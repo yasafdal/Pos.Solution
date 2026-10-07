@@ -1,6 +1,5 @@
 ﻿using CurrieTechnologies.Razor.SweetAlert2;
 using Microsoft.Extensions.Logging;
-using POS.Client.Services;
 using POS.Shared.Interfaces;
 
 namespace POS.Client
@@ -31,11 +30,6 @@ namespace POS.Client
 
             //plugins
             builder.Services.AddSweetAlert2();
-
-            //Services
-            builder.Services.AddScoped<ICategoryService, CategoryService>();
-            builder.Services.AddScoped<IProductService, ProductService>();
-            builder.Services.AddScoped<ITaxService, TaxService>();
 
             return builder.Build();
         }

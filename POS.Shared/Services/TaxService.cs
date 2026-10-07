@@ -2,7 +2,7 @@
 using POS.Shared.Interfaces;
 using POS.Shared.Models;
 
-namespace POS.Client.Services;
+namespace POS.Shared.Services;
 
 public class TaxService : ITaxService
 {
