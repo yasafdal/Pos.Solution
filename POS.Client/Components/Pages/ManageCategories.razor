@@ -1,0 +1,203 @@
+﻿@page "/manage-categories"
+@using POS.Shared.Models
+@using POS.Client.Services
+@using POS.Shared.Interfaces
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject ICategoryService CategorySvc
+@inject SweetAlertService Swal
+
+<div class="container-fluid py-4" style="background-color: #f4f6f8; min-height: 100vh;">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-end mb-4 px-1">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Categories</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Manage your product classifications</span>
+        </div>
+    </div>
+
+    <div class="row g-4 d-flex flex-column flex-lg-row">
+        <!-- Left Column: The Unified Data Card -->
+        <div class="col-lg-8 order-2 order-lg-1">
+            <div class="card border-0 shadow-sm rounded-4 overflow-hidden h-100">
+                
+                <!-- Card Toolbar -->
+                <div class="card-header bg-white border-bottom-0 pt-4 pb-3 px-4 d-flex justify-content-between align-items-center">
+                    <div style="max-width: 350px; width: 100%;">
+                        <input type="search" class="form-control bg-light border-0 shadow-none px-4 py-2"
+                               placeholder="Search categories..."
+                               @bind="globalSearch" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <!-- Grid Body -->
+                <div class="card-body p-0">
+                    @if (categories == null)
+                    {
+                        <div class="text-center py-5 text-muted">
+                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                            Loading categories...
+                        </div>
+                    }
+                    else
+                    {
+                        <QuickGrid Items="@FilteredCategories" Pagination="@pagination" Theme="corporate">
+                            <PropertyColumn Property="@(c => c.Name)" Title="Category Name" Sortable="true" />
+                            <PropertyColumn Property="@(c => c.Description)" Title="Description" Sortable="true" />
+
+                            <TemplateColumn Title="Actions">
+                                <div class="d-flex gap-2">
+                                    <!-- Text-only Ghost Buttons -->
+                                    <button class="btn btn-sm btn-light text-primary rounded-pill px-4 fw-semibold border-0" @onclick="() => StartEdit(context)">
+                                        Edit
+                                    </button>
+                                    <button class="btn btn-sm btn-light text-danger rounded-pill px-4 fw-semibold border-0" @onclick="() => DeleteCategory(context.CategoryId)">
+                                        Delete
+                                    </button>
+                                </div>
+                            </TemplateColumn>
+                        </QuickGrid>
+                    }
+                </div>
+
+                <!-- Card Footer (Seamless Pagination) -->
+                @if (categories != null)
+                {
+                    <div class="card-footer bg-white border-0 px-3 px-md-4 py-3 m-0 d-flex justify-content-center justify-content-sm-end overflow-x-auto">
+                        <Paginator State="@pagination" />
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Right Column: Action Panel -->
+        <div class="col-lg-4 order-1 order-lg-2">
+            <div class="card border-0 shadow-sm rounded-4 p-4 sticky-top" style="top: 20px;">
+                
+                <!-- Typography-based Form Header -->
+                <div class="mb-4">
+                    <h5 class="fw-bolder mb-0 text-dark">
+                        @(isEditing ? "Edit Category" : "New Category")
+                    </h5>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Category Name</label>
+                    <input @bind="currentCategory.Name" class="form-control form-control-lg bg-light border-0 shadow-none" placeholder="e.g. Hot Drinks" />
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Description (Optional)</label>
+                    <textarea @bind="currentCategory.Description" class="form-control bg-light border-0 shadow-none" rows="3" placeholder="Brief details about this category..."></textarea>
+                </div>
+
+                <div class="d-grid gap-2 mt-2">
+                    <button class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") btn-lg fw-bold rounded-3 shadow-sm" @onclick="SaveCategory">
+                        @(isEditing ? "Save Changes" : "Create Category")
+                    </button>
+                    
+                    @if (isEditing)
+                    {
+                        <button class="btn btn-light btn-lg text-secondary fw-bold rounded-3 mt-1 border-0" @onclick="CancelEdit">
+                            Cancel
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<CategoryDto>? categories;
+    private CategoryDto currentCategory = new();
+    private bool isEditing = false;
+    private string globalSearch = string.Empty;
+
+    // Tell the grid to show 10 items per page
+    private PaginationState pagination = new PaginationState { ItemsPerPage = 10 };
+
+    // QuickGrid requires an IQueryable, so we just convert the filtered list here
+    private IQueryable<CategoryDto> FilteredCategories =>
+        (categories?.Where(c =>
+            string.IsNullOrWhiteSpace(globalSearch) ||     
+            c.Name.Contains(globalSearch, StringComparison.OrdinalIgnoreCase) ||
+            (c.Description != null && c.Description.Contains(globalSearch, StringComparison.OrdinalIgnoreCase))
+            
+        ) ?? Array.Empty<CategoryDto>()).AsQueryable();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCategories();
+    }
+
+    private async Task LoadCategories()
+    {
+        var rawCategories = await CategorySvc.GetCategoriesAsync();
+
+        categories = rawCategories
+            .OrderByDescending(c => c.CategoryId).ToList();
+    }
+
+    private void StartEdit(CategoryDto category)
+    {
+        isEditing = true;
+        currentCategory = new CategoryDto
+        {
+            CategoryId = category.CategoryId,
+            Name = category.Name,
+            Description = category.Description
+        };
+    }
+
+    private void CancelEdit()
+    {
+        isEditing = false;
+        currentCategory = new CategoryDto();
+    }
+
+    private async Task SaveCategory()
+    {
+        if (string.IsNullOrWhiteSpace(currentCategory.Name)) return;
+
+        if (isEditing)
+        {
+            await CategorySvc.UpdateCategoryAsync(currentCategory.CategoryId, currentCategory);
+            await Swal.FireAsync("Updated!", "The category was successfully updated.", SweetAlertIcon.Success);
+        }
+        else
+        {
+            await CategorySvc.CreateCategoryAsync(currentCategory);
+            await Swal.FireAsync("Created!", "The new category was added.", SweetAlertIcon.Success);
+        }
+
+        CancelEdit();
+        await LoadCategories();
+    }
+
+    private async Task DeleteCategory(int id)
+    {
+        var result = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Are you sure?",
+            Text = "You will not be able to recover this category!",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#dc3545",
+            ConfirmButtonText = "Yes"
+        });
+
+        if (!string.IsNullOrEmpty(result.Value))
+        {
+            if (isEditing && currentCategory.CategoryId == id)
+            {
+                CancelEdit();
+            }
+
+            await CategorySvc.DeleteCategoryAsync(id);
+            await LoadCategories();
+        
+            // 3. Show success message
+            await Swal.FireAsync("Deleted!", "The category has been deleted.", SweetAlertIcon.Success);
+        }
+    }
+}

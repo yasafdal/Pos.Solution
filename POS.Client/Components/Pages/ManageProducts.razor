@@ -1,0 +1,336 @@
+﻿@page "/manage-products"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using CurrieTechnologies.Razor.SweetAlert2
+@using Microsoft.AspNetCore.Components.QuickGrid
+@inject IProductService ProductSvc
+@inject ITaxService TaxSvc
+@inject ICategoryService CategorySvc
+@inject SweetAlertService Swal
+
+<div class="container-fluid py-4" style="background-color: #f4f6f8; min-height: 100vh;">
+    <!-- Header: Stacks on mobile, side-by-side on larger screens -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-end gap-3 mb-4 px-1">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Products</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Manage your inventory and pricing</span>
+        </div>
+        <!-- Button: Full width on mobile, auto width on tablet/desktop -->
+        <button class="btn btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm" @onclick="OpenAddModal">
+            Add New Product
+        </button>
+    </div>
+
+    <!-- The Unified Data Card -->
+    <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+        
+        <!-- Card Toolbar: Uses Bootstrap Grid for responsive width -->
+        <div class="card-header bg-white border-bottom-0 pt-4 pb-3 px-3 px-md-4">
+            <div class="row">
+                <div class="col-12 col-md-6 col-lg-4">
+                    <input type="search" class="form-control bg-light border-0 shadow-none px-4 py-2 w-100"
+                           placeholder="Search products or SKUs..."
+                           @bind="globalSearch" @bind:event="oninput" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Grid Body: overflow-x-auto allows horizontal swiping on small devices -->
+        <div class="card-body p-0 overflow-x-auto">
+            @if (products == null)
+            {
+                <div class="text-center py-5 text-muted">
+                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                    Loading products...
+                </div>
+            }
+            else
+            {
+                <!-- We selectively show only the most important columns in the grid -->
+                <QuickGrid Items="@FilteredProducts" Pagination="@pagination" Theme="corporate">
+                    <TemplateColumn Title="Product Name" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.Name))" Sortable="true">
+                        <div>
+                            <span class="d-block fw-semibold text-dark">@context.Name</span>
+                            @if (context.UnitValue > 0 && !string.IsNullOrEmpty(context.UnitOfMeasure))
+                            {
+                                <small class="d-block text-secondary" style="font-size: 0.85em;">
+                                    @context.UnitValue @context.UnitOfMeasure
+                                </small>
+                            }
+                        </div>
+                    </TemplateColumn>
+                    <PropertyColumn Property="@(p => p.CategoryName)" Title="Category" Sortable="true" />
+                    <PropertyColumn Property="@(p => p.CostPrice)" Title="Cost Price" Format="C2" Sortable="true" />
+                    <PropertyColumn Property="@(p => p.Price)" Title="Price" Format="C2" Sortable="true" />
+                    <PropertyColumn Property="@(p => p.TaxName)" Title="Tax Class" Sortable="true" />
+                    <PropertyColumn Property="@(p => p.StockQuantity)" Title="Stock" Sortable="true" />
+                    
+                    <TemplateColumn Title="Status">
+                        @if (context.IsActive)
+                        {
+                            <span class="badge bg-success bg-opacity-10 text-success rounded-pill px-3">Active</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary rounded-pill px-3">Inactive</span>
+                        }
+                    </TemplateColumn>
+
+                    <TemplateColumn Title="Actions">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-light text-primary rounded-pill px-3 px-md-4 fw-semibold border-0" @onclick="() => OpenEditModal(context)">
+                                Edit
+                            </button>
+                            <button class="btn btn-sm btn-light text-danger rounded-pill px-3 px-md-4 fw-semibold border-0" @onclick="() => DeleteProduct(context.ProductId)">
+                                Delete
+                            </button>
+                        </div>
+                    </TemplateColumn>
+                </QuickGrid>
+            }
+        </div>
+
+        <!-- Card Footer: Centered on mobile, right-aligned on larger screens -->
+        @if (products != null)
+        {
+            <div class="card-footer bg-white border-0 px-3 px-md-4 py-3 m-0 d-flex justify-content-center justify-content-sm-end overflow-x-auto">
+                <Paginator State="@pagination" />
+            </div>
+        }
+    </div>
+</div>
+
+@if (isModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow">
+                
+                <div class="modal-header border-0 px-4 pt-4 pb-0">
+                    <h5 class="fw-bolder text-dark mb-0">@(isEditing ? "Edit Product" : "New Product")</h5>
+                </div>
+                
+                <div class="modal-body px-4 py-4">
+                    <div class="row g-3 g-md-4">
+                        
+                        <!-- Row 1: Basic Info & Measurements -->
+                        <div class="col-12 col-md-5">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Product Name</label>
+                            <input @bind="currentProduct.Name" class="form-control bg-light border-0 shadow-none px-3 py-2" placeholder="e.g. Espresso" />
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Category</label>
+                            <select @bind="currentProduct.CategoryId" class="form-select bg-light border-0 shadow-none px-3 py-2">
+                                <option value="0">Select Category...</option>
+                                @foreach (var cat in categories)
+                                {
+                                    <option value="@cat.CategoryId">@cat.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Value</label>
+                            <!-- step="any" allows decimals like 1.5 -->
+                            <input type="number" step="any" @bind="currentProduct.UnitValue" class="form-control bg-light border-0 shadow-none px-3 py-2" placeholder="e.g. 16" />
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Unit</label>
+                            <select @bind="currentProduct.UnitOfMeasure" class="form-select bg-light border-0 shadow-none px-3 py-2">
+                                <option value="">-</option>
+                                @foreach (var unit in unitOptions)
+                                {
+                                    <option value="@unit">@unit</option>
+                                }
+                            </select>
+                        </div>
+
+                        <!-- Row 2: Financials (Prices side-by-side on mobile, Tax full width) -->
+                        <div class="col-6 col-md-4">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Selling Price</label>
+                            <input type="number" @bind="currentProduct.Price" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-6 col-md-4">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Cost Price</label>
+                            <input type="number" @bind="currentProduct.CostPrice" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Tax Class</label>
+                            <select @bind="currentProduct.TaxId" class="form-select bg-light border-0 shadow-none px-3 py-2">
+                                <option value="">Exempt / No Tax</option>
+                                @foreach (var tax in taxes)
+                                {
+                                    <option value="@tax.TaxId">@tax.Name (@tax.Rate%)</option>
+                                }
+                            </select>
+                        </div>
+
+                        <!-- Row 3: Inventory Management (Side-by-side on mobile) -->
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">SKU</label>
+                            <input @bind="currentProduct.SKU" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Barcode</label>
+                            <input @bind="currentProduct.Barcode" class="form-control bg-light border-0 shadow-none px-3 py-2" placeholder="Scan or type..." />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Stock Qty</label>
+                            <input type="number" @bind="currentProduct.StockQuantity" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.5px;">Reorder Lvl</label>
+                            <input type="number" @bind="currentProduct.ReorderLevel" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+
+                        <!-- Row 4: F&B Specifics (Stacks on mobile, inline on desktop) -->
+                        <div class="col-12">
+                            <div class="d-flex flex-column flex-sm-row gap-3 gap-sm-4 p-3 bg-light rounded-3 mt-2">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="kitchenSwitch" @bind="currentProduct.IsKitchenItem">
+                                    <label class="form-check-label fw-semibold text-dark" for="kitchenSwitch">Route to Kitchen Printer</label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="activeSwitch" @bind="currentProduct.IsActive">
+                                    <label class="form-check-label fw-semibold text-dark" for="activeSwitch">Active in POS</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer: Full width buttons on mobile, right-aligned on desktop -->
+                <div class="modal-footer border-0 px-4 pb-4 pt-0 d-flex flex-column flex-sm-row justify-content-sm-end gap-2">
+                    <button class="btn btn-light text-secondary fw-bold rounded-pill px-4 border-0 w-100 w-sm-auto order-2 order-sm-1" @onclick="CloseModal">Cancel</button>
+                    <button class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") fw-bold rounded-pill px-4 shadow-sm w-100 w-sm-auto order-1 order-sm-2" @onclick="SaveProduct">
+                        @(isEditing ? "Save Changes" : "Create Product")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ProductDto>? products;
+    private List<CategoryDto> categories = new();
+    private List<TaxDto> taxes = new();
+    private ProductDto currentProduct = new();
+
+    private bool isEditing = false;
+    private bool isModalOpen = false;
+    private string globalSearch = string.Empty;
+
+    private List<string> unitOptions = new()
+    {
+        "pc", "pk", "ct", "set", "Dozen", "Loaf", "Bunch", // Count / Items
+        "oz", "lb", "g", "kg",                             // Weight
+        "ml", "L", "Gallon"                                // Volume
+    };
+
+    private PaginationState pagination = new PaginationState { ItemsPerPage = 10 };
+
+    private IQueryable<ProductDto> FilteredProducts =>
+        (products?.Where(p =>
+            string.IsNullOrWhiteSpace(globalSearch) ||
+            p.Name.Contains(globalSearch, StringComparison.OrdinalIgnoreCase) ||
+            (p.SKU != null && p.SKU.Contains(globalSearch, StringComparison.OrdinalIgnoreCase)) ||
+            (p.CategoryName != null && p.CategoryName.Contains(globalSearch, StringComparison.OrdinalIgnoreCase))
+        ) ?? Array.Empty<ProductDto>()).AsQueryable();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProducts();
+        var rawCategories = await CategorySvc.GetCategoriesAsync();
+        categories = rawCategories.
+            OrderBy(c => c.Name).ToList();
+        taxes = await TaxSvc.GetTaxesAsync();
+    }
+
+
+    private async Task LoadProducts()
+    {
+        var rawProducts = await ProductSvc.GetProductsAsync();
+        products = rawProducts
+            .OrderByDescending(p => p.ProductId)
+            .ToList();
+    }
+
+    private void OpenAddModal()
+    {
+        isEditing = false;
+        currentProduct = new ProductDto { IsActive = true }; // Default to active
+        isModalOpen = true;
+    }
+
+    private void OpenEditModal(ProductDto product)
+    {
+        isEditing = true;
+        currentProduct = new ProductDto
+        {
+            ProductId = product.ProductId,
+            CategoryId = product.CategoryId,
+            Name = product.Name,
+            Price = product.Price,
+            UnitValue = product.UnitValue,
+            UnitOfMeasure = product.UnitOfMeasure,
+            CostPrice = product.CostPrice,
+            StockQuantity = product.StockQuantity,
+            ReorderLevel = product.ReorderLevel,
+            SKU = product.SKU,
+            Barcode = product.Barcode,
+            TaxId = product.TaxId,
+            IsKitchenItem = product.IsKitchenItem,
+            IsActive = product.IsActive
+        };
+        isModalOpen = true;
+    }
+
+    private void CloseModal()
+    {
+        isModalOpen = false;
+        currentProduct = new();
+    }
+
+    private async Task SaveProduct()
+    {
+        if (string.IsNullOrWhiteSpace(currentProduct.Name) || currentProduct.CategoryId == 0)
+        {
+            await Swal.FireAsync("Missing Info", "Please provide a name and select a category.", SweetAlertIcon.Warning);
+            return;
+        }
+
+        if (isEditing)
+        {
+            await ProductSvc.UpdateProductAsync(currentProduct.ProductId, currentProduct);
+            await Swal.FireAsync("Updated!", "The product was successfully updated.", SweetAlertIcon.Success);
+        }
+        else
+        {
+            await ProductSvc.CreateProductAsync(currentProduct);
+            await Swal.FireAsync("Created!", "The new product was added.", SweetAlertIcon.Success);
+        }
+
+        CloseModal();
+        await LoadProducts();
+    }
+
+    private async Task DeleteProduct(int id)
+    {
+        var result = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Are you sure?",
+            Text = "You will not be able to recover this product!",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#dc3545",
+            ConfirmButtonText = "Yes, delete it!"
+        });
+
+        if (!string.IsNullOrEmpty(result.Value))
+        {
+            await ProductSvc.DeleteProductAsync(id);
+            await LoadProducts();
+            await Swal.FireAsync("Deleted!", "The product has been deleted.", SweetAlertIcon.Success);
+        }
+    }
+}

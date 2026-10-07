@@ -1,0 +1,43 @@
+﻿using CurrieTechnologies.Razor.SweetAlert2;
+using Microsoft.Extensions.Logging;
+using POS.Client.Services;
+using POS.Shared.Interfaces;
+
+namespace POS.Client
+{
+    public static class MauiProgram
+    {
+        public static MauiApp CreateMauiApp()
+        {
+            var builder = MauiApp.CreateBuilder();
+            builder
+                .UseMauiApp<App>()
+                .ConfigureFonts(fonts =>
+                {
+                    fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
+                });
+
+            builder.Services.AddMauiBlazorWebView();
+#if DEBUG
+            builder.Services.AddBlazorWebViewDeveloperTools();
+    		builder.Logging.AddDebug();
+#endif
+
+            //Configure the HttpClient to point to your running API (Update the port to match yours)
+            builder.Services.AddScoped(sp => new HttpClient
+            {
+                BaseAddress = new Uri("https://localhost:7139/")
+            });
+
+            //plugins
+            builder.Services.AddSweetAlert2();
+
+            //Services
+            builder.Services.AddScoped<ICategoryService, CategoryService>();
+            builder.Services.AddScoped<IProductService, ProductService>();
+            builder.Services.AddScoped<ITaxService, TaxService>();
+
+            return builder.Build();
+        }
+    }
+}

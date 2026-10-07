@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="POS.Api/POS.Api.csproj" />
+  <Project Path="POS.Client/POS.Client.csproj" Id="1d3b7394-c340-4be4-af05-9b54c51af458">
+    <Deploy Solution="Debug|*" />
+  </Project>
+  <Project Path="POS.Shared/POS.Shared.csproj" />
+</Solution>
