@@ -1,19 +1,85 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+<div class="app-wrapper">
+    <!-- Header Navbar -->
+    <nav class="app-header navbar navbar-expand bg-white border-bottom shadow-sm">
+        <div class="container-fluid">
+            <!-- Sidebar Toggle & Left Links -->
+            <ul class="navbar-nav align-items-center">
+                <li class="nav-item">
+                    <a class="nav-link text-dark" data-lte-toggle="sidebar" href="#" role="button" aria-label="Toggle sidebar">
+                        <i class="bi bi-list fs-4"></i>
+                    </a>
+                </li>
+            </ul>
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+            <!-- Right Navbar Items (Auth / User) -->
+            <ul class="navbar-nav ms-auto align-items-center gap-2">
+                <AuthorizeView>
+                    <Authorized>
+                        <li class="nav-item d-none d-md-flex align-items-center me-2">
+                            <span class="nav-link text-secondary fw-medium px-2">
+                                <i class="bi bi-person-circle me-1 text-primary"></i> @context.User.Identity?.Name
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <form action="Account/Logout" method="post" class="d-inline m-0">
+                                <AntiforgeryToken />
+                                <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill px-3 fw-medium">
+                                    <i class="bi bi-box-arrow-right me-1"></i> Logout
+                                </button>
+                            </form>
+                        </li>
+                    </Authorized>
+                    <NotAuthorized>
+                        <li class="nav-item">
+                            <a class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-medium" href="Account/Login">
+                                <i class="bi bi-box-arrow-in-right me-1"></i> Login
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="btn btn-sm btn-primary rounded-pill px-3 fw-medium" href="Account/Register">
+                                Register
+                            </a>
+                        </li>
+                    </NotAuthorized>
+                </AuthorizeView>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- App Sidebar -->
+    <aside class="app-sidebar original-sidebar shadow" data-bs-theme="dark">
+        <!-- Sidebar Brand -->
+        <div class="sidebar-brand border-bottom border-white border-opacity-10">
+            <a href="" class="brand-link text-decoration-none d-flex align-items-center">
+                <i class="bi bi-shop text-warning fs-4 brand-icon"></i>
+                <span class="brand-text fw-bold fs-5 text-white ms-2">POS System</span>
+            </a>
         </div>
 
-        <article class="content px-4">
-            @Body
-        </article>
+        <!-- Sidebar Navigation Menu -->
+        <div class="sidebar-wrapper">
+            <NavMenu />
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="app-main bg-white">
+        <div class="app-content py-3 px-4">
+            <div class="container-fluid px-0">
+                @Body
+            </div>
+        </div>
     </main>
+
+    <!-- Footer -->
+    <footer class="app-footer text-secondary small py-2 px-4 border-top bg-white">
+        <div class="float-end d-none d-sm-inline">
+            <b>Version</b> 1.0.0
+        </div>
+        <strong>&copy; 2026 POS System.</strong> All rights reserved.
+    </footer>
 </div>
 
 <div id="blazor-error-ui" data-nosnippet>

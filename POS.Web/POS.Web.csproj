@@ -22,4 +22,10 @@
     <ProjectReference Include="..\POS.Shared\POS.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Asset\" />
+    <Folder Include="Bootstrap\" />
+    <Folder Include="AdminLte\" />
+  </ItemGroup>
+
 </Project>

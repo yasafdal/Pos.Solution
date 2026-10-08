@@ -64,3 +64,110 @@ h1:focus {
     color: #ffffff !important;
     font-weight: 600;
 }
+
+/* Smooth Sidebar Transition & Layout Synchronization */
+.app-sidebar {
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    will-change: width, min-width, max-width, margin-left;
+}
+
+@media (min-width: 992px) {
+    /* Collapsed mode: only show icons, fixed 4.6rem width */
+    body.sidebar-collapse .app-sidebar {
+        width: 4.6rem !important;
+        min-width: 4.6rem !important;
+        max-width: 4.6rem !important;
+        margin-left: 0 !important;
+        overflow-x: hidden !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
+    }
+
+    /* Hide text labels, section headers, and brand text */
+    body.sidebar-collapse .sidebar-brand .brand-text,
+    body.sidebar-collapse .sidebar-menu .nav-header,
+    body.sidebar-collapse .sidebar-menu .nav-link p {
+        display: none !important;
+        width: 0 !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+    }
+
+    /* Center brand icon in collapsed state */
+    body.sidebar-collapse .sidebar-brand {
+        padding: 0.8125rem 0 !important;
+        justify-content: center !important;
+    }
+
+    body.sidebar-collapse .sidebar-brand .brand-link {
+        justify-content: center !important;
+        width: 100% !important;
+    }
+
+    body.sidebar-collapse .sidebar-brand .brand-icon {
+        margin: 0 auto !important;
+    }
+
+    /* Center nav icons and format nav items */
+    body.sidebar-collapse .sidebar-menu .nav-item {
+        width: 100% !important;
+        display: flex !important;
+        justify-content: center !important;
+    }
+
+    body.sidebar-collapse .sidebar-menu .nav-link {
+        justify-content: center !important;
+        padding: 0.65rem 0 !important;
+        margin: 0.2rem auto !important;
+        width: 3.2rem !important;
+        height: 3.2rem !important;
+        border-radius: 0.5rem !important;
+    }
+
+    body.sidebar-collapse .sidebar-menu .nav-link:hover {
+        transform: none !important;
+        background-color: rgba(255, 255, 255, 0.12) !important;
+    }
+
+    body.sidebar-collapse .sidebar-menu .nav-link:hover .nav-icon {
+        transform: scale(1.15) !important;
+    }
+
+    body.sidebar-collapse .sidebar-menu .nav-link .nav-icon {
+        margin-right: 0 !important;
+        font-size: 1.3rem !important;
+    }
+
+    body.sidebar-collapse .sidebar-menu form {
+        width: 100% !important;
+        display: flex !important;
+        justify-content: center !important;
+    }
+
+    body.sidebar-collapse .sidebar-menu button.nav-link {
+        width: 3.2rem !important;
+        margin: 0.2rem auto !important;
+        justify-content: center !important;
+        padding: 0.65rem 0 !important;
+    }
+}
+
+@media (max-width: 991.98px) {
+    .app-sidebar {
+        transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    }
+}
+
+.app-header,
+.app-main,
+.app-footer {
+    transition: margin 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                padding 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                width 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
