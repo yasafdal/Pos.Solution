@@ -28,6 +28,8 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
     app.MapScalarApiReference();
 }
+
+app.UseStaticFiles();
 app.UseCors("AllowAll"); // Enable CORS
 
 app.UseHttpsRedirection();

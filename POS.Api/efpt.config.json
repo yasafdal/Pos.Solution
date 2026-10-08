@@ -19,6 +19,14 @@
    "T4TemplatePath": null,
    "Tables": [
       {
+         "Name": "[dbo].[Branches]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[BranchInventory]",
+         "ObjectType": 0
+      },
+      {
          "Name": "[dbo].[Categories]",
          "ObjectType": 0
       },
@@ -48,6 +56,10 @@
       },
       {
          "Name": "[dbo].[Orders]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[Outlets]",
          "ObjectType": 0
       },
       {

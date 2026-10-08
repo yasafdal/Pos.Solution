@@ -1,0 +1,404 @@
+﻿@page "/branches"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using POS.Shared.Services
+@inject IBranchService BranchService
+@using Microsoft.AspNetCore.Components.QuickGrid
+
+<div class="container-fluid p-4">
+    <!-- Header Section -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+        <div>
+            <h3 class="fw-bold text-dark mb-1">Branch & Outlet Management</h3>
+            <p class="text-secondary mb-0 small">Manage physical store locations and individual POS registers</p>
+        </div>
+        <button class="btn btn-primary rounded-pill px-4 fw-semibold shadow-sm d-flex align-items-center gap-2" @onclick="OpenNewBranchModal">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4" />
+            </svg>
+            Add Branch
+        </button>
+    </div>
+
+    <!-- Search Input -->
+    <div class="card border-0 shadow-sm rounded-4 mb-4">
+        <div class="card-body p-3">
+            <div class="row g-3 align-items-center">
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="input-group">
+                        <span class="input-group-text bg-white border-end-0 rounded-start-3 text-secondary">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z" />
+                            </svg>
+                        </span>
+                        <input type="text" class="form-control border-start-0 rounded-end-3" placeholder="Search branch name or code..." @bind="searchTerm" @bind:event="oninput" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- QuickGrid Table -->
+    <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <QuickGrid Items="@FilteredBranches" Pagination="@pagination" Theme="commercial">
+                    <PropertyColumn Property="@(b => b.Code)" Title="Code" Sortable="true" Align="Align.Left" />
+                    <PropertyColumn Property="@(b => b.Name)" Title="Branch Name" Sortable="true" Align="Align.Left" />
+                    <PropertyColumn Property="@(b => b.TaxType)" Title="Business Settings" Align="Align.Left" />
+                    <PropertyColumn Property="@(b => b.Phone)" Title="Phone" Align="Align.Left" />
+                    <PropertyColumn Property="@(b => b.Address)" Title="Address" Align="Align.Left" />
+
+                    <!-- Outlets Count & Button -->
+                    <TemplateColumn Context="branch" Title="POS Outlets" Align="Align.Center">
+                        <button class="btn btn-sm btn-soft-primary rounded-pill px-3 fw-semibold" @onclick="() => OpenOutletsModal(branch)">
+                            <span class="badge bg-primary rounded-pill me-1">@branch.OutletCount</span> Manage Outlets
+                        </button>
+                    </TemplateColumn>
+
+                    <!-- Status -->
+                    <TemplateColumn Context="branch" Title="Status" Align="Align.Center">
+                        @if (branch.IsActive)
+                        {
+                            <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-3 py-1">Active</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle rounded-pill px-3 py-1">Inactive</span>
+                        }
+                    </TemplateColumn>
+
+                    <!-- Actions -->
+                    <TemplateColumn Context="branch" Title="Actions" Align="Align.Right">
+                        <div class="d-flex justify-content-end gap-2 me-2">
+                            <button class="btn btn-sm btn-outline-warning text-dark rounded-circle p-2 d-flex align-items-center" @onclick="() => OpenEditBranchModal(branch)" title="Edit Branch">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325" />
+                                </svg>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger rounded-circle p-2 d-flex align-items-center" @onclick="() => DeleteBranch(branch.BranchId)" title="Delete Branch">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z" />
+                                    <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z" />
+                                </svg>
+                            </button>
+                        </div>
+                    </TemplateColumn>
+                </QuickGrid>
+            </div>
+        </div>
+        <div class="card-footer bg-white border-top-0 p-3">
+            <Paginator State="@pagination" />
+        </div>
+    </div>
+</div>
+
+<!-- Modal 1: Branch Add / Edit -->
+@if (isBranchModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <EditForm Model="@currentBranch" OnValidSubmit="SaveBranch" class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <DataAnnotationsValidator />
+                <div class="modal-header border-bottom px-4 py-3">
+                    <h5 class="fw-bold mb-0">@(isEditingBranch ? "Edit Branch" : "New Branch")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseBranchModal"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    <div class="row g-3">
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold small">Branch Code</label>
+                            <InputText @bind-Value="currentBranch.Code" class="form-control rounded-3" placeholder="e.g. BR-01" />
+                        </div>
+                        <div class="col-12 col-md-8">
+                            <label class="form-label fw-semibold small">Branch Name <span class="text-danger">*</span></label>
+                            <InputText @bind-Value="currentBranch.Name" class="form-control rounded-3" placeholder="e.g. Main Branch" />
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold small">Phone Number</label>
+                            <InputText @bind-Value="currentBranch.Phone" class="form-control rounded-3" placeholder="e.g. (02) 8123-4567" />
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold small">Tax Type (BIR)</label>
+                            <InputSelect @bind-Value="currentBranch.TaxType" class="form-select rounded-3">
+                                <option value="VAT-Registered">VAT-Registered</option>
+                                <option value="Non-VAT">Non-VAT</option>
+                            </InputSelect>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold small">Address</label>
+                            <InputTextArea @bind-Value="currentBranch.Address" class="form-control rounded-3" rows="2" placeholder="Street address..." />
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check form-switch p-3 bg-light rounded-3 border">
+                                <InputCheckbox class="form-check-input ms-0 me-2" id="branchActive" @bind-Value="currentBranch.IsActive" />
+                                <label class="form-check-label fw-semibold text-dark" for="branchActive">Active Branch</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3">
+                    <button type="button" class="btn btn-outline-secondary rounded-pill px-4" @onclick="CloseBranchModal">Cancel</button>
+                    <button type="submit" class="btn btn-primary rounded-pill px-4 fw-bold" disabled="@isSaving">Save Branch</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+<!-- Modal 2: Outlets Management for Selected Branch -->
+@if (isOutletsModalOpen && activeBranch != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold mb-0">Outlets for @activeBranch.Name</h5>
+                        <small class="text-secondary">Configure POS registers and sales terminals for this location</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseOutletsModal"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    <!-- Inline Form for Add/Edit Outlet -->
+                    <EditForm Model="@currentOutlet" OnValidSubmit="SaveOutlet" class="p-3 bg-light rounded-3 border mb-4">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-12 col-md-6">
+                                <label class="form-label fw-semibold small mb-1">Outlet / POS Name <span class="text-danger">*</span></label>
+                                <InputText @bind-Value="currentOutlet.Name" class="form-control rounded-3" placeholder="e.g. Main Register 1" />
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label class="form-label fw-semibold small mb-1">Device ID / Terminal IP</label>
+                                <InputText @bind-Value="currentOutlet.DeviceIdentifier" class="form-control rounded-3" placeholder="e.g. 192.168.1.101" />
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label fw-semibold small mb-1">PTU No. (BIR)</label>
+                                <InputText @bind-Value="currentOutlet.PTUNumber" class="form-control rounded-3" placeholder="Permit To Use No." />
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label fw-semibold small mb-1">MIN No. (BIR)</label>
+                                <InputText @bind-Value="currentOutlet.MINNumber" class="form-control rounded-3" placeholder="Machine ID No." />
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label fw-semibold small mb-1">Machine Serial No.</label>
+                                <InputText @bind-Value="currentOutlet.SerialNumber" class="form-control rounded-3" placeholder="SN-XXXXX" />
+                            </div>
+                            <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+                                @if (isEditingOutlet)
+                                {
+                                    <button type="button" class="btn btn-outline-secondary rounded-3 btn-sm px-3" @onclick="ResetOutletForm">Cancel</button>
+                                }
+                                <button type="submit" class="btn btn-success rounded-3 btn-sm fw-bold px-4">
+                                    @(isEditingOutlet ? "Update Register" : "Add Register")
+                                </button>
+                            </div>
+                        </div>
+                    </EditForm>
+
+                    <!-- Outlet List Table -->
+                    <div class="table-responsive border rounded-3">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Outlet Name</th>
+                                    <th>Device ID</th>
+                                    <th>PTU No.</th>
+                                    <th>MIN No.</th>
+                                    <th>Serial No.</th>
+                                    <th class="text-center">Status</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (activeBranch.Outlets.Any())
+                                {
+                                    @foreach (var outlet in activeBranch.Outlets)
+                                    {
+                                        <tr>
+                                            <td class="fw-semibold">@outlet.Name</td>
+                                            <td class="text-muted small">@(string.IsNullOrWhiteSpace(outlet.DeviceIdentifier) ? "—" : outlet.DeviceIdentifier)</td>
+                                            <td class="text-muted small">@(string.IsNullOrWhiteSpace(outlet.PTUNumber) ? "—" : outlet.PTUNumber)</td>
+                                            <td class="text-muted small">@(string.IsNullOrWhiteSpace(outlet.MINNumber) ? "—" : outlet.MINNumber)</td>
+                                            <td class="text-muted small">@(string.IsNullOrWhiteSpace(outlet.SerialNumber) ? "—" : outlet.SerialNumber)</td>
+                                            <td class="text-center">
+                                                <span class="badge @(outlet.IsActive ? "bg-success" : "bg-secondary") rounded-pill">
+                                                    @(outlet.IsActive ? "Active" : "Inactive")
+                                                </span>
+                                            </td>
+                                            <td class="text-end">
+                                                <button class="btn btn-sm btn-link text-primary p-0 me-3" @onclick="() => EditOutlet(outlet)">Edit</button>
+                                                <button class="btn btn-sm btn-link text-danger p-0 me-2" @onclick="() => DeleteOutlet(outlet.OutletId)">Delete</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                                else
+                                {
+                                    <tr>
+                                        <td colspan="7" class="text-center py-4 text-muted">No registers added for this branch yet.</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3">
+                    <button type="button" class="btn btn-secondary rounded-pill px-4" @onclick="CloseOutletsModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<BranchDto> branches = new();
+    private string searchTerm = string.Empty;
+    private PaginationState pagination = new PaginationState { ItemsPerPage = 10 };
+
+    private bool isBranchModalOpen = false;
+    private bool isEditingBranch = false;
+    private bool isSaving = false;
+    private BranchDto currentBranch = new();
+
+    private bool isOutletsModalOpen = false;
+    private bool isEditingOutlet = false;
+    private BranchDto? activeBranch;
+    private OutletDto currentOutlet = new();
+
+    private IQueryable<BranchDto> FilteredBranches
+    {
+        get
+        {
+            var query = branches.AsQueryable();
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(b => b.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                                         (b.Code != null && b.Code.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)));
+            }
+            return query;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadBranches();
+    }
+
+    private async Task LoadBranches()
+    {
+        branches = await BranchService.GetBranchesAsync();
+    }
+
+    private void OpenNewBranchModal()
+    {
+        currentBranch = new BranchDto { IsActive = true };
+        isEditingBranch = false;
+        isBranchModalOpen = true;
+    }
+
+    private void OpenEditBranchModal(BranchDto branch)
+    {
+        currentBranch = new BranchDto
+        {
+            BranchId = branch.BranchId,
+            Name = branch.Name,
+            Code = branch.Code,
+            Address = branch.Address,
+            Phone = branch.Phone,
+            IsActive = branch.IsActive
+        };
+        isEditingBranch = true;
+        isBranchModalOpen = true;
+    }
+
+    private void CloseBranchModal() => isBranchModalOpen = false;
+
+    private async Task SaveBranch()
+    {
+        isSaving = true;
+        if (isEditingBranch)
+        {
+            await BranchService.UpdateBranchAsync(currentBranch.BranchId, currentBranch);
+        }
+        else
+        {
+            await BranchService.CreateBranchAsync(currentBranch);
+        }
+        isSaving = false;
+        isBranchModalOpen = false;
+        await LoadBranches();
+    }
+
+    private async Task DeleteBranch(int id)
+    {
+        if (await BranchService.DeleteBranchAsync(id))
+        {
+            await LoadBranches();
+        }
+    }
+
+    private void OpenOutletsModal(BranchDto branch)
+    {
+        activeBranch = branch;
+        ResetOutletForm();
+        isOutletsModalOpen = true;
+    }
+
+    private void CloseOutletsModal() => isOutletsModalOpen = false;
+
+    private void ResetOutletForm()
+    {
+        currentOutlet = new OutletDto
+        {
+            BranchId = activeBranch?.BranchId ?? 0,
+            IsActive = true
+        };
+        isEditingOutlet = false;
+    }
+
+    private void EditOutlet(OutletDto outlet)
+    {
+        currentOutlet = new OutletDto
+        {
+            OutletId = outlet.OutletId,
+            BranchId = outlet.BranchId,
+            Name = outlet.Name,
+            DeviceIdentifier = outlet.DeviceIdentifier,
+            PTUNumber = outlet.PTUNumber,
+            MINNumber = outlet.MINNumber,
+            SerialNumber = outlet.SerialNumber,
+            IsActive = outlet.IsActive
+        };
+        isEditingOutlet = true;
+    }
+
+    private async Task SaveOutlet()
+    {
+        if (activeBranch == null || string.IsNullOrWhiteSpace(currentOutlet.Name)) return;
+
+        currentOutlet.BranchId = activeBranch.BranchId;
+
+        if (isEditingOutlet)
+        {
+            await BranchService.UpdateOutletAsync(currentOutlet.OutletId, currentOutlet);
+        }
+        else
+        {
+            await BranchService.CreateOutletAsync(currentOutlet);
+        }
+
+        ResetOutletForm();
+        await LoadBranches();
+        activeBranch = branches.FirstOrDefault(b => b.BranchId == activeBranch.BranchId);
+    }
+
+    private async Task DeleteOutlet(int outletId)
+    {
+        await BranchService.DeleteOutletAsync(outletId);
+        await LoadBranches();
+        if (activeBranch != null)
+        {
+            activeBranch = branches.FirstOrDefault(b => b.BranchId == activeBranch.BranchId);
+        }
+    }
+}

@@ -39,6 +39,8 @@ public partial class Product
 
     public bool IsKitchenItem { get; set; }
 
+    public virtual ICollection<BranchInventory> BranchInventories { get; set; } = new List<BranchInventory>();
+
     public virtual Category Category { get; set; }
 
     public virtual ICollection<InventoryLog> InventoryLogs { get; set; } = new List<InventoryLog>();

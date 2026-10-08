@@ -56,6 +56,7 @@ builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSe
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
+builder.Services.AddScoped<IBranchService, BranchService>();
 
 var app = builder.Build();
 
