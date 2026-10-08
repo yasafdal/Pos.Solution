@@ -1,0 +1,426 @@
+﻿@page "/manage-products"
+@page "/manage-products/{FilterCategoryId:int}"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject IProductService ProductService
+@inject ICategoryService CategoryService
+@inject ITaxService TaxService
+@inject SweetAlertService Swal
+
+<style>
+    /* 1. ANNIHILATE BLAZOR'S FAKE PADDING ROWS */
+    .commercial-grid table tbody tr:not([aria-rowindex]) {
+        display: none !important;
+    }
+
+    /* 2. Fix the Table Layout */
+    .commercial-grid table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin-bottom: 0 !important;
+    }
+
+        /* 3. Style Headers */
+        .commercial-grid table thead th {
+            background-color: #f9fafb !important;
+            color: #6b7280 !important;
+            font-size: 0.75rem !important;
+            font-weight: 600 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.05em !important;
+            padding: 1rem 1.25rem !important;
+            border-bottom: 2px solid #e5e7eb !important;
+            white-space: nowrap !important;
+        }
+
+        /* 4. Style Cells */
+        .commercial-grid table tbody td {
+            padding: 1rem 1.25rem !important;
+            vertical-align: middle !important;
+            border-bottom: 1px solid #f3f4f6 !important;
+            color: #374151 !important;
+            font-size: 0.9rem !important;
+        }
+
+        /* 5. Hover Effects */
+        .commercial-grid table tbody tr {
+            transition: background-color 0.2s ease !important;
+        }
+
+            .commercial-grid table tbody tr:hover {
+                background-color: #f9fafb !important;
+            }
+</style>
+
+<div class="container-fluid py-4" style="background-color: #f4f6f8; min-height: 100vh;">
+    <!-- Header -->
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-end gap-3 mb-4 px-1">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Products</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Manage your inventory, pricing, and configurations</span>
+        </div>
+        <div class="d-flex flex-column flex-sm-row gap-2">
+            @if (FilterCategoryId.HasValue)
+            {
+                <a href="/manage-categories" class="btn btn-light rounded-pill px-4 py-2 fw-bold shadow-sm">Back to Categories</a>
+            }
+            <button class="btn btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm" @onclick="OpenAddModal">
+                Add New Product
+            </button>
+        </div>
+    </div>
+
+    <!-- Data Card -->
+    <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+        <!-- Grid Body -->
+        <div class="card-body p-0 overflow-x-auto">
+            @if (products == null)
+            {
+                <div class="text-center py-5 text-muted">
+                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                    Loading products...
+                </div>
+            }
+            else
+            {
+                <div class="commercial-grid overflow-x-auto">
+                    <QuickGrid Items="@FilteredProducts" Pagination="@pagination">
+                        <TemplateColumn Context="product" Title="Product Name" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.Name))" Sortable="true">
+    
+                            <ColumnOptions>
+                                <div class="p-2">
+                                    <input type="search" class="form-control form-control-sm shadow-none"
+                                           autofocus @bind="nameFilter" @bind:event="oninput"
+                                           placeholder="Search name, SKU..." />
+                                </div>
+                            </ColumnOptions>
+    
+                            <ChildContent>
+                                <div>
+                                    <span class="d-block fw-semibold text-dark">@product.Name</span>
+                                    @if (product.UnitValue > 0 && !string.IsNullOrWhiteSpace(product.UnitOfMeasure))
+                                    {
+                                        <small class="d-block text-secondary" style="font-size: 0.85em;">
+                                            @product.UnitValue @product.UnitOfMeasure
+                                        </small>
+                                    }
+                                </div>
+                            </ChildContent>
+
+                        </TemplateColumn>
+    
+                        <PropertyColumn Property="@(p => p.CategoryName)" Title="Category" Sortable="true" />
+                        <PropertyColumn Property="@(p => p.CostPrice)" Title="Cost Price" Format="C2" Sortable="true" />
+                        <PropertyColumn Property="@(p => p.Price)" Title="Price" Format="C2" Sortable="true" />
+                        <PropertyColumn Property="@(p => p.StockQuantity)" Title="Stock" Sortable="true" />
+    
+                        <TemplateColumn Context="product" Title="Status">
+                            @if (product.IsActive)
+                            {
+                                <span class="badge bg-success bg-opacity-10 text-success rounded-pill px-3">Active</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary bg-opacity-10 text-secondary rounded-pill px-3">Inactive</span>
+                            }
+                        </TemplateColumn>
+
+                        <TemplateColumn Context="product" Title="Actions">
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-light text-primary rounded-pill px-3 px-md-4 fw-semibold border-0" @onclick="() => OpenEditModal(product)">
+                                    Edit
+                                </button>
+                                <button class="btn btn-sm btn-light text-danger rounded-pill px-3 px-md-4 fw-semibold border-0" @onclick="() => DeleteProduct(product.ProductId)">
+                                    Delete
+                                </button>
+                            </div>
+                        </TemplateColumn>
+                    </QuickGrid>
+                </div>
+
+                <div class="p-3">
+                    <Paginator State="@pagination" />
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<!-- Modal -->
+@if (isModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow">
+                
+                <div class="modal-header border-0 px-4 pt-4 pb-0">
+                    <h5 class="fw-bolder text-dark mb-0">@(isEditing ? "Edit Product" : "New Product")</h5>
+                </div>
+                
+                <div class="modal-body px-4 py-4">
+                    <div class="row g-3 g-md-4">
+                        
+                        <!-- Row 1: Basic Info & Measurements -->
+                        <div class="col-12 col-md-5">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Product Name</label>
+                            <input @bind="currentProduct.Name" class="form-control bg-light border-0 shadow-none px-3 py-2" placeholder="e.g. Espresso" />
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Category</label>
+                            <select @bind="currentProduct.CategoryId" class="form-select bg-light border-0 shadow-none px-3 py-2">
+                                <option value="0">Select Category...</option>
+                                @foreach (var cat in categories)
+                                {
+                                    <option value="@cat.CategoryId">@cat.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Value</label>
+                            <input type="number" step="any" @bind="currentProduct.UnitValue" class="form-control bg-light border-0 shadow-none px-3 py-2" placeholder="e.g. 16" />
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Unit</label>
+                            <select @bind="currentProduct.UnitOfMeasure" class="form-select bg-light border-0 shadow-none px-3 py-2">
+                                <option value="">-</option>
+                                @foreach (var unit in unitOptions)
+                                {
+                                    <option value="@unit">@unit</option>
+                                }
+                            </select>
+                        </div>
+
+                        <!-- Row 2: Financials & Tax -->
+                        <div class="col-6 col-md-4">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Cost Price</label>
+                            <input type="number" @bind="currentProduct.CostPrice" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-6 col-md-4">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Selling Price</label>
+                            <input type="number" @bind="currentProduct.Price" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Tax Class</label>
+                            <select @bind="currentProduct.TaxId" class="form-select bg-light border-0 shadow-none px-3 py-2">
+                                <option value="">Exempt / No Tax</option>
+                                @foreach (var tax in taxes)
+                                {
+                                    <option value="@tax.TaxId">@tax.Name</option>
+                                }
+                            </select>
+                        </div>
+
+                        <!-- Row 3: Identifiers & Stock -->
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">SKU</label>
+                            <input @bind="currentProduct.SKU" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Barcode</label>
+                            <input @bind="currentProduct.Barcode" class="form-control bg-light border-0 shadow-none px-3 py-2" placeholder="Scan or type..." />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Stock Qty</label>
+                            <input type="number" @bind="currentProduct.StockQuantity" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Reorder Lvl</label>
+                            <input type="number" @bind="currentProduct.ReorderLevel" class="form-control bg-light border-0 shadow-none px-3 py-2" />
+                        </div>
+
+                        <!-- Row 4: Config & Media -->
+                        <div class="col-12 col-md-8">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Image URL</label>
+                            <input @bind="currentProduct.ImageUrl" class="form-control bg-light border-0 shadow-none px-3 py-2" placeholder="https://..." />
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label text-secondary small fw-bold text-uppercase">Product Type</label>
+                            <select @bind="currentProduct.ProductType" class="form-select bg-light border-0 shadow-none px-3 py-2">
+                                <option value="Standard">Standard</option>
+                                <option value="MadeToOrder">Made To Order</option>
+                            </select>
+                        </div>
+
+                        <!-- Row 5: Switches -->
+                        <div class="col-12">
+                            <div class="d-flex flex-column flex-sm-row gap-3 gap-sm-4 p-3 bg-light rounded-3 mt-2">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="kitchenSwitch" @bind="currentProduct.IsKitchenItem">
+                                    <label class="form-check-label fw-semibold text-dark" for="kitchenSwitch">Route to Kitchen Printer</label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="activeSwitch" @bind="currentProduct.IsActive">
+                                    <label class="form-check-label fw-semibold text-dark" for="activeSwitch">Active in POS</label>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <div class="modal-footer border-0 px-4 pb-4 pt-0 d-flex flex-column flex-sm-row justify-content-sm-end gap-2">
+                    <button class="btn btn-light text-secondary fw-bold rounded-pill px-4 border-0 w-100 w-sm-auto order-2 order-sm-1" @onclick="CloseModal">Cancel</button>
+                    <button class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") fw-bold rounded-pill px-4 shadow-sm w-100 w-sm-auto order-1 order-sm-2" @onclick="SaveProduct">
+                        @(isEditing ? "Save Changes" : "Create Product")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int? FilterCategoryId { get; set; }
+
+    private List<ProductDto>? products;
+    private List<CategoryDto> categories = new();
+    private List<TaxDto> taxes = new();
+    
+    private PaginationState pagination = new PaginationState { ItemsPerPage = 10 };
+    private string nameFilter = string.Empty;
+
+    // Dropdown Configuration
+    private List<string> unitOptions = new() { "pc", "pk", "ct", "set", "Dozen", "Loaf", "Bunch", "oz", "lb", "g", "kg", "ml", "L", "Gallon" };
+
+    // Modal State
+    private bool isModalOpen = false;
+    private bool isEditing = false;
+    private ProductDto currentProduct = new();
+
+    private IQueryable<ProductDto>? FilteredProducts =>
+       string.IsNullOrWhiteSpace(nameFilter)
+           ? products?.AsQueryable()
+           : products?.Where(p =>
+               (p.Name != null && p.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase)) ||
+               (p.SKU != null && p.SKU.Contains(nameFilter, StringComparison.OrdinalIgnoreCase)) ||
+               (p.Barcode != null && p.Barcode.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
+             ).AsQueryable();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load dependent data for dropdowns
+        categories = await CategoryService.GetCategoriesAsync();
+        taxes = await TaxService.GetTaxesAsync();
+        
+        await LoadProducts();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Re-filter products if the route parameter changes while already on the page
+        await LoadProducts();
+    }
+
+    private async Task LoadProducts()
+    {
+        var rawProducts = await ProductService.GetProductsAsync();
+        
+        // If routed from the Categories grid, filter by that specific category
+        if (FilterCategoryId.HasValue)
+        {
+            rawProducts = rawProducts.Where(p => p.CategoryId == FilterCategoryId.Value).ToList();
+        }
+
+        products = rawProducts.OrderByDescending(p => p.ProductId).ToList();
+    }
+
+    private void OpenAddModal()
+    {
+        isEditing = false;
+        currentProduct = new ProductDto
+        {
+            IsActive = true,
+            ProductType = "Standard",
+            UnitValue = 1,
+            UnitOfMeasure = "pc",
+            CategoryId = FilterCategoryId ?? 0
+        };
+        isModalOpen = true;
+    }
+
+    private void OpenEditModal(ProductDto product)
+    {
+        isEditing = true;
+        currentProduct = new ProductDto
+        {
+            ProductId = product.ProductId,
+            CategoryId = product.CategoryId,
+            Name = product.Name,
+            UnitValue = product.UnitValue,
+            UnitOfMeasure = product.UnitOfMeasure,
+            Barcode = product.Barcode,
+            SKU = product.SKU,
+            ImageUrl = product.ImageUrl,
+            Price = product.Price,
+            CostPrice = product.CostPrice,
+            StockQuantity = product.StockQuantity,
+            ReorderLevel = product.ReorderLevel,
+            TaxId = product.TaxId,
+            ProductType = string.IsNullOrWhiteSpace(product.ProductType) ? "Standard" : product.ProductType,
+            IsActive = product.IsActive,
+            IsKitchenItem = product.IsKitchenItem
+        };
+        isModalOpen = true;
+    }
+
+    private void CloseModal()
+    {
+        isModalOpen = false;
+    }
+
+    private async Task SaveProduct()
+    {
+        if (isEditing)
+        {
+            await ProductService.UpdateProductAsync(currentProduct.ProductId, currentProduct);
+        }
+        else
+        {
+            await ProductService.CreateProductAsync(currentProduct);
+        }
+
+        await LoadProducts();
+        CloseModal();
+
+        await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Success!",
+            Text = isEditing ? "Product updated successfully." : "Product created successfully.",
+            Icon = SweetAlertIcon.Success,
+            Timer = 2000,
+            ShowConfirmButton = false
+        });
+    }
+
+    private async Task DeleteProduct(int id)
+    {
+        var result = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Are you sure?",
+            Text = "You are about to delete this product. This cannot be undone!",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#d33",
+            CancelButtonColor = "#3085d6",
+            ConfirmButtonText = "Yes!"
+        });
+
+        if (result.IsConfirmed)
+        {
+            await ProductService.DeleteProductAsync(id);
+            await LoadProducts();
+
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Deleted!",
+                Text = "The product has been removed.",
+                Icon = SweetAlertIcon.Success,
+                Timer = 2000,
+                ShowConfirmButton = false
+            });
+        }
+    }
+}

@@ -22,12 +22,13 @@ namespace POS.Api.Controllers
         public async Task<ActionResult<IEnumerable<CategoryDto>>> GetCategories()
         {
             var categories = await _context.Categories
-                .Where(c => c.IsActive)
+                .Where(c => c.IsDeleted == false)
                 .Select(c => new CategoryDto
                 {
                     CategoryId = c.CategoryId,
                     Name = c.Name,
-                    Description = c.Description
+                    Description = c.Description,
+                    IsActive = c.IsActive
                 })
                 .ToListAsync();
 
@@ -44,7 +45,8 @@ namespace POS.Api.Controllers
                 {
                     CategoryId = c.CategoryId,
                     Name = c.Name,
-                    Description = c.Description
+                    Description = c.Description,
+                    IsActive = c.IsActive
                 })
                 .FirstOrDefaultAsync();
 
@@ -64,7 +66,7 @@ namespace POS.Api.Controllers
             {
                 Name = categoryDto.Name,
                 Description = categoryDto.Description,
-                IsActive = true
+                IsActive = categoryDto.IsActive
             };
 
             _context.Categories.Add(category);
@@ -94,6 +96,7 @@ namespace POS.Api.Controllers
             // Update allowed fields
             category.Name = categoryDto.Name;
             category.Description = categoryDto.Description;
+            category.IsActive = categoryDto.IsActive;
 
             await _context.SaveChangesAsync();
 
@@ -106,12 +109,12 @@ namespace POS.Api.Controllers
         public async Task<IActionResult> DeleteCategory(int id)
         {
             var category = await _context.Categories.FindAsync(id);
-            if (category == null || !category.IsActive)
+            if (category == null || category.IsDeleted)
             {
                 return NotFound();
             }
 
-            category.IsActive = false;
+            category.IsDeleted = true;
             await _context.SaveChangesAsync();
 
             return NoContent();

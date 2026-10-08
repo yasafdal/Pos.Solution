@@ -4,4 +4,5 @@
     <Deploy Solution="Debug|*" />
   </Project>
   <Project Path="POS.Shared/POS.Shared.csproj" />
+  <Project Path="POS.Web/POS.Web.csproj" Id="80f57a98-16d7-4b8d-adc8-406661d7cfec" />
 </Solution>

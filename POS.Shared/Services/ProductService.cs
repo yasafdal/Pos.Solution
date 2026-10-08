@@ -2,7 +2,7 @@
 using POS.Shared.Models;
 using POS.Shared.Interfaces;
 
-namespace POS.Client.Services;
+namespace POS.Shared.Services;
 
 public class ProductService : IProductService
 {
