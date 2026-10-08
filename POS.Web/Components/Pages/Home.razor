@@ -1,7 +1,120 @@
-﻿@page "/"
+@page "/"
+@using POS.Shared.Interfaces
+@inject ICategoryService CategoryService
+@inject IProductService ProductService
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Dashboard - POS</PageTitle>
 
-<h1>Hello, world!</h1>
+<!-- Content Header -->
+<div class="app-content-header mb-4">
+    <div class="container-fluid px-0">
+        <div class="row align-items-center">
+            <div class="col-sm-6">
+                <h3 class="mb-0 fw-bold">Dashboard</h3>
+            </div>
+            <div class="col-sm-6">
+                <ol class="breadcrumb float-sm-end mb-0">
+                    <li class="breadcrumb-item"><a href="" class="text-decoration-none">Home</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">Dashboard</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
 
-Welcome to your new app.
+<!-- Stat Cards -->
+<div class="row g-3 mb-4">
+    <!-- Categories Card -->
+    <div class="col-lg-3 col-sm-6">
+        <div class="small-box text-bg-primary rounded-3 shadow-sm">
+            <div class="inner p-3">
+                <h3 class="fw-bold mb-1">@(categoriesCount?.ToString() ?? "—")</h3>
+                <p class="mb-0">Categories</p>
+            </div>
+            <div class="small-box-icon">
+                <i class="bi bi-tags-fill"></i>
+            </div>
+            <a href="manage-categories" class="small-box-footer link-light link-underline-opacity-0 link-underline-opacity-50-hover d-block text-center py-2 text-white">
+                Manage Categories <i class="bi bi-arrow-right-circle ms-1"></i>
+            </a>
+        </div>
+    </div>
+
+    <!-- Products Card -->
+    <div class="col-lg-3 col-sm-6">
+        <div class="small-box text-bg-success rounded-3 shadow-sm">
+            <div class="inner p-3">
+                <h3 class="fw-bold mb-1">@(productsCount?.ToString() ?? "—")</h3>
+                <p class="mb-0">Products</p>
+            </div>
+            <div class="small-box-icon">
+                <i class="bi bi-box-seam-fill"></i>
+            </div>
+            <a href="manage-products" class="small-box-footer link-light link-underline-opacity-0 link-underline-opacity-50-hover d-block text-center py-2 text-white">
+                Manage Products <i class="bi bi-arrow-right-circle ms-1"></i>
+            </a>
+        </div>
+    </div>
+
+    <!-- Quick Action / Add Category Card -->
+    <div class="col-lg-3 col-sm-6">
+        <div class="small-box text-bg-warning rounded-3 shadow-sm">
+            <div class="inner p-3">
+                <h3 class="fw-bold mb-1 text-dark">+ Add</h3>
+                <p class="mb-0 text-dark">New Category</p>
+            </div>
+            <div class="small-box-icon">
+                <i class="bi bi-plus-circle text-dark"></i>
+            </div>
+            <a href="manage-categories" class="small-box-footer link-dark link-underline-opacity-0 link-underline-opacity-50-hover d-block text-center py-2 text-dark">
+                Go to Categories <i class="bi bi-arrow-right-circle ms-1"></i>
+            </a>
+        </div>
+    </div>
+
+    <!-- Quick Action / Add Product Card -->
+    <div class="col-lg-3 col-sm-6">
+        <div class="small-box text-bg-info rounded-3 shadow-sm">
+            <div class="inner p-3">
+                <h3 class="fw-bold mb-1 text-white">+ Add</h3>
+                <p class="mb-0 text-white">New Product</p>
+            </div>
+            <div class="small-box-icon">
+                <i class="bi bi-cart-plus-fill"></i>
+            </div>
+            <a href="manage-products" class="small-box-footer link-light link-underline-opacity-0 link-underline-opacity-50-hover d-block text-center py-2 text-white">
+                Go to Products <i class="bi bi-arrow-right-circle ms-1"></i>
+            </a>
+        </div>
+    </div>
+</div>
+
+
+
+@code {
+    private int? categoriesCount;
+    private int? productsCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var cats = await CategoryService.GetCategoriesAsync();
+            categoriesCount = cats?.Count ?? 0;
+        }
+        catch
+        {
+            categoriesCount = null;
+        }
+
+        try
+        {
+            var prods = await ProductService.GetProductsAsync();
+            productsCount = prods?.Count ?? 0;
+        }
+        catch
+        {
+            productsCount = null;
+        }
+    }
+}
