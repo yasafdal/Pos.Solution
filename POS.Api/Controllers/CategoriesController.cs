@@ -28,7 +28,8 @@ namespace POS.Api.Controllers
                     CategoryId = c.CategoryId,
                     Name = c.Name,
                     Description = c.Description,
-                    IsActive = c.IsActive
+                    IsActive = c.IsActive,
+                    ProductCount = _context.Products.Count(p => p.CategoryId == c.CategoryId)
                 })
                 .ToListAsync();
 

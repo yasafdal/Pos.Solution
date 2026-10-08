@@ -13,6 +13,10 @@ public partial class PosDbContext : DbContext
     {
     }
 
+    public virtual DbSet<Branch> Branches { get; set; }
+
+    public virtual DbSet<BranchInventory> BranchInventories { get; set; }
+
     public virtual DbSet<Category> Categories { get; set; }
 
     public virtual DbSet<Customer> Customers { get; set; }
@@ -29,6 +33,8 @@ public partial class PosDbContext : DbContext
 
     public virtual DbSet<OrderItemModifier> OrderItemModifiers { get; set; }
 
+    public virtual DbSet<Outlet> Outlets { get; set; }
+
     public virtual DbSet<Payment> Payments { get; set; }
 
     public virtual DbSet<Product> Products { get; set; }
@@ -39,6 +45,45 @@ public partial class PosDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<Branch>(entity =>
+        {
+            entity.HasKey(e => e.BranchId).HasName("PK__Branches__A1682FC51E0ECFCF");
+
+            entity.Property(e => e.Address).HasMaxLength(255);
+            entity.Property(e => e.Code).HasMaxLength(20);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.Name)
+                .IsRequired()
+                .HasMaxLength(100);
+            entity.Property(e => e.Phone).HasMaxLength(50);
+            entity.Property(e => e.TaxType)
+                .IsRequired()
+                .HasMaxLength(30)
+                .HasDefaultValue("VAT-Registered");
+        });
+
+        modelBuilder.Entity<BranchInventory>(entity =>
+        {
+            entity.HasKey(e => e.BranchInventoryId).HasName("PK__BranchIn__C1E8B852A6BBD61E");
+
+            entity.ToTable("BranchInventory");
+
+            entity.HasIndex(e => new { e.BranchId, e.ProductId }, "UQ_Branch_Product").IsUnique();
+
+            entity.Property(e => e.LastUpdated).HasDefaultValueSql("(getdate())");
+            entity.Property(e => e.ReorderLevel).HasDefaultValue(5);
+
+            entity.HasOne(d => d.Branch).WithMany(p => p.BranchInventories)
+                .HasForeignKey(d => d.BranchId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK__BranchInv__Branc__31B762FC");
+
+            entity.HasOne(d => d.Product).WithMany(p => p.BranchInventories)
+                .HasForeignKey(d => d.ProductId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK__BranchInv__Produ__32AB8735");
+        });
+
         modelBuilder.Entity<Category>(entity =>
         {
             entity.HasKey(e => e.CategoryId).HasName("PK__Categori__19093A0B413AEB18");
@@ -167,6 +212,29 @@ public partial class PosDbContext : DbContext
                 .HasForeignKey(d => d.OrderItemId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_OrderItemMod_OrderItems");
+        });
+
+        modelBuilder.Entity<Outlet>(entity =>
+        {
+            entity.HasKey(e => e.OutletId).HasName("PK__Outlets__7865F0CF120682DB");
+
+            entity.Property(e => e.DeviceIdentifier).HasMaxLength(100);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.Minnumber)
+                .HasMaxLength(50)
+                .HasColumnName("MINNumber");
+            entity.Property(e => e.Name)
+                .IsRequired()
+                .HasMaxLength(100);
+            entity.Property(e => e.Ptunumber)
+                .HasMaxLength(50)
+                .HasColumnName("PTUNumber");
+            entity.Property(e => e.SerialNumber).HasMaxLength(50);
+
+            entity.HasOne(d => d.Branch).WithMany(p => p.Outlets)
+                .HasForeignKey(d => d.BranchId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK__Outlets__BranchI__2CF2ADDF");
         });
 
         modelBuilder.Entity<Payment>(entity =>

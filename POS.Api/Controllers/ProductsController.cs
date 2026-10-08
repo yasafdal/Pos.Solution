@@ -10,10 +10,47 @@ namespace POS.Api.Controllers
     public class ProductsController : ControllerBase
     {
         private readonly PosDbContext _context;
+        private readonly IWebHostEnvironment _env;
 
-        public ProductsController(PosDbContext context)
+        public ProductsController(PosDbContext context, IWebHostEnvironment env)
         {
             _context = context;
+            _env = env;
+        }
+
+        // POST: api/Products/upload-image
+        [HttpPost("upload-image")]
+        public async Task<IActionResult> UploadImage(IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest("No file uploaded.");
+
+            // Validate extension
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+
+            if (!allowedExtensions.Contains(extension))
+                return BadRequest("Invalid image format. Allowed formats: JPG, JPEG, PNG, WEBP.");
+
+            // Ensure wwwroot/uploads/products directory exists
+            var uploadsFolder = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), "uploads", "products");
+            if (!Directory.Exists(uploadsFolder))
+            {
+                Directory.CreateDirectory(uploadsFolder);
+            }
+
+            // Generate unique filename to avoid overwrites
+            var uniqueFileName = $"{Guid.NewGuid()}{extension}";
+            var filePath = Path.Combine(uploadsFolder, uniqueFileName);
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream);
+            }
+
+            // Relative URL saved to database
+            var relativeUrl = $"/uploads/products/{uniqueFileName}";
+            return Ok(new { imageUrl = relativeUrl });
         }
 
         // GET: api/Products

@@ -63,8 +63,10 @@
                         }
                     </TemplateColumn>
 
-                    <TemplateColumn Context="category" Title="Products Quantity" Align="Align.Center">
-                        <span class="quantity-badge">0</span>
+                    <TemplateColumn Context="category" Title="Products Quantity" SortBy="@(GridSort<CategoryDto>.ByAscending(c => c.ProductCount))" Sortable="true" Align="Align.Center">
+                        <span class="quantity-badge">
+                            @category.ProductCount
+                        </span>
                     </TemplateColumn>
 
                     <TemplateColumn Context="category" Title="Status" Align="Align.Center">

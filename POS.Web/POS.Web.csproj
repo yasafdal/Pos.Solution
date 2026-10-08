@@ -26,6 +26,7 @@
     <Folder Include="Asset\" />
     <Folder Include="Bootstrap\" />
     <Folder Include="AdminLte\" />
+    <Folder Include="wwwroot\uploads\products\" />
   </ItemGroup>
 
 </Project>

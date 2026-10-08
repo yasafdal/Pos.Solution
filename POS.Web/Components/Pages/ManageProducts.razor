@@ -8,6 +8,7 @@
 @inject ICategoryService CategoryService
 @inject ITaxService TaxService
 @inject SweetAlertService Swal
+@inject HttpClient Http
 
 <PageTitle>@(FilterCategoryId.HasValue && CurrentCategory != null ? $"{CurrentCategory.Name} - POS" : "Products - POS")</PageTitle>
 
@@ -79,8 +80,34 @@
         }
         else
         {
+
             <div class="commercial-grid table-responsive w-100">
                 <QuickGrid Items="@FilteredProducts" Pagination="@pagination" Theme="commercial">
+        
+                    <!-- Product Image Thumbnail Column -->
+                    <TemplateColumn Context="product" Title="Image" Align="Align.Center">
+                        <div class="d-flex align-items-center justify-content-center py-1">
+                            @if (!string.IsNullOrWhiteSpace(product.ImageUrl))
+                            {
+                                <img src="@GetFullImageUrl(product.ImageUrl)"
+                                     alt="@product.Name"
+                                     class="rounded-3 border object-fit-cover shadow-sm"
+                                     style="width: 42px; height: 42px;" />
+                            }
+                            else
+                            {
+                                <div class="bg-light border rounded-3 d-flex align-items-center justify-content-center text-secondary"
+                                     style="width: 42px; height: 42px; background-color: #f8f9fa;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
+                                        <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0" />
+                                        <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1z" />
+                                    </svg>
+                                </div>
+                            }
+                        </div>
+                    </TemplateColumn>
+
+                    <!-- Product Name Column -->
                     <TemplateColumn Context="product" Title="Product Name" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.Name))" Sortable="true" Align="Align.Left">
                         <div>
                             <span class="d-block fw-semibold text-dark">@(string.IsNullOrWhiteSpace(product.Name) ? "—" : product.Name)</span>
@@ -130,13 +157,13 @@
                             <div class="actions-cell-wrap d-flex justify-content-end gap-2">
                                 <button class="action-btn action-btn-edit" @onclick="() => OpenEditModal(product)" title="Edit Product" aria-label="Edit Product">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
-                                        <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325"/>
+                                        <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325" />
                                     </svg>
                                 </button>
                                 <button class="action-btn action-btn-delete" @onclick="() => DeleteProduct(product.ProductId)" title="Delete Product" aria-label="Delete Product">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
-                                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
-                                        <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+                                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z" />
+                                        <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z" />
                                     </svg>
                                 </button>
                             </div>
@@ -187,144 +214,166 @@
 {
     <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
         <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
-            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
-                <EditForm Model="@currentProduct" OnValidSubmit="SaveProduct">
-                    <DataAnnotationsValidator />
+            
+            <!-- EditForm acts directly as the modal-content container -->
+            <EditForm Model="@currentProduct" OnValidSubmit="SaveProduct" class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <DataAnnotationsValidator />
 
-                    <!-- Modal Header -->
-                    <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
-                        <div>
-                            <h5 class="fw-bold text-dark mb-0">@(isEditing ? "Edit Product" : "New Product")</h5>
-                            <small class="text-secondary" style="font-size: 0.85rem;">
-                                @(isEditing ? "Update product details and pricing" : "Enter the details to add a new product")
-                            </small>
-                        </div>
-                        <button type="button" class="btn-close shadow-none" @onclick="CloseModal" aria-label="Close"></button>
+                <!-- Modal Header -->
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">@(isEditing ? "Edit Product" : "New Product")</h5>
+                        <small class="text-secondary" style="font-size: 0.85rem;">
+                            @(isEditing ? "Update product details and pricing" : "Enter the details to add a new product")
+                        </small>
                     </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseModal" aria-label="Close"></button>
+                </div>
 
-                    <!-- Modal Body -->
-                    <div class="modal-body px-4 py-3">
-                        <div class="row g-3">
-                            <!-- Basic Information -->
-                            <div class="col-12 col-md-7">
-                                <label class="form-label text-dark fw-semibold small mb-1">Product Name <span class="text-danger">*</span></label>
-                                <InputText @bind-Value="currentProduct.Name" class="form-control rounded-3" placeholder="e.g. Espresso" />
-                            </div>
-                            <div class="col-12 col-md-5">
-                                <label class="form-label text-dark fw-semibold small mb-1">Category <span class="text-danger">*</span></label>
-                                <InputSelect @bind-Value="currentProduct.CategoryId" class="form-select rounded-3">
-                                    <option value="0">Select Category...</option>
-                                    @foreach (var cat in categories)
-                                    {
-                                        <option value="@cat.CategoryId">@cat.Name</option>
-                                    }
-                                </InputSelect>
-                            </div>
+                <!-- Modal Body (Scrollable) -->
+                <div class="modal-body px-4 py-3">
+                    <div class="row g-3">
+                        <!-- Basic Information -->
+                        <div class="col-12 col-md-7">
+                            <label class="form-label text-dark fw-semibold small mb-1">Product Name <span class="text-danger">*</span></label>
+                            <InputText @bind-Value="currentProduct.Name" class="form-control rounded-3" placeholder="e.g. Espresso" />
+                        </div>
+                        <div class="col-12 col-md-5">
+                            <label class="form-label text-dark fw-semibold small mb-1">Category <span class="text-danger">*</span></label>
+                            <InputSelect @bind-Value="currentProduct.CategoryId" class="form-select rounded-3">
+                                <option value="0">Select Category...</option>
+                                @foreach (var cat in categories)
+                                {
+                                    <option value="@cat.CategoryId">@cat.Name</option>
+                                }
+                            </InputSelect>
+                        </div>
 
-                            <!-- Pricing & Tax -->
-                            <div class="col-12 col-md-4">
-                                <label class="form-label text-dark fw-semibold small mb-1">Cost Price</label>
-                                <div class="input-group">
-                                    <span class="input-group-text bg-light text-muted border-end-0">₱</span>
-                                    <InputNumber @bind-Value="currentProduct.CostPrice" class="form-control" placeholder="0.00" />
-                                </div>
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label class="form-label text-dark fw-semibold small mb-1">Selling Price <span class="text-danger">*</span></label>
-                                <div class="input-group">
-                                    <span class="input-group-text bg-light text-muted border-end-0">₱</span>
-                                    <InputNumber @bind-Value="currentProduct.Price" class="form-control" placeholder="0.00" />
-                                </div>
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label class="form-label text-dark fw-semibold small mb-1">Tax Class</label>
-                                <InputSelect @bind-Value="currentProduct.TaxId" class="form-select rounded-3">
-                                    <option value="">Exempt / No Tax</option>
-                                    @foreach (var tax in taxes)
-                                    {
-                                        <option value="@tax.TaxId">@tax.Name</option>
-                                    }
-                                </InputSelect>
-                            </div>
-
-                            <!-- SKU, Barcode, Stock, Reorder -->
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">SKU</label>
-                                <InputText @bind-Value="currentProduct.SKU" class="form-control rounded-3" placeholder="e.g. SKU-101" />
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">Barcode</label>
-                                <InputText @bind-Value="currentProduct.Barcode" class="form-control rounded-3" placeholder="Scan or type..." />
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">Stock Quantity</label>
-                                <InputNumber @bind-Value="currentProduct.StockQuantity" class="form-control rounded-3" placeholder="0" />
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">Reorder Level</label>
-                                <InputNumber @bind-Value="currentProduct.ReorderLevel" class="form-control rounded-3" placeholder="0" />
-                            </div>
-
-                            <!-- Measurement & Type -->
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">Unit Value</label>
-                                <InputNumber @bind-Value="currentProduct.UnitValue" class="form-control rounded-3" placeholder="e.g. 1" />
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">Unit of Measure</label>
-                                <InputSelect @bind-Value="currentProduct.UnitOfMeasure" class="form-select rounded-3">
-                                    <option value="">-</option>
-                                    @foreach (var unit in unitOptions)
-                                    {
-                                        <option value="@unit">@unit</option>
-                                    }
-                                </InputSelect>
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <label class="form-label text-dark fw-semibold small mb-1">Product Type</label>
-                                <InputSelect @bind-Value="currentProduct.ProductType" class="form-select rounded-3">
-                                    <option value="Standard">Standard</option>
-                                    <option value="MadeToOrder">Made To Order</option>
-                                </InputSelect>
-                            </div>
-
-                            <!-- Image URL -->
-                            <div class="col-12">
-                                <label class="form-label text-dark fw-semibold small mb-1">Image URL</label>
-                                <InputText @bind-Value="currentProduct.ImageUrl" class="form-control rounded-3" placeholder="https://example.com/image.jpg (Optional)" />
-                            </div>
-
-                            <!-- Switches -->
-                            <div class="col-12">
-                                <div class="p-3 bg-light rounded-3 border d-flex flex-wrap gap-4 align-items-center">
-                                    <div class="form-check form-switch mb-0">
-                                        <InputCheckbox class="form-check-input" id="activeSwitch" @bind-Value="currentProduct.IsActive" />
-                                        <label class="form-check-label fw-semibold text-dark ms-1" for="activeSwitch">Active in POS</label>
-                                    </div>
-                                    <div class="form-check form-switch mb-0">
-                                        <InputCheckbox class="form-check-input" id="kitchenSwitch" @bind-Value="currentProduct.IsKitchenItem" />
-                                        <label class="form-check-label fw-semibold text-dark ms-1" for="kitchenSwitch">Route to Kitchen Printer</label>
-                                    </div>
-                                </div>
+                        <!-- Pricing & Tax -->
+                        <div class="col-12 col-md-4">
+                            <label class="form-label text-dark fw-semibold small mb-1">Cost Price</label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-light text-muted border-end-0">₱</span>
+                                <InputNumber @bind-Value="currentProduct.CostPrice" class="form-control" placeholder="0.00" />
                             </div>
                         </div>
-                    </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label text-dark fw-semibold small mb-1">Selling Price <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-light text-muted border-end-0">₱</span>
+                                <InputNumber @bind-Value="currentProduct.Price" class="form-control" placeholder="0.00" />
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label text-dark fw-semibold small mb-1">Tax Class</label>
+                            <InputSelect @bind-Value="currentProduct.TaxId" class="form-select rounded-3">
+                                <option value="">Exempt / No Tax</option>
+                                @foreach (var tax in taxes)
+                                {
+                                    <option value="@tax.TaxId">@tax.Name</option>
+                                }
+                            </InputSelect>
+                        </div>
 
-                    <!-- Modal Footer -->
-                    <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end align-items-center gap-2">
-                        <button type="button" class="btn btn-outline-secondary rounded-pill px-4 fw-medium" @onclick="CloseModal">
-                            Cancel
-                        </button>
-                        <button type="submit" class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") rounded-pill px-4 fw-bold shadow-sm" disabled="@isSaving">
-                            @if (isSaving)
-                            {
-                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                            }
-                            @(isEditing ? "Save Changes" : "Create Product")
-                        </button>
+                        <!-- SKU, Barcode, Stock, Reorder -->
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-dark fw-semibold small mb-1">SKU</label>
+                            <InputText @bind-Value="currentProduct.SKU" class="form-control rounded-3" placeholder="e.g. SKU-101" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-dark fw-semibold small mb-1">Barcode</label>
+                            <InputText @bind-Value="currentProduct.Barcode" class="form-control rounded-3" placeholder="Scan or type..." />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-dark fw-semibold small mb-1">Stock Quantity</label>
+                            <InputNumber @bind-Value="currentProduct.StockQuantity" class="form-control rounded-3" placeholder="0" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-dark fw-semibold small mb-1">Reorder Level</label>
+                            <InputNumber @bind-Value="currentProduct.ReorderLevel" class="form-control rounded-3" placeholder="0" />
+                        </div>
+
+                        <!-- Measurement & Type -->
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-dark fw-semibold small mb-1">Unit Value</label>
+                            <InputNumber @bind-Value="currentProduct.UnitValue" class="form-control rounded-3" placeholder="e.g. 1" />
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label text-dark fw-semibold small mb-1">Unit of Measure</label>
+                            <InputSelect @bind-Value="currentProduct.UnitOfMeasure" class="form-select rounded-3">
+                                <option value="">-</option>
+                                @foreach (var unit in unitOptions)
+                                {
+                                    <option value="@unit">@unit</option>
+                                }
+                            </InputSelect>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label text-dark fw-semibold small mb-1">Product Type</label>
+                            <InputSelect @bind-Value="currentProduct.ProductType" class="form-select rounded-3">
+                                <option value="Standard">Standard</option>
+                                <option value="MadeToOrder">Made To Order</option>
+                            </InputSelect>
+                        </div>
+
+                        <!-- Product Image Upload Section -->
+                        <div class="col-12">
+                            <label class="form-label text-dark fw-semibold small mb-1">Product Image</label>
+                            <div class="d-flex align-items-center gap-3">
+                                @if (!string.IsNullOrWhiteSpace(currentProduct.ImageUrl))
+                                {
+                                    <div class="position-relative">
+                                        <img src="@GetFullImageUrl(currentProduct.ImageUrl)" alt="Product Preview" class="rounded-3 border object-fit-cover" style="width: 64px; height: 64px;" />
+                                        <button type="button" class="btn btn-sm btn-danger rounded-circle position-absolute top-0 start-100 translate-middle p-0 d-flex align-items-center justify-content-center" style="width: 20px; height: 20px;" @onclick="RemoveImage">
+                                            &times;
+                                        </button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="bg-light border rounded-3 d-flex align-items-center justify-content-center text-muted small" style="width: 64px; height: 64px;">
+                                        No Img
+                                    </div>
+                                }
+
+                                <div class="flex-grow-1">
+                                    <InputFile OnChange="HandleImageSelected" class="form-control rounded-3" accept=".jpg,.jpeg,.png,.webp" />
+                                    <small class="text-secondary d-block mt-1" style="font-size: 0.75rem;">Allowed formats: JPG, PNG, WEBP (Max 5MB)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Switches -->
+                        <div class="col-12">
+                            <div class="p-3 bg-light rounded-3 border d-flex flex-wrap gap-4 align-items-center">
+                                <div class="form-check form-switch mb-0">
+                                    <InputCheckbox class="form-check-input" id="activeSwitch" @bind-Value="currentProduct.IsActive" />
+                                    <label class="form-check-label fw-semibold text-dark ms-1" for="activeSwitch">Active in POS</label>
+                                </div>
+                                <div class="form-check form-switch mb-0">
+                                    <InputCheckbox class="form-check-input" id="kitchenSwitch" @bind-Value="currentProduct.IsKitchenItem" />
+                                    <label class="form-check-label fw-semibold text-dark ms-1" for="kitchenSwitch">Route to Kitchen Printer</label>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </EditForm>
-            </div>
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end align-items-center gap-2">
+                    <button type="button" class="btn btn-outline-secondary rounded-pill px-4 fw-medium" @onclick="CloseModal">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") rounded-pill px-4 fw-bold shadow-sm" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        @(isEditing ? "Save Changes" : "Create Product")
+                    </button>
+                </div>
+            </EditForm>
+
         </div>
     </div>
 }
@@ -350,6 +399,7 @@
     private bool isEditing = false;
     private bool isSaving = false;
     private ProductDto currentProduct = new();
+    private bool isUploadingImage = false;
 
     private IQueryable<ProductDto>? FilteredProducts =>
        string.IsNullOrWhiteSpace(nameFilter)
@@ -519,6 +569,81 @@
         {
             isSaving = false;
         }
+    }
+
+    private string GetFullImageUrl(string? relativeUrl)
+    {
+        if (string.IsNullOrWhiteSpace(relativeUrl))
+            return string.Empty;
+
+        // If it's already a full web URL (e.g. external link), return as-is
+        if (relativeUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            relativeUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return relativeUrl;
+        }
+
+        // Combine API Base Address with the relative path (/uploads/products/...)
+        var apiBaseAddress = Http.BaseAddress?.ToString().TrimEnd('/');
+        return $"{apiBaseAddress}{relativeUrl}";
+    }
+
+    private async Task HandleImageSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        // Limit size to 5MB
+        if (file.Size > 5 * 1024 * 1024)
+        {
+            await Swal.FireAsync("Error", "File size exceeds the 5MB limit.", SweetAlertIcon.Error);
+            return;
+        }
+
+        try
+        {
+            isUploadingImage = true;
+
+            using var content = new MultipartFormDataContent();
+            var streamContent = new StreamContent(file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024));
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+            
+            content.Add(streamContent, "file", file.Name);
+
+            var response = await Http.PostAsync("api/Products/upload-image", content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<UploadResult>();
+                if (result != null)
+                {
+                    currentProduct.ImageUrl = result.ImageUrl;
+                }
+            }
+            else
+            {
+                var errorMsg = await response.Content.ReadAsStringAsync();
+                await Swal.FireAsync("Upload Failed", errorMsg, SweetAlertIcon.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", $"Image upload failed: {ex.Message}", SweetAlertIcon.Error);
+        }
+        finally
+        {
+            isUploadingImage = false;
+        }
+    }
+
+    private void RemoveImage()
+    {
+        currentProduct.ImageUrl = string.Empty;
+    }
+
+    private class UploadResult
+    {
+        public string ImageUrl { get; set; } = string.Empty;
     }
 
     private async Task DeleteProduct(int id)
