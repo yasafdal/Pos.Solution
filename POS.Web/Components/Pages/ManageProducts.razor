@@ -7,6 +7,8 @@
 @inject IProductService ProductService
 @inject ICategoryService CategoryService
 @inject ITaxService TaxService
+@inject IUomService UomService
+@inject IProductRecipeService ProductRecipeService
 @inject SweetAlertService Swal
 @inject HttpClient Http
 
@@ -162,6 +164,12 @@
                         </HeaderTemplate>
                         <ChildContent>
                             <div class="actions-cell-wrap d-flex justify-content-end gap-2">
+                                @if (product.ProductType == "MadeToOrder")
+                                {
+                                    <button class="btn btn-sm btn-outline-info rounded-circle p-2 me-1" @onclick="() => OpenRecipeModal(product)" title="Manage Recipe / Ingredients" aria-label="Manage Recipe / Ingredients">
+                                        <i class="bi-journal-text"></i>
+                                    </button>
+                                }
                                 <button type="button" class="btn btn-sm btn-warning text-dark" @onclick="() => OpenEditModal(product)" title="Edit Product" aria-label="Edit Product">
                                     <i class="bi bi-pencil"></i>
                                 </button>
@@ -247,11 +255,12 @@
                             </div>
                         </div>
                         <div class="row g-3">
-                            <div class="col-12 col-md-4">
+                            <!-- Row 1: Primary Information (6 / 6) -->
+                            <div class="col-12 col-md-6">
                                 <label class="form-label text-dark fw-semibold small mb-1">Product Name <span class="text-danger">*</span></label>
                                 <InputText @bind-Value="currentProduct.Name" class="form-control rounded" placeholder="e.g. Espresso, Chocolate Donut" />
                             </div>
-                            <div class="col-12 col-md-4">
+                            <div class="col-12 col-md-6">
                                 <label class="form-label text-dark fw-semibold small mb-1">Category <span class="text-danger">*</span></label>
                                 <InputSelect @bind-Value="currentProduct.CategoryId" class="form-select rounded">
                                     <option value="0">Select Category...</option>
@@ -261,26 +270,32 @@
                                     }
                                 </InputSelect>
                             </div>
+
+                            <!-- Row 2: Specifications & Measurement (4 / 4 / 4) -->
                             <div class="col-12 col-md-4">
                                 <label class="form-label text-dark fw-semibold small mb-1">Product Type</label>
                                 <InputSelect @bind-Value="currentProduct.ProductType" class="form-select rounded">
                                     <option value="Standard">Standard (Stock Item)</option>
                                     <option value="MadeToOrder">Made To Order (Kitchen)</option>
-                                </InputSelect>
-                            </div>
-                            <div class="col-12 col-md-4">
-                                <label class="form-label text-dark fw-semibold small mb-1">Unit of Measurement</label>
-                                <InputSelect @bind-Value="currentProduct.UnitOfMeasure" class="form-select rounded">
-                                    <option value="">- None -</option>
-                                    @foreach (var unit in unitOptions)
-                                    {
-                                        <option value="@unit">@unit</option>
-                                    }
+                                    <option value="RawMaterial">Raw Material</option>
                                 </InputSelect>
                             </div>
                             <div class="col-12 col-md-4">
                                 <label class="form-label text-dark fw-semibold small mb-1">Unit Value</label>
                                 <InputNumber @bind-Value="currentProduct.UnitValue" class="form-control rounded" placeholder="1" />
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Unit of Measurement</label>
+                                <InputSelect @bind-Value="currentProduct.UnitOfMeasure" class="form-select rounded">
+                                    <option value="">-- None --</option>
+                                    @if (availableUoms != null)
+                                    {
+                                        @foreach (var uom in availableUoms.Where(u => u.IsActive))
+                                        {
+                                            <option value="@uom.Abbreviation">@uom.Name (@uom.Abbreviation)</option>
+                                        }
+                                    }
+                                </InputSelect>
                             </div>
                         </div>
                     </div>
@@ -339,25 +354,15 @@
                             </div>
                         </div>
                         <div class="row g-3">
-                            <div class="col-6 col-md-3">
+                            <div class="col-6 col-md-6">
                                 <label class="form-label text-dark fw-semibold small mb-1">SKU</label>
                                 <InputText @bind-Value="currentProduct.SKU" class="form-control rounded" placeholder="e.g. SKU-101" />
                                 <small class="text-secondary" style="font-size: 0.72rem;">Internal item code</small>
                             </div>
-                            <div class="col-6 col-md-3">
+                            <div class="col-6 col-md-6">
                                 <label class="form-label text-dark fw-semibold small mb-1">Barcode</label>
                                 <InputText @bind-Value="currentProduct.Barcode" class="form-control rounded" placeholder="Scan or type..." />
                                 <small class="text-secondary" style="font-size: 0.72rem;">UPC / EAN scanner code</small>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">Current Stock</label>
-                                <InputNumber @bind-Value="currentProduct.StockQuantity" class="form-control rounded" placeholder="0" />
-                                <small class="text-secondary" style="font-size: 0.72rem;">Initial or on-hand count</small>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-dark fw-semibold small mb-1">Reorder Level</label>
-                                <InputNumber @bind-Value="currentProduct.ReorderLevel" class="form-control rounded" placeholder="0" />
-                                <small class="text-secondary" style="font-size: 0.72rem;">Low stock alert trigger</small>
                             </div>
                         </div>
                     </div>
@@ -457,21 +462,124 @@
     </div>
 }
 
+
+<!-- Recipe / BOM Management Modal -->
+@if (isRecipeModalOpen && selectedProductForRecipe != null)
+
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3">
+                    <div>
+                        <h5 class="fw-bold mb-0">Recipe / BOM — @selectedProductForRecipe.Name</h5>
+                        <small class="text-muted">Define raw material quantities required to prepare 1 serving</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseRecipeModal"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    <!-- Inline Form to Add Raw Material -->
+                    <EditForm Model="@newRecipeItem" OnValidSubmit="AddIngredientToRecipe" class="p-3 bg-light rounded-3 border mb-4">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-12 col-md-5">
+                                <label class="form-label fw-semibold small mb-1">Raw Material <span class="text-danger">*</span></label>
+                                <InputSelect @bind-Value="newRecipeItem.RawMaterialProductId" class="form-select rounded-3">
+                                    <option value="0">Select Ingredient...</option>
+                                    @foreach (var rm in products.Where(p => p.ProductType == "RawMaterial"))
+                                    {
+                                        <option value="@rm.ProductId">@rm.Name (@rm.UnitOfMeasure)</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                            <div class="col-12 col-md-3">
+                                <label class="form-label fw-semibold small mb-1">Qty Required <span class="text-danger">*</span></label>
+                                <InputNumber @bind-Value="newRecipeItem.QuantityRequired" class="form-control rounded-3" step="0.01" />
+                            </div>
+                            <div class="col-12 col-md-2">
+                                <label class="form-label fw-semibold small mb-1">UOM</label>
+                                <InputSelect @bind-Value="newRecipeItem.Uom" class="form-select rounded-3">
+                                    <option value="">Unit...</option>
+                                    @if (availableUoms != null)
+                                    {
+                                        @foreach (var uom in availableUoms.Where(u => u.IsActive))
+                                        {
+                                            <option value="@uom.Abbreviation">@uom.Abbreviation</option>
+                                        }
+                                    }
+                                </InputSelect>
+                            </div>
+                            <div class="col-12 col-md-2 d-grid">
+                                <button type="submit" class="btn btn-primary rounded-3 fw-bold" disabled="@isRecipeSaving">
+                                    Add Item
+                                </button>
+                            </div>
+                        </div>
+                    </EditForm>
+
+                    <!-- Assigned Recipe Items Table -->
+                    <div class="table-responsive border rounded-3">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Ingredient / Raw Material</th>
+                                    <th class="text-center">Qty Required</th>
+                                    <th class="text-center">UOM</th>
+                                    <th class="text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (recipeList.Any())
+                                {
+                                    @foreach (var item in recipeList)
+                                    {
+                                        <tr>
+                                            <td class="fw-semibold">@item.RawMaterialName</td>
+                                            <td class="text-center fw-bold text-primary">@item.QuantityRequired</td>
+                                            <td class="text-center">
+                                                <span class="badge bg-light text-dark border">@item.Uom</span>
+                                            </td>
+                                            <td class="text-end">
+                                                <button class="btn btn-sm btn-link text-danger p-0" @onclick="() => RemoveIngredient(item.RecipeId)">Remove</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                                else
+                                {
+                                    <tr>
+                                        <td colspan="4" class="text-center py-4 text-muted">No raw materials assigned to this recipe yet.</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3">
+                    <button type="button" class="btn btn-secondary rounded-pill px-4" @onclick="CloseRecipeModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter]
     public int? FilterCategoryId { get; set; }
 
     private List<ProductDto>? products;
     private List<CategoryDto> categories = new();
-    private CategoryDto? CurrentCategory =>
-        FilterCategoryId.HasValue ? categories.FirstOrDefault(c => c.CategoryId == FilterCategoryId.Value) : null;
+    private CategoryDto? CurrentCategory => FilterCategoryId.HasValue ? categories.FirstOrDefault(c => c.CategoryId == FilterCategoryId.Value) : null;
     private List<TaxDto> taxes = new();
     
     private PaginationState pagination = new PaginationState { ItemsPerPage = 10 };
     private string nameFilter = string.Empty;
+    private List<UomDto> availableUoms = new();
 
-    // Dropdown Configuration
-    private List<string> unitOptions = new() { "pc", "pk", "ct", "set", "Dozen", "Loaf", "Bunch", "oz", "lb", "g", "kg", "ml", "L", "Gallon" };
+    private bool isRecipeModalOpen = false;
+    private bool isRecipeSaving = false;
+    private ProductDto? selectedProductForRecipe;
+    private List<ProductRecipeDto> recipeList = new();
+    private ProductRecipeDto newRecipeItem = new();
 
     // Modal State
     private bool isModalOpen = false;
@@ -523,6 +631,7 @@
             categories = await CategoryService.GetCategoriesAsync();
             taxes = await TaxService.GetTaxesAsync();
             await LoadProducts();
+            availableUoms = await UomService.GetUomsAsync();
         }
         catch (Exception ex)
         {
@@ -597,8 +706,6 @@
             ImageUrl = product.ImageUrl,
             Price = product.Price,
             CostPrice = product.CostPrice,
-            StockQuantity = product.StockQuantity,
-            ReorderLevel = product.ReorderLevel,
             TaxId = product.TaxId,
             ProductType = string.IsNullOrWhiteSpace(product.ProductType) ? "Standard" : product.ProductType,
             IsActive = product.IsActive,
@@ -849,6 +956,69 @@
                     ConfirmButtonColor = "#2563eb"
                 });
             }
+        }
+    }
+
+    private async Task OpenRecipeModal(ProductDto product)
+    {
+        selectedProductForRecipe = product;
+        newRecipeItem = new ProductRecipeDto
+        {
+            ProductId = product.ProductId,
+            QuantityRequired = 1,
+            Uom = product.UnitOfMeasure
+        };
+        await LoadRecipe();
+        isRecipeModalOpen = true;
+    }
+
+    private async Task LoadRecipe()
+    {
+        if (selectedProductForRecipe != null)
+        {
+            recipeList = await ProductRecipeService.GetRecipeForProductAsync(selectedProductForRecipe.ProductId);
+        }
+    }
+
+    private void CloseRecipeModal()
+    {
+        isRecipeModalOpen = false;
+        selectedProductForRecipe = null;
+    }
+
+    private async Task AddIngredientToRecipe()
+    {
+        if (selectedProductForRecipe == null || newRecipeItem.RawMaterialProductId <= 0 || newRecipeItem.QuantityRequired <= 0) return;
+
+        isRecipeSaving = true;
+        newRecipeItem.ProductId = selectedProductForRecipe.ProductId;
+
+        // Default UOM from raw material if left empty
+        if (string.IsNullOrWhiteSpace(newRecipeItem.Uom))
+        {
+            var rawMat = products.FirstOrDefault(p => p.ProductId == newRecipeItem.RawMaterialProductId);
+            newRecipeItem.Uom = rawMat?.UnitOfMeasure ?? "pc";
+        }
+
+        var success = await ProductRecipeService.AddIngredientAsync(newRecipeItem);
+        isRecipeSaving = false;
+
+        if (success)
+        {
+            newRecipeItem = new ProductRecipeDto
+            {
+                ProductId = selectedProductForRecipe.ProductId,
+                QuantityRequired = 1
+            };
+            await LoadRecipe();
+        }
+    }
+
+    private async Task RemoveIngredient(int recipeId)
+    {
+        if (await ProductRecipeService.RemoveIngredientAsync(recipeId))
+        {
+            await LoadRecipe();
         }
     }
 }

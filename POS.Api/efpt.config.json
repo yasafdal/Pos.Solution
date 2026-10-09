@@ -31,43 +31,11 @@
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[Customers]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[InventoryLogs]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[ModifierGroups]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[Modifiers]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[OrderItemModifiers]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[OrderItems]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[Orders]",
-         "ObjectType": 0
-      },
-      {
          "Name": "[dbo].[Outlets]",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[Payments]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[ProductModifierGroups]",
+         "Name": "[dbo].[ProductRecipes]",
          "ObjectType": 0
       },
       {
@@ -75,7 +43,15 @@
          "ObjectType": 0
       },
       {
+         "Name": "[dbo].[StockAdjustments]",
+         "ObjectType": 0
+      },
+      {
          "Name": "[dbo].[Taxes]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[UnitOfMeasures]",
          "ObjectType": 0
       },
       {

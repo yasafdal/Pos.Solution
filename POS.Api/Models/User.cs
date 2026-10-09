@@ -16,8 +16,4 @@ public partial class User
     public string Role { get; set; }
 
     public string PinCode { get; set; }
-
-    public virtual ICollection<InventoryLog> InventoryLogs { get; set; } = new List<InventoryLog>();
-
-    public virtual ICollection<Order> Orders { get; set; } = new List<Order>();
 }

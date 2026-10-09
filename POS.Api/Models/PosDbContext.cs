@@ -19,27 +19,17 @@ public partial class PosDbContext : DbContext
 
     public virtual DbSet<Category> Categories { get; set; }
 
-    public virtual DbSet<Customer> Customers { get; set; }
-
-    public virtual DbSet<InventoryLog> InventoryLogs { get; set; }
-
-    public virtual DbSet<Modifier> Modifiers { get; set; }
-
-    public virtual DbSet<ModifierGroup> ModifierGroups { get; set; }
-
-    public virtual DbSet<Order> Orders { get; set; }
-
-    public virtual DbSet<OrderItem> OrderItems { get; set; }
-
-    public virtual DbSet<OrderItemModifier> OrderItemModifiers { get; set; }
-
     public virtual DbSet<Outlet> Outlets { get; set; }
-
-    public virtual DbSet<Payment> Payments { get; set; }
 
     public virtual DbSet<Product> Products { get; set; }
 
+    public virtual DbSet<ProductRecipe> ProductRecipes { get; set; }
+
+    public virtual DbSet<StockAdjustment> StockAdjustments { get; set; }
+
     public virtual DbSet<Taxis> Taxes { get; set; }
+
+    public virtual DbSet<UnitOfMeasure> UnitOfMeasures { get; set; }
 
     public virtual DbSet<User> Users { get; set; }
 
@@ -95,125 +85,6 @@ public partial class PosDbContext : DbContext
                 .HasMaxLength(50);
         });
 
-        modelBuilder.Entity<Customer>(entity =>
-        {
-            entity.HasKey(e => e.CustomerId).HasName("PK__Customer__A4AE64D82D04133D");
-
-            entity.Property(e => e.Email).HasMaxLength(100);
-            entity.Property(e => e.FullName)
-                .IsRequired()
-                .HasMaxLength(100);
-            entity.Property(e => e.PhoneNumber).HasMaxLength(20);
-        });
-
-        modelBuilder.Entity<InventoryLog>(entity =>
-        {
-            entity.HasKey(e => e.LogId).HasName("PK__Inventor__5E5486482D8B4EC2");
-
-            entity.Property(e => e.CreatedDate).HasDefaultValueSql("(getdate())");
-            entity.Property(e => e.MovementType)
-                .IsRequired()
-                .HasMaxLength(30);
-            entity.Property(e => e.Notes).HasMaxLength(255);
-
-            entity.HasOne(d => d.Product).WithMany(p => p.InventoryLogs)
-                .HasForeignKey(d => d.ProductId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_InventoryLogs_Products");
-
-            entity.HasOne(d => d.User).WithMany(p => p.InventoryLogs)
-                .HasForeignKey(d => d.UserId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_InventoryLogs_Users");
-        });
-
-        modelBuilder.Entity<Modifier>(entity =>
-        {
-            entity.HasKey(e => e.ModifierId).HasName("PK__Modifier__2AF26D2B885F3EFA");
-
-            entity.Property(e => e.AdditionalPrice).HasColumnType("decimal(18, 2)");
-            entity.Property(e => e.IsActive).HasDefaultValue(true);
-            entity.Property(e => e.Name)
-                .IsRequired()
-                .HasMaxLength(50);
-
-            entity.HasOne(d => d.Group).WithMany(p => p.Modifiers)
-                .HasForeignKey(d => d.GroupId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_Modifiers_Groups");
-        });
-
-        modelBuilder.Entity<ModifierGroup>(entity =>
-        {
-            entity.HasKey(e => e.GroupId).HasName("PK__Modifier__149AF36A761F9F75");
-
-            entity.Property(e => e.IsActive).HasDefaultValue(true);
-            entity.Property(e => e.MaxSelections).HasDefaultValue(1);
-            entity.Property(e => e.Name)
-                .IsRequired()
-                .HasMaxLength(50);
-        });
-
-        modelBuilder.Entity<Order>(entity =>
-        {
-            entity.HasKey(e => e.OrderId).HasName("PK__Orders__C3905BCFE5346D00");
-
-            entity.Property(e => e.OrderDate).HasDefaultValueSql("(getdate())");
-            entity.Property(e => e.Status)
-                .IsRequired()
-                .HasMaxLength(20)
-                .HasDefaultValue("Completed");
-            entity.Property(e => e.TaxAmount).HasColumnType("decimal(18, 2)");
-            entity.Property(e => e.TotalAmount).HasColumnType("decimal(18, 2)");
-
-            entity.HasOne(d => d.Customer).WithMany(p => p.Orders)
-                .HasForeignKey(d => d.CustomerId)
-                .HasConstraintName("FK_Orders_Customers");
-
-            entity.HasOne(d => d.User).WithMany(p => p.Orders)
-                .HasForeignKey(d => d.UserId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_Orders_Users");
-        });
-
-        modelBuilder.Entity<OrderItem>(entity =>
-        {
-            entity.HasKey(e => e.OrderItemId).HasName("PK__OrderIte__57ED0681593D868B");
-
-            entity.Property(e => e.Subtotal).HasColumnType("decimal(18, 2)");
-            entity.Property(e => e.UnitPrice).HasColumnType("decimal(18, 2)");
-
-            entity.HasOne(d => d.Order).WithMany(p => p.OrderItems)
-                .HasForeignKey(d => d.OrderId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_OrderItems_Orders");
-
-            entity.HasOne(d => d.Product).WithMany(p => p.OrderItems)
-                .HasForeignKey(d => d.ProductId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_OrderItems_Products");
-        });
-
-        modelBuilder.Entity<OrderItemModifier>(entity =>
-        {
-            entity.HasKey(e => e.OrderItemModifierId).HasName("PK__OrderIte__3FF147B9E6FC3119");
-
-            entity.Property(e => e.AdditionalPrice).HasColumnType("decimal(18, 2)");
-            entity.Property(e => e.ModifierName)
-                .IsRequired()
-                .HasMaxLength(50);
-
-            entity.HasOne(d => d.Modifier).WithMany(p => p.OrderItemModifiers)
-                .HasForeignKey(d => d.ModifierId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_OrderItemMod_Modifiers");
-
-            entity.HasOne(d => d.OrderItem).WithMany(p => p.OrderItemModifiers)
-                .HasForeignKey(d => d.OrderItemId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_OrderItemMod_OrderItems");
-        });
-
         modelBuilder.Entity<Outlet>(entity =>
         {
             entity.HasKey(e => e.OutletId).HasName("PK__Outlets__7865F0CF120682DB");
@@ -237,22 +108,6 @@ public partial class PosDbContext : DbContext
                 .HasConstraintName("FK__Outlets__BranchI__2CF2ADDF");
         });
 
-        modelBuilder.Entity<Payment>(entity =>
-        {
-            entity.HasKey(e => e.PaymentId).HasName("PK__Payments__9B556A38D6DC44B1");
-
-            entity.Property(e => e.AmountPaid).HasColumnType("decimal(18, 2)");
-            entity.Property(e => e.PaymentDate).HasDefaultValueSql("(getdate())");
-            entity.Property(e => e.PaymentMethod)
-                .IsRequired()
-                .HasMaxLength(50);
-
-            entity.HasOne(d => d.Order).WithMany(p => p.Payments)
-                .HasForeignKey(d => d.OrderId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_Payments_Orders");
-        });
-
         modelBuilder.Entity<Product>(entity =>
         {
             entity.HasKey(e => e.ProductId).HasName("PK__Products__B40CC6CD97C36184");
@@ -261,6 +116,7 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.CostPrice).HasColumnType("decimal(18, 2)");
             entity.Property(e => e.ImageUrl).HasMaxLength(255);
             entity.Property(e => e.IsActive).HasDefaultValue(true, "DF__Products__IsActi__5DCAEF64");
+            entity.Property(e => e.IsDeleted).HasColumnName("isDeleted");
             entity.Property(e => e.Name)
                 .IsRequired()
                 .HasMaxLength(100);
@@ -284,23 +140,46 @@ public partial class PosDbContext : DbContext
             entity.HasOne(d => d.Tax).WithMany(p => p.Products)
                 .HasForeignKey(d => d.TaxId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
 
-            entity.HasMany(d => d.Groups).WithMany(p => p.Products)
-                .UsingEntity<Dictionary<string, object>>(
-                    "ProductModifierGroup",
-                    r => r.HasOne<ModifierGroup>().WithMany()
-                        .HasForeignKey("GroupId")
-                        .OnDelete(DeleteBehavior.ClientSetNull)
-                        .HasConstraintName("FK_ProductMod_Groups"),
-                    l => l.HasOne<Product>().WithMany()
-                        .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.ClientSetNull)
-                        .HasConstraintName("FK_ProductMod_Products"),
-                    j =>
-                    {
-                        j.HasKey("ProductId", "GroupId").HasName("PK__ProductM__054569FBBC2BFBD7");
-                        j.ToTable("ProductModifierGroups");
-                    });
+        modelBuilder.Entity<ProductRecipe>(entity =>
+        {
+            entity.HasKey(e => e.RecipeId).HasName("PK__ProductR__FDD988B0770DB3E4");
+
+            entity.HasIndex(e => new { e.ProductId, e.RawMaterialProductId }, "UQ_Product_Ingredient").IsUnique();
+
+            entity.Property(e => e.QuantityRequired).HasColumnType("decimal(18, 4)");
+            entity.Property(e => e.Uom).HasMaxLength(10);
+
+            entity.HasOne(d => d.Product).WithMany(p => p.ProductRecipeProducts)
+                .HasForeignKey(d => d.ProductId)
+                .HasConstraintName("FK__ProductRe__Produ__43D61337");
+
+            entity.HasOne(d => d.RawMaterialProduct).WithMany(p => p.ProductRecipeRawMaterialProducts)
+                .HasForeignKey(d => d.RawMaterialProductId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK__ProductRe__RawMa__44CA3770");
+        });
+
+        modelBuilder.Entity<StockAdjustment>(entity =>
+        {
+            entity.HasKey(e => e.StockAdjustmentId).HasName("PK__StockAdj__0A9711B322927CA3");
+
+            entity.Property(e => e.AdjustmentType)
+                .IsRequired()
+                .HasMaxLength(20);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())");
+            entity.Property(e => e.Reason).HasMaxLength(255);
+
+            entity.HasOne(d => d.Branch).WithMany(p => p.StockAdjustments)
+                .HasForeignKey(d => d.BranchId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK__StockAdju__Branc__3A4CA8FD");
+
+            entity.HasOne(d => d.Product).WithMany(p => p.StockAdjustments)
+                .HasForeignKey(d => d.ProductId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK__StockAdju__Produ__3B40CD36");
         });
 
         modelBuilder.Entity<Taxis>(entity =>
@@ -309,6 +188,19 @@ public partial class PosDbContext : DbContext
 
             entity.Property(e => e.Name).HasMaxLength(50);
             entity.Property(e => e.Rate).HasColumnType("decimal(18, 0)");
+        });
+
+        modelBuilder.Entity<UnitOfMeasure>(entity =>
+        {
+            entity.HasKey(e => e.UomId).HasName("PK__UnitOfMe__F6F8D47E987A1D7A");
+
+            entity.Property(e => e.Abbreviation)
+                .IsRequired()
+                .HasMaxLength(10);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.Name)
+                .IsRequired()
+                .HasMaxLength(50);
         });
 
         modelBuilder.Entity<User>(entity =>

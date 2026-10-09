@@ -6,9 +6,9 @@
     <ul class="nav sidebar-menu flex-column" data-lte-toggle="treeview" role="menu" data-accordion="false">
         <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1">Navigation</li>
         <li class="nav-item">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All" title="Home">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All" title="Dashboard">
                 <i class="nav-icon bi bi-house-door-fill"></i>
-                <p>Home</p>
+                <p>Dashboard</p>
             </NavLink>
         </li>
 
@@ -31,6 +31,18 @@
                 <p>Branches</p>
             </NavLink>
         </li>
+        <li>
+            <NavLink class="nav-link" href="inventory" Match="NavLinkMatch.Prefix" title="Inventory & Stock">
+                <i class="nav-icon bi bi-box-seam"></i>
+                <p>Inventory & Stock</p>
+            </NavLink>
+        </li>
+
+        <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Settings</li>
+        <NavLink class="nav-link" href="uom" Match="NavLinkMatch.Prefix" title="UOM">
+            <i class="nav-icon bi bi-rulers"></i>
+            <p>UOM</p>
+        </NavLink>
 
         <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Security</li>
         <li class="nav-item">
@@ -39,6 +51,8 @@
                 <p>Auth Required</p>
             </NavLink>
         </li>
+
+
 
         <AuthorizeView>
             <Authorized>

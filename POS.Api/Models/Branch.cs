@@ -24,4 +24,6 @@ public partial class Branch
     public virtual ICollection<BranchInventory> BranchInventories { get; set; } = new List<BranchInventory>();
 
     public virtual ICollection<Outlet> Outlets { get; set; } = new List<Outlet>();
+
+    public virtual ICollection<StockAdjustment> StockAdjustments { get; set; } = new List<StockAdjustment>();
 }

@@ -2,11 +2,12 @@ using CurrieTechnologies.Razor.SweetAlert2;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using POS.Shared.Models;
 using POS.Shared.Interfaces;
+using POS.Shared.Services;
 using POS.Web.Components;
 using POS.Web.Components.Account;
 using POS.Web.Data;
-using POS.Shared.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -57,6 +58,9 @@ builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<IBranchService, BranchService>();
+builder.Services.AddScoped<IInventoryService, InventoryService>();
+builder.Services.AddScoped<IUomService, UomService>();
+builder.Services.AddScoped<IProductRecipeService, ProductRecipeService>();
 
 var app = builder.Build();
 

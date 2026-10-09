@@ -39,15 +39,17 @@ public partial class Product
 
     public bool IsKitchenItem { get; set; }
 
+    public bool IsDeleted { get; set; }
+
     public virtual ICollection<BranchInventory> BranchInventories { get; set; } = new List<BranchInventory>();
 
     public virtual Category Category { get; set; }
 
-    public virtual ICollection<InventoryLog> InventoryLogs { get; set; } = new List<InventoryLog>();
+    public virtual ICollection<ProductRecipe> ProductRecipeProducts { get; set; } = new List<ProductRecipe>();
 
-    public virtual ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
+    public virtual ICollection<ProductRecipe> ProductRecipeRawMaterialProducts { get; set; } = new List<ProductRecipe>();
+
+    public virtual ICollection<StockAdjustment> StockAdjustments { get; set; } = new List<StockAdjustment>();
 
     public virtual Taxis Tax { get; set; }
-
-    public virtual ICollection<ModifierGroup> Groups { get; set; } = new List<ModifierGroup>();
 }
