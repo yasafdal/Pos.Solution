@@ -27,7 +27,7 @@
         </div>
         
         <div>
-            <button class="btn btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenAddModal">
+            <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenAddModal">
                 Add New Product
             </button>
         </div>
@@ -59,10 +59,8 @@
 
         <!-- Search Input (Right) -->
         <div class="position-relative" style="width: 280px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none;" viewBox="0 0 16 16">
-                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>
-            </svg>
-            <input type="search" class="form-control form-control-sm rounded-pill ps-4 bg-white shadow-none border"
+            <i class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
+            <input type="search" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border"
                    placeholder="Search name, SKU, barcode..."
                    @bind="nameFilter"
                    @bind:event="oninput" />
@@ -92,16 +90,13 @@
                                 <img src="@GetFullImageUrl(product.ImageUrl)"
                                      alt="@product.Name"
                                      class="rounded-3 border object-fit-cover shadow-sm"
-                                     style="width: 42px; height: 42px;" />
+                                     style="width: 60px; height: 60px;" />
                             }
                             else
                             {
                                 <div class="bg-light border rounded-3 d-flex align-items-center justify-content-center text-secondary"
-                                     style="width: 42px; height: 42px; background-color: #f8f9fa;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
-                                        <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0" />
-                                        <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1z" />
-                                    </svg>
+                                     style="width: 60px; height: 60px; background-color: #f8f9fa;">
+                                    <i class="bi bi-image text-muted fs-4"></i>
                                 </div>
                             }
                         </div>
@@ -110,38 +105,50 @@
                     <!-- Product Name Column -->
                     <TemplateColumn Context="product" Title="Product Name" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.Name))" Sortable="true" Align="Align.Left">
                         <div>
-                            <span class="d-block fw-semibold text-dark">@(string.IsNullOrWhiteSpace(product.Name) ? "—" : product.Name)</span>
-                            @if (product.UnitValue > 0 && !string.IsNullOrWhiteSpace(product.UnitOfMeasure))
-                            {
-                                <small class="text-secondary" style="font-size: 0.85em;">
-                                    @product.UnitValue @product.UnitOfMeasure
-                                </small>
-                            }
+                            <span class="d-block fw-semibold text-dark text-truncate" title="@product.Name">@(string.IsNullOrWhiteSpace(product.Name) ? "—" : product.Name)</span>
                         </div>
+                    </TemplateColumn>
+
+                    <!-- Unit Value Column -->
+                    <TemplateColumn Context="product" Title="Unit Value" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.UnitValue))" Sortable="true" Align="Align.Left">
+                        @if (product.UnitValue.HasValue && product.UnitValue.Value > 0)
+                        {
+                            <span class="text-secondary fw-medium">@product.UnitValue.Value.ToString("0.00")</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">—</span>
+                        }
+                    </TemplateColumn>
+
+                    <!-- UOM Column -->
+                    <TemplateColumn Context="product" Title="UOM" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.UnitOfMeasure))" Sortable="true" Align="Align.Left">
+                        @if (!string.IsNullOrWhiteSpace(product.UnitOfMeasure))
+                        {
+                            <span class="text-secondary fw-medium">
+                                @product.UnitOfMeasure
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">—</span>
+                        }
                     </TemplateColumn>
 
                     <PropertyColumn Property="@(p => p.CategoryName)" Title="Category" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(p => p.CostPrice)" Title="Cost Price" Format="C2" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(p => p.Price)" Title="Price" Format="C2" Sortable="true" Align="Align.Left" />
                     
-                    <TemplateColumn Context="product" Title="Stock" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.StockQuantity))" Sortable="true" Align="Align.Center">
-                        <span class="quantity-badge @(product.StockQuantity <= product.ReorderLevel ? "low-stock" : "")">
-                            @product.StockQuantity
-                        </span>
-                    </TemplateColumn>
-
                     <TemplateColumn Context="product" Title="Status" Align="Align.Center">
                         @if (product.IsActive)
                         {
                             <span class="status-badge active">
-                                <span class="status-dot"></span>
                                 Active
                             </span>
                         }
                         else
                         {
                             <span class="status-badge inactive">
-                                <span class="status-dot"></span>
                                 Inactive
                             </span>
                         }
@@ -155,16 +162,11 @@
                         </HeaderTemplate>
                         <ChildContent>
                             <div class="actions-cell-wrap d-flex justify-content-end gap-2">
-                                <button class="action-btn action-btn-edit" @onclick="() => OpenEditModal(product)" title="Edit Product" aria-label="Edit Product">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
-                                        <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325" />
-                                    </svg>
+                                <button type="button" class="btn btn-sm btn-warning text-dark" @onclick="() => OpenEditModal(product)" title="Edit Product" aria-label="Edit Product">
+                                    <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="action-btn action-btn-delete" @onclick="() => DeleteProduct(product.ProductId)" title="Delete Product" aria-label="Delete Product">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
-                                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z" />
-                                        <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z" />
-                                    </svg>
+                                <button type="button" class="btn btn-sm btn-danger text-white" @onclick="() => DeleteProduct(product.ProductId)" title="Delete Product" aria-label="Delete Product">
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </div>
                         </ChildContent>
@@ -232,139 +234,216 @@
 
                 <!-- Modal Body (Scrollable) -->
                 <div class="modal-body px-4 py-3">
-                    <div class="row g-3">
-                        <!-- Basic Information -->
-                        <div class="col-12 col-md-7">
-                            <label class="form-label text-dark fw-semibold small mb-1">Product Name <span class="text-danger">*</span></label>
-                            <InputText @bind-Value="currentProduct.Name" class="form-control rounded-3" placeholder="e.g. Espresso" />
-                        </div>
-                        <div class="col-12 col-md-5">
-                            <label class="form-label text-dark fw-semibold small mb-1">Category <span class="text-danger">*</span></label>
-                            <InputSelect @bind-Value="currentProduct.CategoryId" class="form-select rounded-3">
-                                <option value="0">Select Category...</option>
-                                @foreach (var cat in categories)
-                                {
-                                    <option value="@cat.CategoryId">@cat.Name</option>
-                                }
-                            </InputSelect>
-                        </div>
-
-                        <!-- Pricing & Tax -->
-                        <div class="col-12 col-md-4">
-                            <label class="form-label text-dark fw-semibold small mb-1">Cost Price</label>
-                            <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0">₱</span>
-                                <InputNumber @bind-Value="currentProduct.CostPrice" class="form-control" placeholder="0.00" />
+                    
+                    <!-- 1. Basic Information -->
+                    <div class="mb-4">
+                        <div class="d-flex align-items-center gap-2 pb-2 mb-3 border-bottom">
+                            <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded" style="width: 28px; height: 28px;">
+                                <i class="bi bi-tag-fill" style="font-size: 0.85rem;"></i>
+                            </div>
+                            <div>
+                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">Basic Information</h6>
+                                <span class="text-secondary small" style="font-size: 0.78rem;">Product identity, category, and unit details</span>
                             </div>
                         </div>
-                        <div class="col-12 col-md-4">
-                            <label class="form-label text-dark fw-semibold small mb-1">Selling Price <span class="text-danger">*</span></label>
-                            <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0">₱</span>
-                                <InputNumber @bind-Value="currentProduct.Price" class="form-control" placeholder="0.00" />
+                        <div class="row g-3">
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Product Name <span class="text-danger">*</span></label>
+                                <InputText @bind-Value="currentProduct.Name" class="form-control rounded" placeholder="e.g. Espresso, Chocolate Donut" />
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Category <span class="text-danger">*</span></label>
+                                <InputSelect @bind-Value="currentProduct.CategoryId" class="form-select rounded">
+                                    <option value="0">Select Category...</option>
+                                    @foreach (var cat in categories)
+                                    {
+                                        <option value="@cat.CategoryId">@cat.Name</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Product Type</label>
+                                <InputSelect @bind-Value="currentProduct.ProductType" class="form-select rounded">
+                                    <option value="Standard">Standard (Stock Item)</option>
+                                    <option value="MadeToOrder">Made To Order (Kitchen)</option>
+                                </InputSelect>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Unit of Measurement</label>
+                                <InputSelect @bind-Value="currentProduct.UnitOfMeasure" class="form-select rounded">
+                                    <option value="">- None -</option>
+                                    @foreach (var unit in unitOptions)
+                                    {
+                                        <option value="@unit">@unit</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Unit Value</label>
+                                <InputNumber @bind-Value="currentProduct.UnitValue" class="form-control rounded" placeholder="1" />
                             </div>
                         </div>
-                        <div class="col-12 col-md-4">
-                            <label class="form-label text-dark fw-semibold small mb-1">Tax Class</label>
-                            <InputSelect @bind-Value="currentProduct.TaxId" class="form-select rounded-3">
-                                <option value="">Exempt / No Tax</option>
-                                @foreach (var tax in taxes)
-                                {
-                                    <option value="@tax.TaxId">@tax.Name</option>
-                                }
-                            </InputSelect>
-                        </div>
+                    </div>
 
-                        <!-- SKU, Barcode, Stock, Reorder -->
-                        <div class="col-6 col-md-3">
-                            <label class="form-label text-dark fw-semibold small mb-1">SKU</label>
-                            <InputText @bind-Value="currentProduct.SKU" class="form-control rounded-3" placeholder="e.g. SKU-101" />
+                    <!-- 2. Pricing & Taxation -->
+                    <div class="mb-4">
+                        <div class="d-flex align-items-center gap-2 pb-2 mb-3 border-bottom">
+                            <div class="d-flex align-items-center justify-content-center bg-success bg-opacity-10 text-success rounded" style="width: 28px; height: 28px;">
+                                <i class="bi bi-cash-stack" style="font-size: 0.85rem;"></i>
+                            </div>
+                            <div>
+                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">Pricing & Tax</h6>
+                                <span class="text-secondary small" style="font-size: 0.78rem;">Cost price, selling price, and BIR tax classification</span>
+                            </div>
                         </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label text-dark fw-semibold small mb-1">Barcode</label>
-                            <InputText @bind-Value="currentProduct.Barcode" class="form-control rounded-3" placeholder="Scan or type..." />
+                        <div class="row g-3">
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Cost Price</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light text-muted border-end-0">₱</span>
+                                    <InputNumber @bind-Value="currentProduct.CostPrice" class="form-control rounded-end" placeholder="0.00" />
+                                </div>
+                                <small class="text-secondary" style="font-size: 0.72rem;">Acquisition / Supplier cost</small>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Selling Price <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light text-muted border-end-0">₱</span>
+                                    <InputNumber @bind-Value="currentProduct.Price" class="form-control rounded-end" placeholder="0.00" />
+                                </div>
+                                <small class="text-secondary" style="font-size: 0.72rem;">Retail price charged to customer</small>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Tax Class</label>
+                                <InputSelect @bind-Value="currentProduct.TaxId" class="form-select rounded">
+                                    <option value="">Exempt / No Tax</option>
+                                    @foreach (var tax in taxes)
+                                    {
+                                        <option value="@tax.TaxId">@tax.Name</option>
+                                    }
+                                </InputSelect>
+                                <small class="text-secondary" style="font-size: 0.72rem;">BIR compliance category</small>
+                            </div>
                         </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label text-dark fw-semibold small mb-1">Stock Quantity</label>
-                            <InputNumber @bind-Value="currentProduct.StockQuantity" class="form-control rounded-3" placeholder="0" />
-                        </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label text-dark fw-semibold small mb-1">Reorder Level</label>
-                            <InputNumber @bind-Value="currentProduct.ReorderLevel" class="form-control rounded-3" placeholder="0" />
-                        </div>
+                    </div>
 
-                        <!-- Measurement & Type -->
-                        <div class="col-6 col-md-3">
-                            <label class="form-label text-dark fw-semibold small mb-1">Unit Value</label>
-                            <InputNumber @bind-Value="currentProduct.UnitValue" class="form-control rounded-3" placeholder="e.g. 1" />
+                    <!-- 3. Inventory & Identification -->
+                    <div class="mb-4">
+                        <div class="d-flex align-items-center gap-2 pb-2 mb-3 border-bottom">
+                            <div class="d-flex align-items-center justify-content-center bg-warning bg-opacity-10 text-warning-emphasis rounded" style="width: 28px; height: 28px;">
+                                <i class="bi bi-box-seam" style="font-size: 0.85rem;"></i>
+                            </div>
+                            <div>
+                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">Inventory & Tracking</h6>
+                                <span class="text-secondary small" style="font-size: 0.78rem;">Stock counts, low stock reorder alert, and item identifiers</span>
+                            </div>
                         </div>
-                        <div class="col-6 col-md-3">
-                            <label class="form-label text-dark fw-semibold small mb-1">Unit of Measure</label>
-                            <InputSelect @bind-Value="currentProduct.UnitOfMeasure" class="form-select rounded-3">
-                                <option value="">-</option>
-                                @foreach (var unit in unitOptions)
-                                {
-                                    <option value="@unit">@unit</option>
-                                }
-                            </InputSelect>
+                        <div class="row g-3">
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-dark fw-semibold small mb-1">SKU</label>
+                                <InputText @bind-Value="currentProduct.SKU" class="form-control rounded" placeholder="e.g. SKU-101" />
+                                <small class="text-secondary" style="font-size: 0.72rem;">Internal item code</small>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-dark fw-semibold small mb-1">Barcode</label>
+                                <InputText @bind-Value="currentProduct.Barcode" class="form-control rounded" placeholder="Scan or type..." />
+                                <small class="text-secondary" style="font-size: 0.72rem;">UPC / EAN scanner code</small>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-dark fw-semibold small mb-1">Current Stock</label>
+                                <InputNumber @bind-Value="currentProduct.StockQuantity" class="form-control rounded" placeholder="0" />
+                                <small class="text-secondary" style="font-size: 0.72rem;">Initial or on-hand count</small>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-dark fw-semibold small mb-1">Reorder Level</label>
+                                <InputNumber @bind-Value="currentProduct.ReorderLevel" class="form-control rounded" placeholder="0" />
+                                <small class="text-secondary" style="font-size: 0.72rem;">Low stock alert trigger</small>
+                            </div>
                         </div>
-                        <div class="col-12 col-md-6">
-                            <label class="form-label text-dark fw-semibold small mb-1">Product Type</label>
-                            <InputSelect @bind-Value="currentProduct.ProductType" class="form-select rounded-3">
-                                <option value="Standard">Standard</option>
-                                <option value="MadeToOrder">Made To Order</option>
-                            </InputSelect>
-                        </div>
+                    </div>
 
-                        <!-- Product Image Upload Section -->
-                        <div class="col-12">
-                            <label class="form-label text-dark fw-semibold small mb-1">Product Image</label>
-                            <div class="d-flex align-items-center gap-3">
-                                @if (!string.IsNullOrWhiteSpace(currentProduct.ImageUrl))
-                                {
-                                    <div class="position-relative">
-                                        <img src="@GetFullImageUrl(currentProduct.ImageUrl)" alt="Product Preview" class="rounded-3 border object-fit-cover" style="width: 64px; height: 64px;" />
-                                        <button type="button" class="btn btn-sm btn-danger rounded-circle position-absolute top-0 start-100 translate-middle p-0 d-flex align-items-center justify-content-center" style="width: 20px; height: 20px;" @onclick="RemoveImage">
-                                            &times;
-                                        </button>
+                    <!-- 4. Product Image -->
+                    <div class="mb-4">
+                        <div class="d-flex align-items-center gap-2 pb-2 mb-3 border-bottom">
+                            <div class="d-flex align-items-center justify-content-center bg-info bg-opacity-10 text-info-emphasis rounded" style="width: 28px; height: 28px;">
+                                <i class="bi bi-image" style="font-size: 0.85rem;"></i>
+                            </div>
+                            <div>
+                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">Product Image</h6>
+                                <span class="text-secondary small" style="font-size: 0.78rem;">Thumbnail photo displayed on POS catalog and registers</span>
+                            </div>
+                        </div>
+                        <div class="p-3 bg-light rounded border d-flex align-items-center gap-3">
+                            @if (!string.IsNullOrWhiteSpace(currentProduct.ImageUrl))
+                            {
+                                <div class="position-relative flex-shrink-0">
+                                    <img src="@GetFullImageUrl(currentProduct.ImageUrl)" alt="Product Preview" class="rounded border object-fit-cover shadow-sm" style="width: 72px; height: 72px;" />
+                                    <button type="button" class="btn btn-sm btn-danger rounded-circle position-absolute top-0 start-100 translate-middle p-0 d-flex align-items-center justify-content-center shadow" style="width: 22px; height: 22px;" @onclick="RemoveImage" title="Remove Image">
+                                        &times;
+                                    </button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="bg-white border rounded d-flex flex-column align-items-center justify-content-center text-muted flex-shrink-0 shadow-sm" style="width: 72px; height: 72px;">
+                                    <i class="bi bi-image text-secondary" style="font-size: 1.25rem;"></i>
+                                    <span style="font-size: 0.65rem;" class="fw-semibold text-secondary">No Image</span>
+                                </div>
+                            }
+
+                            <div class="flex-grow-1">
+                                <label class="form-label text-dark fw-semibold small mb-1">Choose Photo</label>
+                                <InputFile OnChange="HandleImageSelected" class="form-control rounded" accept=".jpg,.jpeg,.png,.webp" />
+                                <small class="text-secondary d-block mt-1" style="font-size: 0.75rem;">Supported formats: JPG, PNG, WEBP (Max 5MB)</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5. POS & Kitchen Routing Settings -->
+                    <div>
+                        <div class="d-flex align-items-center gap-2 pb-2 mb-3 border-bottom">
+                            <div class="d-flex align-items-center justify-content-center bg-secondary bg-opacity-10 text-secondary rounded" style="width: 28px; height: 28px;">
+                                <i class="bi bi-sliders" style="font-size: 0.85rem;"></i>
+                            </div>
+                            <div>
+                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">POS & Kitchen Settings</h6>
+                                <span class="text-secondary small" style="font-size: 0.78rem;">Configure register visibility and kitchen order routing</span>
+                            </div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-12 col-md-6">
+                                <div class="p-3 bg-light rounded border h-100 d-flex align-items-center justify-content-between">
+                                    <div>
+                                        <label class="form-check-label fw-bold text-dark mb-0 d-block" for="activeSwitch">Active in POS</label>
+                                        <small class="text-secondary" style="font-size: 0.78rem;">Enable product for cashier ring-up and orders</small>
                                     </div>
-                                }
-                                else
-                                {
-                                    <div class="bg-light border rounded-3 d-flex align-items-center justify-content-center text-muted small" style="width: 64px; height: 64px;">
-                                        No Img
+                                    <div class="form-check form-switch mb-0 fs-5 ms-3">
+                                        <InputCheckbox class="form-check-input" id="activeSwitch" @bind-Value="currentProduct.IsActive" />
                                     </div>
-                                }
-
-                                <div class="flex-grow-1">
-                                    <InputFile OnChange="HandleImageSelected" class="form-control rounded-3" accept=".jpg,.jpeg,.png,.webp" />
-                                    <small class="text-secondary d-block mt-1" style="font-size: 0.75rem;">Allowed formats: JPG, PNG, WEBP (Max 5MB)</small>
                                 </div>
                             </div>
-                        </div>
-
-                        <!-- Switches -->
-                        <div class="col-12">
-                            <div class="p-3 bg-light rounded-3 border d-flex flex-wrap gap-4 align-items-center">
-                                <div class="form-check form-switch mb-0">
-                                    <InputCheckbox class="form-check-input" id="activeSwitch" @bind-Value="currentProduct.IsActive" />
-                                    <label class="form-check-label fw-semibold text-dark ms-1" for="activeSwitch">Active in POS</label>
-                                </div>
-                                <div class="form-check form-switch mb-0">
-                                    <InputCheckbox class="form-check-input" id="kitchenSwitch" @bind-Value="currentProduct.IsKitchenItem" />
-                                    <label class="form-check-label fw-semibold text-dark ms-1" for="kitchenSwitch">Route to Kitchen Printer</label>
+                            <div class="col-12 col-md-6">
+                                <div class="p-3 bg-light rounded border h-100 d-flex align-items-center justify-content-between">
+                                    <div>
+                                        <label class="form-check-label fw-bold text-dark mb-0 d-block" for="kitchenSwitch">Route to Kitchen</label>
+                                        <small class="text-secondary" style="font-size: 0.78rem;">Auto-print preparation ticket to kitchen printer</small>
+                                    </div>
+                                    <div class="form-check form-switch mb-0 fs-5 ms-3">
+                                        <InputCheckbox class="form-check-input" id="kitchenSwitch" @bind-Value="currentProduct.IsKitchenItem" />
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
+
                 </div>
 
                 <!-- Modal Footer -->
                 <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end align-items-center gap-2">
-                    <button type="button" class="btn btn-outline-secondary rounded-pill px-4 fw-medium" @onclick="CloseModal">
+                    <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseModal">
                         Cancel
                     </button>
-                    <button type="submit" class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") rounded-pill px-4 fw-bold shadow-sm" disabled="@isSaving">
+                    <button type="submit" class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") rounded px-4 fw-bold shadow-sm" disabled="@isSaving">
                         @if (isSaving)
                         {
                             <span class="spinner-border spinner-border-sm me-1" role="status"></span>
@@ -407,7 +486,8 @@
            : products?.Where(p =>
                (p.Name != null && p.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase)) ||
                (p.SKU != null && p.SKU.Contains(nameFilter, StringComparison.OrdinalIgnoreCase)) ||
-               (p.Barcode != null && p.Barcode.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
+               (p.Barcode != null && p.Barcode.Contains(nameFilter, StringComparison.OrdinalIgnoreCase)) ||
+               (p.UnitOfMeasure != null && p.UnitOfMeasure.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
              ).AsQueryable();
 
     private int TotalPages
@@ -450,7 +530,9 @@
             {
                 Title = "Error",
                 Text = "Failed to load dependencies: " + ex.Message,
-                Icon = SweetAlertIcon.Error
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
         }
     }
@@ -479,7 +561,9 @@
             {
                 Title = "Error",
                 Text = "Failed to load products: " + ex.Message,
-                Icon = SweetAlertIcon.Error
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
         }
     }
@@ -531,6 +615,46 @@
     private async Task SaveProduct()
     {
         if (isSaving) return;
+
+        if (string.IsNullOrWhiteSpace(currentProduct.Name))
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Validation Error",
+                Text = "Product name is required.",
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
+        if (currentProduct.CategoryId <= 0)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Validation Error",
+                Text = "Please select a category.",
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
+        if (currentProduct.Price < 0)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Validation Error",
+                Text = "Selling price cannot be negative.",
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
         isSaving = true;
 
         try
@@ -549,11 +673,11 @@
 
             await Swal.FireAsync(new SweetAlertOptions
             {
-                Title = "Success!",
+                Title = isEditing ? "Product Updated!" : "Product Created!",
                 Text = isEditing ? "Product updated successfully." : "Product created successfully.",
                 Icon = SweetAlertIcon.Success,
-                Timer = 2000,
-                ShowConfirmButton = false
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
         }
         catch (Exception ex)
@@ -562,7 +686,9 @@
             {
                 Title = "Error",
                 Text = "Failed to save product: " + ex.Message,
-                Icon = SweetAlertIcon.Error
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
         }
         finally
@@ -596,7 +722,14 @@
         // Limit size to 5MB
         if (file.Size > 5 * 1024 * 1024)
         {
-            await Swal.FireAsync("Error", "File size exceeds the 5MB limit.", SweetAlertIcon.Error);
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "File size exceeds the 5MB limit.",
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
             return;
         }
 
@@ -623,12 +756,26 @@
             else
             {
                 var errorMsg = await response.Content.ReadAsStringAsync();
-                await Swal.FireAsync("Upload Failed", errorMsg, SweetAlertIcon.Error);
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Upload Failed",
+                    Text = errorMsg,
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
             }
         }
         catch (Exception ex)
         {
-            await Swal.FireAsync("Error", $"Image upload failed: {ex.Message}", SweetAlertIcon.Error);
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = $"Image upload failed: {ex.Message}",
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
         }
         finally
         {
@@ -636,9 +783,24 @@
         }
     }
 
-    private void RemoveImage()
+    private async Task RemoveImage()
     {
-        currentProduct.ImageUrl = string.Empty;
+        var result = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Remove Image?",
+            Text = "Are you sure you want to remove the product image?",
+            Icon = SweetAlertIcon.Question,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#d33",
+            CancelButtonColor = "#64748b",
+            ConfirmButtonText = "Yes, remove it",
+            CancelButtonText = "Cancel"
+        });
+
+        if (result.IsConfirmed)
+        {
+            currentProduct.ImageUrl = string.Empty;
+        }
     }
 
     private class UploadResult
@@ -655,8 +817,9 @@
             Icon = SweetAlertIcon.Warning,
             ShowCancelButton = true,
             ConfirmButtonColor = "#d33",
-            CancelButtonColor = "#3085d6",
-            ConfirmButtonText = "Yes, delete it!"
+            CancelButtonColor = "#64748b",
+            ConfirmButtonText = "Yes, delete it!",
+            CancelButtonText = "Cancel"
         });
 
         if (result.IsConfirmed)
@@ -671,8 +834,8 @@
                     Title = "Deleted!",
                     Text = "The product has been removed.",
                     Icon = SweetAlertIcon.Success,
-                    Timer = 2000,
-                    ShowConfirmButton = false
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
                 });
             }
             catch (Exception ex)
@@ -681,7 +844,9 @@
                 {
                     Title = "Error",
                     Text = "Failed to delete product: " + ex.Message,
-                    Icon = SweetAlertIcon.Error
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
                 });
             }
         }

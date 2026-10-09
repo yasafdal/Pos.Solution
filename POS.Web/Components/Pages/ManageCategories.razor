@@ -16,7 +16,7 @@
         
         <div>
             <!-- Add Category Button -->
-            <button class="btn btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenAddModal">
+            <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenAddModal">
                 Add New Category
             </button>
         </div>
@@ -25,10 +25,8 @@
     <!-- Search Input (Right Aligned) -->
     <div class="d-flex justify-content-end mb-3">
         <div class="position-relative" style="width: 260px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none;" viewBox="0 0 16 16">
-                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>
-            </svg>
-            <input type="search" class="form-control form-control-sm rounded-pill ps-4 bg-white shadow-none border"
+            <i class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
+            <input type="search" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border"
                    placeholder="Search categories..."
                    @bind="nameFilter"
                    @bind:event="oninput" />
@@ -64,7 +62,7 @@
                     </TemplateColumn>
 
                     <TemplateColumn Context="category" Title="Products Quantity" SortBy="@(GridSort<CategoryDto>.ByAscending(c => c.ProductCount))" Sortable="true" Align="Align.Center">
-                        <span class="quantity-badge">
+                        <span class="text-dark fw-medium">
                             @category.ProductCount
                         </span>
                     </TemplateColumn>
@@ -73,14 +71,12 @@
                         @if (category.IsActive)
                         {
                             <span class="status-badge active">
-                                <span class="status-dot"></span>
                                 Active
                             </span>
                         }
                         else
                         {
                             <span class="status-badge inactive">
-                                <span class="status-dot"></span>
                                 Inactive
                             </span>
                         }
@@ -94,21 +90,14 @@
                         </HeaderTemplate>
                         <ChildContent>
                             <div class="actions-cell-wrap d-flex justify-content-end gap-2">
-                                <a class="action-btn action-btn-products" href="/manage-products/@category.CategoryId" title="View Products" aria-label="View Products">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                                        <path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>
-                                    </svg>
+                                <a class="btn btn-sm btn-primary text-white" href="/manage-products/@category.CategoryId" title="View Products" aria-label="View Products">
+                                    <i class="bi bi-plus-lg"></i>
                                 </a>
-                                <button class="action-btn action-btn-edit" @onclick="() => OpenEditModal(category)" title="Edit Category" aria-label="Edit Category">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
-                                        <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325"/>
-                                    </svg>
+                                <button type="button" class="btn btn-sm btn-warning text-dark" @onclick="() => OpenEditModal(category)" title="Edit Category" aria-label="Edit Category">
+                                    <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="action-btn action-btn-delete" @onclick="() => DeleteCategory(category.CategoryId)" title="Delete Category" aria-label="Delete Category">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
-                                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
-                                        <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
-                                    </svg>
+                                <button type="button" class="btn btn-sm btn-danger text-white" @onclick="() => DeleteCategory(category.CategoryId)" title="Delete Category" aria-label="Delete Category">
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </div>
                         </ChildContent>
@@ -199,10 +188,10 @@
 
                     <!-- Modal Footer -->
                     <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end align-items-center gap-2">
-                        <button type="button" class="btn btn-outline-secondary rounded-pill px-4 fw-medium" @onclick="CloseModal">
+                        <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseModal">
                             Cancel
                         </button>
-                        <button type="submit" class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") rounded-pill px-4 fw-bold shadow-sm" disabled="@isSaving">
+                        <button type="submit" class="btn @(isEditing ? "btn-warning text-dark" : "btn-primary") rounded px-4 fw-bold shadow-sm" disabled="@isSaving">
                             @if (isSaving)
                             {
                                 <span class="spinner-border spinner-border-sm me-1" role="status"></span>
@@ -279,7 +268,9 @@
             {
                 Title = "Error",
                 Text = "Failed to load categories: " + ex.Message,
-                Icon = SweetAlertIcon.Error
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
         }
     }
@@ -318,7 +309,9 @@
             {
                 Title = "Validation Error",
                 Text = "Category name is required.",
-                Icon = SweetAlertIcon.Warning
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
             return;
         }
@@ -341,11 +334,11 @@
 
             await Swal.FireAsync(new SweetAlertOptions
             {
-                Title = "Success!",
+                Title = isEditing ? "Category Updated!" : "Category Created!",
                 Text = isEditing ? "Category updated successfully." : "Category created successfully.",
                 Icon = SweetAlertIcon.Success,
-                Timer = 2000,
-                ShowConfirmButton = false
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
         }
         catch (Exception ex)
@@ -354,7 +347,9 @@
             {
                 Title = "Error",
                 Text = "Failed to save category: " + ex.Message,
-                Icon = SweetAlertIcon.Error
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
             });
         }
         finally
@@ -372,8 +367,9 @@
             Icon = SweetAlertIcon.Warning,
             ShowCancelButton = true,
             ConfirmButtonColor = "#d33",
-            CancelButtonColor = "#3085d6",
-            ConfirmButtonText = "Yes"
+            CancelButtonColor = "#64748b",
+            ConfirmButtonText = "Yes, delete it!",
+            CancelButtonText = "Cancel"
         });
 
         if (result.IsConfirmed)
@@ -388,8 +384,8 @@
                     Title = "Deleted!",
                     Text = "The category has been removed.",
                     Icon = SweetAlertIcon.Success,
-                    Timer = 2000,
-                    ShowConfirmButton = false
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
                 });
             }
             catch (Exception ex)
@@ -398,7 +394,9 @@
                 {
                     Title = "Error",
                     Text = "Failed to delete category: " + ex.Message,
-                    Icon = SweetAlertIcon.Error
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
                 });
             }
         }
