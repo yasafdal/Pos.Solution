@@ -1,3 +1,65 @@
+/* ========================================================
+   Global Uniform Border Radius (5px)
+   ======================================================== */
+:root,
+[data-bs-theme="light"],
+[data-bs-theme="dark"] {
+    --bs-border-radius: 5px !important;
+    --bs-border-radius-sm: 5px !important;
+    --bs-border-radius-lg: 5px !important;
+    --bs-border-radius-xl: 5px !important;
+    --bs-border-radius-xxl: 5px !important;
+    --bs-border-radius-2xl: 5px !important;
+    --bs-border-radius-pill: 5px !important;
+    --global-border-radius: 5px !important;
+}
+
+/* Uniform border-radius across all Bootstrap utilities */
+.rounded,
+.rounded-1,
+.rounded-2,
+.rounded-3,
+.rounded-4,
+.rounded-5,
+.rounded-pill {
+    border-radius: 5px !important;
+}
+
+.rounded-top {
+    border-top-left-radius: 5px !important;
+    border-top-right-radius: 5px !important;
+}
+
+.rounded-bottom {
+    border-bottom-left-radius: 5px !important;
+    border-bottom-right-radius: 5px !important;
+}
+
+.rounded-start {
+    border-top-left-radius: 5px !important;
+    border-bottom-left-radius: 5px !important;
+}
+
+.rounded-end {
+    border-top-right-radius: 5px !important;
+    border-bottom-right-radius: 5px !important;
+}
+
+/* Core Form Controls, Buttons, Modals, Cards, Tables, and Components */
+.form-control,
+.form-select,
+.input-group,
+.input-group-text,
+.btn:not(.rounded-circle),
+.modal-content,
+.card,
+.dropdown-menu,
+.alert,
+.badge,
+.table-responsive {
+    border-radius: 5px !important;
+}
+
 html, body {
     font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
@@ -170,4 +232,22 @@ h1:focus {
     transition: margin 0.3s cubic-bezier(0.4, 0, 0.2, 1),
                 padding 0.3s cubic-bezier(0.4, 0, 0.2, 1),
                 width 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* ========================================================
+   SweetAlert2 Modal Layer & Uniform Styling
+   ======================================================== */
+.swal2-container {
+    z-index: 100000 !important;
+}
+
+.swal2-popup {
+    border-radius: 5px !important;
+    font-family: inherit !important;
+}
+
+.swal2-actions button {
+    border-radius: 5px !important;
+    font-weight: 600 !important;
+    padding: 0.5rem 1.25rem !important;
 }

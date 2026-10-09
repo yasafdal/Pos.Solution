@@ -3,12 +3,12 @@
     display: none !important;
 }
 
-/* 2. Full-width table layout */
+/* 2. Full-width table layout with equal auto column distribution */
 .commercial-grid ::deep table.quickgrid {
     width: 100% !important;
     border-collapse: collapse !important;
     margin-bottom: 0 !important;
-    table-layout: auto !important;
+    table-layout: fixed !important;
 }
 
     /* 3. Base Header Styling */
@@ -46,13 +46,16 @@
         border-bottom: 1px solid #f1f5f9 !important;
         color: #1e293b !important;
         font-size: 0.9rem !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
     }
 
         /* 5. Column Spacing & Widths */
-        /* Col 1: Category Name */
+        /* Col 1: Category Name (Equal Auto Width) */
         .commercial-grid ::deep table.quickgrid thead th:nth-child(1),
         .commercial-grid ::deep table.quickgrid tbody td:nth-child(1) {
-            width: 180px !important;
+            width: auto !important;
             text-align: left !important;
             padding-left: 0.85rem !important;
             padding-right: 0.75rem !important;
@@ -80,10 +83,10 @@
             text-align: left !important;
         }
 
-        /* Col 2: Description */
+        /* Col 2: Description (Equal Auto Width) */
         .commercial-grid ::deep table.quickgrid thead th:nth-child(2),
         .commercial-grid ::deep table.quickgrid tbody td:nth-child(2) {
-            width: 300px !important;
+            width: auto !important;
             text-align: left !important;
             padding-left: 0.75rem !important;
             padding-right: 0.75rem !important;
@@ -108,13 +111,14 @@
             color: #64748b !important;
         }
 
-        /* Col 3: Products Quantity (Close to Description) */
+        /* Col 3: Products Quantity (Equal Auto Width) */
         .commercial-grid ::deep table.quickgrid thead th:nth-child(3),
         .commercial-grid ::deep table.quickgrid tbody td:nth-child(3) {
-            width: 150px !important;
+            width: auto !important;
             text-align: center !important;
             padding-left: 0.5rem !important;
             padding-right: 0.5rem !important;
+            font-variant-numeric: tabular-nums !important;
         }
 
             .commercial-grid ::deep table.quickgrid thead th:nth-child(3) .col-header-content,
@@ -134,10 +138,10 @@
                 margin: 0 auto !important;
             }
 
-        /* Col 4: Status (Close to Products Quantity) */
+        /* Col 4: Status (Equal Auto Width) */
         .commercial-grid ::deep table.quickgrid thead th:nth-child(4),
         .commercial-grid ::deep table.quickgrid tbody td:nth-child(4) {
-            width: 110px !important;
+            width: auto !important;
             text-align: center !important;
             padding-left: 0.5rem !important;
             padding-right: 0.5rem !important;
@@ -162,7 +166,11 @@
 
     /* Col 5: Actions (Positioned at far right) */
     .commercial-grid ::deep table.quickgrid thead th:nth-child(5),
-    .commercial-grid ::deep table.quickgrid thead th:last-child {
+    .commercial-grid ::deep table.quickgrid thead th:last-child,
+    .commercial-grid ::deep table.quickgrid tbody td:nth-child(5),
+    .commercial-grid ::deep table.quickgrid tbody td:last-child {
+        width: 140px !important;
+        min-width: 140px !important;
         text-align: right !important;
         padding-left: 0.5rem !important;
         padding-right: 1rem !important;
@@ -233,18 +241,18 @@
     color: #475569;
     background-color: #f1f5f9;
     border: 1px solid #e2e8f0;
-    border-radius: 9999px;
+    border-radius: 5px;
     font-variant-numeric: tabular-nums;
 }
 
 ::deep .status-badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    justify-content: center;
     font-size: 0.75rem;
     font-weight: 600;
-    padding: 0.25rem 0.75rem;
-    border-radius: 9999px;
+    padding: 0.25rem 0.65rem;
+    border-radius: 5px;
     letter-spacing: 0.02em;
 }
 
@@ -260,73 +268,23 @@
         border: 1px solid #e2e8f0;
     }
 
-    ::deep .status-badge .status-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-    }
-
-    ::deep .status-badge.active .status-dot {
-        background-color: #10b981;
-    }
-
-    ::deep .status-badge.inactive .status-dot {
-        background-color: #94a3b8;
-    }
-
-/* 8. Action Buttons */
-::deep .action-btn {
+/* 8. Action Buttons (Solid Bootstrap Buttons) */
+::deep .action-btn,
+::deep .actions-cell-wrap .btn,
+.commercial-grid ::deep .btn-sm {
     width: 32px;
     height: 32px;
-    padding: 0;
-    border-radius: 9999px;
+    padding: 0 !important;
+    border-radius: 5px !important;
     text-decoration: none;
     transition: all 0.15s ease-in-out;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid transparent;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0.9rem !important;
     cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
-
-::deep .action-btn-products {
-    background-color: #fefce8;
-    color: #ca8a04;
-    border-color: #fef08a;
-}
-
-    ::deep .action-btn-products:hover {
-        background-color: #ca8a04;
-        color: #ffffff;
-        border-color: #ca8a04;
-        box-shadow: 0 2px 4px rgba(202, 138, 4, 0.2);
-    }
-
-::deep .action-btn-edit {
-    background-color: #eff6ff;
-    color: #2563eb;
-    border-color: #dbeafe;
-}
-
-    ::deep .action-btn-edit:hover {
-        background-color: #2563eb;
-        color: #ffffff;
-        border-color: #2563eb;
-        box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
-    }
-
-::deep .action-btn-delete {
-    background-color: #fef2f2;
-    color: #dc2626;
-    border-color: #fee2e2;
-}
-
-    ::deep .action-btn-delete:hover {
-        background-color: #dc2626;
-        color: #ffffff;
-        border-color: #dc2626;
-        box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
-    }
 
 /* 9. Pagination (QuickGrid Paginator / Bootstrap) */
 ::deep .pagination {
@@ -335,7 +293,7 @@
     vertical-align: middle !important;
     padding-left: 0 !important;
     list-style: none !important;
-    border-radius: 0.375rem !important;
+    border-radius: 5px !important;
 }
 
     ::deep .pagination .page-item .page-link {
@@ -359,13 +317,13 @@
     }
 
     ::deep .pagination .page-item:first-child .page-link {
-        border-top-left-radius: 0.375rem !important;
-        border-bottom-left-radius: 0.375rem !important;
+        border-top-left-radius: 5px !important;
+        border-bottom-left-radius: 5px !important;
     }
 
     ::deep .pagination .page-item:last-child .page-link {
-        border-top-right-radius: 0.375rem !important;
-        border-bottom-right-radius: 0.375rem !important;
+        border-top-right-radius: 5px !important;
+        border-bottom-right-radius: 5px !important;
     }
 
     ::deep .pagination .page-item.active .page-link {
