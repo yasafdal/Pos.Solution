@@ -236,6 +236,8 @@
 
                 <!-- Modal Body -->
                 <div class="modal-body px-4 py-3">
+
+
                     <!-- Inline Form for Add/Edit Outlet -->
                     <EditForm Model="@currentOutlet" OnValidSubmit="SaveOutlet" class="p-3 bg-light rounded border mb-4">
                         <div class="row g-3 align-items-end">
@@ -270,6 +272,22 @@
                             </div>
                         </div>
                     </EditForm>
+
+                     <!-- Inventory Tracking Toggle Container -->
+                    <div class="p-3 bg-light rounded border mb-3">
+                       
+                        <div class="d-flex justify-content-between align-items-center gap-3">
+                            <div>
+                                <span class="fw-bold text-dark d-block mb-1">Track Inventory</span>
+                                <p class="text-secondary small mb-0" style="line-height: 1.45;">
+                                    Applies to every item and is saved as soon as you switch it. When on, stock is counted and items with no stock cannot be sold until stocked in.
+                                </p>
+                            </div>
+                            <div class="form-check form-switch fs-4 mb-0 flex-shrink-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="trackInventorySwitch" @bind="isTrackInventoryEnabled" style="cursor: pointer;" />
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- Outlet List Table -->
                     <div class="table-responsive border rounded">
@@ -353,6 +371,7 @@
     private bool isEditingOutlet = false;
     private BranchDto? activeBranch;
     private OutletDto currentOutlet = new();
+    private bool isTrackInventoryEnabled = false;
 
     private IQueryable<BranchDto>? FilteredBranches =>
         string.IsNullOrWhiteSpace(searchTerm)
