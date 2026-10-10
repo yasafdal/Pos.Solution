@@ -1,24 +1,28 @@
-﻿@page "/inventory"
+@page "/inventory"
 @using POS.Shared.Models
 @using POS.Shared.Services
 @using POS.Shared.Interfaces
 @using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
 @inject IInventoryService InventoryService
 @inject IBranchService BranchService
 @inject HttpClient Http
+@inject SweetAlertService Swal
 
-<div class="container-fluid p-4">
-    <!-- Header Section -->
-    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+<PageTitle>Inventory - POS</PageTitle>
+
+<div class="w-100 py-2">
+    <!-- Header Toolbar -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
         <div>
-            <h3 class="fw-bold text-dark mb-1">Branch Inventory & Stock Control</h3>
-            <p class="text-secondary mb-0 small">Monitor and manage branch-specific stock levels and reorder thresholds</p>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Inventory & Stock Control</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Monitor branch-specific stock levels, restock items, and configure reorder thresholds</span>
         </div>
         
         <!-- Branch Selector Dropdown -->
-        <div class="d-flex align-items-center gap-2 bg-white p-2 rounded-3 shadow-sm border">
-            <span class="fw-semibold text-secondary small ms-2">Select Branch:</span>
-            <select class="form-select border-0 fw-bold text-primary pe-4" style="width: auto; cursor: pointer;" value="@selectedBranchId" @onchange="OnBranchChanged">
+        <div class="d-flex align-items-center gap-2">
+            <span class="fw-bold text-dark small text-nowrap">Branch:</span>
+            <select class="form-select form-select-sm rounded fw-semibold bg-white border shadow-none" style="min-width: 220px; height: 38px;" value="@selectedBranchId" @onchange="OnBranchChanged">
                 @foreach (var branch in branches)
                 {
                     <option value="@branch.BranchId">@branch.Name (@(branch.Code ?? "No Code"))</option>
@@ -28,188 +32,254 @@
     </div>
 
     <!-- Summary Statistics Cards -->
-    <div class="row g-3 mb-4">
+    <div class="row g-3 mb-3">
         <div class="col-12 col-md-4">
-            <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+            <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
-                        <span class="text-secondary small fw-semibold d-block">Total Catalog Items</span>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Total Catalog Items</span>
                         <h4 class="fw-bold text-dark mb-0">@inventoryList.Count</h4>
                     </div>
-                    <div class="p-3 bg-primary-subtle text-primary rounded-circle">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
-                            <path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5l2.404.961L10.404 2zm3.564 1.428L5.596 5l7.154 2.861 2.404-.961zM16 5.662l-3.996 1.599L8 4.722l-8 3.2v5.578a.5.5 0 0 0 .309.463l7 3a.5.5 0 0 0 .382 0l7-3A.5.5 0 0 0 16 13.5V5.662z" />
-                        </svg>
+                    <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 44px; height: 44px;">
+                        <i class="bi bi-boxes fs-4"></i>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-12 col-md-4">
-            <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+            <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
-                        <span class="text-secondary small fw-semibold d-block">Low Stock Alerts</span>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Low Stock Alerts</span>
                         <h4 class="fw-bold text-warning mb-0">@inventoryList.Count(i => i.IsLowStock && i.StockQuantity > 0)</h4>
                     </div>
-                    <div class="p-3 bg-warning-subtle text-warning rounded-circle">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
-                            <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" />
-                        </svg>
+                    <div class="d-flex align-items-center justify-content-center bg-warning bg-opacity-10 text-warning rounded-3" style="width: 44px; height: 44px;">
+                        <i class="bi bi-exclamation-triangle-fill fs-4"></i>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-12 col-md-4">
-            <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+            <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
-                        <span class="text-secondary small fw-semibold d-block">Out of Stock Items</span>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Out of Stock Items</span>
                         <h4 class="fw-bold text-danger mb-0">@inventoryList.Count(i => i.StockQuantity == 0)</h4>
                     </div>
-                    <div class="p-3 bg-danger-subtle text-danger rounded-circle">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" viewBox="0 0 16 16">
-                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
-                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                        </svg>
+                    <div class="d-flex align-items-center justify-content-center bg-danger bg-opacity-10 text-danger rounded-3" style="width: 44px; height: 44px;">
+                        <i class="bi bi-x-circle-fill fs-4"></i>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Search Input -->
-    <div class="card border-0 shadow-sm rounded-4 mb-4">
-        <div class="card-body p-3">
-            <div class="row g-3 align-items-center">
-                <div class="col-12 col-md-6 col-lg-4">
-                    <div class="input-group">
-                        <span class="input-group-text bg-white border-end-0 rounded-start-3 text-secondary">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z" />
-                            </svg>
+    <!-- Search Row (Right Aligned) -->
+    <div class="d-flex justify-content-end mb-3">
+        <div class="position-relative" style="width: 280px;">
+            <i class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
+            <input type="search" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border"
+                   placeholder="Search product or category..."
+                   @bind="searchTerm"
+                   @bind:event="oninput" />
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="w-100">
+        @if (isLoading)
+        {
+            <div class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                Loading inventory...
+            </div>
+        }
+        else
+        {
+            <div class="commercial-grid table-responsive w-100">
+                <QuickGrid Items="@FilteredInventory" Pagination="@pagination" Theme="commercial">
+                    <!-- Col 1: Thumbnail -->
+                    <TemplateColumn Context="item" Title="Image" Align="Align.Center">
+                        <div class="d-flex align-items-center justify-content-center py-1">
+                            @if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+                            {
+                                <img src="@GetFullImageUrl(item.ImageUrl)" alt="@item.ProductName" class="rounded-3 border object-fit-cover shadow-sm" style="width: 60px; height: 60px;" />
+                            }
+                            else
+                            {
+                                <div class="bg-light border rounded-3 d-flex align-items-center justify-content-center text-secondary" style="width: 60px; height: 60px; background-color: #f8f9fa;">
+                                    <i class="bi bi-image text-muted fs-4"></i>
+                                </div>
+                            }
+                        </div>
+                    </TemplateColumn>
+
+                    <!-- Col 2: Product Name -->
+                    <TemplateColumn Context="item" Title="Product Name" SortBy="@(GridSort<BranchInventoryDto>.ByAscending(i => i.ProductName))" Sortable="true" Align="Align.Left">
+                        <div>
+                            <span class="d-block fw-semibold text-dark text-truncate" title="@item.ProductName">@(string.IsNullOrWhiteSpace(item.ProductName) ? "—" : item.ProductName)</span>
+                        </div>
+                    </TemplateColumn>
+
+                    <!-- Col 3: Category -->
+                    <PropertyColumn Property="@(i => i.CategoryName)" Title="Category" Sortable="true" Align="Align.Left" />
+
+                    <!-- Col 4: Price -->
+                    <PropertyColumn Property="@(i => i.Price)" Title="Price" Format="C2" Sortable="true" Align="Align.Left" />
+
+                    <!-- Col 5: Available Stock -->
+                    <TemplateColumn Context="item" Title="Available Stock" SortBy="@(GridSort<BranchInventoryDto>.ByAscending(i => i.StockQuantity))" Sortable="true" Align="Align.Center">
+                        <span class="quantity-badge @(item.StockQuantity == 0 ? "out-of-stock" : item.IsLowStock ? "low-stock" : "")">
+                            @item.StockQuantity
                         </span>
-                        <input type="text" class="form-control border-start-0 rounded-end-3" placeholder="Search product name or category..." @bind="searchTerm" @bind:event="oninput" />
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+                    </TemplateColumn>
 
-    <!-- Inventory QuickGrid -->
-    <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-        <div class="card-body p-0">
-            @if (isLoading)
-            {
-                <div class="text-center py-5">
-                    <div class="spinner-border text-primary" role="status"></div>
-                    <p class="text-secondary small mt-2">Loading inventory data...</p>
-                </div>
-            }
-            else
-            {
-                <div class="table-responsive">
-                    <QuickGrid Items="@FilteredInventory" Pagination="@pagination" Theme="commercial">
-                        <!-- Thumbnail Column -->
-                        <TemplateColumn Context="item" Title="Image" Align="Align.Center">
-                            <div class="d-flex align-items-center justify-content-center py-1">
-                                @if (!string.IsNullOrWhiteSpace(item.ImageUrl))
-                                {
-                                    <img src="@GetFullImageUrl(item.ImageUrl)" alt="@item.ProductName" class="rounded-3 border object-fit-cover shadow-sm" style="width: 42px; height: 42px;" />
-                                }
-                                else
-                                {
-                                    <div class="bg-light border rounded-3 d-flex align-items-center justify-content-center text-secondary" style="width: 42px; height: 42px;">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="text-muted" viewBox="0 0 16 16">
-                                            <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0" />
-                                            <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1z" />
-                                        </svg>
-                                    </div>
-                                }
+                    <!-- Col 6: Reorder Level -->
+                    <TemplateColumn Context="item" Title="Reorder Level" SortBy="@(GridSort<BranchInventoryDto>.ByAscending(i => i.ReorderLevel))" Sortable="true" Align="Align.Center">
+                        <span class="text-secondary fw-medium">
+                            @item.ReorderLevel
+                        </span>
+                    </TemplateColumn>
+
+                    <!-- Col 7: Stock Status -->
+                    <TemplateColumn Context="item" Title="Status" Align="Align.Center">
+                        @if (item.StockQuantity == 0)
+                        {
+                            <span class="status-badge inactive">Out of Stock</span>
+                        }
+                        else if (item.IsLowStock)
+                        {
+                            <span class="status-badge low">Low Stock</span>
+                        }
+                        else
+                        {
+                            <span class="status-badge active">In Stock</span>
+                        }
+                    </TemplateColumn>
+
+                    <!-- Col 8: Actions -->
+                    <TemplateColumn Context="item" Title="Actions" Align="Align.Right">
+                        <HeaderTemplate>
+                            <div class="actions-header-wrap">
+                                <span class="actions-header-text">Actions</span>
                             </div>
-                        </TemplateColumn>
+                        </HeaderTemplate>
+                        <ChildContent>
+                            <div class="actions-cell-wrap d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-sm btn-primary text-white" @onclick="() => OpenAdjustModal(item)" title="Adjust Stock / Restock" aria-label="Adjust Stock / Restock">
+                                    <i class="bi bi-sliders"></i>
+                                </button>
+                            </div>
+                        </ChildContent>
+                    </TemplateColumn>
+                </QuickGrid>
+            </div>
 
-                        <PropertyColumn Property="@(i => i.ProductName)" Title="Product Name" Sortable="true" Align="Align.Left" />
-                        <PropertyColumn Property="@(i => i.CategoryName)" Title="Category" Sortable="true" Align="Align.Left" />
-                        <PropertyColumn Property="@(i => i.Price)" Title="Price" Format="C2" Sortable="true" Align="Align.Left" />
-
-                        <!-- Stock Level Column -->
-                        <TemplateColumn Context="item" Title="Available Stock" SortBy="@(GridSort<BranchInventoryDto>.ByAscending(i => i.StockQuantity))" Sortable="true" Align="Align.Center">
-                            <span class="badge rounded-pill px-3 py-2 fs-6 @(item.StockQuantity == 0 ? "bg-danger" : item.IsLowStock ? "bg-warning text-dark" : "bg-success")">
-                                @item.StockQuantity
-                            </span>
-                        </TemplateColumn>
-
-                        <!-- Reorder Threshold -->
-                        <PropertyColumn Property="@(i => i.ReorderLevel)" Title="Reorder Level" Sortable="true" Align="Align.Center" />
-
-                        <!-- Actions Column -->
-                        <TemplateColumn Context="item" Title="Stock Actions" Align="Align.Right">
-                            <button class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-semibold me-2" @onclick="() => OpenAdjustModal(item)">
-                                Adjust Stock / Restock
-                            </button>
-                        </TemplateColumn>
-                    </QuickGrid>
+            <!-- Bootstrap Pagination Bar -->
+            <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center pt-3 mt-1 border-top gap-3">
+                <div class="text-secondary small fw-medium">
+                    @GetShowingRangeText()
                 </div>
-            }
-        </div>
-        <div class="card-footer bg-white border-top-0 p-3">
-            <Paginator State="@pagination" />
-        </div>
+
+                <nav aria-label="Inventory table pagination">
+                    <ul class="pagination mb-0">
+                        <li class="page-item @(pagination.CurrentPageIndex == 0 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex - 1)" disabled="@(pagination.CurrentPageIndex == 0)" aria-label="Previous">
+                                Previous
+                            </button>
+                        </li>
+
+                        @for (int i = 0; i < TotalPages; i++)
+                        {
+                            var pageIndex = i;
+                            var isActive = pagination.CurrentPageIndex == pageIndex;
+                            <li class="page-item @(isActive ? "active" : "")" aria-current="@(isActive ? "page" : null)">
+                                <button type="button" class="page-link" @onclick="() => GoToPage(pageIndex)">
+                                    @(pageIndex + 1)
+                                </button>
+                            </li>
+                        }
+
+                        <li class="page-item @(pagination.CurrentPageIndex >= TotalPages - 1 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex + 1)" disabled="@(pagination.CurrentPageIndex >= TotalPages - 1)" aria-label="Next">
+                                Next
+                            </button>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        }
     </div>
 </div>
 
 <!-- Restock / Adjust Stock Modal -->
 @if (isAdjustModalOpen && activeItem != null)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog">
-        <div class="modal-dialog modal-dialog-centered">
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <EditForm Model="@adjustmentModel" OnValidSubmit="SaveStockAdjustment" class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
-                <div class="modal-header border-bottom px-4 py-3">
-                    <h5 class="fw-bold mb-0">Adjust Stock — @activeItem.ProductName</h5>
-                    <button type="button" class="btn-close" @onclick="CloseAdjustModal"></button>
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Adjust Stock — @activeItem.ProductName</h5>
+                        <small class="text-secondary" style="font-size: 0.85rem;">Modify available stock count and reorder alert threshold</small>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseAdjustModal" aria-label="Close"></button>
                 </div>
+                
                 <div class="modal-body px-4 py-3">
-                    <div class="mb-3 p-3 bg-light rounded-3 border">
-                        <div class="row">
+                    <div class="mb-3 p-3 bg-light rounded border">
+                        <div class="row g-2">
                             <div class="col-6">
-                                <small class="text-secondary d-block">Current Available Stock</small>
+                                <small class="text-secondary d-block fw-semibold" style="font-size: 0.75rem;">Current Available Stock</small>
                                 <span class="fw-bold fs-5 text-dark">@activeItem.StockQuantity</span>
                             </div>
                             <div class="col-6">
-                                <small class="text-secondary d-block">Category</small>
-                                <span class="fw-semibold text-dark">@activeItem.CategoryName</span>
+                                <small class="text-secondary d-block fw-semibold" style="font-size: 0.75rem;">Category</small>
+                                <span class="fw-semibold text-dark">@(string.IsNullOrWhiteSpace(activeItem.CategoryName) ? "—" : activeItem.CategoryName)</span>
                             </div>
                         </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold small">Adjustment Action</label>
-                        <InputSelect @bind-Value="adjustmentModel.AdjustmentType" class="form-select rounded-3">
-                            <option value="Add">Add Stock / Restock (+)</option>
-                            <option value="Deduct">Deduct / Wastage (-)</option>
-                            <option value="Set">Set Exact Quantity (=)</option>
-                        </InputSelect>
-                    </div>
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label text-dark fw-semibold small mb-1">Adjustment Action <span class="text-danger">*</span></label>
+                            <InputSelect @bind-Value="adjustmentModel.AdjustmentType" class="form-select rounded">
+                                <option value="Add">Add Stock / Restock (+)</option>
+                                <option value="Deduct">Deduct / Wastage (-)</option>
+                                <option value="Set">Set Exact Quantity (=)</option>
+                            </InputSelect>
+                        </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold small">Quantity</label>
-                        <InputNumber @bind-Value="adjustmentModel.Quantity" class="form-control rounded-3" min="1" />
-                    </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label text-dark fw-semibold small mb-1">Quantity <span class="text-danger">*</span></label>
+                            <InputNumber @bind-Value="adjustmentModel.Quantity" class="form-control rounded" min="1" />
+                        </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold small">Reorder Threshold Level</label>
-                        <InputNumber @bind-Value="adjustmentModel.ReorderLevel" class="form-control rounded-3" min="0" />
-                        <small class="text-muted">Trigger low stock alert when quantity drops to this value.</small>
-                    </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label text-dark fw-semibold small mb-1">Reorder Threshold Level</label>
+                            <InputNumber @bind-Value="adjustmentModel.ReorderLevel" class="form-control rounded" min="0" />
+                        </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold small">Notes / Reason</label>
-                        <InputText @bind-Value="adjustmentModel.Reason" class="form-control rounded-3" placeholder="e.g. Supplier Restock, Stock Count Audit, Damaged Goods" />
+                        <div class="col-12">
+                            <label class="form-label text-dark fw-semibold small mb-1">Notes / Reason</label>
+                            <InputText @bind-Value="adjustmentModel.Reason" class="form-control rounded" placeholder="e.g. Supplier Restock, Audit, Damaged Goods" />
+                        </div>
                     </div>
                 </div>
-                <div class="modal-footer border-top bg-light px-4 py-3">
-                    <button type="button" class="btn btn-outline-secondary rounded-pill px-4" @onclick="CloseAdjustModal">Cancel</button>
-                    <button type="submit" class="btn btn-primary rounded-pill px-4 fw-bold" disabled="@isSaving">Save Stock</button>
+
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-light border px-4 py-2 fw-semibold text-secondary" @onclick="CloseAdjustModal">Cancel</button>
+                    <button type="submit" class="btn btn-primary px-4 py-2 fw-bold shadow-sm" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                            <span>Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Save Adjustment</span>
+                        }
+                    </button>
                 </div>
             </EditForm>
         </div>
@@ -241,6 +311,25 @@
                                          (i.CategoryName != null && i.CategoryName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)));
             }
             return query;
+        }
+    }
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)(FilteredInventory?.Count() ?? 0) / pagination.ItemsPerPage));
+
+    private string GetShowingRangeText()
+    {
+        var total = FilteredInventory?.Count() ?? 0;
+        if (total == 0) return "Showing 0 items";
+        int start = (pagination.CurrentPageIndex * pagination.ItemsPerPage) + 1;
+        int end = Math.Min(start + pagination.ItemsPerPage - 1, total);
+        return $"Showing {start}–{end} of {total} items";
+    }
+
+    private async Task GoToPage(int pageIndex)
+    {
+        if (pageIndex >= 0 && pageIndex < TotalPages)
+        {
+            await pagination.SetCurrentPageIndexAsync(pageIndex);
         }
     }
 
@@ -292,13 +381,89 @@
 
     private async Task SaveStockAdjustment()
     {
-        isSaving = true;
-        var success = await InventoryService.AdjustStockAsync(adjustmentModel);
-        isSaving = false;
-        if (success)
+        if (adjustmentModel.Quantity < 0 || (adjustmentModel.AdjustmentType != "Set" && adjustmentModel.Quantity == 0))
         {
-            isAdjustModalOpen = false;
-            await LoadInventory();
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Invalid Quantity",
+                Text = "Please enter a valid quantity greater than zero.",
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
+        var actionText = adjustmentModel.AdjustmentType switch
+        {
+            "Add" => $"add {adjustmentModel.Quantity} units to",
+            "Deduct" => $"deduct {adjustmentModel.Quantity} units from",
+            "Set" => $"set stock to {adjustmentModel.Quantity} units for",
+            _ => "adjust stock for"
+        };
+
+        var productName = activeItem?.ProductName ?? "this product";
+
+        var confirmResult = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Confirm Stock Adjustment",
+            Text = $"Are you sure you want to {actionText} \"{productName}\"?",
+            Icon = SweetAlertIcon.Question,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#2563eb",
+            CancelButtonColor = "#64748b",
+            ConfirmButtonText = "Yes, save adjustment",
+            CancelButtonText = "Cancel"
+        });
+
+        if (!confirmResult.IsConfirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+            var success = await InventoryService.AdjustStockAsync(adjustmentModel);
+            if (success)
+            {
+                isAdjustModalOpen = false;
+                await LoadInventory();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Stock Adjusted!",
+                    Text = "Inventory level has been updated successfully.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Failed",
+                    Text = "Could not update stock. Please try again.",
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "An error occurred: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        finally
+        {
+            isSaving = false;
         }
     }
 
