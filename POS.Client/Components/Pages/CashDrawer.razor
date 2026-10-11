@@ -1,0 +1,25 @@
+@page "/cash-drawer"
+@inject PosSessionService Session
+@inject NavigationManager Navigation
+
+@if (!Session.IsAuthenticated)
+{
+    Navigation.NavigateTo("/login");
+}
+else
+{
+    <div class="p-4">
+        <h3 class="fw-bold text-dark mb-1">Cash Drawer</h3>
+        <p class="text-muted small">Drawer management, cash in/out, and float balance</p>
+        <div class="card p-4 border-0 shadow-sm rounded-3 mt-3">
+            <div class="text-center py-5 text-muted">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-2 text-secondary">
+                    <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                    <circle cx="12" cy="12" r="2"></circle>
+                    <path d="M6 12h.01M18 12h.01"></path>
+                </svg>
+                <p class="mb-0 fw-medium">Cash drawer status: Closed / Ready for shift actions.</p>
+            </div>
+        </div>
+    </div>
+}

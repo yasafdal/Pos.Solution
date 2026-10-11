@@ -1,0 +1,24 @@
+@page "/returns"
+@inject PosSessionService Session
+@inject NavigationManager Navigation
+
+@if (!Session.IsAuthenticated)
+{
+    Navigation.NavigateTo("/login");
+}
+else
+{
+    <div class="p-4">
+        <h3 class="fw-bold text-dark mb-1">Returns</h3>
+        <p class="text-muted small">Process customer refunds and item exchanges</p>
+        <div class="card p-4 border-0 shadow-sm rounded-3 mt-3">
+            <div class="text-center py-5 text-muted">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-2 text-secondary">
+                    <polyline points="1 4 1 10 7 10"></polyline>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                </svg>
+                <p class="mb-0 fw-medium">Ready to process item return by receipt number.</p>
+            </div>
+        </div>
+    </div>
+}

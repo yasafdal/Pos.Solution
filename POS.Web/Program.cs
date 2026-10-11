@@ -19,11 +19,12 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddAuthorizationCore();
 builder.Services.AddCascadingAuthenticationState();
-builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
+builder.Services.AddScoped<CustomAuthStateProvider>();
+builder.Services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<CustomAuthStateProvider>());
 
 
 builder.Services.AddScoped<IdentityRedirectManager>();
-builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
+
 
 builder.Services.AddAuthentication(options =>
     {
@@ -75,6 +76,8 @@ builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<IUomService, UomService>();
+builder.Services.AddScoped<IServiceModeService, ServiceModeService>();
+builder.Services.AddScoped<IBusinessTypeService, BusinessTypeService>();
 builder.Services.AddScoped<IProductRecipeService, ProductRecipeService>();
 builder.Services.AddScoped<IUserService, UserService>();
 
@@ -98,7 +101,10 @@ app.UseAntiforgery();
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode()
+    // Users-table authentication is restored inside the interactive circuit from
+    // protected session storage; AuthorizeRouteView enforces page authorization.
+    .AllowAnonymous();
 
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();

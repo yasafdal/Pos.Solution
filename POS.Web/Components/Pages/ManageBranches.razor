@@ -5,6 +5,8 @@
 @using Microsoft.AspNetCore.Components.QuickGrid
 @using CurrieTechnologies.Razor.SweetAlert2
 @inject IBranchService BranchService
+@inject IBusinessTypeService BusinessTypeService
+@inject IServiceModeService ServiceModeService
 @inject SweetAlertService Swal
 
 <PageTitle>Branches - POS</PageTitle>
@@ -52,6 +54,7 @@
                     <PropertyColumn Property="@(b => b.Name)" Title="Branch Name" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(b => b.Phone)" Title="Phone" Align="Align.Left" />
                     <PropertyColumn Property="@(b => b.Address)" Title="Address" Align="Align.Left" />
+                    <TemplateColumn Title="Business Type" Context="branch">@(branch.BusinessTypeName ?? "Unassigned")</TemplateColumn>
                     <PropertyColumn Property="@(b => b.TaxType)" Title="Tax Type" Align="Align.Left" />
 
                     <!-- Outlets Count -->
@@ -159,6 +162,29 @@
 
                 <!-- Modal Body -->
                 <div class="modal-body px-4 py-3">
+                    <div class="mb-3">
+                        <label for="branchBusinessType" class="form-label">Business Type</label>
+                        <InputSelect id="branchBusinessType" class="form-select" @bind-Value="currentBranch.BusinessTypeId" disabled="@(businessTypes == null)">
+                            <option value="">Unassigned</option>
+                            @foreach (var type in businessTypes ?? new List<BusinessTypeDto>())
+                            {
+                                <option value="@type.Id">@type.Type</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    @if (currentBranch.BusinessTypeId.HasValue && businessTypes?.FirstOrDefault(b => b.Id == currentBranch.BusinessTypeId)?.Type != "RETAIL")
+                    {
+                        <div class="mb-3">
+                            <label for="branchServiceMode" class="form-label">Service Mode</label>
+                            <InputSelect id="branchServiceMode" class="form-select" @bind-Value="currentBranch.ServiceModeId" disabled="@(serviceModes == null)">
+                                <option value="">Unassigned</option>
+                                @foreach (var mode in serviceModes ?? new List<ServiceModeDto>())
+                                {
+                                    <option value="@mode.ServiceModeId">@mode.Type</option>
+                                }
+                            </InputSelect>
+                        </div>
+                    }
                     <div class="row g-3">
                         <div class="col-12 col-md-4">
                             <label class="form-label text-dark fw-semibold small mb-1">Branch Code</label>
@@ -408,6 +434,9 @@
         }
     }
 
+    private List<BusinessTypeDto>? businessTypes;
+    private List<ServiceModeDto>? serviceModes;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadBranches();
@@ -417,6 +446,8 @@
     {
         try
         {
+            businessTypes = await BusinessTypeService.GetBusinessTypesAsync();
+            serviceModes = await ServiceModeService.GetServiceModesAsync();
             var rawBranches = await BranchService.GetBranchesAsync();
             branches = rawBranches.OrderByDescending(b => b.BranchId).ToList();
         }
@@ -445,6 +476,8 @@
         currentBranch = new BranchDto
         {
             BranchId = branch.BranchId,
+            BusinessTypeId = branch.BusinessTypeId,
+            ServiceModeId = branch.ServiceModeId,
             Name = branch.Name,
             Code = branch.Code,
             Address = branch.Address,

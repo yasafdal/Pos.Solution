@@ -1,0 +1,109 @@
+@page "/business-type"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject IBusinessTypeService BusinessTypeService
+@inject SweetAlertService Swal
+
+<PageTitle>Business Type - POS</PageTitle>
+<div class="w-100 py-2">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div><h2 class="fw-bold">Business Types</h2><p class="text-secondary">Manage business classifications for branches.</p></div>
+        <button class="btn btn-primary" disabled="@busy" @onclick="() => Edit(new())">Add Business Type</button>
+    </div>
+    @if (loadError != null)
+    {
+        <div class="alert alert-danger" role="alert">@loadError <button class="btn btn-link" @onclick="Load">Retry</button></div>
+    }
+    <input type="search" class="form-control mb-3" aria-label="Search business types" placeholder="Search type or description..." @bind="search" @bind:event="oninput" @bind:after="ResetPage" />
+    @if (items == null)
+    {
+        <p role="status">Loading business types...</p>
+    }
+    else
+    {
+        <div class="commercial-grid table-responsive">
+            <QuickGrid Items="@Filtered" Pagination="@pagination" Theme="commercial">
+                <PropertyColumn Property="@(x => x.Type)" Title="Type" Sortable="true" />
+                <PropertyColumn Property="@(x => x.Description)" Title="Description" Sortable="true" />
+                <TemplateColumn Title="Actions" Context="item" Align="Align.Right">
+                    <button class="btn btn-sm btn-warning me-2" aria-label="Edit Business Type" disabled="@busy" @onclick="() => Edit(item)"><i class="bi bi-pencil"></i></button>
+                    <button class="btn btn-sm btn-danger" aria-label="Delete Business Type" disabled="@busy" @onclick="() => Delete(item.Id)"><i class="bi bi-trash"></i></button>
+                </TemplateColumn>
+            </QuickGrid>
+        </div>
+        <Paginator State="@pagination" />
+    }
+</div>
+@if (editing != null)
+{
+    <div class="modal show d-block" role="dialog" aria-modal="true" aria-labelledby="businessTypeTitle" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <EditForm Model="editing" OnValidSubmit="Save" class="modal-content">
+                <DataAnnotationsValidator />
+                <div class="modal-header"><h5 id="businessTypeTitle">@(editing.Id == 0 ? "New Business Type" : "Edit Business Type")</h5></div>
+                <div class="modal-body">
+                    <ValidationSummary />
+                    <label for="businessTypeCode" class="form-label">Type</label>
+                    <InputText id="businessTypeCode" class="form-control mb-3" @bind-Value="editing.Type" maxlength="50" />
+                    <label for="businessTypeDescription" class="form-label">Description</label>
+                    <InputTextArea id="businessTypeDescription" class="form-control" @bind-Value="editing.Description" maxlength="250" />
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" disabled="@busy" @onclick="() => editing = null">Cancel</button>
+                    <button type="submit" class="btn btn-primary" disabled="@busy">Save</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    private List<BusinessTypeDto>? items;
+    private BusinessTypeDto? editing;
+    private string search = "";
+    private string? loadError;
+    private bool busy;
+    private readonly PaginationState pagination = new() { ItemsPerPage = 10 };
+    private IQueryable<BusinessTypeDto> Filtered => (items ?? []).Where(x => x.Type.Contains(search, StringComparison.OrdinalIgnoreCase) || x.Description.Contains(search, StringComparison.OrdinalIgnoreCase)).AsQueryable();
+    protected override Task OnInitializedAsync() => Load();
+    private Task ResetPage() => pagination.SetCurrentPageIndexAsync(0);
+    private async Task Load()
+    {
+        try { items = await BusinessTypeService.GetBusinessTypesAsync(); loadError = null; await ResetPage(); }
+        catch (HttpRequestException) { loadError = "Could not load business types. Please retry."; }
+    }
+    private void Edit(BusinessTypeDto item) => editing = new() { Id = item.Id, Type = item.Type, Description = item.Description };
+    private Task Alert(string title, string text, SweetAlertIcon icon) => Swal.FireAsync(new SweetAlertOptions { Title = title, Text = text, Icon = icon });
+    private async Task Save()
+    {
+        if (busy || editing == null) return;
+        busy = true;
+        try
+        {
+            var success = editing.Id == 0 ? await BusinessTypeService.CreateBusinessTypeAsync(editing) : await BusinessTypeService.UpdateBusinessTypeAsync(editing.Id, editing);
+            if (!success) { await Alert("Save Failed", "Use a unique type (up to 50 characters) and a description (up to 250 characters). Both are required. The record may also have been removed; reload and retry.", SweetAlertIcon.Error); return; }
+            editing = null;
+            await Load();
+            await Alert("Saved", "Business type saved.", SweetAlertIcon.Success);
+        }
+        catch (HttpRequestException) { await Alert("Save Failed", "Unable to reach the API. Please retry.", SweetAlertIcon.Error); }
+        finally { busy = false; }
+    }
+    private async Task Delete(int id)
+    {
+        if (busy) return;
+        var confirm = await Swal.FireAsync(new SweetAlertOptions { Title = "Delete business type?", Text = "This cannot be undone. Types assigned to branches cannot be deleted.", Icon = SweetAlertIcon.Warning, ShowCancelButton = true, ConfirmButtonText = "Delete" });
+        if (!confirm.IsConfirmed) return;
+        busy = true;
+        try
+        {
+            if (!await BusinessTypeService.DeleteBusinessTypeAsync(id)) { await Alert("Delete Failed", "The type may be assigned to a branch or already removed. Unassign it from branches before deleting.", SweetAlertIcon.Error); return; }
+            await Load();
+            await Alert("Deleted", "Business type deleted.", SweetAlertIcon.Success);
+        }
+        catch (HttpRequestException) { await Alert("Delete Failed", "Unable to reach the API. Please retry.", SweetAlertIcon.Error); }
+        finally { busy = false; }
+    }
+}

@@ -7,6 +7,12 @@ public partial class Branch
 {
     public int BranchId { get; set; }
 
+    public int? BusinessTypeId { get; set; }
+    public virtual BusinessType? BusinessType { get; set; }
+
+    public int? ServiceModeId { get; set; }
+    public virtual ServiceMode? ServiceMode { get; set; }
+
     public string Name { get; set; } = null!;
 
     public string? Code { get; set; }

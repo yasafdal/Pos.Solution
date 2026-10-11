@@ -1,17 +1,57 @@
 ﻿@inherits LayoutComponentBase
+@inject PosSessionService Session
+@inject HttpClient Http
+@inject NavigationManager Navigation
 
 <div class="page">
-    <div class="sidebar">
-        <NavMenu />
+    @if (Session.IsAuthenticated)
+    {
+        <header class="app-header-bar d-flex justify-content-between align-items-center px-4">
+            <div class="d-flex align-items-center gap-3">
+                <button type="button" class="hamburger-btn d-flex align-items-center justify-content-center" @onclick="ToggleNavMenu" aria-label="Toggle navigation" title="Toggle Menu">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <span class="terminal-identity">@Session.Outlet!.BranchCode • @Session.Outlet.OutletName</span>
+            </div>
+            <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 fw-medium" @onclick="LockTerminal">Lock Terminal</button>
+        </header>
+    }
+
+    <div class="main-body">
+        @if (Session.IsAuthenticated && isNavVisible)
+        {
+            <div class="nav-backdrop" @onclick="ToggleNavMenu"></div>
+            <div class="sidebar shadow-lg">
+                <div @onclick="CloseNavMenu"><NavMenu /></div>
+            </div>
+        }
+
+        <main class="content-area">
+            <article class="content px-4 py-3">
+                @Body
+            </article>
+        </main>
     </div>
-
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
-
-        <article class="content px-4">
-            @Body
-        </article>
-    </main>
 </div>
+
+@code {
+    private bool isNavVisible = false;
+
+    private void CloseNavMenu() => isNavVisible = false;
+
+    private void ToggleNavMenu()
+    {
+        isNavVisible = !isNavVisible;
+    }
+
+    private void LockTerminal()
+    {
+        Session.ClearSession();
+        Http.DefaultRequestHeaders.Authorization = null;
+        Navigation.NavigateTo("/login");
+    }
+}

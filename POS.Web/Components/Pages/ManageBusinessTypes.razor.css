@@ -1,0 +1,3 @@
+ .modal { background-color: rgba(15, 23, 42, .5); }
+.commercial-grid ::deep table { width: 100%; }
+.commercial-grid ::deep th, .commercial-grid ::deep td { padding: .85rem; border-bottom: 1px solid #dee2e6; }

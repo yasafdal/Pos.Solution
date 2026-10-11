@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.58.0" />
+    <ProjectReference Include="../POS.Api/POS.Api.csproj" />
+    <ProjectReference Include="../POS.Web/POS.Web.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <RazorComponent Include="../POS.Client/Components/Pages/Login.razor" Link="ClientHost/Pages/Login.razor" />
+    <RazorComponent Include="../POS.Client/Components/Layout/AuthLayout.razor" Link="ClientHost/Layout/AuthLayout.razor" />
+    <RazorComponent Include="../POS.Client/Components/Pages/Home.razor" Link="ClientHost/Pages/Home.razor" />
+    <RazorComponent Include="../POS.Client/Components/Layout/MainLayout.razor" Link="ClientHost/Layout/MainLayout.razor" />
+    <RazorComponent Include="../POS.Client/Components/Layout/NavMenu.razor" Link="ClientHost/Layout/NavMenu.razor" />
+    <RazorComponent Include="../POS.Client/Components/Pages/NewSale.razor" Link="ClientHost/Pages/NewSale.razor" />
+    <RazorComponent Include="../POS.Client/Components/Pages/Transactions.razor" Link="ClientHost/Pages/Transactions.razor" />
+    <RazorComponent Include="../POS.Client/Components/Pages/HeldSales.razor" Link="ClientHost/Pages/HeldSales.razor" />
+    <RazorComponent Include="../POS.Client/Components/Pages/Returns.razor" Link="ClientHost/Pages/Returns.razor" />
+    <RazorComponent Include="../POS.Client/Components/Pages/CashDrawer.razor" Link="ClientHost/Pages/CashDrawer.razor" />
+    <RazorComponent Include="../POS.Client/Components/Pages/MyShift.razor" Link="ClientHost/Pages/MyShift.razor" />
+    <Compile Include="../POS.Client/Services/TerminalAddressProvider.cs" Link="ClientHost/TerminalAddressProvider.cs" />
+    <Compile Include="../POS.Client/Services/ITerminalAddressProvider.cs" Link="ClientHost/ITerminalAddressProvider.cs" />
+    <Compile Include="../POS.Client/Services/PosSessionService.cs" Link="ClientHost/PosSessionService.cs" />
+    <Compile Include="../POS.Client/Services/CartService.cs" Link="ClientHost/CartService.cs" />
+    <None Include="../POS.Client/Components/Pages/NewSale.razor.css" Link="ClientHost/Pages/NewSale.razor.css" />
+    <None Include="../POS.Client/Components/Layout/MainLayout.razor.css" Link="ClientHost/Layout/MainLayout.razor.css" />
+    <None Include="../POS.Client/Components/Layout/NavMenu.razor.css" Link="ClientHost/Layout/NavMenu.razor.css" />
+  </ItemGroup>
+</Project>

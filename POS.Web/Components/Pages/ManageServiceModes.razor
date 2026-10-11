@@ -1,0 +1,109 @@
+@page "/business-mode"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject IServiceModeService ServiceModeService
+@inject SweetAlertService Swal
+
+<PageTitle>Service Mode - POS</PageTitle>
+<div class="w-100 py-2">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div><h2 class="fw-bold">Service Modes</h2><p class="text-secondary">Manage service mode classifications for branches.</p></div>
+        <button class="btn btn-primary" disabled="@busy" @onclick="() => Edit(new())">Add Service Mode</button>
+    </div>
+    @if (loadError != null)
+    {
+        <div class="alert alert-danger" role="alert">@loadError <button class="btn btn-link" @onclick="Load">Retry</button></div>
+    }
+    <input type="search" class="form-control mb-3" aria-label="Search service modes" placeholder="Search type or description..." @bind="search" @bind:event="oninput" @bind:after="ResetPage" />
+    @if (items == null)
+    {
+        <p role="status">Loading service modes...</p>
+    }
+    else
+    {
+        <div class="commercial-grid table-responsive">
+            <QuickGrid Items="@Filtered" Pagination="@pagination" Theme="commercial">
+                <PropertyColumn Property="@(x => x.Type)" Title="Type" Sortable="true" />
+                <PropertyColumn Property="@(x => x.Description)" Title="Description" Sortable="true" />
+                <TemplateColumn Title="Actions" Context="item" Align="Align.Right">
+                    <button class="btn btn-sm btn-warning me-2" aria-label="Edit Service Mode" disabled="@busy" @onclick="() => Edit(item)"><i class="bi bi-pencil"></i></button>
+                    <button class="btn btn-sm btn-danger" aria-label="Delete Service Mode" disabled="@busy" @onclick="() => Delete(item.ServiceModeId)"><i class="bi bi-trash"></i></button>
+                </TemplateColumn>
+            </QuickGrid>
+        </div>
+        <Paginator State="@pagination" />
+    }
+</div>
+@if (editing != null)
+{
+    <div class="modal show d-block" role="dialog" aria-modal="true" aria-labelledby="serviceModeTitle" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <EditForm Model="editing" OnValidSubmit="Save" class="modal-content">
+                <DataAnnotationsValidator />
+                <div class="modal-header"><h5 id="serviceModeTitle">@(editing.ServiceModeId == 0 ? "New Service Mode" : "Edit Service Mode")</h5></div>
+                <div class="modal-body">
+                    <ValidationSummary />
+                    <label for="serviceModeType" class="form-label">Type</label>
+                    <InputText id="serviceModeType" class="form-control mb-3" @bind-Value="editing.Type" maxlength="50" />
+                    <label for="serviceModeDescription" class="form-label">Description</label>
+                    <InputTextArea id="serviceModeDescription" class="form-control" @bind-Value="editing.Description" maxlength="255" />
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" disabled="@busy" @onclick="() => editing = null">Cancel</button>
+                    <button type="submit" class="btn btn-primary" disabled="@busy">Save</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ServiceModeDto>? items;
+    private ServiceModeDto? editing;
+    private string search = "";
+    private string? loadError;
+    private bool busy;
+    private readonly PaginationState pagination = new() { ItemsPerPage = 10 };
+    private IQueryable<ServiceModeDto> Filtered => (items ?? []).Where(x => x.Type.Contains(search, StringComparison.OrdinalIgnoreCase) || x.Description.Contains(search, StringComparison.OrdinalIgnoreCase)).AsQueryable();
+    protected override Task OnInitializedAsync() => Load();
+    private Task ResetPage() => pagination.SetCurrentPageIndexAsync(0);
+    private async Task Load()
+    {
+        try { items = await ServiceModeService.GetServiceModesAsync(); loadError = null; await ResetPage(); }
+        catch (HttpRequestException) { loadError = "Could not load service modes. Please retry."; }
+    }
+    private void Edit(ServiceModeDto item) => editing = new() { ServiceModeId = item.ServiceModeId, Type = item.Type, Description = item.Description };
+    private Task Alert(string title, string text, SweetAlertIcon icon) => Swal.FireAsync(new SweetAlertOptions { Title = title, Text = text, Icon = icon });
+    private async Task Save()
+    {
+        if (busy || editing == null) return;
+        busy = true;
+        try
+        {
+            var success = editing.ServiceModeId == 0 ? await ServiceModeService.CreateServiceModeAsync(editing) : await ServiceModeService.UpdateServiceModeAsync(editing.ServiceModeId, editing);
+            if (!success) { await Alert("Save Failed", "Use a unique type (up to 50 characters) and a description (up to 255 characters). Both are required. The record may also have been removed; reload and retry.", SweetAlertIcon.Error); return; }
+            editing = null;
+            await Load();
+            await Alert("Saved", "Service mode saved.", SweetAlertIcon.Success);
+        }
+        catch (HttpRequestException) { await Alert("Save Failed", "Unable to reach the API. Please retry.", SweetAlertIcon.Error); }
+        finally { busy = false; }
+    }
+    private async Task Delete(int id)
+    {
+        if (busy) return;
+        var confirm = await Swal.FireAsync(new SweetAlertOptions { Title = "Delete service mode?", Text = "This cannot be undone. Modes assigned to branches cannot be deleted.", Icon = SweetAlertIcon.Warning, ShowCancelButton = true, ConfirmButtonText = "Delete" });
+        if (!confirm.IsConfirmed) return;
+        busy = true;
+        try
+        {
+            if (!await ServiceModeService.DeleteServiceModeAsync(id)) { await Alert("Delete Failed", "The mode may be assigned to a branch or already removed. Unassign it from branches before deleting.", SweetAlertIcon.Error); return; }
+            await Load();
+            await Alert("Deleted", "Service mode deleted.", SweetAlertIcon.Success);
+        }
+        catch (HttpRequestException) { await Alert("Delete Failed", "Unable to reach the API. Please retry.", SweetAlertIcon.Error); }
+        finally { busy = false; }
+    }
+}

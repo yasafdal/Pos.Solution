@@ -24,6 +24,11 @@ namespace POS.Api.Controllers
                 .Select(b => new BranchDto
                 {
                     BranchId = b.BranchId,
+                    BusinessTypeId = b.BusinessTypeId,
+                    BusinessTypeName = b.BusinessType != null ? b.BusinessType.Type : null,
+                    ServiceModeId = b.ServiceModeId,
+                    ServiceModeName = b.ServiceMode != null ? b.ServiceMode.Type : null,
+                    TrackInventory = b.TrackInventory,
                     Name = b.Name,
                     Code = b.Code,
                     Address = b.Address,
@@ -52,8 +57,12 @@ namespace POS.Api.Controllers
         [HttpPost]
         public async Task<ActionResult<BranchDto>> CreateBranch(BranchDto dto)
         {
+            if (dto.BusinessTypeId.HasValue && !await _context.BusinessTypes.AnyAsync(x => x.Id == dto.BusinessTypeId))
+                return BadRequest("The selected business type does not exist.");
             var branch = new Branch
             {
+                BusinessTypeId = dto.BusinessTypeId,
+                ServiceModeId = dto.ServiceModeId,
                 Name = dto.Name,
                 Code = dto.Code,
                 Address = dto.Address,
@@ -76,6 +85,10 @@ namespace POS.Api.Controllers
             var branch = await _context.Branches.FindAsync(id);
             if (branch == null) return NotFound();
 
+            if (dto.BusinessTypeId.HasValue && !await _context.BusinessTypes.AnyAsync(x => x.Id == dto.BusinessTypeId))
+                return BadRequest("The selected business type does not exist.");
+            branch.BusinessTypeId = dto.BusinessTypeId;
+            branch.ServiceModeId = dto.ServiceModeId;
             branch.Name = dto.Name;
             branch.Code = dto.Code;
             branch.Address = dto.Address;

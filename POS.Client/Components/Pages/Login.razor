@@ -1,0 +1,438 @@
+@page "/login"
+@layout Layout.AuthLayout
+@inject IUserService UserService
+@inject IOutletService OutletService
+@inject ITerminalAddressProvider TerminalAddress
+@inject PosSessionService Session
+@inject NavigationManager Navigation
+@inject HttpClient Http
+
+<div class="pos-login-card">
+    <!-- POS Terminal Branding -->
+    <div class="pos-header">
+        <div class="pos-logo-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+        </div>
+        <h2 class="pos-title">POS Terminal</h2>
+        <p class="pos-subtitle">Enter your 4-digit PIN to begin</p>
+    </div>
+
+    <!-- Error Alert -->
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="pos-error-badge">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span>@errorMessage</span>
+        </div>
+    }
+
+    <!-- PIN Visual Dots -->
+    <div class="pin-display">
+        @for (int i = 0; i < 4; i++)
+        {
+            var isFilled = pin.Length > i;
+            <div class="pin-dot @(isFilled ? "filled" : "")"></div>
+        }
+    </div>
+
+    <!-- Hidden Input for Physical Keyboard / Barcode Support -->
+    <input @ref="hiddenInput"
+           type="password"
+           inputmode="numeric"
+           maxlength="4"
+           @bind:get="pin"
+           @bind:set="OnInputChanged"
+           @bind:event="oninput"
+           readonly="@isLoading"
+           @onkeydown="OnKeyDown"
+           class="hidden-pin-input"
+           autofocus />
+
+    <!-- POS Numpad Grid -->
+    <div class="numpad-grid">
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('1')" disabled="@isLoading">1</button>
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('2')" disabled="@isLoading">2</button>
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('3')" disabled="@isLoading">3</button>
+
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('4')" disabled="@isLoading">4</button>
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('5')" disabled="@isLoading">5</button>
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('6')" disabled="@isLoading">6</button>
+
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('7')" disabled="@isLoading">7</button>
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('8')" disabled="@isLoading">8</button>
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('9')" disabled="@isLoading">9</button>
+
+        <button type="button" class="numpad-btn action-btn clear-btn" @onclick="ClearPin" disabled="@isLoading">
+            <span>C</span>
+        </button>
+        <button type="button" class="numpad-btn" @onclick="() => AppendDigit('0')" disabled="@isLoading">0</button>
+        <button type="button" class="numpad-btn action-btn backspace-btn" @onclick="Backspace" disabled="@isLoading">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path>
+                <line x1="18" y1="9" x2="12" y2="15"></line>
+                <line x1="12" y1="9" x2="18" y2="15"></line>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Status / Loading -->
+    <div class="pos-footer">
+        @if (isLoading)
+        {
+            <div class="loading-indicator">
+                <span class="spinner"></span>
+                <span>Authenticating cashier...</span>
+            </div>
+        }
+        else
+        {
+            <div class="helper-text">Tap keypad or use physical numpad</div>
+        }
+    </div>
+</div>
+
+<style>
+    .pos-login-card {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 1.5rem;
+        padding: 2.5rem 2rem;
+        width: 100%;
+        max-width: 420px;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        color: #f8fafc;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        user-select: none;
+    }
+
+    .pos-header {
+        text-align: center;
+        margin-bottom: 1.5rem;
+    }
+
+    .pos-logo-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 1rem;
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1rem;
+        color: #ffffff;
+        box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.4);
+    }
+
+    .pos-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin: 0;
+        color: #f8fafc;
+        letter-spacing: -0.025em;
+    }
+
+    .pos-subtitle {
+        font-size: 0.9rem;
+        color: #94a3b8;
+        margin: 0.35rem 0 0;
+    }
+
+    .pos-error-badge {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        color: #fca5a5;
+        font-size: 0.85rem;
+        font-weight: 500;
+        padding: 0.5rem 1rem;
+        border-radius: 0.75rem;
+        margin-bottom: 1.25rem;
+        animation: shake 0.3s ease-in-out;
+    }
+
+    @@keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-6px); }
+        75% { transform: translateX(6px); }
+    }
+
+    .pin-display {
+        display: flex;
+        justify-content: center;
+        gap: 1.25rem;
+        margin-bottom: 2rem;
+        padding: 0.75rem 0;
+    }
+
+    .pin-dot {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid #475569;
+        background: transparent;
+        transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .pin-dot.filled {
+        background: #3b82f6;
+        border-color: #60a5fa;
+        transform: scale(1.15);
+        box-shadow: 0 0 12px rgba(59, 130, 246, 0.6);
+    }
+
+    .hidden-pin-input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+        width: 0;
+        height: 0;
+    }
+
+    .numpad-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.85rem;
+        width: 100%;
+        max-width: 320px;
+    }
+
+    .numpad-btn {
+        height: 68px;
+        border-radius: 1rem;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: #f8fafc;
+        font-size: 1.5rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.12s ease;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    }
+
+    .numpad-btn:hover:not(:disabled) {
+        background: #1e293b;
+        border-color: #475569;
+        transform: translateY(-2px);
+    }
+
+    .numpad-btn:active:not(:disabled) {
+        background: #334155;
+        transform: translateY(1px);
+    }
+
+    .numpad-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .action-btn {
+        font-size: 1.15rem;
+    }
+
+    .clear-btn {
+        color: #f87171;
+        background: rgba(239, 68, 68, 0.1);
+        border-color: rgba(239, 68, 68, 0.25);
+    }
+
+    .clear-btn:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.2);
+        border-color: rgba(239, 68, 68, 0.4);
+    }
+
+    .backspace-btn {
+        color: #94a3b8;
+    }
+
+    .pos-footer {
+        margin-top: 1.75rem;
+        min-height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .helper-text {
+        font-size: 0.8rem;
+        color: #64748b;
+    }
+
+    .loading-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #60a5fa;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+
+    .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(96, 165, 250, 0.25);
+        border-top-color: #60a5fa;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+
+@code {
+    private string pin = string.Empty;
+    private bool isLoading = false;
+    private string? errorMessage;
+    private ElementReference hiddenInput;
+    private bool restoreInputFocus;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender || restoreInputFocus)
+        {
+            restoreInputFocus = false;
+            try
+            {
+                await hiddenInput.FocusAsync();
+            }
+            catch
+            {
+                // In headless tests or non-JS environments, ignore focus failure
+            }
+        }
+    }
+
+    private async Task AppendDigit(char digit)
+    {
+        if (pin.Length >= 4 || isLoading) return;
+
+        restoreInputFocus = true;
+        errorMessage = null;
+        pin += digit;
+
+        if (pin.Length == 4)
+        {
+            await SubmitPinAsync();
+        }
+    }
+
+    private void ClearPin()
+    {
+        if (isLoading) return;
+        restoreInputFocus = true;
+        pin = string.Empty;
+        errorMessage = null;
+    }
+
+    private void Backspace()
+    {
+        if (isLoading) return;
+        restoreInputFocus = true;
+        if (pin.Length > 0) pin = pin[..^1];
+        errorMessage = null;
+    }
+
+    private async Task OnInputChanged(string inputVal)
+    {
+        if (isLoading) return;
+        var digitsOnly = new string(inputVal.Where(char.IsDigit).Take(4).ToArray());
+        pin = digitsOnly;
+        errorMessage = null;
+
+        if (pin.Length == 4)
+        {
+            await SubmitPinAsync();
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (isLoading) return;
+
+        // Native input owns digits and deletions; handling them here as well
+        // would process the same physical keystroke twice.
+        if (e.Key is "Escape")
+        {
+            ClearPin();
+        }
+        else if (e.Key is "Enter" && pin.Length == 4)
+        {
+            await SubmitPinAsync();
+        }
+    }
+
+    private async Task SubmitPinAsync()
+    {
+        if (string.IsNullOrWhiteSpace(pin) || isLoading) return;
+
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var authResult = await UserService.PinLoginAsync(pin);
+
+            if (authResult != null)
+            {
+                var (token, username, role) = authResult.Value;
+
+                var address = await TerminalAddress.GetAddressAsync();
+                var outlet = await OutletService.ResolveTerminalAsync(address, token);
+                if (outlet == null)
+                {
+                    errorMessage = "This IP address is not listed";
+                    return;
+                }
+                Session.SetSession(token, username, role, outlet);
+
+                // Set token for future API requests
+                Http.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+                // Navigate to main POS dashboard
+                Navigation.NavigateTo("/");
+            }
+            else
+            {
+                errorMessage = "Invalid PIN. Please try again.";
+                pin = string.Empty;
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception)
+        {
+            errorMessage = "Server error. Ensure the POS API is running.";
+            pin = string.Empty;
+        }
+        finally
+        {
+            if (errorMessage != null)
+            {
+                Session.ClearSession();
+                Http.DefaultRequestHeaders.Authorization = null;
+                pin = string.Empty;
+            }
+            isLoading = false;
+            restoreInputFocus = true;
+        }
+    }
+}

@@ -16,6 +16,21 @@ namespace POS.Shared.Services
             _http = http;
         }
 
+        public async Task<(string Token, string Username, string Role)?> PinLoginAsync(string pinCode)
+        {
+            var response = await _http.PostAsJsonAsync("api/Auth/pin-login", new PinLoginDto { PinCode = pinCode });
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var result = await response.Content.ReadFromJsonAsync<PinLoginResponse>();
+            if (result == null || string.IsNullOrEmpty(result.Token))
+                return null;
+
+            return (result.Token, result.Username, result.Role);
+        }
+
+        private sealed record PinLoginResponse(string Token, string Username, string Role);
+
         public async Task<List<UserDto>> GetUsersAsync()
         {
             return await _http.GetFromJsonAsync<List<UserDto>>("api/Users") ?? new();

@@ -27,8 +27,15 @@ namespace POS.Api.Controllers
         {
             var user = await _context.Users.SingleOrDefaultAsync(u => u.Username == request.Username);
 
-            // Verify User exists and password matches the BCrypt hash
-            if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+            try
+            {
+                // Verify User exists and password matches the BCrypt hash
+                if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+                {
+                    return Unauthorized("Invalid username or password.");
+                }
+            }
+            catch (BCrypt.Net.SaltParseException)
             {
                 return Unauthorized("Invalid username or password.");
             }
@@ -57,5 +64,46 @@ namespace POS.Api.Controllers
 
             return Ok(new { Token = jwt });
         }
+
+        [HttpPost("pin-login")]
+        public async Task<IActionResult> PinLogin([FromBody] PinLoginDto request)
+        {
+            if (string.IsNullOrWhiteSpace(request?.PinCode))
+            {
+                return BadRequest("PIN code is required.");
+            }
+
+            var user = await _context.Users.SingleOrDefaultAsync(u => u.PinCode == request.PinCode);
+
+            if (user == null)
+            {
+                return Unauthorized("Invalid PIN.");
+            }
+
+            // Create the Token Claims
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+                new Claim(ClaimTypes.Name, user.Username),
+                new Claim(ClaimTypes.Role, user.Role)
+            };
+
+            // Generate Token
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var token = new JwtSecurityToken(
+                issuer: _configuration["Jwt:Issuer"],
+                audience: _configuration["Jwt:Audience"],
+                claims: claims,
+                expires: DateTime.Now.AddHours(8),
+                signingCredentials: creds
+            );
+
+            var jwt = new JwtSecurityTokenHandler().WriteToken(token);
+
+            return Ok(new { Token = jwt, Username = user.Username, Role = user.Role });
+        }
+
     }
 }

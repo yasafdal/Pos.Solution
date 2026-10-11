@@ -1,6 +1,8 @@
 ﻿using CurrieTechnologies.Razor.SweetAlert2;
 using Microsoft.Extensions.Logging;
 using POS.Shared.Interfaces;
+using POS.Shared.Services;
+using POS.Client.Services;
 
 namespace POS.Client
 {
@@ -30,6 +32,26 @@ namespace POS.Client
 
             //plugins
             builder.Services.AddSweetAlert2();
+
+            // Services
+            builder.Services.AddSingleton<PosSessionService>();
+            builder.Services.AddScoped<CartService>();
+            builder.Services.AddScoped<IUserService, UserService>();
+            builder.Services.AddScoped<IOutletService, OutletService>();
+            builder.Services.AddScoped<ICategoryService, CategoryService>();
+            builder.Services.AddScoped<IProductService, ProductService>();
+#if DEBUG
+            // Development only: match Outlets.DeviceIdentifier while the API stays on localhost.
+            // Set to null to restore OS route detection. Never included in Release builds.
+            const string? developmentTerminalIp = "192.168.1.8";
+            builder.Services.AddScoped<ITerminalAddressProvider>(sp =>
+                new TerminalAddressProvider(sp.GetRequiredService<HttpClient>())
+                {
+                    DevelopmentAddressOverride = developmentTerminalIp
+                });
+#else
+            builder.Services.AddScoped<ITerminalAddressProvider, TerminalAddressProvider>();
+#endif
 
             return builder.Build();
         }
