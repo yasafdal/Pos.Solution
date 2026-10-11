@@ -19,6 +19,8 @@ public partial class Branch
 
     public string TaxType { get; set; } = null!;
 
+    public bool TrackInventory { get; set; }
+
     public virtual ICollection<BranchInventory> BranchInventories { get; set; } = new List<BranchInventory>();
 
     public virtual ICollection<Outlet> Outlets { get; set; } = new List<Outlet>();

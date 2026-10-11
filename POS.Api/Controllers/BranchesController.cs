@@ -59,7 +59,8 @@ namespace POS.Api.Controllers
                 Address = dto.Address,
                 Phone = dto.Phone,
                 TaxType = dto.TaxType,
-                IsActive = dto.IsActive
+                IsActive = dto.IsActive,
+                TrackInventory = dto.TrackInventory
             };
 
             _context.Branches.Add(branch);
@@ -81,6 +82,7 @@ namespace POS.Api.Controllers
             branch.Phone = dto.Phone;
             branch.TaxType = dto.TaxType;
             branch.IsActive = dto.IsActive;
+            branch.TrackInventory = dto.TrackInventory;
 
             await _context.SaveChangesAsync();
             return NoContent();

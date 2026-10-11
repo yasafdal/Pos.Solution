@@ -8,6 +8,8 @@ using POS.Shared.Services;
 using POS.Web.Components;
 using POS.Web.Components.Account;
 using POS.Web.Data;
+using Microsoft.AspNetCore.Components.Authorization;
+using POS.Web.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,7 +17,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+builder.Services.AddAuthorizationCore();
 builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthStateProvider>();
+
+
 builder.Services.AddScoped<IdentityRedirectManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 
@@ -40,11 +46,20 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddSignInManager()
     .AddDefaultTokenProviders();
 
-builder.Services.AddScoped(_ => new HttpClient
+builder.Services.AddScoped(_ =>
 {
-    BaseAddress = new Uri(
-        builder.Configuration["ApiBaseUrl"]
-        ?? throw new InvalidOperationException("ApiBaseUrl is missing."))
+    var handler = new HttpClientHandler();
+
+    // Ignore SSL certificate errors in development
+    handler.ServerCertificateCustomValidationCallback =
+        (message, cert, chain, errors) => true;
+
+    return new HttpClient(handler)
+    {
+        BaseAddress = new Uri(
+            builder.Configuration["ApiBaseUrl"]
+            ?? throw new InvalidOperationException("ApiBaseUrl is missing."))
+    };
 });
 
 //extensions
@@ -61,6 +76,7 @@ builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<IUomService, UomService>();
 builder.Services.AddScoped<IProductRecipeService, ProductRecipeService>();
+builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
 
