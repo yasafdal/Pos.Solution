@@ -1,0 +1,17 @@
+﻿@inject NavigationManager NavManager
+
+<div class="p-5 text-center">
+    <h4>Redirecting to Login...</h4>
+    <p>If you are not redirected automatically, <a href="/login">click here</a>.</p>
+</div>
+
+@code {
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // forceLoad: true forces the browser to physically reload the page at the new URL
+            NavManager.NavigateTo("/login", forceLoad: true);
+        }
+    }
+}

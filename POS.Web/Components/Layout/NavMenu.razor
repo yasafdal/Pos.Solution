@@ -1,9 +1,10 @@
 @implements IDisposable
-
 @inject NavigationManager NavigationManager
+@using Microsoft.AspNetCore.Components.Authorization
 
 <nav class="mt-2" aria-label="Main navigation">
     <ul class="nav sidebar-menu flex-column" data-lte-toggle="treeview" role="menu" data-accordion="false">
+        
         <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1">Navigation</li>
         <li class="nav-item">
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All" title="Dashboard">
@@ -25,13 +26,13 @@
                 <p>Products</p>
             </NavLink>
         </li>
-        <li>
+        <li class="nav-item">
             <NavLink class="nav-link" href="branches" Match="NavLinkMatch.Prefix" title="Branches">
                 <i class="nav-icon bi bi-shop"></i>
                 <p>Branches</p>
             </NavLink>
         </li>
-        <li>
+        <li class="nav-item">
             <NavLink class="nav-link" href="inventory" Match="NavLinkMatch.Prefix" title="Inventory & Stock">
                 <i class="nav-icon bi bi-box-seam"></i>
                 <p>Inventory & Stock</p>
@@ -39,56 +40,23 @@
         </li>
 
         <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Settings</li>
-        <NavLink class="nav-link" href="uom" Match="NavLinkMatch.Prefix" title="UOM">
-            <i class="nav-icon bi bi-rulers"></i>
-            <p>UOM</p>
-        </NavLink>
-
-        <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Security</li>
         <li class="nav-item">
-            <NavLink class="nav-link" href="auth" title="Auth Required">
-                <i class="nav-icon bi bi-shield-lock-fill"></i>
-                <p>Auth Required</p>
+            <NavLink class="nav-link" href="uom" Match="NavLinkMatch.Prefix" title="UOM">
+                <i class="nav-icon bi bi-rulers"></i>
+                <p>UOM</p>
             </NavLink>
         </li>
 
-
-
-        <AuthorizeView>
+        <AuthorizeView Roles="Admin, Manager">
             <Authorized>
-                <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Account</li>
+                <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Admin</li>
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="Account/Manage" title="@context.User.Identity?.Name">
-                        <i class="nav-icon bi bi-person-circle"></i>
-                        <p>@context.User.Identity?.Name</p>
+                    <NavLink class="nav-link" href="users" Match="NavLinkMatch.Prefix" title="Users">
+                        <i class="nav-icon bi bi-people"></i>
+                        <p>Users</p>
                     </NavLink>
-                </li>
-                <li class="nav-item">
-                    <form action="Account/Logout" method="post" class="m-0">
-                        <AntiforgeryToken />
-                        <input type="hidden" name="ReturnUrl" value="@currentUrl" />
-                        <button type="submit" class="nav-link btn btn-link text-start w-100 border-0" title="Logout">
-                            <i class="nav-icon bi bi-box-arrow-right text-danger"></i>
-                            <p class="text-danger mb-0">Logout</p>
-                        </button>
-                    </form>
                 </li>
             </Authorized>
-            <NotAuthorized>
-                <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Account</li>
-                <li class="nav-item">
-                    <NavLink class="nav-link" href="Account/Login" title="Login">
-                        <i class="nav-icon bi bi-box-arrow-in-right"></i>
-                        <p>Login</p>
-                    </NavLink>
-                </li>
-                <li class="nav-item">
-                    <NavLink class="nav-link" href="Account/Register" title="Register">
-                        <i class="nav-icon bi bi-person-plus-fill"></i>
-                        <p>Register</p>
-                    </NavLink>
-                </li>
-            </NotAuthorized>
         </AuthorizeView>
     </ul>
 </nav>
@@ -113,4 +81,3 @@
         NavigationManager.LocationChanged -= OnLocationChanged;
     }
 }
-

@@ -17,5 +17,7 @@ public class BranchDto
 
     public bool IsActive { get; set; } = true;
     public int OutletCount { get; set; }
+
+    public bool TrackInventory { get; set; }
     public List<OutletDto> Outlets { get; set; } = new();
 }

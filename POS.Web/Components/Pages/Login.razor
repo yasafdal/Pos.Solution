@@ -1,0 +1,88 @@
+﻿@page "/login"
+@layout Layout.AuthLayout
+@using POS.Shared.Models
+@using POS.Web.Auth
+@inject HttpClient Http
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavManager
+@attribute [AllowAnonymous]
+@inject POS.Web.Auth.CustomAuthStateProvider AuthStateProvider
+
+<div class="d-flex justify-content-center align-items-center vh-100 bg-light">
+    <div class="card shadow p-4" style="width: 25rem; border-radius: 1rem;">
+        <h3 class="text-center fw-bold mb-4">POS Login</h3>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger small py-2">@errorMessage</div>
+        }
+
+        <EditForm Model="loginModel" OnValidSubmit="HandleLogin">
+            <DataAnnotationsValidator />
+            
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Username</label>
+                <InputText @bind-Value="loginModel.Username" class="form-control" />
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label small fw-semibold">Password</label>
+                <InputText @bind-Value="loginModel.Password" type="password" class="form-control" />
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 fw-bold" disabled="@isLoading">
+                @(isLoading ? "Authenticating..." : "Sign In")
+            </button>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private LoginDto loginModel = new();
+    private bool isLoading = false;
+    private string? errorMessage;
+
+    private async Task HandleLogin()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            // Call your API login endpoint
+            var response = await Http.PostAsJsonAsync("api/auth/login", loginModel);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<TokenResponse>();
+                if (result != null && !string.IsNullOrEmpty(result.Token))
+                {
+                    // Trigger the Custom Auth State
+                    var customAuthStateProvider = (CustomAuthStateProvider)AuthStateProvider;
+                    await customAuthStateProvider.LogInAsync(result.Token);
+
+                    // Attach token to future HTTP requests
+                    Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", result.Token);
+
+                    NavManager.NavigateTo("/");
+                }
+            }
+            else
+            {
+                errorMessage = "Invalid username or password.";
+            }
+        }
+        catch(Exception ex)
+        {
+            //errorMessage = "Server error. Ensure the API is running.";
+            errorMessage = $"Error: {ex.Message} (Inner: {ex.InnerException?.Message})";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // Small helper class for the API response
+    private class TokenResponse { public string Token { get; set; } = ""; }
+}
