@@ -1,0 +1,176 @@
+@inject IReceiptService ReceiptService
+@inject IReceiptPrinter ReceiptPrinter
+
+<div class="modal show d-block receipt-preview-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-title" style="background:rgba(15,23,42,.55)">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 id="receipt-title" class="modal-title">Payment Successful</h5>
+            </div>
+            <div class="modal-body">
+                <p class="text-success fw-bold">Payment is saved. Printing does not affect your payment.</p>
+                @if (loading)
+                {
+                    <p role="status">Loading saved receipt…</p>
+                }
+                @if (error != null)
+                {
+                    <div class="alert alert-warning" role="alert">
+                        <strong>Payment Successful — Receipt Not Printed</strong>
+                        <p class="mb-0">@error</p>
+                    </div>
+                }
+                @if (printDialogOpened)
+                {
+                    <p role="status">Print dialog opened. Select Microsoft Print to PDF or your installed thermal printer.</p>
+                }
+                @if (!string.IsNullOrEmpty(savedPdfPath))
+                {
+                    <div class="alert alert-success d-flex justify-content-between align-items-center" role="status">
+                        <div>
+                            <strong>✓ PDF Saved:</strong> <small class="text-break">@savedPdfPath</small>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-success ms-2" @onclick="OpenPdf">Open</button>
+                    </div>
+                }
+                @if (receipt != null)
+                {
+                    <article class="border rounded p-3 bg-white text-dark receipt-document">
+                        <h5 class="text-center">@receipt.BranchName</h5>
+                        <p class="text-center mb-2">@receipt.BranchAddress<br />@receipt.BranchPhone</p>
+                        <div>Branch: @receipt.BranchCode</div>
+                        <div>Terminal: @receipt.TerminalName</div>
+                        <div>Order: @receipt.OrderNumber</div>
+                        <div>Cashier: @receipt.CashierId</div>
+                        <div>Paid: @receipt.PaidAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
+                        <hr />
+                        @foreach (var item in receipt.Items)
+                        {
+                            <div class="mb-2" @key="item.OrderItemId">
+                                <div class="d-flex justify-content-between gap-3"><strong>@item.ProductName</strong><span>₱@item.LineTotal.ToString("N2")</span></div>
+                                <small>@item.Quantity.ToString("0.###") × ₱@item.UnitPrice.ToString("N2")</small>
+                                @foreach (var modifier in item.Modifiers)
+                                {
+                                    <div class="small ps-2">+ @modifier.ModifierName (₱@modifier.AdditionalPrice.ToString("N2") each)</div>
+                                }
+                            </div>
+                        }
+                        <hr />
+                        <div class="d-flex justify-content-between"><span>Subtotal</span><span>₱@receipt.Subtotal.ToString("N2")</span></div>
+                        <div class="d-flex justify-content-between"><span>Discount</span><span>₱@receipt.DiscountAmount.ToString("N2")</span></div>
+                        <div class="d-flex justify-content-between fw-bold"><span>Total</span><span>₱@receipt.TotalAmount.ToString("N2")</span></div>
+                        @foreach (var payment in receipt.Payments)
+                        {
+                            <hr />
+                            <div>@payment.PaymentMethod — ₱@payment.Amount.ToString("N2")</div>
+                            <div>Tendered: ₱@payment.AmountTendered.ToString("N2")</div>
+                            <div class="fw-bold">Change: ₱@payment.ChangeAmount.ToString("N2")</div>
+                        }
+                        <hr />
+                        <small>Transaction receipt preview — not a BIR-compliant official invoice.</small>
+                    </article>
+                }
+            </div>
+            <div class="modal-footer d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-secondary px-3 py-2" disabled="@(printing || savingPdf)" @onclick="OnClose">Skip Printing</button>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-outline-primary px-3 py-2" disabled="@(loading || printing || savingPdf)" @onclick="SavePdf">
+                        @(savingPdf ? "Saving PDF…" : "Save as PDF")
+                    </button>
+                    <button type="button" class="btn btn-primary px-4 py-2" disabled="@(loading || printing || savingPdf)" @onclick="PrintReceipt">
+                        @(printing ? "Opening printer…" : error != null ? "Retry Print" : "Print Receipt")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public long OrderId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    private ReceiptDto? receipt;
+    private string? error;
+    private bool loading;
+    private bool printing;
+    private bool savingPdf;
+    private string? savedPdfPath;
+    private bool printDialogOpened;
+    private long loadedOrderId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (loadedOrderId == OrderId) return;
+        loadedOrderId = OrderId;
+        receipt = null;
+        printDialogOpened = false;
+        savedPdfPath = null;
+        await LoadReceipt();
+    }
+
+    private async Task LoadReceipt()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            receipt = await ReceiptService.GetReceiptAsync(OrderId);
+            if (receipt == null) error = "Saved receipt could not be found. Retry receipt retrieval; do not take payment again.";
+        }
+        catch
+        {
+            error = "Unable to load the saved receipt. Check the API connection and retry printing, not payment.";
+        }
+        finally { loading = false; }
+    }
+
+    private async Task SavePdf()
+    {
+        if (savingPdf || loading) return;
+        savingPdf = true;
+        error = null;
+        savedPdfPath = null;
+        try
+        {
+            if (receipt == null) await LoadReceipt();
+            if (receipt == null) return;
+            savedPdfPath = await ReceiptPrinter.SavePdfAsync(receipt);
+            OpenPdf();
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to save PDF: {ex.Message}";
+        }
+        finally { savingPdf = false; }
+    }
+
+    private void OpenPdf()
+    {
+        if (string.IsNullOrEmpty(savedPdfPath) || !File.Exists(savedPdfPath)) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(savedPdfPath) { UseShellExecute = true });
+        }
+        catch { }
+    }
+
+    private async Task PrintReceipt()
+    {
+        if (printing || loading) return;
+        printing = true;
+        error = null;
+        printDialogOpened = false;
+        try
+        {
+            if (receipt == null) await LoadReceipt();
+            if (receipt == null) return;
+            await ReceiptPrinter.PrintAsync(receipt);
+            printDialogOpened = true;
+        }
+        catch
+        {
+            error = "The print operation could not be started. Check the printer or PDF destination, then choose Retry Print.";
+        }
+        finally { printing = false; }
+    }
+}

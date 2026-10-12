@@ -139,14 +139,145 @@ public sealed class NewSaleBrowserTests
         await page.GetByTitle("Decrease", new() { Exact = true }).ClickAsync();
         await Assertions.Expect(page.Locator(".qty-display")).ToHaveTextAsync("1");
         await proceedBtn.ClickAsync();
-        await Assertions.Expect(page.Locator(".swal2-popup")).ToBeVisibleAsync();
-        await Assertions.Expect(page.Locator(".swal2-html-container")).ToContainTextAsync("150.00");
-        await page.Locator(".swal2-confirm").ClickAsync();
-        // Payment remains a preview, not a persisted sale.
+        var paymentDialog = page.GetByRole(AriaRole.Dialog);
+        await Assertions.Expect(paymentDialog).ToContainTextAsync("150.00");
+        await paymentDialog.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
+        // Cancelling payment preserves the unpaid cart.
         await Assertions.Expect(page.Locator(".qty-display")).ToHaveTextAsync("1");
         await page.Locator(".clear-cart-btn").ClickAsync();
         await page.Locator(".swal2-confirm").ClickAsync();
         await Assertions.Expect(page.Locator(".empty-cart")).ToBeVisibleAsync();
+    }
+
+    [Fact]
+    public async Task Cash_shortcuts_set_tender_change_and_cancel_preserves_cart()
+    {
+        await using var host = await SaleHost.StartAsync();
+        await OpenSale(host);
+        var page = host.Page;
+        await page.Locator(".product-card").Filter(new() { HasText = "Blueberry Muffin" }).ClickAsync();
+        await page.Locator(".btn-proceed-payment").ClickAsync();
+        var dialog = page.GetByRole(AriaRole.Dialog);
+        await Assertions.Expect(dialog.Locator("select")).ToHaveCountAsync(0);
+        foreach (var amount in new[] { "₱100", "₱500", "₱1,000" })
+            await Assertions.Expect(dialog.GetByRole(AriaRole.Button, new() { Name = amount, Exact = true })).ToBeVisibleAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "₱500", Exact = true }).ClickAsync();
+        await Assertions.Expect(dialog.Locator("input[type=number]")).ToHaveValueAsync("500");
+        await Assertions.Expect(dialog).ToContainTextAsync("405.00");
+        await dialog.Locator("input[type=number]").FillAsync("90");
+        await Assertions.Expect(dialog.GetByRole(AriaRole.Button, new() { Name = "Confirm Payment" })).ToBeDisabledAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Exact (₱95.00)", Exact = true }).ClickAsync();
+        await Assertions.Expect(dialog.Locator("input[type=number]")).ToHaveValueAsync("95");
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.Locator(".cart-item-total")).ToHaveTextAsync("₱95.00");
+    }
+
+    [Fact]
+    public async Task Modifier_tiles_preserve_customizations_and_enforce_limits()
+    {
+        await using var host = await SaleHost.StartAsync(withModifiers: true);
+        await OpenSale(host);
+        var page = host.Page;
+        var product = page.Locator(".product-card").Filter(new() { HasText = "Iced Caramel Macchiato" });
+        await product.ClickAsync();
+        var dialog = page.GetByRole(AriaRole.Dialog);
+        await Assertions.Expect(dialog.Locator("input[type=radio], input[type=checkbox]")).ToHaveCountAsync(0);
+        var large = dialog.GetByRole(AriaRole.Button, new() { Name = "Large", Exact = true });
+        var pearls = dialog.GetByRole(AriaRole.Button, new() { Name = "Pearls", Exact = true });
+        await large.ClickAsync();
+        await Assertions.Expect(large).ToHaveAttributeAsync("aria-pressed", "true");
+        await pearls.ClickAsync();
+        await Assertions.Expect(dialog.Locator(".modal-footer")).ToContainTextAsync("200.00");
+        await pearls.ClickAsync();
+        await Assertions.Expect(pearls).ToHaveAttributeAsync("aria-pressed", "false");
+        await pearls.ClickAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Extra Shot", Exact = true }).ClickAsync();
+        var syrup = dialog.GetByRole(AriaRole.Button, new() { Name = "Syrup", Exact = true });
+        await syrup.ClickAsync();
+        await Assertions.Expect(dialog.GetByRole(AriaRole.Alert)).ToContainTextAsync("at most 2");
+        await Assertions.Expect(syrup).ToHaveAttributeAsync("aria-pressed", "false");
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Extra Shot", Exact = true }).ClickAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Add to Cart", Exact = true }).ClickAsync();
+        await Assertions.Expect(dialog.GetByRole(AriaRole.Alert)).ToContainTextAsync("Sugar");
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Half Sugar", Exact = true }).PressAsync("Space");
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Add to Cart", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.Locator(".cart-item-total")).ToHaveTextAsync("₱200.00");
+        await Assertions.Expect(page.Locator(".cart-item-modifiers")).ToContainTextAsync("Large");
+        await Assertions.Expect(page.Locator(".cart-item-modifiers")).ToContainTextAsync("Pearls");
+        await product.ClickAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "No Sugar", Exact = true }).ClickAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Add to Cart", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.Locator(".cart-item-row")).ToHaveCountAsync(2);
+        await Assertions.Expect(page.Locator(".cart-item-total")).ToHaveTextAsync(new[] { "₱200.00", "₱150.00" });
+        await product.ClickAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
+        await product.ClickAsync();
+        await dialog.GetByRole(AriaRole.Button, new() { Name = "Close", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.Locator(".cart-item-row")).ToHaveCountAsync(2);
+    }
+
+    [Fact]
+    public async Task Paid_order_offers_manual_receipt_without_repeating_payment()
+    {
+        await using var host = await SaleHost.StartAsync();
+        await OpenSale(host);
+        var page = host.Page;
+        await page.Locator(".product-card").Filter(new() { HasText = "Blueberry Muffin" }).ClickAsync();
+        await page.Locator(".btn-proceed-payment").ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Confirm Payment", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.GetByRole(AriaRole.Button, new() { Name = "Print Receipt", Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByRole(AriaRole.Button, new() { Name = "Skip Printing", Exact = true })).ToBeVisibleAsync();
+        await Assertions.Expect(page.Locator(".empty-cart")).ToBeVisibleAsync();
+        Assert.Equal(1, host.Payments.Calls);
+        Assert.Equal(0, host.Printer.Calls);
+        host.Printer.Fail = true;
+        await page.GetByRole(AriaRole.Button, new() { Name = "Print Receipt", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Payment Successful — Receipt Not Printed");
+        Assert.Equal(1, host.Payments.Calls);
+        host.Printer.Fail = false;
+        await page.GetByRole(AriaRole.Button, new() { Name = "Retry Print", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Print dialog opened");
+        Assert.Equal(2, host.Printer.Calls);
+        Assert.Equal(1, host.Payments.Calls);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Skip Printing", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.Locator(".receipt-preview-modal")).ToHaveCountAsync(0);
+    }
+
+    [Fact]
+    public async Task Receipt_loading_failure_can_retry_without_another_payment()
+    {
+        await using var host = await SaleHost.StartAsync();
+        host.Receipts.Fail = true;
+        await OpenSale(host);
+        var page = host.Page;
+        await page.Locator(".product-card").Filter(new() { HasText = "Blueberry Muffin" }).ClickAsync();
+        await page.Locator(".btn-proceed-payment").ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Confirm Payment", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("Payment Successful — Receipt Not Printed");
+        await Assertions.Expect(page.Locator(".empty-cart")).ToBeVisibleAsync();
+        Assert.Equal(1, host.Payments.Calls);
+        Assert.Equal(0, host.Printer.Calls);
+        host.Receipts.Fail = false;
+        await page.GetByRole(AriaRole.Button, new() { Name = "Retry Print", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.Locator(".receipt-document")).ToContainTextAsync("Blueberry Muffin");
+        await Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Print dialog opened");
+        Assert.Equal(1, host.Payments.Calls);
+        Assert.Equal(1, host.Printer.Calls);
+    }
+
+    [Fact]
+    public async Task Skipping_receipt_never_calls_printer_or_repeats_payment()
+    {
+        await using var host = await SaleHost.StartAsync();
+        await OpenSale(host);
+        var page = host.Page;
+        await page.Locator(".product-card").First.ClickAsync();
+        await page.Locator(".btn-proceed-payment").ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Confirm Payment", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Skip Printing", Exact = true }).ClickAsync();
+        await Assertions.Expect(page.Locator(".receipt-preview-modal")).ToHaveCountAsync(0);
+        Assert.Equal(1, host.Payments.Calls);
+        Assert.Equal(0, host.Printer.Calls);
     }
 
     private static string FindRepository()
@@ -295,12 +426,15 @@ public sealed class NewSaleBrowserTests
         public IPage Page { get; }
         public ClientPinBrowserTests.SyntheticUsers Users { get; }
         public PosSessionService Session => app.Services.GetRequiredService<PosSessionService>();
+        public SyntheticPaymentService Payments => app.Services.GetRequiredService<SyntheticPaymentService>();
+        public SyntheticPrinter Printer => app.Services.GetRequiredService<SyntheticPrinter>();
+        public SyntheticReceipts Receipts => app.Services.GetRequiredService<SyntheticReceipts>();
         public ClientPinBrowserTests.SyntheticOutlets Outlets => app.Services.GetRequiredService<ClientPinBrowserTests.SyntheticOutlets>();
 
         private SaleHost(WebApplication app, IPlaywright playwright, IBrowser browser, IPage page, ClientPinBrowserTests.SyntheticUsers users)
             => (this.app, this.playwright, this.browser, Page, Users) = (app, playwright, browser, page, users);
 
-        public static async Task<SaleHost> StartAsync(string? businessType = "FNB")
+        public static async Task<SaleHost> StartAsync(string? businessType = "FNB", bool withModifiers = false)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -320,6 +454,16 @@ public sealed class NewSaleBrowserTests
             builder.Services.AddSingleton<ICategoryService>(sp => sp.GetRequiredService<SyntheticCategories>());
             builder.Services.AddSingleton<SyntheticProducts>();
             builder.Services.AddSingleton<IProductService>(sp => sp.GetRequiredService<SyntheticProducts>());
+            builder.Services.AddSingleton(new SyntheticModifierService { Enabled = withModifiers });
+            builder.Services.AddSingleton<IModifierService>(sp => sp.GetRequiredService<SyntheticModifierService>());
+            builder.Services.AddSingleton<SyntheticOrderService>();
+            builder.Services.AddSingleton<IOrderService>(sp => sp.GetRequiredService<SyntheticOrderService>());
+            builder.Services.AddSingleton<SyntheticPaymentService>();
+            builder.Services.AddSingleton<IPaymentService>(sp => sp.GetRequiredService<SyntheticPaymentService>());
+            builder.Services.AddSingleton<SyntheticReceipts>();
+            builder.Services.AddSingleton<IReceiptService>(sp => sp.GetRequiredService<SyntheticReceipts>());
+            builder.Services.AddSingleton<SyntheticPrinter>();
+            builder.Services.AddSingleton<IReceiptPrinter>(sp => sp.GetRequiredService<SyntheticPrinter>());
             builder.Services.AddSingleton<PosSessionService>();
             builder.Services.AddScoped<CartService>();
             builder.Services.AddSingleton(new HttpClient());
@@ -373,12 +517,134 @@ public sealed class NewSaleBrowserTests
     {
         public Task<List<ProductDto>> GetProductsAsync() => Task.FromResult(new List<ProductDto>
         {
-            new() { ProductId = 1, Barcode = "001234", SKU = "COF-1", CategoryId = 1, Name = "Iced Caramel Macchiato", Price = 150m, IsActive = true, ImageUrl = "/uploads/products/macchiato.jpg", UnitOfMeasure = "cup" },
-            new() { ProductId = 2, Barcode = "DUP", CategoryId = 1, Name = "Cold Brew Coffee", Price = 130m, IsActive = true, ImageUrl = null, UnitOfMeasure = "bottle" },
-            new() { ProductId = 3, Barcode = "DUP", CategoryId = 2, Name = "Blueberry Muffin", Price = 95m, IsActive = true, ImageUrl = null, UnitOfMeasure = "piece" }
+            new() { ProductId = 1, Barcode = "001234", SKU = "COF-1", CategoryId = 1, Name = "Iced Caramel Macchiato", Price = 150m, IsActive = true, ImageUrl = "/uploads/products/macchiato.jpg", UnitOfMeasure = "cup", ProductType = "Standard" },
+            new() { ProductId = 2, Barcode = "DUP", CategoryId = 1, Name = "Cold Brew Coffee", Price = 130m, IsActive = true, ImageUrl = null, UnitOfMeasure = "bottle", ProductType = "Standard" },
+            new() { ProductId = 3, Barcode = "DUP", CategoryId = 2, Name = "Blueberry Muffin", Price = 95m, IsActive = true, ImageUrl = null, UnitOfMeasure = "piece", ProductType = "Standard" }
         });
         public Task<ProductDto> CreateProductAsync(ProductDto product) => Task.FromResult(product);
         public Task UpdateProductAsync(int id, ProductDto product) => Task.CompletedTask;
         public Task DeleteProductAsync(int id) => Task.CompletedTask;
+    }
+
+    private sealed class SyntheticModifierService : IModifierService
+    {
+        public bool Enabled { get; init; }
+        public Task<List<ModifierGroupDto>> GetModifierGroupsAsync() => Task.FromResult(new List<ModifierGroupDto>());
+        public Task<ModifierGroupDto?> GetModifierGroupByIdAsync(int id) => Task.FromResult<ModifierGroupDto?>(null);
+        public Task<bool> CreateModifierGroupAsync(ModifierGroupDto dto) => Task.FromResult(true);
+        public Task<bool> UpdateModifierGroupAsync(int id, ModifierGroupDto dto) => Task.FromResult(true);
+        public Task<bool> DeleteModifierGroupAsync(int id) => Task.FromResult(true);
+        public Task<List<ModifierOptionDto>> GetOptionsByGroupAsync(int groupId) => Task.FromResult(new List<ModifierOptionDto>());
+        public Task<bool> CreateOptionAsync(ModifierOptionDto dto) => Task.FromResult(true);
+        public Task<bool> UpdateOptionAsync(int id, ModifierOptionDto dto) => Task.FromResult(true);
+        public Task<bool> DeleteOptionAsync(int id) => Task.FromResult(true);
+        public Task<List<ProductModifierGroupDto>> GetProductModifierGroupsAsync(int productId) => Task.FromResult(
+            !Enabled ? new List<ProductModifierGroupDto>() : new List<ProductModifierGroupDto>
+            {
+                new() { ModifierGroupId = 1, ModifierGroupName = "Size", IsRequired = true, MinSelections = 1, MaxSelections = 1,
+                    Options = new() { new() { ModifierOptionId = 11, Name = "Regular" }, new() { ModifierOptionId = 12, Name = "Large", Price = 30m } } },
+                new() { ModifierGroupId = 2, ModifierGroupName = "Add-ons", MinSelections = 0, MaxSelections = 2,
+                    Options = new() { new() { ModifierOptionId = 21, Name = "Pearls", Price = 20m }, new() { ModifierOptionId = 22, Name = "Extra Shot", Price = 40m }, new() { ModifierOptionId = 23, Name = "Syrup", Price = 25m } } },
+                new() { ModifierGroupId = 3, ModifierGroupName = "Sugar", MinSelections = 1, MaxSelections = 1,
+                    Options = new() { new() { ModifierOptionId = 31, Name = "Half Sugar" }, new() { ModifierOptionId = 32, Name = "No Sugar" } } }
+            });
+        public Task<bool> AssignModifierGroupToProductAsync(int productId, int modifierGroupId, int displayOrder = 0) => Task.FromResult(true);
+        public Task<bool> RemoveModifierGroupFromProductAsync(int productId, int modifierGroupId) => Task.FromResult(true);
+    }
+
+    private sealed class SyntheticOrderService : IOrderService
+    {
+        public Task<OrderResponseDto?> CreateOrderAsync(OrderCreateDto dto)
+        {
+            var items = dto.Items.Select((i, index) =>
+            {
+                var modifierTotal = i.Modifiers.Sum(m => m.AdditionalPrice);
+                var unitPrice = i.BasePrice + modifierTotal;
+                return new OrderItemResponseDto
+                {
+                    OrderItemId = index + 1,
+                    ProductId = i.ProductId,
+                    ProductName = i.ProductName,
+                    Quantity = i.Quantity,
+                    BasePrice = i.BasePrice,
+                    ModifierTotal = modifierTotal,
+                    UnitPrice = unitPrice,
+                    LineTotal = unitPrice * i.Quantity
+                };
+            }).ToList();
+
+            var subtotal = items.Sum(i => i.LineTotal);
+            var total = subtotal - dto.DiscountAmount;
+            return Task.FromResult<OrderResponseDto?>(new OrderResponseDto
+            {
+                OrderId = 1,
+                OrderNumber = "TEST-ORDER-0001",
+                BranchId = dto.BranchId,
+                OutletId = dto.OutletId,
+                CashierId = dto.CashierId,
+                OrderStatus = "PENDING",
+                PaymentStatus = "UNPAID",
+                Subtotal = subtotal,
+                DiscountAmount = dto.DiscountAmount,
+                TotalAmount = total,
+                Items = items
+            });
+        }
+
+        public Task<OrderResponseDto?> GetOrderByIdAsync(long orderId) => Task.FromResult<OrderResponseDto?>(null);
+    }
+
+    private sealed class SyntheticReceipts : IReceiptService
+    {
+        public bool Fail { get; set; }
+        public Task<ReceiptDto?> GetReceiptAsync(long orderId, bool isReprint = false)
+        {
+            if (Fail) throw new HttpRequestException("Test receipt retrieval failure");
+            return Task.FromResult<ReceiptDto?>(new ReceiptDto
+            {
+                OrderId = orderId, OrderNumber = "TEST-ORDER-0001", BranchName = "Test Cafe",
+                TerminalName = "Counter A", CashierId = "test-cashier", TotalAmount = 95m, Subtotal = 95m,
+                Items = new() { new() { OrderItemId = 1, ProductName = "Blueberry Muffin", Quantity = 1, UnitPrice = 95, LineTotal = 95 } },
+                Payments = new() { new() { PaymentStatus = "SUCCESS", PaymentMethod = "CASH", Amount = 95m, AmountTendered = 100m, ChangeAmount = 5m } }
+            });
+        }
+    }
+
+    private sealed class SyntheticPrinter : IReceiptPrinter
+    {
+        public int Calls { get; private set; }
+        public bool Fail { get; set; }
+        public Task PrintAsync(ReceiptDto receipt)
+        {
+            Calls++;
+            if (Fail) throw new InvalidOperationException("Test printer offline");
+            return Task.CompletedTask;
+        }
+
+        public Task<string> SavePdfAsync(ReceiptDto receipt)
+        {
+            Calls++;
+            if (Fail) throw new InvalidOperationException("Test printer offline");
+            return Task.FromResult("/fake/receipt.pdf");
+        }
+    }
+
+    private sealed class SyntheticPaymentService : IPaymentService
+    {
+        public int Calls { get; private set; }
+        public Task<PaymentResponseDto?> ProcessPaymentAsync(PaymentProcessDto dto)
+        {
+            Calls++;
+            return Task.FromResult<PaymentResponseDto?>(new PaymentResponseDto
+        {
+            PaymentId = 1,
+            OrderId = dto.OrderId,
+            PaymentMethod = dto.PaymentMethod,
+            Amount = dto.Amount,
+            AmountTendered = dto.AmountTendered,
+            ChangeAmount = dto.AmountTendered - dto.Amount,
+            PaymentStatus = "SUCCESS"
+        });
+        }
     }
 }

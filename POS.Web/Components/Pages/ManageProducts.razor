@@ -9,6 +9,7 @@
 @inject ITaxService TaxService
 @inject IUomService UomService
 @inject IProductRecipeService ProductRecipeService
+@inject IModifierService ModifierService
 @inject SweetAlertService Swal
 @inject HttpClient Http
 
@@ -411,7 +412,51 @@
                         </div>
                     </div>
 
-                    <!-- 5. POS & Kitchen Routing Settings -->
+                    <!-- 5. Product Modifiers & Add-on Groups -->
+                    <div class="mb-4">
+                        <div class="d-flex align-items-center gap-2 pb-2 mb-3 border-bottom">
+                            <div class="d-flex align-items-center justify-content-center bg-purple bg-opacity-10 text-purple rounded" style="width: 28px; height: 28px; background-color: rgba(111, 66, 193, 0.1) !important; color: #6f42c1 !important;">
+                                <i class="bi bi-collection-fill" style="font-size: 0.85rem;"></i>
+                            </div>
+                            <div>
+                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">Product Modifiers & Add-on Groups</h6>
+                                <span class="text-secondary small" style="font-size: 0.78rem;">Assign modifier groups (e.g. Size, Toppings, Add-ons) to this product</span>
+                            </div>
+                        </div>
+                        @if (availableModifierGroups == null || !availableModifierGroups.Any())
+                        {
+                            <div class="text-secondary small p-3 bg-light rounded border">
+                                No modifier groups available. Create modifier groups in Modifier Management first.
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="row g-3">
+                                @foreach (var group in availableModifierGroups)
+                                {
+                                    var isChecked = selectedModifierGroupIds.Contains(group.ModifierGroupId);
+                                    <div class="col-12 col-md-6">
+                                        <div class="p-3 bg-light rounded border h-100 d-flex align-items-center justify-content-between">
+                                            <div>
+                                                <label class="form-check-label fw-bold text-dark mb-0 d-block" for="@($"modGroup_{group.ModifierGroupId}")">@group.Name</label>
+                                                <small class="text-secondary" style="font-size: 0.78rem;">
+                                                    @(group.MaxSelections > 1 ? "Multiple selections" : "Single selection") 
+                                                    @(group.IsRequired ? "• Required" : "• Optional")
+                                                </small>
+                                            </div>
+                                            <div class="form-check form-switch mb-0 fs-5 ms-3">
+                                                <input class="form-check-input" type="checkbox" id="@($"modGroup_{group.ModifierGroupId}")"
+                                                       checked="@isChecked"
+                                                       @onchange="@(e => ToggleModifierGroup(group.ModifierGroupId, (bool)(e.Value ?? false)))" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <!-- 6. POS & Kitchen Routing Settings -->
                     <div>
                         <div class="d-flex align-items-center gap-2 pb-2 mb-3 border-bottom">
                             <div class="d-flex align-items-center justify-content-center bg-secondary bg-opacity-10 text-secondary rounded" style="width: 28px; height: 28px;">
@@ -589,6 +634,8 @@
     private ProductDto? selectedProductForRecipe;
     private List<ProductRecipeDto> recipeList = new();
     private ProductRecipeDto newRecipeItem = new();
+    private List<ModifierGroupDto> availableModifierGroups = new();
+    private HashSet<int> selectedModifierGroupIds = new();
 
     // Modal State
     private bool isModalOpen = false;
@@ -640,6 +687,7 @@
         {
             categories = await CategoryService.GetCategoriesAsync();
             taxes = await TaxService.GetTaxesAsync();
+            availableModifierGroups = await ModifierService.GetModifierGroupsAsync();
             await LoadProducts();
             availableUoms = await UomService.GetUomsAsync();
         }
@@ -698,10 +746,11 @@
             UnitOfMeasure = "pc",
             CategoryId = FilterCategoryId ?? 0
         };
+        selectedModifierGroupIds.Clear();
         isModalOpen = true;
     }
 
-    private void OpenEditModal(ProductDto product)
+    private async Task OpenEditModal(ProductDto product)
     {
         isEditing = true;
         currentProduct = new ProductDto
@@ -721,7 +770,36 @@
             IsActive = product.IsActive,
             IsKitchenItem = product.IsKitchenItem
         };
+
+        selectedModifierGroupIds.Clear();
+        try
+        {
+            var assignedGroups = await ModifierService.GetProductModifierGroupsAsync(product.ProductId);
+            if (assignedGroups != null)
+            {
+                foreach (var g in assignedGroups)
+                {
+                    selectedModifierGroupIds.Add(g.ModifierGroupId);
+                }
+            }
+        }
+        catch (Exception)
+        {
+        }
+
         isModalOpen = true;
+    }
+
+    private void ToggleModifierGroup(int modifierGroupId, bool isChecked)
+    {
+        if (isChecked)
+        {
+            selectedModifierGroupIds.Add(modifierGroupId);
+        }
+        else
+        {
+            selectedModifierGroupIds.Remove(modifierGroupId);
+        }
     }
 
     private void CloseModal()
@@ -776,13 +854,50 @@
 
         try
         {
+            int targetProductId = 0;
             if (isEditing)
             {
                 await ProductService.UpdateProductAsync(currentProduct.ProductId, currentProduct);
+                targetProductId = currentProduct.ProductId;
             }
             else
             {
-                await ProductService.CreateProductAsync(currentProduct);
+                var created = await ProductService.CreateProductAsync(currentProduct);
+                if (created != null && created.ProductId > 0)
+                {
+                    targetProductId = created.ProductId;
+                }
+                else
+                {
+                    var allProducts = await ProductService.GetProductsAsync();
+                    var latest = allProducts.OrderByDescending(p => p.ProductId).FirstOrDefault();
+                    if (latest != null)
+                    {
+                        targetProductId = latest.ProductId;
+                    }
+                }
+            }
+
+            if (targetProductId > 0)
+            {
+                var existingAssigned = await ModifierService.GetProductModifierGroupsAsync(targetProductId);
+                var existingGroupIds = new HashSet<int>(existingAssigned.Select(g => g.ModifierGroupId));
+
+                foreach (var groupId in selectedModifierGroupIds)
+                {
+                    if (!existingGroupIds.Contains(groupId))
+                    {
+                        await ModifierService.AssignModifierGroupToProductAsync(targetProductId, groupId);
+                    }
+                }
+
+                foreach (var groupId in existingGroupIds)
+                {
+                    if (!selectedModifierGroupIds.Contains(groupId))
+                    {
+                        await ModifierService.RemoveModifierGroupFromProductAsync(targetProductId, groupId);
+                    }
+                }
             }
 
             await LoadProducts();

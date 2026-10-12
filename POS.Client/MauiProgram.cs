@@ -40,6 +40,15 @@ namespace POS.Client
             builder.Services.AddScoped<IOutletService, OutletService>();
             builder.Services.AddScoped<ICategoryService, CategoryService>();
             builder.Services.AddScoped<IProductService, ProductService>();
+            builder.Services.AddScoped<IModifierService, ModifierService>();
+            builder.Services.AddScoped<IOrderService, OrderService>();
+            builder.Services.AddScoped<IPaymentService, PaymentService>();
+            builder.Services.AddScoped<IReceiptService, ReceiptService>();
+#if WINDOWS
+            builder.Services.AddSingleton<IReceiptPrinter, POS.Client.Platforms.Windows.WindowsReceiptPrinter>();
+#else
+            builder.Services.AddSingleton<IReceiptPrinter, UnsupportedReceiptPrinter>();
+#endif
 #if DEBUG
             // Development only: match Outlets.DeviceIdentifier while the API stays on localhost.
             // Set to null to restore OS route detection. Never included in Release builds.

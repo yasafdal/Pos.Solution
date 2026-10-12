@@ -120,7 +120,6 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.ProductType)
                 .HasMaxLength(20)
                 .HasDefaultValueSql("'Standard'::character varying");
-            entity.Property(e => e.ReorderLevel).HasDefaultValue(10);
             entity.Property(e => e.Sku)
                 .HasMaxLength(50)
                 .HasColumnName("SKU");

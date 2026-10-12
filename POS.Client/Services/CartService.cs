@@ -23,11 +23,27 @@ namespace POS.Client.Services
 
         public event Action? OnChange;
 
+        private static bool ModifiersEqual(List<ModifierOptionDto> a, List<ModifierOptionDto> b)
+        {
+            var list1 = a ?? new();
+            var list2 = b ?? new();
+            if (list1.Count != list2.Count) return false;
+            var ids1 = list1.Select(x => x.ModifierOptionId).OrderBy(id => id).ToList();
+            var ids2 = list2.Select(x => x.ModifierOptionId).OrderBy(id => id).ToList();
+            return ids1.SequenceEqual(ids2);
+        }
+
         public void AddItem(ProductDto product, int quantity = 1)
         {
+            AddItem(product, quantity, null);
+        }
+
+        public void AddItem(ProductDto product, int quantity, List<ModifierOptionDto>? selectedModifiers)
+        {
+            selectedModifiers ??= new();
             if (quantity <= 0 || quantity > int.MaxValue - TotalItems)
                 throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be positive and fit the current order.");
-            var existing = _items.FirstOrDefault(i => i.ProductId == product.ProductId);
+            var existing = _items.FirstOrDefault(i => i.ProductId == product.ProductId && ModifiersEqual(i.SelectedModifiers, selectedModifiers));
             if (existing != null)
             {
                 existing.Quantity += quantity;
@@ -38,7 +54,8 @@ namespace POS.Client.Services
                 {
                     ProductId = product.ProductId,
                     ProductName = product.Name,
-                    Price = product.Price,
+                    BasePrice = product.Price,
+                    SelectedModifiers = selectedModifiers,
                     Quantity = quantity,
                     ImageUrl = product.ImageUrl,
                     UnitOfMeasure = product.UnitOfMeasure
@@ -51,6 +68,15 @@ namespace POS.Client.Services
         {
             var item = _items.FirstOrDefault(i => i.ProductId == productId);
             if (item != null && TotalItems < int.MaxValue)
+            {
+                item.Quantity++;
+                NotifyStateChanged();
+            }
+        }
+
+        public void IncreaseQuantity(CartItem item)
+        {
+            if (item != null && _items.Contains(item) && TotalItems < int.MaxValue)
             {
                 item.Quantity++;
                 NotifyStateChanged();
@@ -74,10 +100,35 @@ namespace POS.Client.Services
             }
         }
 
+        public void DecreaseQuantity(CartItem item)
+        {
+            if (item != null && _items.Contains(item))
+            {
+                if (item.Quantity > 1)
+                {
+                    item.Quantity--;
+                }
+                else
+                {
+                    _items.Remove(item);
+                }
+                NotifyStateChanged();
+            }
+        }
+
         public void RemoveItem(int productId)
         {
             var item = _items.FirstOrDefault(i => i.ProductId == productId);
             if (item != null)
+            {
+                _items.Remove(item);
+                NotifyStateChanged();
+            }
+        }
+
+        public void RemoveItem(CartItem item)
+        {
+            if (item != null && _items.Contains(item))
             {
                 _items.Remove(item);
                 NotifyStateChanged();

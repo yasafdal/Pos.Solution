@@ -8,6 +8,7 @@
 @inject IBusinessTypeService BusinessTypeService
 @inject IServiceModeService ServiceModeService
 @inject SweetAlertService Swal
+@inject HttpClient Http
 
 <PageTitle>Branches - POS</PageTitle>
 
@@ -351,6 +352,9 @@
                                             </td>
                                             <td class="text-end">
                                                 <div class="d-flex justify-content-end gap-1">
+                                                    <button type="button" class="btn btn-sm btn-info text-white" @onclick="() => OpenInvoiceSequencesModal(outlet)" title="Invoice Series" aria-label="Invoice Series">
+                                                        <i class="bi bi-receipt"></i>
+                                                    </button>
                                                     <button type="button" class="btn btn-sm btn-warning text-dark" @onclick="() => EditOutlet(outlet)" title="Edit Outlet" aria-label="Edit Outlet">
                                                         <i class="bi bi-pencil"></i>
                                                     </button>
@@ -376,6 +380,181 @@
                 <!-- Modal Footer -->
                 <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end">
                     <button type="button" class="btn btn-light border px-4 py-2 fw-semibold text-secondary" @onclick="CloseOutletsModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 3: Invoice Sequence Management for Selected Outlet -->
+@if (isInvoiceSequencesModalOpen && activeSequenceOutlet != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <!-- Modal Header -->
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Invoice Series - @activeSequenceOutlet.Name</h5>
+                        <small class="text-secondary" style="font-size: 0.85rem;">Manage BIR-compliant sales invoice numbering and active series for this register</small>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseInvoiceSequencesModal" aria-label="Close"></button>
+                </div>
+
+                <!-- Modal Body -->
+                <div class="modal-body px-4 py-3">
+                    <!-- Active Series Summary Card -->
+                    <div class="card border bg-light mb-4 shadow-sm">
+                        <div class="card-body">
+                            <h6 class="fw-bold text-dark mb-3"><i class="bi bi-shield-check text-primary me-2"></i>Active Invoice Series</h6>
+                            @if (activeInvoiceSequence != null)
+                            {
+                                <div class="row g-3">
+                                    <div class="col-6 col-md-4">
+                                        <span class="text-secondary small d-block">Series Code</span>
+                                        <strong class="text-dark">@activeInvoiceSequence.SeriesCode</strong>
+                                    </div>
+                                    <div class="col-6 col-md-4">
+                                        <span class="text-secondary small d-block">Prefix</span>
+                                        <strong class="text-dark">@(string.IsNullOrWhiteSpace(activeInvoiceSequence.Prefix) ? "—" : activeInvoiceSequence.Prefix)</strong>
+                                    </div>
+                                    <div class="col-6 col-md-4">
+                                        <span class="text-secondary small d-block">Starting Number</span>
+                                        <strong class="text-dark">@activeInvoiceSequence.StartingNumber</strong>
+                                    </div>
+                                    <div class="col-6 col-md-4">
+                                        <span class="text-secondary small d-block">Ending Number</span>
+                                        <strong class="text-dark">@(activeInvoiceSequence.EndingNumber.HasValue ? activeInvoiceSequence.EndingNumber.Value.ToString() : "Unlimited")</strong>
+                                    </div>
+                                    <div class="col-6 col-md-4">
+                                        <span class="text-secondary small d-block">Last Issued Number</span>
+                                        <strong class="text-dark">@activeInvoiceSequence.LastIssuedNumber</strong>
+                                    </div>
+                                    <div class="col-6 col-md-4">
+                                        <span class="text-secondary small d-block">Padding Length</span>
+                                        <strong class="text-dark">@activeInvoiceSequence.PaddingLength</strong>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="text-muted small py-2">No active invoice series configured for this outlet. Configure and activate one below.</div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Create/Configure New Series Form -->
+                    <div class="card border mb-4 shadow-sm">
+                        <div class="card-header bg-white py-3">
+                            <h6 class="fw-bold text-dark mb-0">Configure New Invoice Series</h6>
+                        </div>
+                        <div class="card-body bg-light">
+                            <EditForm Model="@newInvoiceSequence" OnValidSubmit="SaveInvoiceSequence">
+                                <DataAnnotationsValidator />
+                                <div class="row g-3">
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Series Code <span class="text-danger">*</span></label>
+                                        <InputText @bind-Value="newInvoiceSequence.SeriesCode" class="form-control rounded" placeholder="e.g. SERIES-01" />
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Prefix</label>
+                                        <InputText @bind-Value="newInvoiceSequence.Prefix" class="form-control rounded" placeholder="e.g. INV-" />
+                                    </div>
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Starting Number</label>
+                                        <InputNumber @bind-Value="newInvoiceSequence.StartingNumber" class="form-control rounded" />
+                                    </div>
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Ending Number (Optional)</label>
+                                        <InputNumber @bind-Value="newInvoiceSequence.EndingNumber" class="form-control rounded" placeholder="e.g. 100000" />
+                                    </div>
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Padding Length</label>
+                                        <InputNumber @bind-Value="newInvoiceSequence.PaddingLength" class="form-control rounded" />
+                                    </div>
+                                    <div class="col-12 d-flex justify-content-end mt-3">
+                                        <button type="submit" class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm" disabled="@isSavingInvoiceSequence">
+                                            @if (isSavingInvoiceSequence)
+                                            {
+                                                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                                <span>Saving...</span>
+                                            }
+                                            else
+                                            {
+                                                <span>Save & Activate Series</span>
+                                            }
+                                        </button>
+                                    </div>
+                                </div>
+                            </EditForm>
+                        </div>
+                    </div>
+
+                    <!-- Historical Sequences Table -->
+                    <h6 class="fw-bold text-dark mb-2">Invoice Series History</h6>
+                    <div class="table-responsive border rounded bg-white">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Series Code</th>
+                                    <th>Prefix</th>
+                                    <th>Range</th>
+                                    <th>Last Issued</th>
+                                    <th>Padding</th>
+                                    <th class="text-center">Status</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (invoiceSequences.Any())
+                                {
+                                    @foreach (var seq in invoiceSequences)
+                                    {
+                                        <tr>
+                                            <td class="fw-semibold text-dark">@seq.SeriesCode</td>
+                                            <td class="text-secondary small">@(string.IsNullOrWhiteSpace(seq.Prefix) ? "—" : seq.Prefix)</td>
+                                            <td class="text-secondary small">@seq.StartingNumber — @(seq.EndingNumber.HasValue ? seq.EndingNumber.Value.ToString() : "Unlimited")</td>
+                                            <td class="text-secondary small">@seq.LastIssuedNumber</td>
+                                            <td class="text-secondary small">@seq.PaddingLength</td>
+                                            <td class="text-center">
+                                                @if (seq.IsActive)
+                                                {
+                                                    <span class="status-badge active">Active</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="status-badge inactive">Inactive</span>
+                                                }
+                                            </td>
+                                            <td class="text-end">
+                                                @if (!seq.IsActive)
+                                                {
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ActivateInvoiceSequence(seq.InvoiceSequenceId)" title="Activate Series">
+                                                        Activate
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted small">Current</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                                else
+                                {
+                                    <tr>
+                                        <td colspan="7" class="text-center py-4 text-muted">No invoice sequences recorded for this outlet.</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end">
+                    <button type="button" class="btn btn-light border px-4 py-2 fw-semibold text-secondary" @onclick="CloseInvoiceSequencesModal">Close</button>
                 </div>
             </div>
         </div>
@@ -792,6 +971,152 @@
                     ConfirmButtonColor = "#2563eb"
                 });
             }
+        }
+    }
+
+    private bool isInvoiceSequencesModalOpen = false;
+    private OutletDto? activeSequenceOutlet;
+    private InvoiceSequenceDto? activeInvoiceSequence;
+    private List<InvoiceSequenceDto> invoiceSequences = new();
+    private InvoiceSequenceDto newInvoiceSequence = new() { StartingNumber = 1, PaddingLength = 7 };
+    private bool isSavingInvoiceSequence = false;
+
+    private async Task OpenInvoiceSequencesModal(OutletDto outlet)
+    {
+        activeSequenceOutlet = outlet;
+        newInvoiceSequence = new() { StartingNumber = 1, PaddingLength = 7 };
+        await LoadInvoiceSequencesForOutlet(outlet.OutletId);
+        isInvoiceSequencesModalOpen = true;
+    }
+
+    private void CloseInvoiceSequencesModal() => isInvoiceSequencesModalOpen = false;
+
+    private async Task LoadInvoiceSequencesForOutlet(int outletId)
+    {
+        try
+        {
+            invoiceSequences = await Http.GetFromJsonAsync<List<InvoiceSequenceDto>>($"api/outlets/{outletId}/invoice-sequences") ?? new();
+            activeInvoiceSequence = invoiceSequences.FirstOrDefault(s => s.IsActive);
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to load invoice sequences: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+    }
+
+    private async Task SaveInvoiceSequence()
+    {
+        if (activeSequenceOutlet == null) return;
+
+        if (string.IsNullOrWhiteSpace(newInvoiceSequence.SeriesCode))
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Missing Fields Required",
+                Text = "Series code is required.",
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
+        try
+        {
+            isSavingInvoiceSequence = true;
+            var response = await Http.PostAsJsonAsync($"api/outlets/{activeSequenceOutlet.OutletId}/invoice-sequences", newInvoiceSequence);
+            if (response.IsSuccessStatusCode)
+            {
+                newInvoiceSequence = new() { StartingNumber = 1, PaddingLength = 7 };
+                await LoadInvoiceSequencesForOutlet(activeSequenceOutlet.OutletId);
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Series Created!",
+                    Text = "New invoice series configured and activated successfully.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                var err = await response.Content.ReadAsStringAsync();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Save Failed",
+                    Text = "Could not create invoice sequence: " + err,
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to save invoice sequence: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        finally
+        {
+            isSavingInvoiceSequence = false;
+        }
+    }
+
+    private async Task ActivateInvoiceSequence(int sequenceId)
+    {
+        if (activeSequenceOutlet == null) return;
+
+        try
+        {
+            var response = await Http.PostAsync($"api/outlets/{activeSequenceOutlet.OutletId}/invoice-sequences/{sequenceId}/activate", null);
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadInvoiceSequencesForOutlet(activeSequenceOutlet.OutletId);
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Activated!",
+                    Text = "Invoice series activated successfully.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                var err = await response.Content.ReadAsStringAsync();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Activation Failed",
+                    Text = "Could not activate invoice sequence: " + err,
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to activate invoice sequence: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
         }
     }
 }

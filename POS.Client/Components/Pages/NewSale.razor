@@ -3,6 +3,9 @@
 @inject NavigationManager Navigation
 @inject ICategoryService CategoryService
 @inject IProductService ProductService
+@inject IModifierService ModifierService
+@inject IOrderService OrderService
+@inject IPaymentService PaymentService
 @inject CartService Cart
 @inject HttpClient Http
 @inject SweetAlertService Swal
@@ -209,22 +212,37 @@ else
                                 <div class="cart-item-row">
                                     <div class="cart-item-info">
                                         <div class="cart-item-name" title="@item.ProductName">@item.ProductName</div>
-                                        <div class="cart-item-unit-price text-muted">₱@item.Price.ToString("N2") each</div>
+                                        <div class="cart-item-unit-price text-muted">₱@item.UnitPrice.ToString("N2") each</div>
+                                        @if (item.SelectedModifiers != null && item.SelectedModifiers.Any())
+                                        {
+                                            <div class="cart-item-modifiers text-muted small mt-1">
+                                                @foreach (var mod in item.SelectedModifiers)
+                                                {
+                                                    <div class="d-flex justify-content-between text-secondary">
+                                                        <span>&nbsp;&nbsp;+ @mod.Name</span>
+                                                        @if (mod.Price > 0)
+                                                        {
+                                                            <span>₱@mod.Price.ToString("N2")</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
                                     </div>
                                     <div class="cart-item-actions d-flex align-items-center gap-2">
                                         <div class="qty-control d-flex align-items-center">
-                                            <button type="button" class="qty-btn" @onclick="() => Cart.DecreaseQuantity(item.ProductId)" title="Decrease">
+                                            <button type="button" class="qty-btn" @onclick="() => Cart.DecreaseQuantity(item)" title="Decrease">
                                                 −
                                             </button>
                                             <span class="qty-display">@item.Quantity</span>
-                                            <button type="button" class="qty-btn" @onclick="() => Cart.IncreaseQuantity(item.ProductId)" title="Increase">
+                                            <button type="button" class="qty-btn" @onclick="() => Cart.IncreaseQuantity(item)" title="Increase">
                                                 +
                                             </button>
                                         </div>
                                         <div class="cart-item-total">
                                             ₱@item.LineTotal.ToString("N2")
                                         </div>
-                                        <button type="button" class="btn-remove-item" @onclick="() => Cart.RemoveItem(item.ProductId)" title="Remove item">
+                                        <button type="button" class="btn-remove-item" @onclick="() => Cart.RemoveItem(item)" title="Remove item">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                                 <polyline points="3 6 5 6 21 6"></polyline>
                                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -259,9 +277,86 @@ else
             </div>
         </div>
     </div>
+
+    <!-- Customization Modal -->
+    @if (isCustomizationOpen && customizingProduct != null)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+                <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                    <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="modal-title fw-bold text-dark mb-0">Customize @customizingProduct.Name</h5>
+                            <small class="text-muted">Base Price: ₱@customizingProduct.Price.ToString("N2")</small>
+                        </div>
+                        <button type="button" class="btn-close" @onclick="CloseCustomizationModal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body px-4 py-3">
+                        @if (!string.IsNullOrEmpty(customizationError))
+                        {
+                            <div class="alert alert-danger py-2 mb-3" role="alert">@customizationError</div>
+                        }
+                        @foreach (var group in currentModifierGroups)
+                        {
+                            var set = selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var s) ? s : new HashSet<int>();
+                            <div class="mb-4">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h6 class="fw-bold text-dark mb-0">
+                                        @group.ModifierGroupName
+                                        @if (group.IsRequired || group.MinSelections > 0)
+                                        {
+                                            <span class="text-danger ms-1">*</span>
+                                        }
+                                    </h6>
+                                    <small class="text-muted">
+                                        @(group.MaxSelections == 1 ? "Select 1" : (group.MinSelections > 0 ? $"Select {group.MinSelections}-{group.MaxSelections}" : "Optional"))
+                                    </small>
+                                </div>
+                                <div class="row g-2" role="group" aria-label="@group.ModifierGroupName">
+                                    @foreach (var option in group.Options.Where(o => o.IsActive).OrderBy(o => o.DisplayOrder))
+                                    {
+                                        var isSelected = set.Contains(option.ModifierOptionId);
+                                        <div class="col-6" @key="option.ModifierOptionId">
+                                            <button type="button" aria-label="@option.Name"
+                                                    aria-pressed="@(isSelected ? "true" : "false")"
+                                                    class="modifier-option btn @(isSelected ? "btn-primary" : "btn-outline-primary") w-100 h-100 py-3 px-3 rounded-3 text-start"
+                                                    @onclick="() => { if (group.MaxSelections == 1) SelectRadioOption(group, option); else ToggleCheckboxOption(group, option, !isSelected); }">
+                                                <span class="d-flex justify-content-between gap-2 fw-bold">
+                                                    <span>@option.Name</span>
+                                                    <span aria-hidden="true">@(isSelected ? "✓" : "＋")</span>
+                                                </span>
+                                                <small class="d-block mt-1">@(option.Price > 0 ? $"+₱{option.Price:N2}" : "No extra charge")</small>
+                                            </button>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="text-muted small">Total Item Price:</span>
+                            <div class="fw-bold fs-5 text-primary">₱@CustomizationTotalPrice.ToString("N2")</div>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-secondary px-4" @onclick="CloseCustomizationModal">Cancel</button>
+                            <button type="button" class="btn btn-primary px-4 fw-bold" @onclick="ConfirmCustomization">Add to Cart</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@if (paidReceiptOrderId.HasValue)
+{
+    <ReceiptPreview OrderId="@paidReceiptOrderId.Value" OnClose="CloseReceiptPreview" />
 }
 
 @code {
+    private long? paidReceiptOrderId;
+    private void CloseReceiptPreview() => paidReceiptOrderId = null;
     private List<CategoryDto> categories = new();
     private List<ProductDto> products = new();
     private int? selectedCategoryId = null;
@@ -318,7 +413,7 @@ else
             await Task.WhenAll(catTask, prodTask);
 
             categories = (await catTask).Where(c => !c.IsDeleted && c.IsActive).ToList();
-            products = (await prodTask).Where(p => p.IsActive).ToList();
+            products = (await prodTask).Where(p => p.IsActive && p.ProductType != "RawMaterial").ToList();
         }
         catch (Exception ex)
         {
@@ -431,9 +526,172 @@ else
         restoreSearchFocus = true;
     }
 
-    private void AddToCart(ProductDto product)
+    private bool isCustomizationOpen = false;
+    private ProductDto? customizingProduct = null;
+    private List<ProductModifierGroupDto> currentModifierGroups = new();
+    private Dictionary<int, HashSet<int>> selectedOptionIdsByGroup = new();
+    private string? customizationError = null;
+
+    private async Task AddToCart(ProductDto product)
     {
-        Cart.AddItem(product);
+        if (IsRetail)
+        {
+            Cart.AddItem(product);
+            return;
+        }
+
+        try
+        {
+            var groups = await ModifierService.GetProductModifierGroupsAsync(product.ProductId);
+            if (groups != null && groups.Any())
+            {
+                customizingProduct = product;
+                currentModifierGroups = groups;
+                selectedOptionIdsByGroup.Clear();
+                customizationError = null;
+
+                foreach (var g in groups)
+                {
+                    selectedOptionIdsByGroup[g.ModifierGroupId] = new HashSet<int>();
+                    if (g.IsRequired && g.MinSelections > 0 && g.Options.Any())
+                    {
+                        var firstOpt = g.Options.OrderBy(o => o.DisplayOrder).First();
+                        selectedOptionIdsByGroup[g.ModifierGroupId].Add(firstOpt.ModifierOptionId);
+                    }
+                }
+
+                isCustomizationOpen = true;
+                StateHasChanged();
+            }
+            else
+            {
+                Cart.AddItem(product);
+            }
+        }
+        catch
+        {
+            Cart.AddItem(product);
+        }
+    }
+
+    private void SelectRadioOption(ProductModifierGroupDto group, ModifierOptionDto option)
+    {
+        if (!selectedOptionIdsByGroup.ContainsKey(group.ModifierGroupId))
+        {
+            selectedOptionIdsByGroup[group.ModifierGroupId] = new HashSet<int>();
+        }
+        var set = selectedOptionIdsByGroup[group.ModifierGroupId];
+        set.Clear();
+        set.Add(option.ModifierOptionId);
+        customizationError = null;
+        StateHasChanged();
+    }
+
+    private void ToggleCheckboxOption(ProductModifierGroupDto group, ModifierOptionDto option, bool isChecked)
+    {
+        if (!selectedOptionIdsByGroup.ContainsKey(group.ModifierGroupId))
+        {
+            selectedOptionIdsByGroup[group.ModifierGroupId] = new HashSet<int>();
+        }
+
+        var set = selectedOptionIdsByGroup[group.ModifierGroupId];
+
+        if (isChecked)
+        {
+            if (group.MaxSelections > 0 && set.Count >= group.MaxSelections)
+            {
+                customizationError = $"Group '{group.ModifierGroupName}' allows at most {group.MaxSelections} selections.";
+                StateHasChanged();
+                return;
+            }
+            set.Add(option.ModifierOptionId);
+        }
+        else
+        {
+            set.Remove(option.ModifierOptionId);
+        }
+        customizationError = null;
+        StateHasChanged();
+    }
+
+    private decimal CustomizationTotalPrice
+    {
+        get
+        {
+            if (customizingProduct == null) return 0m;
+            decimal total = customizingProduct.Price;
+            foreach (var group in currentModifierGroups)
+            {
+                if (selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var set))
+                {
+                    foreach (var optId in set)
+                    {
+                        var opt = group.Options.FirstOrDefault(o => o.ModifierOptionId == optId);
+                        if (opt != null)
+                        {
+                            total += opt.Price;
+                        }
+                    }
+                }
+            }
+            return total;
+        }
+    }
+
+    private void ConfirmCustomization()
+    {
+        if (customizingProduct == null) return;
+
+        foreach (var group in currentModifierGroups)
+        {
+            var set = selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var s) ? s : new HashSet<int>();
+            int count = set.Count;
+
+            if (group.IsRequired && count < Math.Max(1, group.MinSelections))
+            {
+                customizationError = $"Please select at least {Math.Max(1, group.MinSelections)} option(s) for '{group.ModifierGroupName ?? "Modifier Group"}'.";
+                return;
+            }
+            if (group.MinSelections > 0 && count < group.MinSelections)
+            {
+                customizationError = $"Please select at least {group.MinSelections} option(s) for '{group.ModifierGroupName ?? "Modifier Group"}'.";
+                return;
+            }
+            if (group.MaxSelections > 0 && count > group.MaxSelections)
+            {
+                customizationError = $"Group '{group.ModifierGroupName ?? "Modifier Group"}' allows at most {group.MaxSelections} selections.";
+                return;
+            }
+        }
+
+        var selectedModifiers = new List<ModifierOptionDto>();
+        foreach (var group in currentModifierGroups)
+        {
+            if (selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var set))
+            {
+                foreach (var optId in set)
+                {
+                    var opt = group.Options.FirstOrDefault(o => o.ModifierOptionId == optId);
+                    if (opt != null)
+                    {
+                        selectedModifiers.Add(opt);
+                    }
+                }
+            }
+        }
+
+        Cart.AddItem(customizingProduct, 1, selectedModifiers);
+        CloseCustomizationModal();
+    }
+
+    private void CloseCustomizationModal()
+    {
+        isCustomizationOpen = false;
+        customizingProduct = null;
+        currentModifierGroups.Clear();
+        selectedOptionIdsByGroup.Clear();
+        customizationError = null;
+        StateHasChanged();
     }
 
     private async Task ClearCart()
@@ -454,19 +712,130 @@ else
         }
     }
 
+    private bool isPaymentModalOpen = false;
+    private OrderResponseDto? currentOrderResponse = null;
+    private decimal cashTendered = 0m;
+    private string? paymentError = null;
+    private bool isProcessingPayment = false;
+
     private async Task ProceedToPayment()
     {
-        if (!Cart.Items.Any()) return;
-
-        await Swal.FireAsync(new SweetAlertOptions
+        if (isProcessingPayment || !Cart.Items.Any()) return;
+        isProcessingPayment = true;
+        paymentError = null;
+        try
         {
-            Title = "Proceed to Payment",
-            Html = $"<p class='mb-2'>Ready to accept payment for <strong>{Cart.TotalItems}</strong> items.</p><h3 class='fw-bold text-primary mt-2'>₱{Cart.Total:N2}</h3>",
-            Icon = SweetAlertIcon.Info,
-            ConfirmButtonText = "Ready for Payment",
-            ConfirmButtonColor = "#2563eb"
-        });
+            var createDto = new OrderCreateDto
+            {
+                BranchId = Session.Outlet?.BranchId ?? 1,
+                OutletId = Session.Outlet?.OutletId ?? 1,
+                CashierId = Session.Username ?? "cashier",
+                OrderType = IsRetail ? "RETAIL" : "DINING",
+                DiscountAmount = 0m,
+                Items = Cart.Items.Select(ci => new OrderItemCreateDto
+                {
+                    ProductId = ci.ProductId,
+                    ProductName = ci.ProductName,
+                    Quantity = ci.Quantity,
+                    BasePrice = ci.BasePrice,
+                    Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
+                    {
+                        ModifierOptionId = m.ModifierOptionId,
+                        ModifierName = m.Name,
+                        AdditionalPrice = m.Price
+                    }).ToList() ?? new()
+                }).ToList()
+            };
+
+            var order = await OrderService.CreateOrderAsync(createDto);
+            if (order == null)
+            {
+                paymentError = "Failed to create order on server.";
+                await Swal.FireAsync("Error", paymentError, SweetAlertIcon.Error);
+                return;
+            }
+
+            currentOrderResponse = order;
+            cashTendered = order.TotalAmount;
+            isPaymentModalOpen = true;
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", $"Payment error: {ex.Message}", SweetAlertIcon.Error);
+        }
+        finally
+        {
+            isProcessingPayment = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ConfirmCashPayment()
+    {
+        if (isProcessingPayment || currentOrderResponse == null) return;
+        if (cashTendered < currentOrderResponse.TotalAmount)
+        {
+            paymentError = $"Amount tendered (₱{cashTendered:N2}) is less than total amount (₱{currentOrderResponse.TotalAmount:N2}).";
+            return;
+        }
+
+        isProcessingPayment = true;
+        paymentError = null;
+        try
+        {
+            var processDto = new PaymentProcessDto
+            {
+                OrderId = currentOrderResponse.OrderId,
+                PaymentMethod = "CASH",
+                Amount = currentOrderResponse.TotalAmount,
+                AmountTendered = cashTendered,
+                ProcessedBy = Session.Username ?? "cashier"
+            };
+
+            var payment = await PaymentService.ProcessPaymentAsync(processDto);
+            if (payment == null || payment.PaymentStatus != "SUCCESS")
+            {
+                paymentError = "Payment processing failed on server.";
+                return;
+            }
+
+            // Payment has committed. Receipt loading/printing is a separate, read-only workflow.
+            var paidOrderId = currentOrderResponse.OrderId;
+            isPaymentModalOpen = false;
+            currentOrderResponse = null;
+            Cart.Clear();
+            paidReceiptOrderId = paidOrderId;
+        }
+        catch (Exception ex)
+        {
+            paymentError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isProcessingPayment = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClosePaymentModal()
+    {
+        if (isProcessingPayment) return;
+        isPaymentModalOpen = false;
+        currentOrderResponse = null;
+        paymentError = null;
         StateHasChanged();
+    }
+
+    private IEnumerable<decimal> GetSuggestedAmounts(decimal total)
+    {
+        // Tender totals, not individual banknotes: works above ₱1,000 too.
+        var suggestions = new SortedSet<decimal> { total };
+        foreach (var increment in new[] { 100m, 500m, 1000m })
+        {
+            var rounded = decimal.Ceiling(total / increment) * increment;
+            if (rounded > total) suggestions.Add(rounded);
+        }
+        return suggestions;
     }
 
     private string GetImageUrl(string? rawUrl)
@@ -481,4 +850,80 @@ else
         var baseUrl = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
         return $"{baseUrl}/{rawUrl.TrimStart('/')}";
     }
+}
+
+@if (isPaymentModalOpen && currentOrderResponse != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="modal-title fw-bold text-dark mb-0">Cash Payment Processing</h5>
+                        <small class="text-muted">Order: @currentOrderResponse.OrderNumber</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="ClosePaymentModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body px-4 py-4">
+                    @if (!string.IsNullOrEmpty(paymentError))
+                    {
+                        <div class="alert alert-danger py-2 mb-3" role="alert">@paymentError</div>
+                    }
+                    <div class="mb-3 text-center bg-light p-3 rounded-3">
+                        <span class="text-muted small d-block">Total Amount Due</span>
+                        <h2 class="fw-bold text-primary mb-0">₱@currentOrderResponse.TotalAmount.ToString("N2")</h2>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark">Payment Method</label>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <button type="button" aria-pressed="true" class="btn btn-outline-primary w-100 py-3 fw-bold" disabled="@isProcessingPayment">
+                                    Cash ✓
+                                </button>
+                            </div>
+                            <div class="col-4">
+                                <button type="button" class="btn btn-light border w-100 py-3" disabled>
+                                    Card<small class="d-block">Coming soon</small>
+                                </button>
+                            </div>
+                            <div class="col-4">
+                                <button type="button" class="btn btn-light border w-100 py-3" disabled>
+                                    E-Wallet<small class="d-block">Coming soon</small>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark">Quick Cash Tendered</label>
+                        <div class="row g-2 mb-2">
+                            @foreach (var amt in GetSuggestedAmounts(currentOrderResponse.TotalAmount))
+                            {
+                                <div class="col-6 col-sm-3">
+                                    <button type="button" aria-pressed="@(cashTendered == amt ? "true" : "false")" disabled="@isProcessingPayment" class="btn @(cashTendered == amt ? "btn-primary" : "btn-outline-primary") w-100 h-100 fw-bold py-3" @onclick="() => cashTendered = amt">
+                                        @(amt == currentOrderResponse.TotalAmount ? $"Exact (₱{amt:N2})" : $"₱{amt:N0}")
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                        <label for="cash-tendered" class="form-label">Amount Tendered (₱)</label>
+                        <input id="cash-tendered" type="number" min="0" step="0.01" inputmode="decimal" disabled="@isProcessingPayment" class="form-control form-control-lg fw-bold" @bind="cashTendered" @bind:event="oninput" placeholder="Enter amount tendered..." />
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center p-3 bg-success bg-opacity-10 rounded-3 border border-success border-opacity-25">
+                        <span class="fw-bold text-success">Change Due:</span>
+                        <span class="fs-4 fw-bold text-success">₱@(Math.Max(0m, cashTendered - currentOrderResponse.TotalAmount).ToString("N2"))</span>
+                    </div>
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between align-items-center">
+                    <button type="button" class="btn btn-outline-secondary px-4" @onclick="ClosePaymentModal">Cancel</button>
+                    <button type="button" class="btn btn-success px-5 fw-bold" disabled="@(cashTendered < currentOrderResponse.TotalAmount || isProcessingPayment)" @onclick="ConfirmCashPayment">
+                        @if (isProcessingPayment)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        }
+                        Confirm Payment
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 }

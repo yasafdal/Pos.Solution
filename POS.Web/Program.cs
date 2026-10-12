@@ -79,6 +79,9 @@ builder.Services.AddScoped<IUomService, UomService>();
 builder.Services.AddScoped<IServiceModeService, ServiceModeService>();
 builder.Services.AddScoped<IBusinessTypeService, BusinessTypeService>();
 builder.Services.AddScoped<IProductRecipeService, ProductRecipeService>();
+builder.Services.AddScoped<IModifierService, ModifierService>();
+builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
