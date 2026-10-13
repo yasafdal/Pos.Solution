@@ -31,6 +31,8 @@ public partial class Product
 
     public string ProductType { get; set; } = null!;
 
+    public string? ShortCode { get; set; }
+
     public bool IsKitchenItem { get; set; }
 
     public bool IsDeleted { get; set; }

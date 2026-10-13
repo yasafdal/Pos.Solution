@@ -54,6 +54,7 @@ namespace POS.Client.Services
                 {
                     ProductId = product.ProductId,
                     ProductName = product.Name,
+                    ProductShortCode = product.ShortCode,
                     BasePrice = product.Price,
                     SelectedModifiers = selectedModifiers,
                     Quantity = quantity,

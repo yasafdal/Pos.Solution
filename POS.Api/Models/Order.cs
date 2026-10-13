@@ -49,6 +49,18 @@ public partial class Order
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    [MaxLength(200)]
+    public string? CustomerName { get; set; }
+
+    [MaxLength(255)]
+    public string? CustomerAddress { get; set; }
+
+    [MaxLength(50)]
+    public string? CustomerTin { get; set; }
+
+    [MaxLength(100)]
+    public string? CustomerBusinessStyle { get; set; }
+
     public virtual ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
 
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();

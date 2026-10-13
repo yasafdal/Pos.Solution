@@ -116,6 +116,7 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.IsActive).HasDefaultValue(true);
             entity.Property(e => e.IsDeleted).HasColumnName("isDeleted");
             entity.Property(e => e.Name).HasMaxLength(100);
+            entity.Property(e => e.ShortCode).HasColumnName("ShortCode").HasMaxLength(30);
             entity.Property(e => e.Price).HasPrecision(18, 2);
             entity.Property(e => e.ProductType)
                 .HasMaxLength(20)

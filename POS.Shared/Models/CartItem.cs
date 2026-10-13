@@ -4,6 +4,7 @@ namespace POS.Shared.Models
     {
         public int ProductId { get; set; }
         public string ProductName { get; set; } = string.Empty;
+        public string? ProductShortCode { get; set; }
         public decimal BasePrice { get; set; }
         public List<ModifierOptionDto> SelectedModifiers { get; set; } = new();
         public decimal UnitPrice => BasePrice + (SelectedModifiers?.Sum(m => m.Price) ?? 0m);

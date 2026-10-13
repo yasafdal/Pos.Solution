@@ -42,12 +42,17 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             TotalAmount = order.TotalAmount,
             InvoiceNumber = order.InvoiceNumber,
             InvoiceIssuedAt = order.InvoiceIssuedAt,
+            CustomerName = order.CustomerName,
+            CustomerAddress = order.CustomerAddress,
+            CustomerTin = order.CustomerTin,
+            CustomerBusinessStyle = order.CustomerBusinessStyle,
             IsReprint = isReprint,
             Items = order.OrderItems.OrderBy(i => i.OrderItemId).Select(i => new OrderItemResponseDto
             {
                 OrderItemId = i.OrderItemId,
                 ProductId = i.ProductId,
                 ProductName = i.ProductName,
+                ProductShortCode = i.ProductShortCode,
                 Quantity = i.Quantity,
                 BasePrice = i.BasePrice,
                 ModifierTotal = i.ModifierTotal,

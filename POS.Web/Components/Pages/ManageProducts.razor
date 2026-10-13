@@ -263,12 +263,22 @@
                             </div>
                         </div>
                         <div class="row g-3">
-                            <!-- Row 1: Primary Information (6 / 6) -->
-                            <div class="col-12 col-md-6">
+                            <!-- Row 1: Primary Information (4 / 4 / 4) -->
+                            <div class="col-12 col-md-4">
                                 <label class="form-label text-dark fw-semibold small mb-1">Product Name <span class="text-danger">*</span></label>
-                                <InputText @bind-Value="currentProduct.Name" class="form-control rounded" placeholder="e.g. Espresso, Chocolate Donut" />
+                                <input type="text" class="form-control rounded" value="@currentProduct.Name" @oninput="OnProductNameChanged" placeholder="e.g. Espresso, Chocolate Donut" />
                             </div>
-                            <div class="col-12 col-md-6">
+                            <div class="col-12 col-md-4">
+                                <label class="form-label text-dark fw-semibold small mb-1">Short Code</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control rounded-start" value="@currentProduct.ShortCode" @oninput="OnShortCodeInput" placeholder="e.g. ICE LATTE" maxlength="30" />
+                                    <button type="button" class="btn btn-outline-secondary text-secondary px-2" @onclick="RegenerateShortCode" title="Regenerate Short Code">
+                                        <i class="bi bi-arrow-repeat"></i>
+                                    </button>
+                                </div>
+                                <small class="text-secondary" style="font-size: 0.72rem;">Max 30 chars for receipts.</small>
+                            </div>
+                            <div class="col-12 col-md-4">
                                 <label class="form-label text-dark fw-semibold small mb-1">Category <span class="text-danger">*</span></label>
                                 <InputSelect @bind-Value="currentProduct.CategoryId" class="form-select rounded">
                                     <option value="0">Select Category...</option>
@@ -641,6 +651,29 @@
     private bool isModalOpen = false;
     private bool isEditing = false;
     private bool isSaving = false;
+    private bool isShortCodeManuallyEdited = false;
+
+    private void OnProductNameChanged(ChangeEventArgs e)
+    {
+        var newName = e.Value?.ToString() ?? string.Empty;
+        currentProduct.Name = newName;
+        if (!isShortCodeManuallyEdited || string.IsNullOrWhiteSpace(currentProduct.ShortCode))
+        {
+            currentProduct.ShortCode = POS.Shared.Services.ProductShortCodeGenerator.GenerateShortCode(newName);
+        }
+    }
+
+    private void OnShortCodeInput(ChangeEventArgs e)
+    {
+        isShortCodeManuallyEdited = true;
+        currentProduct.ShortCode = e.Value?.ToString();
+    }
+
+    private void RegenerateShortCode()
+    {
+        isShortCodeManuallyEdited = false;
+        currentProduct.ShortCode = POS.Shared.Services.ProductShortCodeGenerator.GenerateShortCode(currentProduct.Name);
+    }
     private ProductDto currentProduct = new();
     private bool isUploadingImage = false;
 
@@ -738,6 +771,7 @@
     private void OpenAddModal()
     {
         isEditing = false;
+        isShortCodeManuallyEdited = false;
         currentProduct = new ProductDto
         {
             IsActive = true,
@@ -753,11 +787,13 @@
     private async Task OpenEditModal(ProductDto product)
     {
         isEditing = true;
+        isShortCodeManuallyEdited = !string.IsNullOrWhiteSpace(product.ShortCode);
         currentProduct = new ProductDto
         {
             ProductId = product.ProductId,
             CategoryId = product.CategoryId,
             Name = product.Name,
+            ShortCode = product.ShortCode,
             UnitValue = product.UnitValue,
             UnitOfMeasure = product.UnitOfMeasure,
             Barcode = product.Barcode,

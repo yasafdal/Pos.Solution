@@ -16,6 +16,7 @@ public class ReceiptPrintingTests
         receipt.BranchName = "<script>alert('branch')</script>";
         receipt.Items[0].ProductName = "<img src=x onerror=alert(1)>";
         receipt.Items[0].Modifiers[0].ModifierName = "Pearls & <extra>";
+        receipt.Items[0].Modifiers[0].AdditionalPrice = 10m;
         var html = ReceiptHtmlFormatter.Format(receipt);
         Assert.Contains("&lt;script&gt;", html);
         Assert.Contains("&lt;img", html);
@@ -29,6 +30,7 @@ public class ReceiptPrintingTests
         Assert.Contains("Cashier: cashier-1", html);
         Assert.Contains("Terminal: TILL-01", html);
         Assert.Contains("NOT A BIR TAX INVOICE", html);
+        Assert.DoesNotContain("included in unit price", html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

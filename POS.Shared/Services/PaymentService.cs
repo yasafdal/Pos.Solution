@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Net.Http.Json;
 using System.Threading.Tasks;
 using POS.Shared.Interfaces;
@@ -7,6 +8,11 @@ namespace POS.Shared.Services;
 
 public class PaymentService(HttpClient http) : IPaymentService
 {
+    public async Task<List<PaymentMethodDto>> GetPaymentMethodsAsync()
+    {
+        return await http.GetFromJsonAsync<List<PaymentMethodDto>>("api/payment-methods") ?? new();
+    }
+
     public async Task<PaymentResponseDto?> ProcessPaymentAsync(PaymentProcessDto dto)
     {
         using var response = await http.PostAsJsonAsync("api/payments", dto);

@@ -15,6 +15,9 @@ public partial class OrderItem
     [MaxLength(200)]
     public string ProductName { get; set; } = null!;
 
+    [MaxLength(30)]
+    public string? ProductShortCode { get; set; }
+
     public decimal Quantity { get; set; }
 
     public decimal BasePrice { get; set; }

@@ -21,6 +21,8 @@ public class ProductDto
     public decimal Price { get; set; }
     public decimal CostPrice { get; set; } 
 
+    public string? ShortCode { get; set; }
+
     public int? TaxId { get; set; }
     public string? TaxName { get; set; } 
     public string ProductType { get; set; } = string.Empty;

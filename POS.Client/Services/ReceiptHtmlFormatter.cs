@@ -50,15 +50,33 @@ public static class ReceiptHtmlFormatter
         Line(html, "Cashier: " + receipt.CashierId);
         Line(html, "Created: " + Timestamp(receipt.CreatedAt));
         Line(html, "Paid: " + Timestamp(receipt.PaidAt));
+        if (!string.IsNullOrWhiteSpace(receipt.CustomerName) || !string.IsNullOrWhiteSpace(receipt.CustomerTin))
+        {
+            html.Append("<hr><div style=\"font-weight: bold; text-align: center;\">[CUSTOMER INFORMATION]</div>");
+            OptionalLine(html, receipt.CustomerName is null ? null : "Customer: " + receipt.CustomerName);
+            OptionalLine(html, receipt.CustomerAddress is null ? null : "Address: " + receipt.CustomerAddress);
+            OptionalLine(html, receipt.CustomerTin is null ? null : "TIN: " + receipt.CustomerTin);
+            OptionalLine(html, receipt.CustomerBusinessStyle is null ? null : "Bus. Style: " + receipt.CustomerBusinessStyle);
+        }
         html.Append("<hr><section aria-label=\"Items\">");
         foreach (var item in receipt.Items)
         {
-            html.Append("<div class=\"item\"><strong>").Append(Encode(item.ProductName)).Append("</strong>");
+            var displayName = !string.IsNullOrWhiteSpace(item.ProductShortCode)
+                ? item.ProductShortCode
+                : item.ProductName;
+            html.Append("<div class=\"item\"><strong>").Append(Encode(displayName)).Append("</strong>");
             Row(html, item.Quantity.ToString("0.###", CultureInfo.InvariantCulture) + " x " + Money(item.UnitPrice), Money(item.LineTotal));
             foreach (var modifier in item.Modifiers)
             {
                 html.Append("<div class=\"modifier\">");
-                Line(html, modifier.ModifierName + " (" + Money(modifier.AdditionalPrice) + ", included in unit price)");
+                if (modifier.AdditionalPrice > 0)
+                {
+                    Row(html, modifier.ModifierName, Money(modifier.AdditionalPrice));
+                }
+                else
+                {
+                    Line(html, modifier.ModifierName);
+                }
                 html.Append("</div>");
             }
             html.Append("</div>");

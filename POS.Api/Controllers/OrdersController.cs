@@ -35,6 +35,10 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 OrderStatus = "PENDING",
                 PaymentStatus = "UNPAID",
                 DiscountAmount = dto.DiscountAmount,
+                CustomerName = string.IsNullOrWhiteSpace(dto.CustomerName) ? null : dto.CustomerName.Trim(),
+                CustomerAddress = string.IsNullOrWhiteSpace(dto.CustomerAddress) ? null : dto.CustomerAddress.Trim(),
+                CustomerTin = string.IsNullOrWhiteSpace(dto.CustomerTin) ? null : dto.CustomerTin.Trim(),
+                CustomerBusinessStyle = string.IsNullOrWhiteSpace(dto.CustomerBusinessStyle) ? null : dto.CustomerBusinessStyle.Trim(),
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -67,6 +71,7 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 {
                     ProductId = itemDto.ProductId,
                     ProductName = itemDto.ProductName ?? "Product",
+                    ProductShortCode = itemDto.ProductShortCode,
                     Quantity = itemDto.Quantity,
                     BasePrice = itemDto.BasePrice,
                     ModifierTotal = modifierTotal,
@@ -124,12 +129,17 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             Subtotal = order.Subtotal,
             DiscountAmount = order.DiscountAmount,
             TotalAmount = order.TotalAmount,
+            CustomerName = order.CustomerName,
+            CustomerAddress = order.CustomerAddress,
+            CustomerTin = order.CustomerTin,
+            CustomerBusinessStyle = order.CustomerBusinessStyle,
             CreatedAt = order.CreatedAt,
             Items = order.OrderItems.Select(i => new OrderItemResponseDto
             {
                 OrderItemId = i.OrderItemId,
                 ProductId = i.ProductId,
                 ProductName = i.ProductName,
+                ProductShortCode = i.ProductShortCode,
                 Quantity = i.Quantity,
                 BasePrice = i.BasePrice,
                 ModifierTotal = i.ModifierTotal,

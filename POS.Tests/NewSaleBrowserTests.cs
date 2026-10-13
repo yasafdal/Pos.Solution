@@ -632,6 +632,16 @@ public sealed class NewSaleBrowserTests
     private sealed class SyntheticPaymentService : IPaymentService
     {
         public int Calls { get; private set; }
+        public Task<List<PaymentMethodDto>> GetPaymentMethodsAsync()
+        {
+            return Task.FromResult(new List<PaymentMethodDto>
+            {
+                new() { PaymentMethodId = 1, Code = "CASH", Name = "Cash", RequiresReference = false, IsActive = true, DisplayOrder = 1 },
+                new() { PaymentMethodId = 2, Code = "CARD", Name = "Visa / Mastercard", RequiresReference = true, IsActive = true, DisplayOrder = 2 },
+                new() { PaymentMethodId = 3, Code = "GCASH", Name = "GCash E-Wallet", RequiresReference = true, IsActive = true, DisplayOrder = 3 },
+                new() { PaymentMethodId = 4, Code = "MAYA", Name = "Maya E-Wallet", RequiresReference = true, IsActive = true, DisplayOrder = 4 }
+            });
+        }
         public Task<PaymentResponseDto?> ProcessPaymentAsync(PaymentProcessDto dto)
         {
             Calls++;

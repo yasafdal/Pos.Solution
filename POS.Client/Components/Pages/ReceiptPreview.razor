@@ -2,7 +2,7 @@
 @inject IReceiptPrinter ReceiptPrinter
 
 <div class="modal show d-block receipt-preview-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-title" style="background:rgba(15,23,42,.55)">
-    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 id="receipt-title" class="modal-title">Payment Successful</h5>
@@ -43,6 +43,16 @@
                         <div>Order: @receipt.OrderNumber</div>
                         <div>Cashier: @receipt.CashierId</div>
                         <div>Paid: @receipt.PaidAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
+                        @if (!string.IsNullOrWhiteSpace(receipt.CustomerName) || !string.IsNullOrWhiteSpace(receipt.CustomerTin))
+                        {
+                            <div class="mt-2 pt-2 border-top">
+                                <strong>Customer Info:</strong><br />
+                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerName)) { <span>Name: @receipt.CustomerName</span><br /> }
+                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerAddress)) { <span>Address: @receipt.CustomerAddress</span><br /> }
+                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerTin)) { <span>TIN: @receipt.CustomerTin</span><br /> }
+                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerBusinessStyle)) { <span>Bus. Style: @receipt.CustomerBusinessStyle</span> }
+                            </div>
+                        }
                         <hr />
                         @foreach (var item in receipt.Items)
                         {

@@ -5,6 +5,7 @@ namespace POS.Api.Models;
 public partial class PosDbContext
 {
     public DbSet<BusinessType> BusinessTypes { get; set; }
+    public virtual DbSet<PaymentMethod> PaymentMethods { get; set; }
     public virtual DbSet<ModifierGroup> ModifierGroups { get; set; }
     public virtual DbSet<ModifierOption> ModifierOptions { get; set; }
     public virtual DbSet<ProductModifierGroup> ProductModifierGroups { get; set; }
@@ -17,6 +18,21 @@ public partial class PosDbContext
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        // Payment Methods
+        modelBuilder.Entity<PaymentMethod>(entity =>
+        {
+            entity.ToTable("PaymentMethods");
+            entity.HasKey(e => e.PaymentMethodId);
+            entity.Property(e => e.PaymentMethodId).HasColumnName("payment_method_id");
+            entity.Property(e => e.Code).HasColumnName("code").HasMaxLength(30).IsRequired();
+            entity.Property(e => e.Name).HasColumnName("name").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.RequiresReference).HasColumnName("requires_reference").HasDefaultValue(false);
+            entity.Property(e => e.IsActive).HasColumnName("is_active").HasDefaultValue(true);
+            entity.Property(e => e.DisplayOrder).HasColumnName("display_order").HasDefaultValue(0);
+
+            entity.HasIndex(e => e.Code).IsUnique().HasDatabaseName("PaymentMethods_code_key");
+        });
+
         // ServiceMode
         modelBuilder.Entity<ServiceMode>(entity =>
         {
@@ -121,6 +137,10 @@ public partial class PosDbContext
             entity.Property(e => e.InvoiceSequenceId).HasColumnName("invoice_sequence_id");
             entity.Property(e => e.InvoiceNumber).HasColumnName("InvoiceNumber").HasMaxLength(50);
             entity.Property(e => e.InvoiceIssuedAt).HasColumnName("invoice_issued_at").HasColumnType("timestamp without time zone");
+            entity.Property(e => e.CustomerName).HasColumnName("CustomerName").HasMaxLength(200);
+            entity.Property(e => e.CustomerAddress).HasColumnName("CustomerAddress").HasMaxLength(255);
+            entity.Property(e => e.CustomerTin).HasColumnName("CustomerTin").HasMaxLength(50);
+            entity.Property(e => e.CustomerBusinessStyle).HasColumnName("CustomerBusinessStyle").HasMaxLength(100);
             entity.Property(e => e.CreatedAt).HasColumnName("CreatedAt").HasColumnType("timestamp without time zone").HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(e => e.OrderNumber).IsUnique().HasDatabaseName("Orders_OrderNumber_key");
@@ -141,6 +161,7 @@ public partial class PosDbContext
             entity.Property(e => e.OrderId).HasColumnName("OrderId");
             entity.Property(e => e.ProductId).HasColumnName("ProductId");
             entity.Property(e => e.ProductName).HasColumnName("ProductName").HasMaxLength(200).IsRequired();
+            entity.Property(e => e.ProductShortCode).HasColumnName("ProductShortCode").HasMaxLength(30);
             entity.Property(e => e.Quantity).HasColumnName("Quantity").HasPrecision(18, 3);
             entity.Property(e => e.BasePrice).HasColumnName("BasePrice").HasPrecision(18, 2);
             entity.Property(e => e.ModifierTotal).HasColumnName("ModifierTotal").HasPrecision(18, 2).HasDefaultValue(0.00m);

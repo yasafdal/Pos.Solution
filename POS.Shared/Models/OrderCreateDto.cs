@@ -10,5 +10,9 @@ public class OrderCreateDto
     public long? ShiftId { get; set; }
     public string OrderType { get; set; } = "DINING";
     public decimal DiscountAmount { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerAddress { get; set; }
+    public string? CustomerTin { get; set; }
+    public string? CustomerBusinessStyle { get; set; }
     public List<OrderItemCreateDto> Items { get; set; } = new();
 }

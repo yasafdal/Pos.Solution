@@ -17,6 +17,10 @@ public class OrderResponseDto
     public decimal Subtotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal TotalAmount { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerAddress { get; set; }
+    public string? CustomerTin { get; set; }
+    public string? CustomerBusinessStyle { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<OrderItemResponseDto> Items { get; set; } = new();
 }

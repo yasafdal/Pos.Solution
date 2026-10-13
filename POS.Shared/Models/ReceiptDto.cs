@@ -19,6 +19,10 @@ public class ReceiptDto
     public decimal TotalAmount { get; set; }
     public string? InvoiceNumber { get; set; }
     public DateTime? InvoiceIssuedAt { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerAddress { get; set; }
+    public string? CustomerTin { get; set; }
+    public string? CustomerBusinessStyle { get; set; }
     public bool IsReprint { get; set; }
     public List<OrderItemResponseDto> Items { get; set; } = new();
     public List<PaymentResponseDto> Payments { get; set; } = new();

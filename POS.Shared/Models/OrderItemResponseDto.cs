@@ -7,6 +7,7 @@ public class OrderItemResponseDto
     public long OrderItemId { get; set; }
     public int ProductId { get; set; }
     public string ProductName { get; set; } = null!;
+    public string? ProductShortCode { get; set; }
     public decimal Quantity { get; set; }
     public decimal BasePrice { get; set; }
     public decimal ModifierTotal { get; set; }

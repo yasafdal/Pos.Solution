@@ -32,6 +32,7 @@ namespace POS.Api.Controllers
                     CategoryId = p.CategoryId,
                     CategoryName = p.Category != null ? p.Category.Name : string.Empty,
                     Name = p.Name,
+                    ShortCode = p.ShortCode,
                     UnitValue = p.UnitValue,
                     UnitOfMeasure = p.UnitOfMeasure,
                     Barcode = p.Barcode,
@@ -58,6 +59,7 @@ namespace POS.Api.Controllers
             {
                 CategoryId = dto.CategoryId,
                 Name = dto.Name,
+                ShortCode = dto.ShortCode,
                 UnitValue = dto.UnitValue,
                 UnitOfMeasure = dto.UnitOfMeasure,
                 Barcode = dto.Barcode,
@@ -87,6 +89,7 @@ namespace POS.Api.Controllers
 
             product.CategoryId = dto.CategoryId;
             product.Name = dto.Name;
+            product.ShortCode = dto.ShortCode;
             product.UnitValue = dto.UnitValue;
             product.UnitOfMeasure = dto.UnitOfMeasure;
             product.Barcode = dto.Barcode;

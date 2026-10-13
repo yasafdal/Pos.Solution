@@ -9,7 +9,7 @@ namespace POS.Tests;
 public class PaymentModuleTests
 {
     [Fact(Skip = "Manual database script runner: never mutate pos_db during automated tests. Apply reviewed SQL explicitly.")]
-    public async Task Apply_PaymentModule_script_to_pos_db_and_verify_tables()
+    public async Task Apply_CustomerInfo_script_to_pos_db()
     {
         using var configured = new PosDbContext();
         var cs = new NpgsqlConnectionStringBuilder(configured.Database.GetConnectionString());
@@ -22,22 +22,38 @@ public class PaymentModuleTests
         await using var cmd = new NpgsqlCommand("SET search_path TO public", db);
         await cmd.ExecuteNonQueryAsync();
 
-        var sqlPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "POS.Api", "Database", "PaymentModule.sql");
+        var sqlPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "POS.Api", "Database", "CustomerInfo.sql");
         var sql = await File.ReadAllTextAsync(sqlPath);
         await using var scriptCmd = new NpgsqlCommand(sql, db);
         await scriptCmd.ExecuteNonQueryAsync();
 
-        // Verify tables exist and can query
         using var context = new PosDbContext();
-        var orderCount = await context.Orders.CountAsync();
-        var itemCount = await context.OrderItems.CountAsync();
-        var modCount = await context.OrderItemModifiers.CountAsync();
-        var paymentCount = await context.Payments.CountAsync();
+        var testOrder = new Order
+        {
+            OrderNumber = "TST-CUST-002",
+            BranchId = 1,
+            OutletId = 1,
+            CashierId = "tester",
+            OrderType = "DINING",
+            OrderStatus = "PENDING",
+            PaymentStatus = "UNPAID",
+            Subtotal = 100m,
+            TotalAmount = 100m,
+            CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
+            CustomerName = "ACME Corp",
+            CustomerAddress = "Makati City",
+            CustomerTin = "123-456-789-000",
+            CustomerBusinessStyle = "Retail"
+        };
+        context.Orders.Add(testOrder);
+        await context.SaveChangesAsync();
 
-        Assert.True(orderCount >= 0);
-        Assert.True(itemCount >= 0);
-        Assert.True(modCount >= 0);
-        Assert.True(paymentCount >= 0);
+        var queried = await context.Orders.FindAsync(testOrder.OrderId);
+        Assert.NotNull(queried);
+        Assert.Equal("ACME Corp", queried.CustomerName);
+        Assert.Equal("Makati City", queried.CustomerAddress);
+        Assert.Equal("123-456-789-000", queried.CustomerTin);
+        Assert.Equal("Retail", queried.CustomerBusinessStyle);
     }
 
     [Fact]
