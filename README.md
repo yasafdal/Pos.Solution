@@ -1,57 +1,40 @@
 # Receipt printing (Windows MAUI client)
 
-## Adapter and completion contract
+## Direct printing
 
-`POS.Client.Services.IReceiptPrinter.PrintAsync(ReceiptDto)` accepts the **persisted paid receipt**, not the live cart. It must not create orders, process payments, or recalculate totals.
+Click **Print Receipt** (or Retry Print) to send the persisted paid receipt directly to the Windows queue **EPSON TM-T88IV Receipt**. There is no Windows print dialog or separate print preview. Payment completion alone does not trigger printing. The existing receipt modal and **Save as PDF** remain available.
 
-On Windows, `POS.Client.Platforms.Windows.WindowsReceiptPrinter` opens a separate native WinUI/WebView2 receipt window and invokes **`CoreWebView2.ShowPrintUI(CoreWebView2PrintDialogKind.System)`**. It never calls JavaScript `window.print()` or navigates/replaces the cashier's BlazorWebView. This preserves the cart and navigation underneath the preview. The preview uses its own writable WebView2 profile under the MAUI app-data directory.
+`WindowsReceiptPrinter.PrintAsync` uses a hidden WinUI/WebView2 host and `CoreWebView2.PrintAsync`. It never replaces the cashier's BlazorWebView, creates orders, processes payments, or recalculates totals. A singleton adapter rejects simultaneous print requests; the UI disables print and PDF actions while printing. There is no automatic retry or fallback to the Windows default printer. The cashier may close the receipt modal while a job is pending; closing does not cancel the job or release the adapter's in-flight guard.
 
-Completion means **the system print UI was opened**, not that a receipt was printed or a PDF saved. Windows/WebView2 does not return cancellation or physical printer success from this dialog. Known initialization, rendering, timeout, or dialog-launch failures throw for the caller to display. The receipt remains paid even when printing fails. Retry/reprint must use the same stored receipt, never repeat checkout/payment.
+Completion means WebView2 reported a successful print submission, **not confirmed paper output**. Known render and print failures are shown without changing the paid sale. Check the EPSON and Windows queue before retrying to avoid duplicate paper receipts.
 
-Only one receipt window is permitted per singleton adapter. Close it before printing another receipt; an attempted duplicate focuses the existing window and throws an explanatory error. Closing the window disposes its WebView2.
+## Printer configuration
 
-### Required DI registration
+- Windows queue: `EPSON TM-T88IV Receipt` (configured in `WindowsReceiptPrinter.cs`).
+- Driver detected on this laptop: `EPSON TM-T88IV ReceiptE4`; port `ESDPRT001`.
+- Driver PrintTicket inspected: 80 × 297 mm, portrait, monochrome, 180 × 180 dpi.
+- Code requests custom 80 × 297 mm, portrait, one copy, one page per side, grayscale, one-sided, 100% scale, zero page margins, no browser headers/footers.
+- HTML keeps its existing 4 mm internal padding (72 mm content area). Long receipts paginate. Physical margins, feed length and cutting depend on the driver/hardware; no ESC/POS cutter or cash-drawer commands are sent.
 
-```csharp
-#if WINDOWS
-builder.Services.AddSingleton<IReceiptPrinter, POS.Client.Platforms.Windows.WindowsReceiptPrinter>();
-#else
-builder.Services.AddSingleton<IReceiptPrinter, UnsupportedReceiptPrinter>();
-#endif
-```
+A renamed/missing queue must be corrected explicitly; the application must not silently send receipts to another printer. Driver defaults are not modified by the application.
 
-Both implementations are included in this change. The non-Windows fallback throws `PlatformNotSupportedException` instead of silently reporting success. No additional production NuGet package or MainPage hook is needed: MAUI already brings WinUI and WebView2.
+## PDF and receipt safety
 
-The non-MAUI `POS.Tests` linked-component host must link `Services/IReceiptPrinter.cs` **and `Services/ReceiptHtmlFormatter.cs`**; its interactive UI tests should inject a fake printer (the platform class is Windows-only).
+**Save as PDF** retains the existing separate export path to `Documents/POS_Receipts/Receipt_<order>.pdf` and opens the saved file. Its format is 80 × 297 mm with zero page margins; it does not print paper. Receipt files contain transaction/customer data: protect them under your retention policy.
 
-## Print to PDF / paper
+All receipt text is HTML-encoded and based on saved DTO amounts. The HTML has no scripts or external assets and uses a restrictive CSP. The print host disables scripts and permits only in-memory receipt navigation (`about:blank` and HTML data URLs). The receipt is marked **NOT A BIR TAX INVOICE**; this feature is not fiscal accreditation.
 
-1. Complete payment, obtain the saved receipt and select Print/Reprint in the sale receipt UI.
-2. The native system print dialog opens. Select **Microsoft Print to PDF**, then Print and choose a destination. Or select an installed physical Windows printer.
-3. Cancelling the dialog does not cancel/refund the sale and does not mean printing failed. The preview stays open. Its **Print…** button reopens the dialog without repeating payment.
-4. For predictable 80 mm PDF output, dismiss the initial print dialog and select **Save PDF…** in the receipt window. Choose a file with the native Windows save picker. This calls **`CoreWebView2.PrintToPdfAsync`** directly, with 80 mm × 297 mm pages, zero margins, no headers/footers, and backgrounds enabled. Long receipts paginate. A false renderer result or exception is shown as failure; success says only “PDF saved.” Cancelling the file picker leaves the paid receipt unchanged.
-5. Close the receipt preview when finished. PDF files contain sale/cashier information; choose an appropriate protected destination and follow your retention policy.
+## Registration and verification
 
-Receipt content is a fixed 80 mm thermal-style document with a 72 mm inner area. The system dialog/driver controls paper size: choose the thermal driver's 80 mm form, or the PDF may appear as a narrow receipt on A4/Letter. The direct Save PDF path explicitly sets 80 mm width. Header/footer includes branch name/code/address/phone when available, order number, terminal, cashier, created/paid timestamps, item quantities, unit/line amounts, modifiers, subtotal, discount, total, payment/tender/change and reference. Modifier amounts are labelled as already included in unit price. Monetary amounts are displayed from the DTO, not recalculated. UTC timestamps are marked UTC; unspecified timestamps are displayed without silently converting the workstation timezone.
+Keep the Windows singleton `IReceiptPrinter` registration in `MauiProgram`. Other platforms use `UnsupportedReceiptPrinter`. No new production package is required.
 
-All DTO text is HTML-encoded. Receipt HTML contains no JavaScript, external assets or network links, sets a restrictive CSP, and the native view disables scripts and blocks external navigation. The receipt explicitly says **NOT A BIR TAX INVOICE**. This work does not implement BIR accreditation, statutory tax invoice fields, fiscal numbering, or tax reporting.
-
-## Switching to a physical thermal adapter
-
-For ordinary Windows driver printing, no code change is necessary: install the manufacturer's driver, choose its 80 mm form and select it in the native print dialog. Test real paper margins, character support, pagination and cutting before rollout.
-
-For direct ESC/POS, USB, network or vendor-SDK printing, add an adapter implementing `IReceiptPrinter`, then replace **only the Windows DI registration** with that adapter. Keep UI, DTO and payment flows unchanged. Map persisted receipt items/modifiers/totals to device commands, handle encoding/code pages explicitly, and throw on known connection/write failures. Do not interpret a spooler hand-off as confirmed paper output; document any stronger hardware acknowledgement separately. Do not send cash-drawer or cutter commands until explicitly configured/tested for the target hardware. Avoid automatically retrying ambiguous sends because they can print duplicates. Keep the system-dialog adapter available as an operator-selected fallback.
-
-## Automated verification
-
-Run only receipt tests (no database required):
+The linked-component test host includes `IReceiptPrinter`, `ReceiptHtmlFormatter`, and `ReceiptNavigationPolicy`. UI tests use a synthetic printer and never print real receipts.
 
 ```bash
-dotnet test POS.Tests/POS.Tests.csproj --filter FullyQualifiedName~ReceiptPrintingTests
+dotnet build POS.Client/POS.Client.csproj -f net10.0-windows10.0.19041.0
+dotnet test POS.Tests/POS.Tests.csproj --filter "FullyQualifiedName~Receipt|FullyQualifiedName~Paid_order|FullyQualifiedName~Skipping_receipt"
 ```
 
-Install the Playwright Chromium browser if the test machine does not already have it (`pwsh POS.Tests/bin/Debug/net10.0/playwright.ps1 install chromium`). The suite checks HTML encoding, persisted money/metadata, invariant formatting, no script/image/frame elements, no external requests, and a real headless Chromium PDF render. Artifacts default to `POS.Tests/bin/Debug/net10.0/receipt-artifacts/`; set `POS_RECEIPT_ARTIFACT_DIR` to choose another folder.
+Install Playwright Chromium if needed using `powershell.exe -File POS.Tests/bin/Debug/net10.0/playwright.ps1 install chromium`.
 
-Development verification produced `receipt-sample.pdf`, `.html` and `.png` under the repository's ignored `artifacts/receipt-printing/` folder (with working copies under `C:/Users/yaser/AppData/Local/hermes/cache/scratch/receipt-artifacts/`). Independent PDF parsing verified one page, ~80 mm width, and expected text including sale number, total and non-tax-invoice disclaimer. These are synthetic test fixtures, not real sales. They prove HTML/PDF rendering, **not** native Windows dialog interaction or physical printer operation. The Windows MAUI target was compiled against the real WebView2 API; the native dialog/save-picker interaction and a physical printer still require a manual Windows acceptance run.
-
-Manual acceptance checklist: print saved receipt to Microsoft Print to PDF; open the resulting file and compare it to the persisted sale; exercise Save PDF; cancel both dialogs; close/reopen preview; disconnect the printer; retry without new payment; confirm the underlying cart/navigation remain unchanged. No deployment, database/schema change, or hardware printing is performed by these tests.
+Manual acceptance: print an existing paid receipt, check paper alignment/cutting, exercise Save as PDF, verify missing/offline-printer handling, and confirm retries never repeat payment. Synthetic print diagnostics must be explicitly labeled TEST ONLY and must not connect to a database.

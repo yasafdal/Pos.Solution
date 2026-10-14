@@ -20,9 +20,13 @@
                         <p class="mb-0">@error</p>
                     </div>
                 }
-                @if (printDialogOpened)
+                @if (printing)
                 {
-                    <p role="status">Print dialog opened. Select Microsoft Print to PDF or your installed thermal printer.</p>
+                    <p role="status">Sending receipt to printer. Closing does not cancel the print job. Check the Windows queue before retrying.</p>
+                }
+                @if (receiptSentToPrinter)
+                {
+                    <p role="status">Receipt sent to printer. Check the EPSON printer and Windows print queue before retrying.</p>
                 }
                 @if (!string.IsNullOrEmpty(savedPdfPath))
                 {
@@ -82,13 +86,13 @@
                 }
             </div>
             <div class="modal-footer d-flex justify-content-between">
-                <button type="button" class="btn btn-outline-secondary px-3 py-2" disabled="@(printing || savingPdf)" @onclick="OnClose">Skip Printing</button>
+                <button type="button" class="btn btn-outline-secondary px-3 py-2" disabled="@savingPdf" @onclick="OnClose">@(printing ? "Close" : "Skip Printing")</button>
                 <div class="d-flex gap-2">
                     <button type="button" class="btn btn-outline-primary px-3 py-2" disabled="@(loading || printing || savingPdf)" @onclick="SavePdf">
                         @(savingPdf ? "Saving PDF…" : "Save as PDF")
                     </button>
                     <button type="button" class="btn btn-primary px-4 py-2" disabled="@(loading || printing || savingPdf)" @onclick="PrintReceipt">
-                        @(printing ? "Opening printer…" : error != null ? "Retry Print" : "Print Receipt")
+                        @(printing ? "Printing…" : error != null ? "Retry Print" : "Print Receipt")
                     </button>
                 </div>
             </div>
@@ -105,7 +109,7 @@
     private bool printing;
     private bool savingPdf;
     private string? savedPdfPath;
-    private bool printDialogOpened;
+    private bool receiptSentToPrinter;
     private long loadedOrderId;
 
     protected override async Task OnParametersSetAsync()
@@ -113,7 +117,7 @@
         if (loadedOrderId == OrderId) return;
         loadedOrderId = OrderId;
         receipt = null;
-        printDialogOpened = false;
+        receiptSentToPrinter = false;
         savedPdfPath = null;
         await LoadReceipt();
     }
@@ -136,7 +140,7 @@
 
     private async Task SavePdf()
     {
-        if (savingPdf || loading) return;
+        if (savingPdf || printing || loading) return;
         savingPdf = true;
         error = null;
         savedPdfPath = null;
@@ -166,20 +170,20 @@
 
     private async Task PrintReceipt()
     {
-        if (printing || loading) return;
+        if (printing || savingPdf || loading) return;
         printing = true;
         error = null;
-        printDialogOpened = false;
+        receiptSentToPrinter = false;
         try
         {
             if (receipt == null) await LoadReceipt();
             if (receipt == null) return;
             await ReceiptPrinter.PrintAsync(receipt);
-            printDialogOpened = true;
+            receiptSentToPrinter = true;
         }
         catch
         {
-            error = "The print operation could not be started. Check the printer or PDF destination, then choose Retry Print.";
+            error = "The receipt could not be sent to the EPSON printer. Check the printer and Windows queue, then choose Retry Print.";
         }
         finally { printing = false; }
     }

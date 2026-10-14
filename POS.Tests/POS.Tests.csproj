@@ -27,6 +27,7 @@
     <RazorComponent Include="../POS.Client/Components/Pages/ReceiptPreview.razor" Link="ClientHost/Pages/ReceiptPreview.razor" />
     <Compile Include="../POS.Client/Services/IReceiptPrinter.cs" Link="ClientHost/IReceiptPrinter.cs" />
     <Compile Include="../POS.Client/Services/ReceiptHtmlFormatter.cs" Link="ClientHost/ReceiptHtmlFormatter.cs" />
+    <Compile Include="../POS.Client/Services/ReceiptNavigationPolicy.cs" Link="ClientHost/ReceiptNavigationPolicy.cs" />
     <RazorComponent Include="../POS.Client/Components/Pages/Transactions.razor" Link="ClientHost/Pages/Transactions.razor" />
     <RazorComponent Include="../POS.Client/Components/Pages/HeldSales.razor" Link="ClientHost/Pages/HeldSales.razor" />
     <RazorComponent Include="../POS.Client/Components/Pages/Returns.razor" Link="ClientHost/Pages/Returns.razor" />

@@ -6,8 +6,8 @@ namespace POS.Client.Services;
 public interface IReceiptPrinter
 {
     /// <summary>
-    /// Opens the print UI. Completion means handed to the system dialog, not paper printed;
-    /// cancellation and spooler failures after hand-off cannot be observed. Throws on known failure.
+    /// Sends the receipt directly to the configured receipt printer. Completion means WebView2
+    /// accepted the print job; it does not guarantee paper output. Throws on known failure.
     /// Never creates an order, processes payment, or changes the cart.
     /// </summary>
     Task PrintAsync(ReceiptDto receipt);

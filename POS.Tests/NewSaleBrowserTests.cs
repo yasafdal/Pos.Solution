@@ -236,11 +236,37 @@ public sealed class NewSaleBrowserTests
         Assert.Equal(1, host.Payments.Calls);
         host.Printer.Fail = false;
         await page.GetByRole(AriaRole.Button, new() { Name = "Retry Print", Exact = true }).ClickAsync();
-        await Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Print dialog opened");
+        await Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Receipt sent to printer");
         Assert.Equal(2, host.Printer.Calls);
         Assert.Equal(1, host.Payments.Calls);
         await page.GetByRole(AriaRole.Button, new() { Name = "Skip Printing", Exact = true }).ClickAsync();
         await Assertions.Expect(page.Locator(".receipt-preview-modal")).ToHaveCountAsync(0);
+    }
+
+    [Fact]
+    public async Task Pending_print_can_be_dismissed_without_repeating_payment_or_cancelling_submission()
+    {
+        await using var host = await SaleHost.StartAsync();
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Printer.PendingPrint = completion.Task;
+        try
+        {
+            await OpenSale(host);
+            var page = host.Page;
+            await page.Locator(".product-card").Filter(new() { HasText = "Blueberry Muffin" }).ClickAsync();
+            await page.Locator(".btn-proceed-payment").ClickAsync();
+            await page.GetByRole(AriaRole.Button, new() { Name = "Confirm Payment", Exact = true }).ClickAsync();
+            await page.GetByRole(AriaRole.Button, new() { Name = "Print Receipt", Exact = true }).ClickAsync();
+            await Assertions.Expect(page.GetByRole(AriaRole.Button, new() { Name = "Printing…", Exact = true })).ToBeDisabledAsync();
+            await Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Closing does not cancel");
+            await page.GetByRole(AriaRole.Button, new() { Name = "Close", Exact = true }).ClickAsync();
+            await Assertions.Expect(page.Locator(".receipt-preview-modal")).ToHaveCountAsync(0);
+            await Assertions.Expect(page.Locator(".empty-cart")).ToBeVisibleAsync();
+            Assert.Equal(1, host.Printer.Calls);
+            Assert.Equal(1, host.Payments.Calls);
+            Assert.False(completion.Task.IsCompleted);
+        }
+        finally { completion.TrySetResult(); }
     }
 
     [Fact]
@@ -260,7 +286,7 @@ public sealed class NewSaleBrowserTests
         host.Receipts.Fail = false;
         await page.GetByRole(AriaRole.Button, new() { Name = "Retry Print", Exact = true }).ClickAsync();
         await Assertions.Expect(page.Locator(".receipt-document")).ToContainTextAsync("Blueberry Muffin");
-        await Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Print dialog opened");
+        await Assertions.Expect(page.GetByRole(AriaRole.Status)).ToContainTextAsync("Receipt sent to printer");
         Assert.Equal(1, host.Payments.Calls);
         Assert.Equal(1, host.Printer.Calls);
     }
@@ -614,11 +640,12 @@ public sealed class NewSaleBrowserTests
     {
         public int Calls { get; private set; }
         public bool Fail { get; set; }
+        public Task? PendingPrint { get; set; }
         public Task PrintAsync(ReceiptDto receipt)
         {
             Calls++;
             if (Fail) throw new InvalidOperationException("Test printer offline");
-            return Task.CompletedTask;
+            return PendingPrint ?? Task.CompletedTask;
         }
 
         public Task<string> SavePdfAsync(ReceiptDto receipt)

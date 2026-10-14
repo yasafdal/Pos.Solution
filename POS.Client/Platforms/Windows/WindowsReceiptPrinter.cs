@@ -1,32 +1,33 @@
 using Microsoft.Maui.ApplicationModel;
-using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 using POS.Client.Services;
 using POS.Shared.Models;
-using Windows.Storage.Pickers;
 using NativeWindow = Microsoft.UI.Xaml.Window;
-using Button = Microsoft.UI.Xaml.Controls.Button;
-using Thickness = Microsoft.UI.Xaml.Thickness;
-using RowDefinition = Microsoft.UI.Xaml.Controls.RowDefinition;
-using GridLength = Microsoft.UI.Xaml.GridLength;
-using GridUnitType = Microsoft.UI.Xaml.GridUnitType;
 
 namespace POS.Client.Platforms.Windows;
 
 /// <summary>
-/// Native WebView2 print adapter. Uses a separate receipt-only window so the cashier's
-/// BlazorWebView, navigation, and cart are never replaced. No window.print JavaScript.
+/// Direct WebView2 printing to the EPSON queue using a hidden receipt-only host.
+/// The cashier's BlazorWebView, navigation, and cart are never replaced.
 /// </summary>
 public sealed class WindowsReceiptPrinter : IReceiptPrinter
 {
-    // Register as a singleton: retain the preview until the user explicitly closes it.
-    private NativeWindow? _preview;
+    // Windows queue name, not the ReceiptE4 driver name. Never use the default printer.
+    private const string PrinterName = "EPSON TM-T88IV Receipt";
+    private int _printing;
 
-    public Task PrintAsync(ReceiptDto receipt)
+    public async Task PrintAsync(ReceiptDto receipt)
     {
-        var html = ReceiptHtmlFormatter.Format(receipt);
-        return MainThread.InvokeOnMainThreadAsync(() => OpenPrintPreviewAsync(html));
+        if (Interlocked.CompareExchange(ref _printing, 1, 0) != 0)
+            throw new InvalidOperationException("A receipt is already being sent to the printer. Wait before printing again.");
+
+        try
+        {
+            var html = ReceiptHtmlFormatter.Format(receipt);
+            await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html));
+        }
+        finally { Interlocked.Exchange(ref _printing, 0); }
     }
 
     public Task<string> SavePdfAsync(ReceiptDto receipt)
@@ -90,52 +91,19 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
         });
     }
 
-    private async Task OpenPrintPreviewAsync(string html)
+    private static async Task PrintDirectAsync(string html)
     {
-        if (_preview is not null)
-        {
-            _preview.Activate();
-            throw new InvalidOperationException("Close the existing receipt preview before printing another receipt.");
-        }
-
         var webView = new WebView2();
-        var window = new NativeWindow { Title = "Receipt — Print / Save as PDF" };
-        var status = new TextBlock { Text = "Loading receipt…", TextWrapping = TextWrapping.Wrap };
-        var print = new Button { Content = "Print…", IsEnabled = false };
-        var save = new Button { Content = "Save PDF…", IsEnabled = false };
-        var close = new Button { Content = "Close preview" };
-        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        toolbar.Children.Add(print);
-        toolbar.Children.Add(save);
-        toolbar.Children.Add(close);
-        var header = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
-        header.Children.Add(toolbar);
-        header.Children.Add(status);
+        var window = new NativeWindow { Title = "Receipt printing" };
         var layout = new Microsoft.UI.Xaml.Controls.Grid();
-        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        layout.Children.Add(header);
-        Microsoft.UI.Xaml.Controls.Grid.SetRow(webView, 1);
         layout.Children.Add(webView);
         window.Content = layout;
-        _preview = window;
-        var closed = false;
-        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        window.Closed += (_, _) =>
-        {
-            closed = true;
-            loaded.TrySetException(new InvalidOperationException("Receipt preview was closed before it was ready."));
-            webView.Close();
-            if (ReferenceEquals(_preview, window)) _preview = null;
-        };
-        close.Click += (_, _) => window.Close();
-        window.Activate();
+        // Initialize a native host without activating a preview or taking cashier focus.
         try
         {
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null,
                 Path.Combine(Microsoft.Maui.Storage.FileSystem.AppDataDirectory, "ReceiptWebView2"), null);
             await webView.EnsureCoreWebView2Async(environment);
-            if (closed) throw new InvalidOperationException("Receipt preview was closed.");
             var core = webView.CoreWebView2;
             core.Settings.IsScriptEnabled = false;
             core.Settings.AreDefaultContextMenusEnabled = false;
@@ -143,10 +111,10 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
             core.Settings.IsStatusBarEnabled = false;
             core.NavigationStarting += (_, args) =>
             {
-                // NavigateToString uses about:blank; no receipt data can navigate to a URL.
-                if (!string.Equals(args.Uri, "about:blank", StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
+                if (!ReceiptNavigationPolicy.IsAllowed(args.Uri)) args.Cancel = true;
             };
             core.NewWindowRequested += (_, args) => args.Handled = true;
+            var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             core.NavigationCompleted += (_, args) =>
             {
                 if (args.IsSuccess) loaded.TrySetResult();
@@ -154,53 +122,35 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
             };
             core.NavigateToString(html);
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30));
-            print.IsEnabled = true;
-            save.IsEnabled = true;
-            print.Click += (_, _) =>
-            {
-                try { ShowPrintDialog(core, status); }
-                catch (Exception ex) { status.Text = "Could not open print dialog: " + ex.Message; }
-            };
-            save.Click += async (_, _) =>
-            {
-                save.IsEnabled = false;
-                print.IsEnabled = false;
-                try
-                {
-                    var picker = new FileSavePicker { SuggestedFileName = "sales-receipt" };
-                    picker.FileTypeChoices.Add("PDF document", new List<string> { ".pdf" });
-                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(window));
-                    var file = await picker.PickSaveFileAsync();
-                    if (file is null) { status.Text = "PDF save cancelled. Payment is unchanged."; return; }
-                    var settings = core.Environment.CreatePrintSettings();
-                    settings.PageWidth = 80d / 25.4d;
-                    settings.PageHeight = 297d / 25.4d;
-                    settings.MarginTop = settings.MarginBottom = settings.MarginLeft = settings.MarginRight = 0;
-                    settings.ShouldPrintHeaderAndFooter = false;
-                    settings.ShouldPrintBackgrounds = true;
-                    var written = await core.PrintToPdfAsync(file.Path, settings);
-                    if (!written) throw new IOException("WebView2 did not create the PDF.");
-                    status.Text = "PDF saved. This does not mean a paper receipt was printed.";
-                }
-                catch (Exception ex) { status.Text = "PDF save failed: " + ex.Message; }
-                finally
-                {
-                    if (!closed) { save.IsEnabled = true; print.IsEnabled = true; }
-                }
-            };
-            ShowPrintDialog(core, status);
-        }
-        catch
-        {
-            if (!closed) window.Close();
-            throw;
-        }
-    }
 
-    private static void ShowPrintDialog(CoreWebView2 core, TextBlock status)
-    {
-        core.ShowPrintUI(CoreWebView2PrintDialogKind.System);
-        status.Text = "Print dialog opened. Select Microsoft Print to PDF or your installed printer. "
-            + "Cancellation and physical printing are not confirmed. Close this preview when finished.";
+            // Matches the installed EPSON driver's 80 x 297 mm portrait form.
+            var settings = core.Environment.CreatePrintSettings();
+            settings.PrinterName = PrinterName;
+            settings.MediaSize = CoreWebView2PrintMediaSize.Custom;
+            settings.PageWidth = 80d / 25.4d;
+            settings.PageHeight = 297d / 25.4d;
+            settings.Orientation = CoreWebView2PrintOrientation.Portrait;
+            settings.MarginTop = settings.MarginBottom = settings.MarginLeft = settings.MarginRight = 0;
+            settings.ScaleFactor = 1;
+            settings.Copies = 1;
+            settings.PagesPerSide = 1;
+            settings.ColorMode = CoreWebView2PrintColorMode.Grayscale;
+            settings.Duplex = CoreWebView2PrintDuplex.OneSided;
+            settings.ShouldPrintHeaderAndFooter = false;
+            settings.ShouldPrintBackgrounds = true;
+            settings.ShouldPrintSelectionOnly = false;
+
+            // No timeout or automatic retry after submission: an ambiguous result can print duplicates.
+            var result = await core.PrintAsync(settings);
+            if (result == CoreWebView2PrintStatus.PrinterUnavailable)
+                throw new InvalidOperationException($"Printer '{PrinterName}' is unavailable. Check its connection and Windows print queue.");
+            if (result != CoreWebView2PrintStatus.Succeeded)
+                throw new InvalidOperationException($"Could not submit the receipt to '{PrinterName}'. Check the Windows print queue before retrying to avoid duplicates.");
+        }
+        finally
+        {
+            try { webView.Close(); }
+            finally { window.Close(); }
+        }
     }
 }
