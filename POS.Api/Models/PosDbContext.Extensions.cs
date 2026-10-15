@@ -15,9 +15,20 @@ public partial class PosDbContext
     public virtual DbSet<Payment> Payments { get; set; }
     public virtual DbSet<OrderSequence> OrderSequences { get; set; }
     public virtual DbSet<InvoiceSequence> InvoiceSequences { get; set; }
+    public virtual DbSet<DiscountType> DiscountTypes { get; set; }
+    public virtual DbSet<DiscountAuditLog> DiscountAuditLogs { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<Category>(entity =>
+        {
+            entity.Property(e => e.ColorHex)
+                .HasColumnName("ColorHex")
+                .HasMaxLength(7)
+                .IsRequired()
+                .HasDefaultValue(POS.Shared.Helpers.CategoryColor.Default);
+        });
+
         // Payment Methods
         modelBuilder.Entity<PaymentMethod>(entity =>
         {

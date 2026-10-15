@@ -105,6 +105,31 @@ public sealed class NewSaleBrowserTests
         await Assertions.Expect(page.Locator(".product-card")).ToHaveCountAsync(3);
     }
 
+    [Theory]
+    [InlineData(1024, 768)]
+    [InlineData(600, 960)]
+    public async Task Category_colors_match_product_accents_without_changing_selection(int width, int height)
+    {
+        await using var host = await SaleHost.StartAsync();
+        await host.Page.SetViewportSizeAsync(width, height);
+        await OpenSale(host);
+        var page = host.Page;
+        var beverage = page.GetByRole(AriaRole.Button, new() { Name = "Beverages", Exact = true });
+        await Assertions.Expect(beverage).ToHaveAttributeAsync("style", "--category-color: #16A34A");
+        var coffee = page.Locator(".product-card").Filter(new() { HasText = "Cold Brew Coffee" });
+        await Assertions.Expect(coffee).ToHaveAttributeAsync("style", "--category-color: #16A34A");
+        await Assertions.Expect(coffee).ToHaveCSSAsync("border-top-color", "rgb(22, 163, 74)");
+        await Assertions.Expect(coffee.Locator(".product-category")).ToHaveTextAsync("Beverages");
+        await beverage.ClickAsync();
+        await Assertions.Expect(beverage).ToHaveAttributeAsync("aria-pressed", "true");
+        await Assertions.Expect(page.Locator(".product-card")).ToHaveCountAsync(2);
+        await coffee.ClickAsync();
+        await Assertions.Expect(page.Locator(".cart-item-name")).ToHaveTextAsync("Cold Brew Coffee");
+        var box = await beverage.BoundingBoxAsync();
+        Assert.True(box != null && box.Height >= 30);
+        Assert.True(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= window.innerWidth"));
+    }
+
     [Fact]
     public async Task NewSale_cart_adds_items_adjusts_quantities_and_proceeds_to_payment()
     {
@@ -460,6 +485,8 @@ public sealed class NewSaleBrowserTests
         private SaleHost(WebApplication app, IPlaywright playwright, IBrowser browser, IPage page, ClientPinBrowserTests.SyntheticUsers users)
             => (this.app, this.playwright, this.browser, Page, Users) = (app, playwright, browser, page, users);
 
+        public string BaseUrl => app.Urls.Single();
+
         public static async Task<SaleHost> StartAsync(string? businessType = "FNB", bool withModifiers = false)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -478,6 +505,8 @@ public sealed class NewSaleBrowserTests
             builder.Services.AddSingleton<IOutletService>(sp => sp.GetRequiredService<ClientPinBrowserTests.SyntheticOutlets>());
             builder.Services.AddSingleton<SyntheticCategories>();
             builder.Services.AddSingleton<ICategoryService>(sp => sp.GetRequiredService<SyntheticCategories>());
+            builder.Services.AddSingleton<SyntheticDiscounts>();
+            builder.Services.AddSingleton<IDiscountService>(sp => sp.GetRequiredService<SyntheticDiscounts>());
             builder.Services.AddSingleton<SyntheticProducts>();
             builder.Services.AddSingleton<IProductService>(sp => sp.GetRequiredService<SyntheticProducts>());
             builder.Services.AddSingleton(new SyntheticModifierService { Enabled = withModifiers });
@@ -527,12 +556,37 @@ public sealed class NewSaleBrowserTests
         }
     }
 
+    private sealed class SyntheticDiscounts : IDiscountService
+    {
+        public Task<List<DiscountTypeDto>> GetDiscountTypesAsync() => Task.FromResult(new List<DiscountTypeDto>
+        {
+            new() { Code = "NONE", Name = "No Discount", DiscountCategory = "NONE", DiscountMethod = "PERCENTAGE", DiscountValue = 0 },
+            new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true }
+        });
+
+        public Task<OrderCalculationResultDto> CalculateOrderAsync(OrderCalculationRequestDto request)
+        {
+            decimal sub = request.Items.Sum(i => (i.UnitPrice + i.ModifierTotal) * i.Quantity);
+            decimal disc = request.DiscountCode == "SC" ? Math.Round(sub / 1.12m * 0.20m, 2) : 0m;
+            return Task.FromResult(new OrderCalculationResultDto
+            {
+                Subtotal = sub,
+                DiscountAmount = disc,
+                TotalAmount = Math.Max(0m, sub - disc),
+                VatExemptSales = disc > 0 ? Math.Round(sub / 1.12m, 2) : 0m,
+                VatAmount = disc > 0 ? 0m : Math.Round(sub - (sub / 1.12m), 2)
+            });
+        }
+
+        public Task<List<DiscountAuditLogDto>> GetAuditLogsAsync(long? orderId = null) => Task.FromResult(new List<DiscountAuditLogDto>());
+    }
+
     private sealed class SyntheticCategories : ICategoryService
     {
         public Task<List<CategoryDto>> GetCategoriesAsync() => Task.FromResult(new List<CategoryDto>
         {
-            new() { CategoryId = 1, Name = "Beverages", IsActive = true },
-            new() { CategoryId = 2, Name = "Food", IsActive = true }
+            new() { CategoryId = 1, Name = "Beverages", ColorHex = "#16A34A", IsActive = true },
+            new() { CategoryId = 2, Name = "Food", ColorHex = "#2563EB", IsActive = true }
         });
         public Task<CategoryDto> CreateCategoryAsync(CategoryDto category) => Task.FromResult(category);
         public Task UpdateCategoryAsync(int id, CategoryDto category) => Task.CompletedTask;

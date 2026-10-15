@@ -83,7 +83,19 @@ public static class ReceiptHtmlFormatter
         }
         html.Append("</section><hr><section class=\"totals\">");
         Row(html, "Subtotal", Money(receipt.Subtotal));
-        Row(html, "Discount", Money(receipt.DiscountAmount));
+        if (receipt.VatableSales > 0) Row(html, "Vatable Sales", Money(receipt.VatableSales));
+        if (receipt.VatExemptSales > 0) Row(html, "VAT-Exempt Sales", Money(receipt.VatExemptSales));
+        if (receipt.ZeroRatedSales > 0) Row(html, "Zero-Rated Sales", Money(receipt.ZeroRatedSales));
+        if (receipt.VatAmount > 0) Row(html, "VAT (12%):", Money(receipt.VatAmount));
+        if (receipt.DiscountAmount > 0)
+        {
+            var dLabel = string.IsNullOrWhiteSpace(receipt.DiscountCode) ? "Discount" : $"Discount ({receipt.DiscountCode})";
+            Row(html, dLabel, "-" + Money(receipt.DiscountAmount));
+            if (!string.IsNullOrWhiteSpace(receipt.CustomerCardNumber))
+            {
+                OptionalLine(html, "SC/PWD ID: " + receipt.CustomerCardNumber);
+            }
+        }
         html.Append("<div class=\"total\">");
         Row(html, "TOTAL", Money(receipt.TotalAmount));
         html.Append("</div></section><hr>");

@@ -1,11 +1,13 @@
 @page "/new-sale"
 @inject PosSessionService Session
 @inject NavigationManager Navigation
+@using POS.Shared.Helpers
 @inject ICategoryService CategoryService
 @inject IProductService ProductService
 @inject IModifierService ModifierService
 @inject IOrderService OrderService
 @inject IPaymentService PaymentService
+@inject IDiscountService DiscountService
 @inject CartService Cart
 @inject HttpClient Http
 @inject SweetAlertService Swal
@@ -82,9 +84,9 @@ else
                     }
                     @foreach (var product in FilteredProducts)
                     {
-                        <button type="button" class="retail-result" disabled="@quantityDialogOpen"
+                        <button type="button" class="retail-result" style="--category-color: @GetCategoryColor(product.CategoryId)" disabled="@quantityDialogOpen"
                                 @onclick="() => ChooseQuantity(product)">
-                            <span><strong>@product.Name</strong><small>@product.SKU · @product.Barcode</small></span>
+                            <span><strong>@product.Name</strong><small>@product.SKU · @product.Barcode</small><small>@GetCategoryName(product.CategoryId)</small></span>
                             <span>₱@product.Price.ToString("N2")</span>
                         </button>
                     }
@@ -96,13 +98,16 @@ else
             <div class="categories-bar mb-3">
                 <button type="button"
                         class="category-pill @(selectedCategoryId == null ? "active" : "")"
+                        aria-pressed="@(selectedCategoryId == null ? "true" : "false")"
                         @onclick="() => SelectCategory(null)">
                     All Categories
                 </button>
                 @foreach (var cat in categories)
                 {
                     <button type="button"
-                            class="category-pill @(selectedCategoryId == cat.CategoryId ? "active" : "")"
+                            class="category-pill category-colored @(selectedCategoryId == cat.CategoryId ? "active" : "")"
+                            style="--category-color: @CategoryColor.Normalize(cat.ColorHex)"
+                            aria-pressed="@(selectedCategoryId == cat.CategoryId ? "true" : "false")"
                             @onclick="() => SelectCategory(cat.CategoryId)">
                         @cat.Name
                     </button>
@@ -135,7 +140,7 @@ else
                     <div class="products-grid">
                         @foreach (var product in FilteredProducts)
                         {
-                            <div class="product-card" @onclick="() => AddToCart(product)" role="button" tabindex="0">
+                            <div class="product-card" style="--category-color: @GetCategoryColor(product.CategoryId)" @onclick="() => AddToCart(product)" role="button" tabindex="0">
                                 <div class="product-img-wrap">
                                     @if (!string.IsNullOrWhiteSpace(product.ImageUrl))
                                     {
@@ -156,6 +161,7 @@ else
                                     }
                                 </div>
                                 <div class="product-info">
+                                    <div class="product-category">@GetCategoryName(product.CategoryId)</div>
                                     <div class="product-name" title="@product.Name">@product.Name</div>
                                     <div class="product-bottom">
                                         <span class="product-price">₱@product.Price.ToString("N2")</span>
@@ -262,21 +268,39 @@ else
                             <span class="text-muted">Subtotal</span>
                             <span class="fw-semibold">₱@Cart.Subtotal.ToString("N2")</span>
                         </div>
+                        @if (Cart.ActiveDiscountCode != "NONE")
+                        {
+                            <div class="d-flex justify-content-between mb-2 text-success">
+                                <span>Discount (@Cart.ActiveDiscountCode)</span>
+                                <span class="fw-semibold">-₱@Cart.ActiveDiscountAmount.ToString("N2")</span>
+                            </div>
+                        }
                         <div class="d-flex justify-content-between align-items-baseline mb-3">
                             <span class="fw-bold fs-5 text-dark">Total</span>
-                            <span class="fw-bolder fs-4 text-primary">₱@Cart.Total.ToString("N2")</span>
+                            <span class="fw-bolder fs-4 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
                         </div>
                     </div>
-                    <button type="button"
-                            class="btn btn-primary w-100 py-3 fw-bold btn-proceed-payment"
-                            disabled="@(!Cart.Items.Any())"
-                            @onclick="ProceedToPayment">
-                        Proceed to Payment
-                    </button>
+                    <div class="d-flex gap-2 mb-2">
+                        <button type="button"
+                                class="btn btn-outline-secondary w-50 py-2 fw-bold btn-discount"
+                                disabled="@(!Cart.Items.Any())"
+                                @onclick="OpenDiscountModal">
+                            <i class="bi bi-percent me-1"></i> Discount
+                        </button>
+                        <button type="button"
+                                class="btn btn-primary w-50 py-3 fw-bold btn-proceed-payment"
+                                disabled="@(!Cart.Items.Any())"
+                                @onclick="ProceedToPayment">
+                            Proceed
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- Discount Modal Component -->
+    <DiscountModal @ref="discountModalComponent" Cart="@Cart" OnDiscountChanged="@StateHasChanged" />
 
     <!-- Customization Modal -->
     @if (isCustomizationOpen && customizingProduct != null)
@@ -354,6 +378,222 @@ else
     <ReceiptPreview OrderId="@paidReceiptOrderId.Value" OnClose="CloseReceiptPreview" />
 }
 
+
+@if (isPaymentModalOpen && currentOrderResponse != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="modal-title fw-bold text-dark mb-0">Payment Processing</h5>
+                        <small class="text-muted">Order: @currentOrderResponse.OrderNumber</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="splitPaymentSwitch" checked="@isSplitPaymentMode" @onchange="@(e => ToggleSplitPayment(e.Value is bool b ? b : (bool.TryParse(e.Value?.ToString(), out var res) && res)))" />
+                            <label class="form-check-label fw-semibold small text-primary" for="splitPaymentSwitch">Split Payment</label>
+                        </div>
+                        <button type="button" class="btn-close" @onclick="ClosePaymentModal" aria-label="Close"></button>
+                    </div>
+                </div>
+                <div class="modal-body px-4 py-4">
+                    @if (!string.IsNullOrEmpty(paymentError))
+                    {
+                        <div class="alert alert-danger py-2 mb-3" role="alert">@paymentError</div>
+                    }
+                    <div class="mb-3 text-center bg-light p-3 rounded-3">
+                        <span class="text-muted small d-block">Total Amount Due</span>
+                        <h2 class="fw-bold text-primary mb-0">₱@currentOrderResponse.TotalAmount.ToString("N2")</h2>
+                        @if (isSplitPaymentMode)
+                        {
+                            var remaining = currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount);
+                            <div class="mt-2 d-flex justify-content-center gap-3 small">
+                                <span class="text-success fw-semibold">Paid: ₱@paymentSplits.Sum(s => s.Amount).ToString("N2")</span>
+                                <span class="text-danger fw-semibold">Remaining: ₱@remaining.ToString("N2")</span>
+                            </div>
+                        }
+                    </div>
+
+                    <!-- Customer Information Section (BIR / EOPT Compliant) -->
+                    <div class="card border mb-3 bg-light rounded-3">
+                        <div class="card-header bg-white py-2 px-3 d-flex justify-content-between align-items-center" style="cursor:pointer" @onclick="() => showCustomerDetailsAccordion = !showCustomerDetailsAccordion">
+                            <span class="fw-semibold small text-dark">Customer Information (Optional / B2B)</span>
+                            <span class="small text-primary">@(showCustomerDetailsAccordion ? "▲ Hide" : "▼ Add / Edit")</span>
+                        </div>
+                        @if (showCustomerDetailsAccordion)
+                        {
+                            <div class="card-body p-3">
+                                <div class="row g-2">
+                                    <div class="col-12">
+                                        <label class="form-label small fw-semibold mb-1">Customer Name</label>
+                                        <input type="text" class="form-control form-control-sm" @bind="customerName" @bind:event="oninput" placeholder="Walk-In / Company Name" />
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label small fw-semibold mb-1">Address</label>
+                                        <input type="text" class="form-control form-control-sm" @bind="customerAddress" @bind:event="oninput" placeholder="Customer billing address" />
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small fw-semibold mb-1">TIN</label>
+                                        <input type="text" class="form-control form-control-sm" @bind="customerTin" @bind:event="oninput" placeholder="Taxpayer ID Number" />
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small fw-semibold mb-1">Business Style</label>
+                                        <input type="text" class="form-control form-control-sm" @bind="customerBusinessStyle" @bind:event="oninput" placeholder="e.g. Restaurant, Retail" />
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    @if (isSplitPaymentMode)
+                    {
+                        @if (paymentSplits.Any())
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold text-dark small">Applied Splits</label>
+                                <div class="list-group">
+                                    @for (int i = 0; i < paymentSplits.Count; i++)
+                                    {
+                                        var idx = i;
+                                        var split = paymentSplits[idx];
+                                        <div class="list-group-item d-flex justify-content-between align-items-center py-2">
+                                            <div>
+                                                <span class="fw-bold">@split.PaymentMethod</span>: ₱@split.Amount.ToString("N2")
+                                                @if (!string.IsNullOrEmpty(split.ReferenceNumber))
+                                                {
+                                                    <small class="text-muted ms-2">(Ref: @split.ReferenceNumber)</small>
+                                                }
+                                            </div>
+                                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemovePaymentSplit(idx)">Remove</button>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        @if (currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount) > 0.01m)
+                        {
+                            <div class="card border bg-light p-3 mb-3">
+                                <h6 class="fw-bold text-dark mb-2">Add Payment Split</h6>
+                                <div class="mb-2">
+                                    <label class="form-label small fw-semibold">Method</label>
+                                    <div class="row g-2">
+                                        @foreach (var pm in (paymentMethods.Any() ? paymentMethods : new List<PaymentMethodDto> { new() { Code = "CASH", Name = "Cash", RequiresReference = false } }))
+                                        {
+                                            var isSelected = currentSplitMethod?.Code == pm.Code;
+                                            <div class="col-6">
+                                                <button type="button" class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") btn-sm w-100 py-2 fw-bold" @onclick="() => currentSplitMethod = pm">
+                                                    @pm.Name
+                                                </button>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+
+                                <div class="mb-2">
+                                    <label class="form-label small fw-semibold">Split Amount (₱)</label>
+                                    <input type="number" min="0.01" step="0.01" class="form-control form-control-sm fw-bold" @bind="currentSplitAmount" @bind:event="oninput" />
+                                </div>
+
+                                @if (currentSplitMethod?.RequiresReference == true)
+                                {
+                                    <div class="mb-2">
+                                        <label class="form-label small fw-semibold">Reference Number <span class="text-danger">*</span></label>
+                                        <input type="text" class="form-control form-control-sm" @bind="currentSplitRef" @bind:event="oninput" placeholder="Reference or approval code..." />
+                                    </div>
+                                }
+
+                                <button type="button" class="btn btn-dark btn-sm w-100 fw-bold mt-2" @onclick="AddPaymentSplit">+ Add This Split</button>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold text-dark">Payment Method</label>
+                            <div class="row g-2">
+                                @if (paymentMethods.Any())
+                                {
+                                    @foreach (var pm in paymentMethods)
+                                    {
+                                        var isSelected = selectedPaymentMethod?.Code == pm.Code;
+                                        <div class="col-6 col-md-3">
+                                            <button type="button" aria-pressed="@(isSelected ? "true" : "false")"
+                                                    class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") w-100 h-100 py-3 fw-bold d-flex flex-column align-items-center justify-content-center"
+                                                    disabled="@isProcessingPayment"
+                                                    @onclick="() => selectedPaymentMethod = pm">
+                                                <span>@pm.Name @(isSelected ? "✓" : "")</span>
+                                                @if (pm.RequiresReference)
+                                                {
+                                                    <small class="d-block fw-normal text-muted mt-1" style="font-size: 0.75rem;">Ref Required</small>
+                                                }
+                                                else
+                                                {
+                                                    <small class="d-block fw-normal text-transparent mt-1" style="font-size: 0.75rem; visibility: hidden;">Cash</small>
+                                                }
+                                            </button>
+                                        </div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="col-4">
+                                        <button type="button" aria-pressed="true" class="btn btn-outline-primary w-100 py-3 fw-bold" disabled="@isProcessingPayment">
+                                            Cash ✓
+                                        </button>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+                        @if (selectedPaymentMethod != null && selectedPaymentMethod.RequiresReference)
+                        {
+                            <div class="mb-3">
+                                <label for="ref-number" class="form-label fw-semibold text-dark">Reference Number / Approval Code <span class="text-danger">*</span></label>
+                                <input id="ref-number" type="text" @bind="referenceNumber" @bind:event="oninput" disabled="@isProcessingPayment" class="form-control form-control-lg fw-bold" placeholder="Enter transaction ref or approval code..." />
+                            </div>
+                        }
+                        else
+                        {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold text-dark">Quick Cash Tendered</label>
+                            <div class="row g-2 mb-2">
+                                @foreach (var amt in GetSuggestedAmounts(currentOrderResponse.TotalAmount))
+                                {
+                                    <div class="col-6 col-sm-3">
+                                        <button type="button" aria-pressed="@(cashTendered == amt ? "true" : "false")" disabled="@isProcessingPayment" class="btn @(cashTendered == amt ? "btn-primary" : "btn-outline-primary") w-100 h-100 fw-bold py-3" @onclick="() => cashTendered = amt">
+                                            @(amt == currentOrderResponse.TotalAmount ? $"Exact (₱{amt:N2})" : $"₱{amt:N0}")
+                                        </button>
+                                    </div>
+                                }
+                            </div>
+                            <label for="cash-tendered" class="form-label">Amount Tendered (₱)</label>
+                            <input id="cash-tendered" type="number" min="0" step="0.01" inputmode="decimal" disabled="@isProcessingPayment" class="form-control form-control-lg fw-bold" @bind="cashTendered" @bind:event="oninput" placeholder="Enter amount tendered..." />
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center p-3 bg-success bg-opacity-10 rounded-3 border border-success border-opacity-25">
+                            <span class="fw-bold text-success">Change Due:</span>
+                            <span class="fs-4 fw-bold text-success">₱@(Math.Max(0m, cashTendered - currentOrderResponse.TotalAmount).ToString("N2"))</span>
+                        </div>
+                        }
+                    }
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between align-items-center">
+                    <button type="button" class="btn btn-outline-secondary px-4" @onclick="ClosePaymentModal">Cancel</button>
+                    <button type="button" class="btn btn-success px-5 fw-bold" disabled="@((isSplitPaymentMode ? Math.Abs(paymentSplits.Sum(s => s.Amount) - currentOrderResponse.TotalAmount) > 0.01m : ((selectedPaymentMethod?.RequiresReference == true && string.IsNullOrWhiteSpace(referenceNumber)) || (selectedPaymentMethod?.Code == "CASH" && cashTendered < currentOrderResponse.TotalAmount))) || isProcessingPayment)" @onclick="ConfirmPayment">
+                        @if (isProcessingPayment)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        }
+                        Confirm Payment
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+
 @code {
     private long? paidReceiptOrderId;
     private void CloseReceiptPreview() => paidReceiptOrderId = null;
@@ -411,7 +651,7 @@ else
         isLoading = true;
         try
         {
-            var catTask = IsRetail ? Task.FromResult(new List<CategoryDto>()) : CategoryService.GetCategoriesAsync();
+            var catTask = CategoryService.GetCategoriesAsync();
             var prodTask = ProductService.GetProductsAsync();
             var pmTask = PaymentService.GetPaymentMethodsAsync();
             await Task.WhenAll(catTask, prodTask, pmTask);
@@ -438,6 +678,12 @@ else
             isLoading = false;
         }
     }
+
+    private string GetCategoryColor(int? categoryId) =>
+        CategoryColor.Normalize(categories.FirstOrDefault(c => c.CategoryId == categoryId)?.ColorHex);
+
+    private string GetCategoryName(int? categoryId) =>
+        categories.FirstOrDefault(c => c.CategoryId == categoryId)?.Name ?? "Uncategorized";
 
     private IEnumerable<ProductDto> FilteredProducts
     {
@@ -721,6 +967,15 @@ else
         }
     }
 
+    private DiscountModal? discountModalComponent;
+
+    private async Task OpenDiscountModal()
+    {
+        if (discountModalComponent != null)
+        {
+            await discountModalComponent.OpenAsync();
+        }
+    }
     private bool isPaymentModalOpen = false;
     private OrderResponseDto? currentOrderResponse = null;
     private decimal cashTendered = 0m;
@@ -816,7 +1071,9 @@ else
                 OutletId = Session.Outlet?.OutletId ?? 1,
                 CashierId = Session.Username ?? "cashier",
                 OrderType = IsRetail ? "RETAIL" : "DINING",
-                DiscountAmount = 0m,
+                DiscountAmount = Cart.ActiveDiscountAmount,
+                DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
+                CustomerCardNumber = Cart.CustomerCardNumber,
                 CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
                 CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
                 CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
@@ -995,218 +1252,4 @@ else
         var baseUrl = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
         return $"{baseUrl}/{rawUrl.TrimStart('/')}";
     }
-}
-
-@if (isPaymentModalOpen && currentOrderResponse != null)
-{
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
-            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
-                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
-                    <div>
-                        <h5 class="modal-title fw-bold text-dark mb-0">Payment Processing</h5>
-                        <small class="text-muted">Order: @currentOrderResponse.OrderNumber</small>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" id="splitPaymentSwitch" checked="@isSplitPaymentMode" @onchange="@(e => ToggleSplitPayment(e.Value is bool b ? b : (bool.TryParse(e.Value?.ToString(), out var res) && res)))" />
-                            <label class="form-check-label fw-semibold small text-primary" for="splitPaymentSwitch">Split Payment</label>
-                        </div>
-                        <button type="button" class="btn-close" @onclick="ClosePaymentModal" aria-label="Close"></button>
-                    </div>
-                </div>
-                <div class="modal-body px-4 py-4">
-                    @if (!string.IsNullOrEmpty(paymentError))
-                    {
-                        <div class="alert alert-danger py-2 mb-3" role="alert">@paymentError</div>
-                    }
-                    <div class="mb-3 text-center bg-light p-3 rounded-3">
-                        <span class="text-muted small d-block">Total Amount Due</span>
-                        <h2 class="fw-bold text-primary mb-0">₱@currentOrderResponse.TotalAmount.ToString("N2")</h2>
-                        @if (isSplitPaymentMode)
-                        {
-                            var remaining = currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount);
-                            <div class="mt-2 d-flex justify-content-center gap-3 small">
-                                <span class="text-success fw-semibold">Paid: ₱@paymentSplits.Sum(s => s.Amount).ToString("N2")</span>
-                                <span class="text-danger fw-semibold">Remaining: ₱@remaining.ToString("N2")</span>
-                            </div>
-                        }
-                    </div>
-
-                    <!-- Customer Information Section (BIR / EOPT Compliant) -->
-                    <div class="card border mb-3 bg-light rounded-3">
-                        <div class="card-header bg-white py-2 px-3 d-flex justify-content-between align-items-center" style="cursor:pointer" @onclick="() => showCustomerDetailsAccordion = !showCustomerDetailsAccordion">
-                            <span class="fw-semibold small text-dark">Customer Information (Optional / B2B)</span>
-                            <span class="small text-primary">@(showCustomerDetailsAccordion ? "▲ Hide" : "▼ Add / Edit")</span>
-                        </div>
-                        @if (showCustomerDetailsAccordion)
-                        {
-                            <div class="card-body p-3">
-                                <div class="row g-2">
-                                    <div class="col-12">
-                                        <label class="form-label small fw-semibold mb-1">Customer Name</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerName" @bind:event="oninput" placeholder="Walk-In / Company Name" />
-                                    </div>
-                                    <div class="col-12">
-                                        <label class="form-label small fw-semibold mb-1">Address</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerAddress" @bind:event="oninput" placeholder="Customer billing address" />
-                                    </div>
-                                    <div class="col-6">
-                                        <label class="form-label small fw-semibold mb-1">TIN</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerTin" @bind:event="oninput" placeholder="Taxpayer ID Number" />
-                                    </div>
-                                    <div class="col-6">
-                                        <label class="form-label small fw-semibold mb-1">Business Style</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerBusinessStyle" @bind:event="oninput" placeholder="e.g. Restaurant, Retail" />
-                                    </div>
-                                </div>
-                            </div>
-                        }
-                    </div>
-
-                    @if (isSplitPaymentMode)
-                    {
-                        @if (paymentSplits.Any())
-                        {
-                            <div class="mb-3">
-                                <label class="form-label fw-semibold text-dark small">Applied Splits</label>
-                                <div class="list-group">
-                                    @for (int i = 0; i < paymentSplits.Count; i++)
-                                    {
-                                        var idx = i;
-                                        var split = paymentSplits[idx];
-                                        <div class="list-group-item d-flex justify-content-between align-items-center py-2">
-                                            <div>
-                                                <span class="fw-bold">@split.PaymentMethod</span>: ₱@split.Amount.ToString("N2")
-                                                @if (!string.IsNullOrEmpty(split.ReferenceNumber))
-                                                {
-                                                    <small class="text-muted ms-2">(Ref: @split.ReferenceNumber)</small>
-                                                }
-                                            </div>
-                                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemovePaymentSplit(idx)">Remove</button>
-                                        </div>
-                                    }
-                                </div>
-                            </div>
-                        }
-
-                        @if (currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount) > 0.01m)
-                        {
-                            <div class="card border bg-light p-3 mb-3">
-                                <h6 class="fw-bold text-dark mb-2">Add Payment Split</h6>
-                                <div class="mb-2">
-                                    <label class="form-label small fw-semibold">Method</label>
-                                    <div class="row g-2">
-                                        @foreach (var pm in (paymentMethods.Any() ? paymentMethods : new List<PaymentMethodDto> { new() { Code = "CASH", Name = "Cash", RequiresReference = false } }))
-                                        {
-                                            var isSelected = currentSplitMethod?.Code == pm.Code;
-                                            <div class="col-6">
-                                                <button type="button" class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") btn-sm w-100 py-2 fw-bold" @onclick="() => currentSplitMethod = pm">
-                                                    @pm.Name
-                                                </button>
-                                            </div>
-                                        }
-                                    </div>
-                                </div>
-
-                                <div class="mb-2">
-                                    <label class="form-label small fw-semibold">Split Amount (₱)</label>
-                                    <input type="number" min="0.01" step="0.01" class="form-control form-control-sm fw-bold" @bind="currentSplitAmount" @bind:event="oninput" />
-                                </div>
-
-                                @if (currentSplitMethod?.RequiresReference == true)
-                                {
-                                    <div class="mb-2">
-                                        <label class="form-label small fw-semibold">Reference Number <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control form-control-sm" @bind="currentSplitRef" @bind:event="oninput" placeholder="Reference or approval code..." />
-                                    </div>
-                                }
-
-                                <button type="button" class="btn btn-dark btn-sm w-100 fw-bold mt-2" @onclick="AddPaymentSplit">+ Add This Split</button>
-                            </div>
-                        }
-                    }
-                    else
-                    {
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold text-dark">Payment Method</label>
-                            <div class="row g-2">
-                                @if (paymentMethods.Any())
-                                {
-                                    @foreach (var pm in paymentMethods)
-                                    {
-                                        var isSelected = selectedPaymentMethod?.Code == pm.Code;
-                                        <div class="col-6 col-md-3">
-                                            <button type="button" aria-pressed="@(isSelected ? "true" : "false")"
-                                                    class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") w-100 h-100 py-3 fw-bold d-flex flex-column align-items-center justify-content-center"
-                                                    disabled="@isProcessingPayment"
-                                                    @onclick="() => selectedPaymentMethod = pm">
-                                                <span>@pm.Name @(isSelected ? "✓" : "")</span>
-                                                @if (pm.RequiresReference)
-                                                {
-                                                    <small class="d-block fw-normal text-muted mt-1" style="font-size: 0.75rem;">Ref Required</small>
-                                                }
-                                                else
-                                                {
-                                                    <small class="d-block fw-normal text-transparent mt-1" style="font-size: 0.75rem; visibility: hidden;">Cash</small>
-                                                }
-                                            </button>
-                                        </div>
-                                    }
-                                }
-                                else
-                                {
-                                    <div class="col-4">
-                                        <button type="button" aria-pressed="true" class="btn btn-outline-primary w-100 py-3 fw-bold" disabled="@isProcessingPayment">
-                                            Cash ✓
-                                        </button>
-                                    </div>
-                                }
-                            </div>
-                        </div>
-
-                        @if (selectedPaymentMethod != null && selectedPaymentMethod.RequiresReference)
-                        {
-                            <div class="mb-3">
-                                <label for="ref-number" class="form-label fw-semibold text-dark">Reference Number / Approval Code <span class="text-danger">*</span></label>
-                                <input id="ref-number" type="text" @bind="referenceNumber" @bind:event="oninput" disabled="@isProcessingPayment" class="form-control form-control-lg fw-bold" placeholder="Enter transaction ref or approval code..." />
-                            </div>
-                        }
-                        else
-                        {
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold text-dark">Quick Cash Tendered</label>
-                            <div class="row g-2 mb-2">
-                                @foreach (var amt in GetSuggestedAmounts(currentOrderResponse.TotalAmount))
-                                {
-                                    <div class="col-6 col-sm-3">
-                                        <button type="button" aria-pressed="@(cashTendered == amt ? "true" : "false")" disabled="@isProcessingPayment" class="btn @(cashTendered == amt ? "btn-primary" : "btn-outline-primary") w-100 h-100 fw-bold py-3" @onclick="() => cashTendered = amt">
-                                            @(amt == currentOrderResponse.TotalAmount ? $"Exact (₱{amt:N2})" : $"₱{amt:N0}")
-                                        </button>
-                                    </div>
-                                }
-                            </div>
-                            <label for="cash-tendered" class="form-label">Amount Tendered (₱)</label>
-                            <input id="cash-tendered" type="number" min="0" step="0.01" inputmode="decimal" disabled="@isProcessingPayment" class="form-control form-control-lg fw-bold" @bind="cashTendered" @bind:event="oninput" placeholder="Enter amount tendered..." />
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center p-3 bg-success bg-opacity-10 rounded-3 border border-success border-opacity-25">
-                            <span class="fw-bold text-success">Change Due:</span>
-                            <span class="fs-4 fw-bold text-success">₱@(Math.Max(0m, cashTendered - currentOrderResponse.TotalAmount).ToString("N2"))</span>
-                        </div>
-                        }
-                    }
-                </div>
-                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between align-items-center">
-                    <button type="button" class="btn btn-outline-secondary px-4" @onclick="ClosePaymentModal">Cancel</button>
-                    <button type="button" class="btn btn-success px-5 fw-bold" disabled="@((isSplitPaymentMode ? Math.Abs(paymentSplits.Sum(s => s.Amount) - currentOrderResponse.TotalAmount) > 0.01m : ((selectedPaymentMethod?.RequiresReference == true && string.IsNullOrWhiteSpace(referenceNumber)) || (selectedPaymentMethod?.Code == "CASH" && cashTendered < currentOrderResponse.TotalAmount))) || isProcessingPayment)" @onclick="ConfirmPayment">
-                        @if (isProcessingPayment)
-                        {
-                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                        }
-                        Confirm Payment
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
 }

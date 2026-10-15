@@ -40,6 +40,21 @@ public partial class Order
 
     public decimal TotalAmount { get; set; }
 
+    public decimal VatableSales { get; set; }
+    public decimal VatExemptSales { get; set; }
+    public decimal ZeroRatedSales { get; set; }
+    public decimal VatAmount { get; set; }
+    public int? DiscountTypeId { get; set; }
+    [MaxLength(30)]
+    public string? DiscountCode { get; set; }
+    [MaxLength(100)]
+    public string? DiscountName { get; set; }
+    public decimal DiscountPercentage { get; set; }
+    [MaxLength(50)]
+    public string? CustomerCardNumber { get; set; }
+
+    public virtual DiscountType? DiscountType { get; set; }
+
     public int? InvoiceSequenceId { get; set; }
 
     [MaxLength(50)]

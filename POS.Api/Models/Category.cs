@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using POS.Shared.Helpers;
 
 namespace POS.Api.Models;
 
@@ -10,6 +11,8 @@ public partial class Category
     public string Name { get; set; } = null!;
 
     public string? Description { get; set; }
+
+    public string ColorHex { get; set; } = CategoryColor.Default;
 
     public bool IsActive { get; set; }
 

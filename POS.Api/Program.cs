@@ -34,6 +34,7 @@ builder.Services.AddDbContext<PosDbContext>(options =>
 
 builder.Services.AddScoped<POS.Shared.Interfaces.IReceiptService, POS.Api.Services.ReceiptService>();
 builder.Services.AddScoped<POS.Shared.Interfaces.ISequenceService, POS.Api.Services.SequenceService>();
+builder.Services.AddScoped<POS.Api.Services.IDiscountCalculationService, POS.Api.Services.DiscountCalculationService>();
 
 // Fix for Npgsql DateTime handling if using local DateTime values
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);

@@ -1,5 +1,6 @@
 @page "/manage-categories"
 @using POS.Shared.Models
+@using POS.Shared.Helpers
 @using POS.Shared.Interfaces
 @inject ICategoryService CategoryService
 
@@ -46,6 +47,11 @@
         {
             <div class="commercial-grid table-responsive w-100">
                 <QuickGrid Items="@FilteredCategories" Pagination="@pagination" Theme="commercial">
+
+                    <TemplateColumn Context="category" Title="Color">
+                        <span class="category-color-swatch" style="--category-color: @CategoryColor.Normalize(category.ColorHex)" aria-hidden="true"></span>
+                        <span>@CategoryColor.Normalize(category.ColorHex)</span>
+                    </TemplateColumn>
 
                     <!-- Name Column -->
                     <PropertyColumn Property="@(c => c.Name)" Title="Category Name" Sortable="true" />
@@ -171,6 +177,17 @@
                             </div>
 
                             <div class="col-12">
+                                <label for="category-color" class="form-label fw-semibold">Category color</label>
+                                <div class="d-flex align-items-center flex-wrap gap-3">
+                                    <input id="category-color" type="color" class="form-control form-control-color category-color-picker" @bind="currentCategory.ColorHex" />
+                                    <span class="category-color-preview" style="--category-color: @CategoryColor.Normalize(currentCategory.ColorHex)">@currentCategory.Name</span>
+                                    <span>@currentCategory.ColorHex</span>
+                                </div>
+                                <div class="form-text">Used on category buttons and product accents in the POS.</div>
+                                <ValidationMessage For="@(() => currentCategory.ColorHex)" />
+                            </div>
+
+                            <div class="col-12">
                                 <label class="form-label text-dark fw-semibold small mb-1">Description</label>
                                 <InputTextArea @bind-Value="currentCategory.Description" class="form-control rounded-3" rows="3" placeholder="Optional details..." />
                             </div>
@@ -291,6 +308,7 @@
             CategoryId = category.CategoryId,
             Name = category.Name,
             Description = category.Description,
+            ColorHex = CategoryColor.Normalize(category.ColorHex),
             IsActive = category.IsActive
         };
         isModalOpen = true;

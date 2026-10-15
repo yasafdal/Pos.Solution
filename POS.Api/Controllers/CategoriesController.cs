@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
 using POS.Shared.Models;
+using POS.Shared.Helpers;
 
 namespace POS.Api.Controllers
 {
@@ -28,6 +29,7 @@ namespace POS.Api.Controllers
                     CategoryId = c.CategoryId,
                     Name = c.Name,
                     Description = c.Description,
+                    ColorHex = CategoryColor.Normalize(c.ColorHex),
                     IsActive = c.IsActive,
                     ProductCount = _context.Products.Count(p => p.CategoryId == c.CategoryId)
                 })
@@ -41,12 +43,13 @@ namespace POS.Api.Controllers
         public async Task<ActionResult<CategoryDto>> GetCategory(int id)
         {
             var category = await _context.Categories
-                .Where(c => c.IsActive && c.CategoryId == id)
+                .Where(c => c.IsActive && !c.IsDeleted && c.CategoryId == id)
                 .Select(c => new CategoryDto
                 {
                     CategoryId = c.CategoryId,
                     Name = c.Name,
                     Description = c.Description,
+                    ColorHex = CategoryColor.Normalize(c.ColorHex),
                     IsActive = c.IsActive
                 })
                 .FirstOrDefaultAsync();
@@ -67,6 +70,7 @@ namespace POS.Api.Controllers
             {
                 Name = categoryDto.Name,
                 Description = categoryDto.Description,
+                ColorHex = categoryDto.ColorHex.ToUpperInvariant(),
                 IsActive = categoryDto.IsActive
             };
 
@@ -75,6 +79,7 @@ namespace POS.Api.Controllers
 
             // Update the DTO with the database-generated ID
             categoryDto.CategoryId = category.CategoryId;
+            categoryDto.ColorHex = category.ColorHex;
 
             return CreatedAtAction(nameof(GetCategory), new { id = category.CategoryId }, categoryDto);
         }
@@ -89,7 +94,7 @@ namespace POS.Api.Controllers
             }
 
             var category = await _context.Categories.FindAsync(id);
-            if (category == null || !category.IsActive)
+            if (category == null || !category.IsActive || category.IsDeleted)
             {
                 return NotFound();
             }
@@ -97,6 +102,7 @@ namespace POS.Api.Controllers
             // Update allowed fields
             category.Name = categoryDto.Name;
             category.Description = categoryDto.Description;
+            category.ColorHex = categoryDto.ColorHex.ToUpperInvariant();
             category.IsActive = categoryDto.IsActive;
 
             await _context.SaveChangesAsync();

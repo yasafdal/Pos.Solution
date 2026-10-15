@@ -15,6 +15,12 @@ public class ReceiptDto
     public DateTime CreatedAt { get; set; }
     public DateTime PaidAt { get; set; }
     public decimal Subtotal { get; set; }
+    public decimal VatableSales { get; set; }
+    public decimal VatExemptSales { get; set; }
+    public decimal ZeroRatedSales { get; set; }
+    public decimal VatAmount { get; set; }
+    public string? DiscountCode { get; set; }
+    public string? CustomerCardNumber { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal TotalAmount { get; set; }
     public string? InvoiceNumber { get; set; }

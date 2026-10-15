@@ -83,6 +83,7 @@ builder.Services.AddScoped<IModifierService, ModifierService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IDiscountService, DiscountService>();
 
 var app = builder.Build();
 

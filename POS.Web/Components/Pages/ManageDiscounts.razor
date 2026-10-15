@@ -1,0 +1,451 @@
+@page "/manage-discounts"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject IDiscountService DiscountService
+@inject SweetAlertService Swal
+
+<PageTitle>Discount Management - POS Admin</PageTitle>
+
+<div class="w-100 py-2">
+    <!-- Header Toolbar -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Discount Management</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Manage discount types, statutory rules, and corporate promotions</span>
+        </div>
+        <div>
+            <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenAddModal">
+                Add New Discount
+            </button>
+        </div>
+    </div>
+
+    <!-- Search Input (Right Aligned) -->
+    <div class="d-flex justify-content-end mb-3">
+        <div class="position-relative" style="width: 260px;">
+            <i class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
+            <input type="search" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border"
+                   placeholder="Search discounts..."
+                   @bind="searchFilter"
+                   @bind:event="oninput" />
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="w-100">
+        @if (discounts == null)
+        {
+            <div class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                Loading discounts...
+            </div>
+        }
+        else
+        {
+            <div class="commercial-grid table-responsive w-100">
+                <QuickGrid Items="@FilteredDiscounts" Pagination="@pagination" Theme="commercial">
+
+                    <PropertyColumn Property="@(d => d.Code)" Title="Code" Sortable="true" />
+                    <PropertyColumn Property="@(d => d.Name)" Title="Discount Name" Sortable="true" />
+
+                    <TemplateColumn Context="d" Title="Category">
+                        <span class="badge bg-light text-dark border px-2 py-1">@d.DiscountCategory</span>
+                    </TemplateColumn>
+
+                    <TemplateColumn Context="d" Title="Method / Value">
+                        @if (d.DiscountMethod == "PERCENTAGE")
+                        {
+                            <span class="fw-bold">@d.DiscountValue.ToString("0.##")%</span>
+                        }
+                        else
+                        {
+                            <span class="fw-bold">₱@d.DiscountValue.ToString("N2")</span>
+                        }
+                    </TemplateColumn>
+
+                    <TemplateColumn Context="d" Title="Statutory?" Align="Align.Center">
+                        @if (d.IsStatutory)
+                        {
+                            <span class="badge bg-success-subtle text-success fw-semibold">Yes</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary-subtle text-secondary">No</span>
+                        }
+                    </TemplateColumn>
+
+                    <TemplateColumn Context="d" Title="Requires ID?" Align="Align.Center">
+                        @if (d.RequiresIdentification)
+                        {
+                            <i class="bi bi-check-circle-fill text-primary"></i>
+                        }
+                        else
+                        {
+                            <span class="text-muted">—</span>
+                        }
+                    </TemplateColumn>
+
+                    <TemplateColumn Context="d" Title="Status" Align="Align.Center">
+                        @if (d.IsActive)
+                        {
+                            <span class="badge bg-success">Active</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary">Inactive</span>
+                        }
+                    </TemplateColumn>
+
+                    <TemplateColumn Context="d" Title="Actions" Align="Align.Right">
+                        <HeaderTemplate>
+                            <div class="actions-header-wrap">
+                                <span class="actions-header-text">Actions</span>
+                            </div>
+                        </HeaderTemplate>
+                        <ChildContent>
+                            <div class="actions-cell-wrap d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-sm btn-warning text-dark" @onclick="() => OpenEditModal(d)" title="Edit Discount" aria-label="Edit Discount">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                @if (!d.IsStatutory)
+                                {
+                                    <button type="button" class="btn btn-sm btn-danger text-white" @onclick="() => DeleteDiscount(d.DiscountTypeId)" title="Delete Discount" aria-label="Delete Discount">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
+                            </div>
+                        </ChildContent>
+                    </TemplateColumn>
+                </QuickGrid>
+            </div>
+
+            <!-- Bootstrap Pagination Bar -->
+            <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center pt-3 mt-1 border-top gap-3">
+                <div class="text-secondary small fw-medium">
+                    @GetShowingRangeText()
+                </div>
+
+                <nav aria-label="Discounts table pagination">
+                    <ul class="pagination mb-0">
+                        <li class="page-item @(pagination.CurrentPageIndex == 0 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex - 1)" disabled="@(pagination.CurrentPageIndex == 0)" aria-label="Previous">
+                                Previous
+                            </button>
+                        </li>
+
+                        @for (int i = 0; i < TotalPages; i++)
+                        {
+                            var pageIndex = i;
+                            var isActive = pagination.CurrentPageIndex == pageIndex;
+                            <li class="page-item @(isActive ? "active" : "")" aria-current="@(isActive ? "page" : null)">
+                                <button type="button" class="page-link" @onclick="() => GoToPage(pageIndex)">
+                                    @(pageIndex + 1)
+                                </button>
+                            </li>
+                        }
+
+                        <li class="page-item @(pagination.CurrentPageIndex >= TotalPages - 1 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex + 1)" disabled="@(pagination.CurrentPageIndex >= TotalPages - 1)" aria-label="Next">
+                                Next
+                            </button>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Modal Dialog with Blazor EditForm and Validation -->
+@if (isModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <EditForm Model="@currentDiscount" OnValidSubmit="SaveDiscount">
+                    <DataAnnotationsValidator />
+
+                    <!-- Modal Header -->
+                    <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="fw-bold text-dark mb-0">@(isEditing ? "Edit Discount" : "New Discount")</h5>
+                            <small class="text-secondary" style="font-size: 0.85rem;">
+                                @(isEditing ? "Update discount rule information" : "Enter the details to add a new discount")
+                            </small>
+                        </div>
+                        <button type="button" class="btn-close shadow-none" @onclick="CloseModal" aria-label="Close"></button>
+                    </div>
+
+                    <!-- Modal Body -->
+                    <div class="modal-body px-4 py-3">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="form-label text-dark fw-semibold small mb-1">Discount Code <span class="text-danger">*</span></label>
+                                <InputText @bind-Value="currentDiscount.Code" class="form-control rounded-3" placeholder="e.g. VIP10" disabled="@isEditing" />
+                            </div>
+
+                            <div class="col-12">
+                                <label class="form-label text-dark fw-semibold small mb-1">Discount Name <span class="text-danger">*</span></label>
+                                <InputText @bind-Value="currentDiscount.Name" class="form-control rounded-3" placeholder="e.g. VIP Member Discount" />
+                            </div>
+
+                            <div class="col-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">Category</label>
+                                <InputSelect @bind-Value="currentDiscount.DiscountCategory" class="form-select rounded-3">
+                                    <option value="PROMOTIONAL">Promotional</option>
+                                    <option value="CORPORATE">Corporate</option>
+                                    <option value="MANUAL">Manual</option>
+                                </InputSelect>
+                            </div>
+
+                            <div class="col-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">Method</label>
+                                <InputSelect @bind-Value="currentDiscount.DiscountMethod" class="form-select rounded-3">
+                                    <option value="PERCENTAGE">Percentage (%)</option>
+                                    <option value="FIXED">Fixed Amount (₱)</option>
+                                </InputSelect>
+                            </div>
+
+                            <div class="col-12">
+                                <label class="form-label text-dark fw-semibold small mb-1">Discount Value <span class="text-danger">*</span></label>
+                                <InputNumber @bind-Value="currentDiscount.DiscountValue" class="form-control rounded-3" />
+                            </div>
+
+                            <div class="col-12">
+                                <div class="p-3 bg-light rounded-3 border d-flex align-items-center justify-content-between mb-2">
+                                    <label class="form-check-label fw-semibold text-dark mb-0">Requires Beneficiary ID</label>
+                                    <div class="form-check form-switch mb-0">
+                                        <InputCheckbox @bind-Value="currentDiscount.RequiresIdentification" class="form-check-input" />
+                                    </div>
+                                </div>
+                                <div class="p-3 bg-light rounded-3 border d-flex align-items-center justify-content-between">
+                                    <label class="form-check-label fw-semibold text-dark mb-0">Active</label>
+                                    <div class="form-check form-switch mb-0">
+                                        <InputCheckbox @bind-Value="currentDiscount.IsActive" class="form-check-input" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Modal Footer -->
+                    <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end align-items-center gap-2">
+                        <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseModal">
+                            Cancel
+                        </button>
+                        <button type="submit" class="btn btn-primary rounded px-4 fw-bold shadow-sm" disabled="@isSaving">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            }
+                            @(isEditing ? "Save Changes" : "Create Discount")
+                        </button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<DiscountTypeDto>? discounts;
+    private PaginationState pagination = new() { ItemsPerPage = 10 };
+    private string searchFilter = string.Empty;
+
+    // Modal State
+    private bool isModalOpen = false;
+    private bool isEditing = false;
+    private bool isSaving = false;
+    private DiscountTypeDto currentDiscount = new();
+
+    private IQueryable<DiscountTypeDto>? FilteredDiscounts =>
+        discounts?
+            .Where(d => string.IsNullOrWhiteSpace(searchFilter) ||
+                        (d.Name != null && d.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)) ||
+                        (d.Code != null && d.Code.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)))
+            .AsQueryable();
+
+    private int TotalPages
+    {
+        get
+        {
+            var count = FilteredDiscounts?.Count() ?? 0;
+            return Math.Max(1, (int)Math.Ceiling((double)count / pagination.ItemsPerPage));
+        }
+    }
+
+    private string GetShowingRangeText()
+    {
+        var total = FilteredDiscounts?.Count() ?? 0;
+        if (total == 0) return "Showing 0 items";
+        int start = (pagination.CurrentPageIndex * pagination.ItemsPerPage) + 1;
+        int end = Math.Min(start + pagination.ItemsPerPage - 1, total);
+        return $"Showing {start}–{end} of {total} discounts";
+    }
+
+    private async Task GoToPage(int pageIndex)
+    {
+        if (pageIndex >= 0 && pageIndex < TotalPages)
+        {
+            await pagination.SetCurrentPageIndexAsync(pageIndex);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDiscounts();
+    }
+
+    private async Task LoadDiscounts()
+    {
+        try
+        {
+            var rawDiscounts = await DiscountService.GetDiscountTypesAsync();
+            discounts = rawDiscounts.OrderByDescending(d => d.DiscountTypeId).ToList();
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to load discounts: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+    }
+
+    private void OpenAddModal()
+    {
+        isEditing = false;
+        currentDiscount = new DiscountTypeDto { IsActive = true, DiscountCategory = "PROMOTIONAL", DiscountMethod = "PERCENTAGE" };
+        isModalOpen = true;
+    }
+
+    private void OpenEditModal(DiscountTypeDto dto)
+    {
+        isEditing = true;
+        currentDiscount = new DiscountTypeDto
+        {
+            DiscountTypeId = dto.DiscountTypeId,
+            Code = dto.Code,
+            Name = dto.Name,
+            DiscountCategory = dto.DiscountCategory,
+            DiscountMethod = dto.DiscountMethod,
+            DiscountValue = dto.DiscountValue,
+            IsStatutory = dto.IsStatutory,
+            RequiresIdentification = dto.RequiresIdentification,
+            IsActive = dto.IsActive
+        };
+        isModalOpen = true;
+    }
+
+    private void CloseModal()
+    {
+        isModalOpen = false;
+    }
+
+    private async Task SaveDiscount()
+    {
+        if (string.IsNullOrWhiteSpace(currentDiscount.Code) || string.IsNullOrWhiteSpace(currentDiscount.Name))
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Missing Fields",
+                Text = "Discount Code and Name are required.",
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+
+            if (isEditing)
+            {
+                await DiscountService.UpdateDiscountAsync(currentDiscount.DiscountTypeId, currentDiscount);
+            }
+            else
+            {
+                await DiscountService.CreateDiscountAsync(currentDiscount);
+            }
+
+            await LoadDiscounts();
+            CloseModal();
+
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = isEditing ? "Discount Updated!" : "Discount Created!",
+                Text = isEditing ? "Discount rule updated successfully." : "Discount rule created successfully.",
+                Icon = SweetAlertIcon.Success,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to save discount: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task DeleteDiscount(int id)
+    {
+        var result = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Are you sure?",
+            Text = "You are about to delete this discount rule. This cannot be undone!",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#d33",
+            CancelButtonColor = "#64748b",
+            ConfirmButtonText = "Yes, delete it!",
+            CancelButtonText = "Cancel"
+        });
+
+        if (result.IsConfirmed)
+        {
+            try
+            {
+                await DiscountService.DeleteDiscountAsync(id);
+                await LoadDiscounts();
+
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Deleted!",
+                    Text = "The discount rule has been removed.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            catch (Exception ex)
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Error",
+                    Text = "Failed to delete discount: " + ex.Message,
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+        }
+    }
+}

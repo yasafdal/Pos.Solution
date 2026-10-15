@@ -22,6 +22,29 @@ namespace POS.Client.Services
         public int TotalItems => _items.Sum(i => i.Quantity);
 
         public event Action? OnChange;
+        private string activeDiscountCode = "NONE";
+        private decimal activeDiscountAmount = 0.00m;
+        private string? customerCardNumber;
+
+        public string ActiveDiscountCode => activeDiscountCode;
+        public decimal ActiveDiscountAmount => activeDiscountAmount;
+        public string? CustomerCardNumber => customerCardNumber;
+
+        public void ApplyDiscount(string code, decimal amount, string? cardNumber = null)
+        {
+            activeDiscountCode = code;
+            activeDiscountAmount = amount;
+            customerCardNumber = cardNumber;
+            NotifyStateChanged();
+        }
+
+        public void ClearDiscount()
+        {
+            activeDiscountCode = "NONE";
+            activeDiscountAmount = 0.00m;
+            customerCardNumber = null;
+            NotifyStateChanged();
+        }
 
         private static bool ModifiersEqual(List<ModifierOptionDto> a, List<ModifierOptionDto> b)
         {

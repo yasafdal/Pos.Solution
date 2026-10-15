@@ -16,16 +16,16 @@ ALTER TABLE "Products" DROP COLUMN IF EXISTS "stockquantity";
 ALTER TABLE "Products" DROP COLUMN IF EXISTS "reorderlevel";
 
 -- Seed Categories for Coffee Shop & Small Food Business
-INSERT INTO "Categories" ("CategoryId", "Name", "Description", "IsActive")
+INSERT INTO "Categories" ("CategoryId", "Name", "Description", "IsActive", "ColorHex")
 VALUES
-(1, 'Coffee & Espresso', 'Hot & iced artisanal coffee drinks', true),
-(2, 'Teas & Beverages', 'Milk teas, fruit teas, and refreshing drinks', true),
-(3, 'Bakery & Pastries', 'Freshly baked muffins, pastries, and breads', true),
-(4, 'Rice Meals & Sandwiches', 'Hearty meals and quick snacks', true),
-(5, 'Add-ons & Extras', 'Extra shots, syrups, and toppings', true),
-(6, 'Inventory & Raw Materials', 'Ingredients and raw supplies', true)
+(1, 'Coffee & Espresso', 'Hot & iced artisanal coffee drinks', true, '#2563EB'),
+(2, 'Teas & Beverages', 'Milk teas, fruit teas, and refreshing drinks', true, '#16A34A'),
+(3, 'Bakery & Pastries', 'Freshly baked muffins, pastries, and breads', true, '#D97706'),
+(4, 'Rice Meals & Sandwiches', 'Hearty meals and quick snacks', true, '#DC2626'),
+(5, 'Add-ons & Extras', 'Extra shots, syrups, and toppings', true, '#9333EA'),
+(6, 'Inventory & Raw Materials', 'Ingredients and raw supplies', true, '#475569')
 ON CONFLICT ("CategoryId") DO UPDATE 
-SET "Name" = EXCLUDED."Name", "Description" = EXCLUDED."Description";
+SET "Name" = EXCLUDED."Name", "Description" = EXCLUDED."Description", "ColorHex" = COALESCE(EXCLUDED."ColorHex", '#2563EB');
 
 -- Reset sequence for Categories if needed
 SELECT setval(pg_get_serial_sequence('"Categories"', 'CategoryId'), coalesce(max("CategoryId"), 1), true) FROM "Categories";

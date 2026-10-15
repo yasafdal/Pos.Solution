@@ -44,6 +44,7 @@ namespace POS.Client
             builder.Services.AddScoped<IOrderService, OrderService>();
             builder.Services.AddScoped<IPaymentService, PaymentService>();
             builder.Services.AddScoped<IReceiptService, ReceiptService>();
+            builder.Services.AddScoped<IDiscountService, DiscountService>();
 #if WINDOWS
             builder.Services.AddSingleton<IReceiptPrinter, POS.Client.Platforms.Windows.WindowsReceiptPrinter>();
 #else

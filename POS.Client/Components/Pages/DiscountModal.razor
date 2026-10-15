@@ -1,0 +1,168 @@
+@inject IDiscountService DiscountService
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.Web
+
+@if (isDiscountModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Apply Transaction Discount</h5>
+                        <small class="text-secondary">Select statutory or corporate discount per BIR regulations</small>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseDiscountModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    @if (!string.IsNullOrEmpty(discountError))
+                    {
+                        <div class="alert alert-danger py-2 mb-3" role="alert">@discountError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark">Select Discount Type</label>
+                        <div class="row g-2">
+                            @if (availableDiscounts != null)
+                            {
+                                @foreach (var dt in availableDiscounts)
+                                {
+                                    var isSelected = selectedDiscountCode == dt.Code;
+                                    <div class="col-6 col-md-4">
+                                        <button type="button" aria-pressed="@(isSelected ? "true" : "false")"
+                                                class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") w-100 py-3 fw-bold d-flex flex-column align-items-center justify-content-center"
+                                                @onclick="() => SelectDiscountType(dt)">
+                                            <span>@dt.Name</span>
+                                            <small class="d-block fw-normal mt-1" style="font-size: 0.75rem;">
+                                                @(dt.DiscountMethod == "PERCENTAGE" ? $"{dt.DiscountValue:0.##}%" : $"₱{dt.DiscountValue:N2}")
+                                            </small>
+                                        </button>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+
+                    @if (selectedDiscountType != null && selectedDiscountType.RequiresIdentification)
+                    {
+                        <div class="mb-3 p-3 bg-light rounded-3 border">
+                            <label class="form-label fw-semibold text-dark">Beneficiary ID / Card Number <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm fw-bold" @bind="cardOrIdNumber" placeholder="Enter Senior Citizen / PWD ID number..." />
+                            <small class="text-muted mt-1 d-block">Required for BIR audit trail and compliance verification.</small>
+                        </div>
+                    }
+
+                    @if (selectedDiscountType != null && selectedDiscountType.Code == "MANUAL")
+                    {
+                        <div class="mb-3 p-3 bg-light rounded-3 border">
+                            <label class="form-label fw-semibold text-dark">Manual Discount Percentage (%) <span class="text-danger">*</span></label>
+                            <input type="number" min="0" max="100" step="0.5" class="form-control form-control-sm fw-bold" @bind="manualPercentage" />
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-outline-secondary px-4 fw-medium" @onclick="ClearDiscount">
+                        Remove Discount
+                    </button>
+                    <button type="button" class="btn btn-primary px-4 fw-bold shadow-sm" @onclick="ConfirmDiscount">
+                        Apply Discount
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public CartService Cart { get; set; } = null!;
+    [Parameter] public EventCallback OnDiscountChanged { get; set; }
+
+    private bool isDiscountModalOpen = false;
+    private List<DiscountTypeDto>? availableDiscounts;
+    private DiscountTypeDto? selectedDiscountType;
+    private string selectedDiscountCode = "NONE";
+    private string? cardOrIdNumber;
+    private decimal manualPercentage = 0m;
+    private string? discountError;
+
+    public async Task OpenAsync()
+    {
+        try
+        {
+            availableDiscounts = await DiscountService.GetDiscountTypesAsync();
+        }
+        catch
+        {
+            availableDiscounts = new List<DiscountTypeDto>
+            {
+                new() { Code = "NONE", Name = "No Discount", DiscountCategory = "NONE", DiscountMethod = "PERCENTAGE", DiscountValue = 0 },
+                new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
+                new() { Code = "PWD", Name = "PWD (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
+                new() { Code = "BNPC", Name = "Basic Commodities (5%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 5, IsStatutory = true },
+                new() { Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10, RequiresIdentification = true }
+            };
+        }
+        selectedDiscountCode = Cart.ActiveDiscountCode;
+        selectedDiscountType = availableDiscounts.FirstOrDefault(d => d.Code == selectedDiscountCode) ?? availableDiscounts.First();
+        cardOrIdNumber = Cart.CustomerCardNumber;
+        discountError = null;
+        isDiscountModalOpen = true;
+    }
+
+    private void CloseDiscountModal() => isDiscountModalOpen = false;
+
+    private void SelectDiscountType(DiscountTypeDto dt)
+    {
+        selectedDiscountType = dt;
+        selectedDiscountCode = dt.Code;
+        discountError = null;
+    }
+
+    private async Task ConfirmDiscount()
+    {
+        if (selectedDiscountType == null) return;
+
+        if (selectedDiscountType.RequiresIdentification && string.IsNullOrWhiteSpace(cardOrIdNumber))
+        {
+            discountError = $"Beneficiary ID or Card Number is required for {selectedDiscountType.Name}.";
+            return;
+        }
+
+        try
+        {
+            var req = new OrderCalculationRequestDto
+            {
+                BranchTaxType = "VAT-Registered",
+                DiscountCode = selectedDiscountCode,
+                ManualDiscountPercentage = manualPercentage,
+                Items = Cart.Items.Select(ci => new CartItemCalculationDto
+                {
+                    ProductId = ci.ProductId,
+                    ProductName = ci.ProductName,
+                    Quantity = ci.Quantity,
+                    UnitPrice = ci.BasePrice,
+                    ModifierTotal = ci.SelectedModifiers.Sum(m => m.Price),
+                    TaxName = "VATable",
+                    IsEligibleForStatutoryDiscount = true
+                }).ToList()
+            };
+
+            var res = await DiscountService.CalculateOrderAsync(req);
+            Cart.ApplyDiscount(selectedDiscountCode, res.DiscountAmount, cardOrIdNumber);
+            isDiscountModalOpen = false;
+            await OnDiscountChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            discountError = $"Failed to calculate discount: {ex.Message}";
+        }
+    }
+
+    private async Task ClearDiscount()
+    {
+        Cart.ClearDiscount();
+        isDiscountModalOpen = false;
+        await OnDiscountChanged.InvokeAsync();
+    }
+}

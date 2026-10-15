@@ -11,7 +11,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISequenceService sequenceService) : ControllerBase
+public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISequenceService sequenceService, POS.Api.Services.IDiscountCalculationService discountCalculator) : ControllerBase
 {
     [HttpPost]
     public async Task<ActionResult<OrderResponseDto>> CreateOrder(OrderCreateDto dto)
@@ -24,6 +24,24 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         {
             var orderNumber = await sequenceService.GenerateOrderNumberAsync(dto.OutletId);
 
+            var calcReq = new OrderCalculationRequestDto
+            {
+                BranchTaxType = "VAT-Registered",
+                DiscountCode = dto.DiscountCode ?? "NONE",
+                Items = dto.Items.Select(i => new CartItemCalculationDto
+                {
+                    ProductId = i.ProductId,
+                    ProductName = i.ProductName ?? "Product",
+                    Quantity = i.Quantity,
+                    UnitPrice = i.BasePrice,
+                    ModifierTotal = i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m,
+                    TaxName = "VATable",
+                    IsEligibleForStatutoryDiscount = true
+                }).ToList()
+            };
+
+            var calcRes = discountCalculator.CalculateOrder(calcReq);
+
             var order = new Order
             {
                 OrderNumber = orderNumber,
@@ -34,7 +52,14 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 OrderType = string.IsNullOrWhiteSpace(dto.OrderType) ? "DINING" : dto.OrderType,
                 OrderStatus = "PENDING",
                 PaymentStatus = "UNPAID",
-                DiscountAmount = dto.DiscountAmount,
+                DiscountAmount = calcRes.DiscountAmount,
+                DiscountTypeId = dto.DiscountTypeId,
+                DiscountCode = dto.DiscountCode,
+                CustomerCardNumber = dto.CustomerCardNumber,
+                VatableSales = calcRes.VatableSales,
+                VatExemptSales = calcRes.VatExemptSales,
+                ZeroRatedSales = calcRes.ZeroRatedSales,
+                VatAmount = calcRes.VatAmount,
                 CustomerName = string.IsNullOrWhiteSpace(dto.CustomerName) ? null : dto.CustomerName.Trim(),
                 CustomerAddress = string.IsNullOrWhiteSpace(dto.CustomerAddress) ? null : dto.CustomerAddress.Trim(),
                 CustomerTin = string.IsNullOrWhiteSpace(dto.CustomerTin) ? null : dto.CustomerTin.Trim(),
@@ -67,6 +92,8 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 decimal lineTotal = unitPrice * itemDto.Quantity;
                 subtotal += lineTotal;
 
+                var calcItem = calcRes.CalculatedItems.FirstOrDefault(ci => ci.ProductId == itemDto.ProductId);
+
                 var orderItem = new OrderItem
                 {
                     ProductId = itemDto.ProductId,
@@ -77,6 +104,9 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                     ModifierTotal = modifierTotal,
                     UnitPrice = unitPrice,
                     LineTotal = lineTotal,
+                    DiscountAmount = calcItem?.DiscountAmount ?? 0m,
+                    VatType = calcItem?.VatType ?? "VATABLE",
+                    VatAmount = calcItem?.VatAmount ?? 0m,
                     OrderItemModifiers = itemModifiers
                 };
 
@@ -84,10 +114,25 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             }
 
             order.Subtotal = subtotal;
-            order.TotalAmount = Math.Max(0m, subtotal - dto.DiscountAmount);
+            order.TotalAmount = calcRes.TotalAmount;
 
             context.Orders.Add(order);
             await context.SaveChangesAsync();
+
+            if (calcRes.DiscountAmount > 0)
+            {
+                context.DiscountAuditLogs.Add(new DiscountAuditLog
+                {
+                    OrderId = order.OrderId,
+                    CashierId = dto.CashierId ?? "system",
+                    DiscountCode = dto.DiscountCode ?? "UNKNOWN",
+                    Action = "APPLIED",
+                    CustomerCardNumber = dto.CustomerCardNumber,
+                    DiscountAmount = calcRes.DiscountAmount,
+                    Reason = "Applied at checkout via POS Client"
+                });
+                await context.SaveChangesAsync();
+            }
             await transaction.CommitAsync();
 
             var response = MapToDto(order);

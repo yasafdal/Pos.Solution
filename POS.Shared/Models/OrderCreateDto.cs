@@ -10,6 +10,9 @@ public class OrderCreateDto
     public long? ShiftId { get; set; }
     public string OrderType { get; set; } = "DINING";
     public decimal DiscountAmount { get; set; }
+    public int? DiscountTypeId { get; set; }
+    public string? DiscountCode { get; set; }
+    public string? CustomerCardNumber { get; set; }
     public string? CustomerName { get; set; }
     public string? CustomerAddress { get; set; }
     public string? CustomerTin { get; set; }

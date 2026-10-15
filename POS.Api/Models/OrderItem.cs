@@ -28,6 +28,11 @@ public partial class OrderItem
 
     public decimal LineTotal { get; set; }
 
+    public decimal DiscountAmount { get; set; }
+    [MaxLength(20)]
+    public string VatType { get; set; } = "VATABLE";
+    public decimal VatAmount { get; set; }
+
     public virtual Order Order { get; set; } = null!;
 
     public virtual ICollection<OrderItemModifier> OrderItemModifiers { get; set; } = new List<OrderItemModifier>();
