@@ -17,6 +17,7 @@ public partial class PosDbContext
     public virtual DbSet<InvoiceSequence> InvoiceSequences { get; set; }
     public virtual DbSet<DiscountType> DiscountTypes { get; set; }
     public virtual DbSet<DiscountAuditLog> DiscountAuditLogs { get; set; }
+    public virtual DbSet<ReceiptReprintLog> ReceiptReprintLogs { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
@@ -263,6 +264,29 @@ public partial class PosDbContext
                 .HasForeignKey(d => d.OutletId)
                 .HasConstraintName("FK_InvoiceSequences_Outlet")
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ReceiptReprintLog>(entity =>
+        {
+            entity.ToTable("ReceiptReprintLogs");
+            entity.HasKey(e => e.ReprintLogId);
+            entity.Property(e => e.ReprintLogId).HasColumnName("ReprintLogId");
+            entity.Property(e => e.OrderId).HasColumnName("OrderId");
+            entity.Property(e => e.InvoiceNumber).HasColumnName("InvoiceNumber").HasMaxLength(50);
+            entity.Property(e => e.BranchId).HasColumnName("BranchId");
+            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
+            entity.Property(e => e.ReprintReason).HasColumnName("ReprintReason").HasMaxLength(255).IsRequired();
+            entity.Property(e => e.ReprintedAt).HasColumnName("ReprintedAt").IsRequired();
+            entity.Property(e => e.PrinterName).HasColumnName("PrinterName").HasMaxLength(100);
+            entity.Property(e => e.PrintStatus).HasColumnName("PrintStatus").HasMaxLength(30).IsRequired();
+            entity.Property(e => e.ErrorMessage).HasColumnName("ErrorMessage");
+
+            entity.HasOne(d => d.Order)
+                .WithMany()
+                .HasForeignKey(d => d.OrderId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_ReceiptReprintLogs_Orders");
         });
     }
 }

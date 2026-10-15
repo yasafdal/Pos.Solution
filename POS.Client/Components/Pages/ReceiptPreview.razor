@@ -71,8 +71,27 @@
                         }
                         <hr />
                         <div class="d-flex justify-content-between"><span>Subtotal</span><span>₱@receipt.Subtotal.ToString("N2")</span></div>
-                        <div class="d-flex justify-content-between"><span>Discount</span><span>₱@receipt.DiscountAmount.ToString("N2")</span></div>
-                        <div class="d-flex justify-content-between fw-bold"><span>Total</span><span>₱@receipt.TotalAmount.ToString("N2")</span></div>
+                        @if (receipt.VatAmount > 0)
+                        {
+                            @if (receipt.VatableSales > 0)
+                            {
+                                <div class="d-flex justify-content-between text-muted small"><span>Vatable Sales</span><span>₱@receipt.VatableSales.ToString("N2")</span></div>
+                            }
+                            @if (receipt.VatExemptSales > 0)
+                            {
+                                <div class="d-flex justify-content-between text-muted small"><span>VAT-Exempt Sales</span><span>₱@receipt.VatExemptSales.ToString("N2")</span></div>
+                            }
+                            @if (receipt.ZeroRatedSales > 0)
+                            {
+                                <div class="d-flex justify-content-between text-muted small"><span>Zero-Rated Sales</span><span>₱@receipt.ZeroRatedSales.ToString("N2")</span></div>
+                            }
+                            <div class="d-flex justify-content-between text-muted small"><span>VAT (12%)</span><span>₱@receipt.VatAmount.ToString("N2")</span></div>
+                        }
+                        @if (receipt.DiscountAmount > 0)
+                        {
+                            <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(receipt.DiscountCode) ? $"({receipt.DiscountCode})" : "")</span><span>-₱@receipt.DiscountAmount.ToString("N2")</span></div>
+                        }
+                        <div class="d-flex justify-content-between fw-bold fs-6 mt-1 pt-1 border-top"><span>Total</span><span>₱@receipt.TotalAmount.ToString("N2")</span></div>
                         @foreach (var payment in receipt.Payments)
                         {
                             <hr />

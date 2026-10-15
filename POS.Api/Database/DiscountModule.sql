@@ -34,9 +34,12 @@ VALUES
 (2, 'SC', 'Senior Citizen Discount (20%)', 'STATUTORY', 'PERCENTAGE', 20.0000, TRUE, TRUE, FALSE, TRUE),
 (3, 'PWD', 'Person with Disability Discount (20%)', 'STATUTORY', 'PERCENTAGE', 20.0000, TRUE, TRUE, FALSE, TRUE),
 (4, 'BNPC', 'Basic Necessities & Prime Commodities (5%)', 'STATUTORY', 'PERCENTAGE', 5.0000, TRUE, TRUE, FALSE, TRUE),
-(5, 'PROMO', 'Promotional Discount', 'PROMOTIONAL', 'PERCENTAGE', 0.0000, FALSE, FALSE, FALSE, TRUE),
-(6, 'EMPLOYEE', 'Employee Discount', 'CORPORATE', 'PERCENTAGE', 10.0000, FALSE, TRUE, TRUE, TRUE),
-(7, 'MANUAL', 'Manual Custom Discount', 'MANUAL', 'PERCENTAGE', 0.0000, FALSE, FALSE, TRUE, TRUE)
+(5, 'NAAC', 'National Athletes and Coaches (20%)', 'STATUTORY', 'PERCENTAGE', 20.0000, TRUE, TRUE, FALSE, TRUE),
+(6, 'MOV', 'Medal of Valor Awardee and Dependents (20%)', 'STATUTORY', 'PERCENTAGE', 20.0000, TRUE, TRUE, FALSE, TRUE),
+(7, 'SP', 'Solo Parent Discount (10%)', 'STATUTORY', 'PERCENTAGE', 10.0000, TRUE, TRUE, FALSE, TRUE),
+(8, 'PROMO', 'Promotional Discount', 'PROMOTIONAL', 'PERCENTAGE', 0.0000, FALSE, FALSE, FALSE, TRUE),
+(9, 'EMPLOYEE', 'Employee Discount', 'CORPORATE', 'PERCENTAGE', 10.0000, FALSE, TRUE, TRUE, TRUE),
+(10, 'MANUAL', 'Manual Custom Discount', 'MANUAL', 'PERCENTAGE', 0.0000, FALSE, FALSE, TRUE, TRUE)
 ON CONFLICT ("Code") DO UPDATE 
 SET "Name" = EXCLUDED."Name", "DiscountValue" = EXCLUDED."DiscountValue", "IsStatutory" = EXCLUDED."IsStatutory";
 

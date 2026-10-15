@@ -564,6 +564,10 @@ public sealed class NewSaleBrowserTests
             new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true }
         });
 
+        public Task<DiscountTypeDto> CreateDiscountAsync(DiscountTypeDto dto) => Task.FromResult(dto);
+        public Task UpdateDiscountAsync(int id, DiscountTypeDto dto) => Task.CompletedTask;
+        public Task DeleteDiscountAsync(int id) => Task.CompletedTask;
+
         public Task<OrderCalculationResultDto> CalculateOrderAsync(OrderCalculationRequestDto request)
         {
             decimal sub = request.Items.Sum(i => (i.UnitPrice + i.ModifierTotal) * i.Quantity);

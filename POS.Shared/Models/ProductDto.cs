@@ -24,7 +24,7 @@ public class ProductDto
     public string? ShortCode { get; set; }
 
     public int? TaxId { get; set; }
-    public string? TaxName { get; set; } 
+    public string? TaxName { get; set; } = "VATable";
     public string ProductType { get; set; } = string.Empty;
 
     public bool IsActive { get; set; } 

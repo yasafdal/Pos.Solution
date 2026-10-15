@@ -24,9 +24,12 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         {
             var orderNumber = await sequenceService.GenerateOrderNumberAsync(dto.OutletId);
 
+            var branch = await context.Branches.AsNoTracking().SingleOrDefaultAsync(b => b.BranchId == dto.BranchId);
+            var branchTaxType = branch?.TaxType ?? "VAT-Registered";
+
             var calcReq = new OrderCalculationRequestDto
             {
-                BranchTaxType = "VAT-Registered",
+                BranchTaxType = branchTaxType,
                 DiscountCode = dto.DiscountCode ?? "NONE",
                 Items = dto.Items.Select(i => new CartItemCalculationDto
                 {
@@ -35,7 +38,7 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                     Quantity = i.Quantity,
                     UnitPrice = i.BasePrice,
                     ModifierTotal = i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m,
-                    TaxName = "VATable",
+                    TaxName = i.TaxName ?? "VATable",
                     IsEligibleForStatutoryDiscount = true
                 }).ToList()
             };

@@ -21,6 +21,15 @@ public class OrderResponseDto
     public string? CustomerAddress { get; set; }
     public string? CustomerTin { get; set; }
     public string? CustomerBusinessStyle { get; set; }
+    public decimal VatableSales { get; set; }
+    public decimal VatExemptSales { get; set; }
+    public decimal ZeroRatedSales { get; set; }
+    public decimal VatAmount { get; set; }
+    public string? DiscountCode { get; set; }
+    public string? CustomerCardNumber { get; set; }
+    public string? InvoiceNumber { get; set; }
+    public DateTime? InvoiceIssuedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<OrderItemResponseDto> Items { get; set; } = new();
+    public List<PaymentResponseDto> Payments { get; set; } = new();
 }

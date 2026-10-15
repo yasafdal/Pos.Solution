@@ -1085,6 +1085,7 @@ else
                     ProductShortCode = ci.ProductShortCode,
                     Quantity = ci.Quantity,
                     BasePrice = ci.BasePrice,
+                    TaxName = ci.TaxName ?? "VATable",
                     Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                     {
                         ModifierOptionId = m.ModifierOptionId,

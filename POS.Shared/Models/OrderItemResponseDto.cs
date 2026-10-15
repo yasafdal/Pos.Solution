@@ -13,5 +13,7 @@ public class OrderItemResponseDto
     public decimal ModifierTotal { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal LineTotal { get; set; }
+    public string? VatType { get; set; }
+    public decimal VatAmount { get; set; }
     public List<OrderItemModifierResponseDto> Modifiers { get; set; } = new();
 }

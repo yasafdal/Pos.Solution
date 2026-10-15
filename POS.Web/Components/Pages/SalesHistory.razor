@@ -1,0 +1,247 @@
+@page "/sales-history"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject ITransactionService TransactionService
+@inject SweetAlertService SwalAlert
+
+<PageTitle>Transaction History - POS Admin</PageTitle>
+
+<div class="w-100 py-2">
+    <!-- Header Toolbar -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Transaction Sales History</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">View completed orders, tax breakdowns, and controlled invoice reprinting</span>
+        </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-white">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label text-dark fw-semibold small mb-1">Search Invoice / Order #</label>
+                <input type="text" class="form-control form-control-sm rounded-3" placeholder="e.g. 5000001" @bind="filter.InvoiceNumber" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Payment Status</label>
+                <select class="form-select form-select-sm rounded-3" @bind="filter.PaymentStatus">
+                    <option value="">All Statuses</option>
+                    <option value="PAID">Paid</option>
+                    <option value="UNPAID">Unpaid</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Cashier ID</label>
+                <input type="text" class="form-control form-control-sm rounded-3" placeholder="Cashier" @bind="filter.CashierId" />
+            </div>
+            <div class="col-md-3 d-flex gap-2">
+                <button class="btn btn-primary btn-sm rounded-3 px-3 fw-bold shadow-sm w-100" @onclick="LoadTransactions">
+                    <i class="bi bi-search me-1"></i> Filter
+                </button>
+                <button class="btn btn-outline-secondary btn-sm rounded-3 px-3 fw-medium w-100" @onclick="ResetFilters">
+                    Reset
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="w-100">
+        @if (transactions == null)
+        {
+            <div class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                Loading transactions...
+            </div>
+        }
+        else
+        {
+            <div class="commercial-grid table-responsive w-100 mb-4">
+                <QuickGrid Items="@transactions.AsQueryable()" Pagination="@pagination" Theme="commercial">
+                    <PropertyColumn Property="@(t => t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))" Title="Date / Time" Sortable="true" />
+                    <PropertyColumn Property="@(t => t.InvoiceNumber ?? "—")" Title="Invoice #" Sortable="true" />
+                    <PropertyColumn Property="@(t => t.OrderNumber)" Title="Order #" Sortable="true" />
+                    <PropertyColumn Property="@(t => t.CashierId)" Title="Cashier" />
+                    
+                    <TemplateColumn Context="t" Title="Status">
+                        @if (t.PaymentStatus == "PAID")
+                        {
+                            <span class="badge bg-success">PAID</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning text-dark">UNPAID</span>
+                        }
+                    </TemplateColumn>
+
+                    <TemplateColumn Context="t" Title="Total Amount" Align="Align.Right">
+                        <span class="fw-bold text-dark">₱@t.TotalAmount.ToString("N2")</span>
+                    </TemplateColumn>
+
+                    <TemplateColumn Context="t" Title="Actions" Align="Align.Right">
+                        <ChildContent>
+                            <div class="actions-cell-wrap d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-sm btn-info text-white" @onclick="() => ViewDetails(t.OrderId)" title="View Details">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-secondary text-white" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint Invoice">
+                                    <i class="bi bi-printer"></i>
+                                </button>
+                            </div>
+                        </ChildContent>
+                    </TemplateColumn>
+                </QuickGrid>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center pt-3 border-top">
+                <div class="text-secondary small fw-medium">Showing transaction history</div>
+                <Paginator State="@pagination" />
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Transaction Detail Modal -->
+@if (isDetailModalOpen && selectedOrder != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Transaction Details (#@selectedOrder.OrderNumber)</h5>
+                        <small class="text-secondary">Invoice: @(selectedOrder.InvoiceNumber ?? "N/A") | Date: @selectedOrder.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</small>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseDetailModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    <div class="row g-3 mb-4">
+                        <div class="col-sm-6">
+                            <div class="p-3 bg-light rounded-3 border">
+                                <span class="text-muted small d-block">Cashier / Terminal</span>
+                                <strong class="text-dark">@selectedOrder.CashierId (Outlet #@selectedOrder.OutletId)</strong>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="p-3 bg-light rounded-3 border">
+                                <span class="text-muted small d-block">Payment Status</span>
+                                <strong class="text-success">@selectedOrder.PaymentStatus</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h6 class="fw-bold text-dark mb-2">Purchased Items</h6>
+                    <div class="table-responsive mb-4">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light fs-7 text-secondary">
+                                <tr>
+                                    <th class="py-2 px-3">Item</th>
+                                    <th class="py-2">Qty</th>
+                                    <th class="py-2">Unit Price</th>
+                                    <th class="py-2 text-end px-3">Line Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in selectedOrder.Items)
+                                {
+                                    <tr>
+                                        <td class="px-3 fw-medium">@item.ProductName</td>
+                                        <td>@item.Quantity.ToString("0.###")</td>
+                                        <td>₱@item.UnitPrice.ToString("N2")</td>
+                                        <td class="text-end px-3 fw-bold">₱@item.LineTotal.ToString("N2")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="p-3 bg-light rounded-3 border">
+                        <div class="d-flex justify-content-between mb-1"><span>Subtotal</span><span>₱@selectedOrder.Subtotal.ToString("N2")</span></div>
+                        @if (selectedOrder.VatAmount > 0)
+                        {
+                            @if (selectedOrder.VatableSales > 0)
+                            {
+                                <div class="d-flex justify-content-between text-muted small"><span>Vatable Sales</span><span>₱@selectedOrder.VatableSales.ToString("N2")</span></div>
+                            }
+                            @if (selectedOrder.VatExemptSales > 0)
+                            {
+                                <div class="d-flex justify-content-between text-muted small"><span>VAT-Exempt Sales</span><span>₱@selectedOrder.VatExemptSales.ToString("N2")</span></div>
+                            }
+                            <div class="d-flex justify-content-between text-muted small"><span>VAT (12%)</span><span>₱@selectedOrder.VatAmount.ToString("N2")</span></div>
+                        }
+                        @if (selectedOrder.DiscountAmount > 0)
+                        {
+                            <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(selectedOrder.DiscountCode) ? $"({selectedOrder.DiscountCode})" : "")</span><span>-₱@selectedOrder.DiscountAmount.ToString("N2")</span></div>
+                        }
+                        <div class="d-flex justify-content-between fw-bold fs-5 mt-2 pt-2 border-top"><span>Total Payable</span><span>₱@selectedOrder.TotalAmount.ToString("N2")</span></div>
+                    </div>
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end">
+                    <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseDetailModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<OrderResponseDto>? transactions;
+    private TransactionFilterDto filter = new();
+    private PaginationState pagination = new() { ItemsPerPage = 10 };
+
+    private bool isDetailModalOpen = false;
+    private OrderResponseDto? selectedOrder;
+
+    protected override async Task OnInitializedAsync() => await LoadTransactions();
+
+    private async Task LoadTransactions()
+    {
+        try
+        {
+            transactions = await TransactionService.GetTransactionsAsync(filter);
+        }
+        catch (Exception ex)
+        {
+            await SwalAlert.FireAsync("Error", "Failed to load transactions: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+
+    private void ResetFilters()
+    {
+        filter = new TransactionFilterDto();
+        _ = LoadTransactions();
+    }
+
+    private async Task ViewDetails(long orderId)
+    {
+        try
+        {
+            selectedOrder = await TransactionService.GetTransactionByIdAsync(orderId);
+            isDetailModalOpen = true;
+        }
+        catch (Exception ex)
+        {
+            await SwalAlert.FireAsync("Error", "Failed to load order details: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+
+    private void CloseDetailModal() => isDetailModalOpen = false;
+
+    private async Task ReprintInvoice(long orderId)
+    {
+        try
+        {
+            var receipt = await TransactionService.GetTransactionReceiptAsync(orderId, true);
+            if (receipt != null)
+            {
+                await SwalAlert.FireAsync("Reprint Audit Recorded", $"Invoice #{receipt.InvoiceNumber ?? receipt.OrderNumber} successfully marked for controlled reprint.", SweetAlertIcon.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            await SwalAlert.FireAsync("Error", "Failed to reprint invoice: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+}

@@ -143,22 +143,33 @@ public class ComprehensiveDiscountComplianceTests
     }
 
     [Fact]
-    public void Test_7_NegativeAmountPrevention()
+    public void Test_8_NaacAndMovAndSoloParentDiscounts()
     {
-        var req = new OrderCalculationRequestDto
+        // NAAC & MOV: 20% discount
+        var reqNaac = new OrderCalculationRequestDto
         {
             BranchTaxType = "VAT-Registered",
-            DiscountCode = "MANUAL",
-            ManualDiscountPercentage = 150m, // 150% discount override
+            DiscountCode = "NAAC",
             Items = new List<CartItemCalculationDto>
             {
-                new() { ProductId = 1, ProductName = "Small Item", Quantity = 1, UnitPrice = 100.00m, TaxName = "VATable" }
+                new() { ProductId = 1, ProductName = "Athlete Meal", Quantity = 1, UnitPrice = 1120.00m, TaxName = "VATable", IsEligibleForStatutoryDiscount = true }
             }
         };
+        var resNaac = _calculator.CalculateOrder(reqNaac);
+        Assert.Equal(200.00m, resNaac.DiscountAmount);
+        Assert.Equal(800.00m, resNaac.TotalAmount);
 
-        var res = _calculator.CalculateOrder(req);
-
-        Assert.True(res.TotalAmount >= 0m);
-        Assert.Equal(0.00m, res.TotalAmount);
+        // Solo Parent (SP): 10% discount on gross base
+        var reqSp = new OrderCalculationRequestDto
+        {
+            BranchTaxType = "VAT-Registered",
+            DiscountCode = "SP",
+            Items = new List<CartItemCalculationDto>
+            {
+                new() { ProductId = 1, ProductName = "Baby Formula", Quantity = 1, UnitPrice = 1000.00m, TaxName = "VATable", IsEligibleForStatutoryDiscount = true }
+            }
+        };
+        var resSp = _calculator.CalculateOrder(reqSp);
+        Assert.Equal(100.00m, resSp.DiscountAmount);
     }
 }

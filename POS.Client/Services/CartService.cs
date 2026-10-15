@@ -82,7 +82,8 @@ namespace POS.Client.Services
                     SelectedModifiers = selectedModifiers,
                     Quantity = quantity,
                     ImageUrl = product.ImageUrl,
-                    UnitOfMeasure = product.UnitOfMeasure
+                    UnitOfMeasure = product.UnitOfMeasure,
+                    TaxName = product.TaxName ?? "VATable"
                 });
             }
             NotifyStateChanged();
@@ -162,6 +163,7 @@ namespace POS.Client.Services
         public void Clear()
         {
             _items.Clear();
+            ClearDiscount();
             NotifyStateChanged();
         }
 

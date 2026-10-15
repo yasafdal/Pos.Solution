@@ -66,9 +66,9 @@ public class DiscountCalculationService : IDiscountCalculationService
             }
 
             // Apply statutory or promotional discounts
-            if (dCode is "SC" or "PWD" && item.IsEligibleForStatutoryDiscount && !isVatExempt && !isZeroRated && isVatReg)
+            if (dCode is "SC" or "PWD" or "NAAC" or "MOV" && item.IsEligibleForStatutoryDiscount && !isVatExempt && !isZeroRated && isVatReg)
             {
-                // Scenario B: VAT-Registered eligible SC/PWD sale
+                // Scenario B: VAT-Registered eligible SC/PWD/NAAC/MOV sale
                 // 1. Remove VAT from gross base -> VAT-exclusive base (Vatable Sales / Exempt base)
                 decimal vatExclusiveBase = Math.Round(lineGross / 1.12m, 2);
                 vatAmount = 0m; // VAT is removed / precluded
@@ -80,10 +80,16 @@ public class DiscountCalculationService : IDiscountCalculationService
                 itemDiscount = Math.Round(vatExclusiveBase * 0.20m, 2);
                 lineTotal = Math.Round(vatExclusiveBase - itemDiscount, 2);
             }
-            else if (dCode is "SC" or "PWD" && item.IsEligibleForStatutoryDiscount && (!isVatReg || isVatExempt))
+            else if (dCode is "SC" or "PWD" or "NAAC" or "MOV" && item.IsEligibleForStatutoryDiscount && (!isVatReg || isVatExempt))
             {
-                // Scenario C: Non-VAT or already exempt SC/PWD sale (no VAT to remove)
+                // Scenario C: Non-VAT or already exempt SC/PWD/NAAC/MOV sale (no VAT to remove)
                 itemDiscount = Math.Round(lineGross * 0.20m, 2);
+                lineTotal = Math.Max(0m, lineGross - itemDiscount);
+            }
+            else if (dCode == "SP" && item.IsEligibleForStatutoryDiscount)
+            {
+                // Solo Parent Discount (10%)
+                itemDiscount = Math.Round(lineGross * 0.10m, 2);
                 lineTotal = Math.Max(0m, lineGross - itemDiscount);
             }
             else if (dCode == "BNPC" && item.IsEligibleForStatutoryDiscount)

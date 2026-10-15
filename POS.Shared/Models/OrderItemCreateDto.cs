@@ -9,5 +9,6 @@ public class OrderItemCreateDto
     public string? ProductShortCode { get; set; }
     public decimal Quantity { get; set; }
     public decimal BasePrice { get; set; }
+    public string? TaxName { get; set; } = "VATable";
     public List<OrderItemModifierCreateDto> Modifiers { get; set; } = new();
 }
