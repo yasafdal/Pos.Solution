@@ -55,7 +55,7 @@
                     <PropertyColumn Property="@(b => b.Name)" Title="Branch Name" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(b => b.Phone)" Title="Phone" Align="Align.Left" />
                     <PropertyColumn Property="@(b => b.Address)" Title="Address" Align="Align.Left" />
-                    <TemplateColumn Title="Business Type" Context="branch">@(branch.BusinessTypeName ?? "Unassigned")</TemplateColumn>
+                    <TemplateColumn Title="Business Type" Context="branch" Align="Align.Left">@(branch.BusinessTypeName ?? "Unassigned")</TemplateColumn>
                     <PropertyColumn Property="@(b => b.TaxType)" Title="Tax Type" Align="Align.Left" />
 
                     <!-- Outlets Count -->

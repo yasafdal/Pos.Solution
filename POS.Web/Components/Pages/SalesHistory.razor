@@ -17,31 +17,81 @@
         </div>
     </div>
 
-    <!-- Filter Card -->
-    <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-white">
-        <div class="row g-3 align-items-end">
-            <div class="col-md-3">
-                <label class="form-label text-dark fw-semibold small mb-1">Search Invoice / Order #</label>
-                <input type="text" class="form-control form-control-sm rounded-3" placeholder="e.g. 5000001" @bind="filter.InvoiceNumber" />
+    <!-- Summary Statistics Cards -->
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-md-4">
+            <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Total Transactions</span>
+                        <h4 class="fw-bold text-dark mb-0">@(transactions?.Count ?? 0)</h4>
+                    </div>
+                    <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 44px; height: 44px;">
+                        <i class="bi bi-receipt-cutoff fs-4"></i>
+                    </div>
+                </div>
             </div>
-            <div class="col-md-2">
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Paid Invoices</span>
+                        <h4 class="fw-bold text-success mb-0">@(transactions?.Count(t => t.PaymentStatus == "PAID") ?? 0)</h4>
+                    </div>
+                    <div class="d-flex align-items-center justify-content-center bg-success bg-opacity-10 text-success rounded-3" style="width: 44px; height: 44px;">
+                        <i class="bi bi-check-circle-fill fs-4"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Total Paid Sales</span>
+                        <h4 class="fw-bold text-primary mb-0">₱@(transactions?.Where(t => t.PaymentStatus == "PAID").Sum(t => t.TotalAmount).ToString("N2") ?? "0.00")</h4>
+                    </div>
+                    <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 44px; height: 44px;">
+                        <i class="bi bi-cash-stack fs-4"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="card border-0 shadow-sm rounded-4 p-3 mb-3 bg-white">
+        <div class="row g-3 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="form-label text-dark fw-semibold small mb-1">Search Invoice #</label>
+                <div class="position-relative">
+                    <i class="bi bi-receipt position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
+                    <input type="text" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border" placeholder="e.g. INV-001" @bind="filter.InvoiceNumber" />
+                </div>
+            </div>
+            <div class="col-12 col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Order #</label>
+                <input type="text" class="form-control form-control-sm rounded bg-white shadow-none border" placeholder="e.g. ORD-001" @bind="filter.OrderNumber" />
+            </div>
+            <div class="col-6 col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Payment Status</label>
-                <select class="form-select form-select-sm rounded-3" @bind="filter.PaymentStatus">
+                <select class="form-select form-select-sm rounded bg-white shadow-none border" @bind="filter.PaymentStatus">
                     <option value="">All Statuses</option>
                     <option value="PAID">Paid</option>
                     <option value="UNPAID">Unpaid</option>
                 </select>
             </div>
-            <div class="col-md-2">
+            <div class="col-6 col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Cashier ID</label>
-                <input type="text" class="form-control form-control-sm rounded-3" placeholder="Cashier" @bind="filter.CashierId" />
+                <input type="text" class="form-control form-control-sm rounded bg-white shadow-none border" placeholder="Cashier ID" @bind="filter.CashierId" />
             </div>
-            <div class="col-md-3 d-flex gap-2">
-                <button class="btn btn-primary btn-sm rounded-3 px-3 fw-bold shadow-sm w-100" @onclick="LoadTransactions">
+            <div class="col-12 col-md-3 d-flex gap-2">
+                <button class="btn btn-primary btn-sm rounded px-3 fw-bold shadow-sm w-100" @onclick="LoadTransactions">
                     <i class="bi bi-search me-1"></i> Filter
                 </button>
-                <button class="btn btn-outline-secondary btn-sm rounded-3 px-3 fw-medium w-100" @onclick="ResetFilters">
-                    Reset
+                <button class="btn btn-outline-secondary btn-sm rounded px-3 fw-medium w-100" @onclick="ResetFilters">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> Reset
                 </button>
             </div>
         </div>
@@ -49,44 +99,74 @@
 
     <!-- Main Grid -->
     <div class="w-100">
-        @if (transactions == null)
+        @if (isLoading)
         {
             <div class="text-center py-5 text-muted">
                 <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
                 Loading transactions...
             </div>
         }
+        else if (transactions == null || !transactions.Any())
+        {
+            <div class="card border rounded-3 p-5 text-center bg-white shadow-sm">
+                <div class="text-muted mb-3">
+                    <i class="bi bi-inbox fs-1 text-secondary"></i>
+                </div>
+                <h5 class="fw-bold text-dark mb-1">No Transactions Found</h5>
+                <p class="text-secondary small mb-3">No sales match the specified filter criteria. Try adjusting your search filters.</p>
+                <div>
+                    <button class="btn btn-outline-primary btn-sm rounded px-3" @onclick="ResetFilters">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Filters
+                    </button>
+                </div>
+            </div>
+        }
         else
         {
-            <div class="commercial-grid table-responsive w-100 mb-4">
+            <div class="commercial-grid table-responsive w-100">
                 <QuickGrid Items="@transactions.AsQueryable()" Pagination="@pagination" Theme="commercial">
-                    <PropertyColumn Property="@(t => t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))" Title="Date / Time" Sortable="true" />
-                    <PropertyColumn Property="@(t => t.InvoiceNumber ?? "—")" Title="Invoice #" Sortable="true" />
-                    <PropertyColumn Property="@(t => t.OrderNumber)" Title="Order #" Sortable="true" />
-                    <PropertyColumn Property="@(t => t.CashierId)" Title="Cashier" />
-                    
-                    <TemplateColumn Context="t" Title="Status">
+                    <!-- Col 1: Date / Time -->
+                    <PropertyColumn Property="@(t => t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))" Title="Date / Time" Sortable="true" Align="Align.Left" />
+
+                    <!-- Col 2: Invoice # -->
+                    <PropertyColumn Property="@(t => t.InvoiceNumber ?? "—")" Title="Invoice #" Sortable="true" Align="Align.Left" />
+
+                    <!-- Col 3: Order # -->
+                    <PropertyColumn Property="@(t => t.OrderNumber)" Title="Order #" Sortable="true" Align="Align.Left" />
+
+                    <!-- Col 4: Cashier -->
+                    <PropertyColumn Property="@(t => t.CashierId)" Title="Cashier" Align="Align.Left" />
+
+                    <!-- Col 5: Status -->
+                    <TemplateColumn Context="t" Title="Status" Align="Align.Center">
                         @if (t.PaymentStatus == "PAID")
                         {
-                            <span class="badge bg-success">PAID</span>
+                            <span class="status-badge paid">PAID</span>
                         }
                         else
                         {
-                            <span class="badge bg-warning text-dark">UNPAID</span>
+                            <span class="status-badge unpaid">UNPAID</span>
                         }
                     </TemplateColumn>
 
-                    <TemplateColumn Context="t" Title="Total Amount" Align="Align.Right">
-                        <span class="fw-bold text-dark">₱@t.TotalAmount.ToString("N2")</span>
+                    <!-- Col 6: Total Amount -->
+                    <TemplateColumn Context="t" Title="Total Amount" Align="Align.Right" SortBy="@(GridSort<OrderResponseDto>.ByAscending(t => t.TotalAmount))" Sortable="true">
+                        <span>₱@t.TotalAmount.ToString("N2")</span>
                     </TemplateColumn>
 
+                    <!-- Col 7: Actions -->
                     <TemplateColumn Context="t" Title="Actions" Align="Align.Right">
+                        <HeaderTemplate>
+                            <div class="actions-header-wrap">
+                                <span class="actions-header-text">Actions</span>
+                            </div>
+                        </HeaderTemplate>
                         <ChildContent>
                             <div class="actions-cell-wrap d-flex justify-content-end gap-2">
-                                <button type="button" class="btn btn-sm btn-info text-white" @onclick="() => ViewDetails(t.OrderId)" title="View Details">
+                                <button type="button" class="btn btn-sm btn-primary text-white" @onclick="() => ViewDetails(t.OrderId)" title="View Details" aria-label="View Details">
                                     <i class="bi bi-eye"></i>
                                 </button>
-                                <button type="button" class="btn btn-sm btn-secondary text-white" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint Invoice">
+                                <button type="button" class="btn btn-sm btn-secondary text-white" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint Invoice" aria-label="Reprint Invoice">
                                     <i class="bi bi-printer"></i>
                                 </button>
                             </div>
@@ -95,9 +175,38 @@
                 </QuickGrid>
             </div>
 
-            <div class="d-flex justify-content-between align-items-center pt-3 border-top">
-                <div class="text-secondary small fw-medium">Showing transaction history</div>
-                <Paginator State="@pagination" />
+            <!-- Bootstrap Pagination Bar -->
+            <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center pt-3 mt-1 border-top gap-3">
+                <div class="text-secondary small fw-medium">
+                    @GetShowingRangeText()
+                </div>
+
+                <nav aria-label="Transactions table pagination">
+                    <ul class="pagination mb-0">
+                        <li class="page-item @(pagination.CurrentPageIndex == 0 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex - 1)" disabled="@(pagination.CurrentPageIndex == 0)" aria-label="Previous">
+                                Previous
+                            </button>
+                        </li>
+
+                        @for (int i = 0; i < TotalPages; i++)
+                        {
+                            var pageIndex = i;
+                            var isActive = pagination.CurrentPageIndex == pageIndex;
+                            <li class="page-item @(isActive ? "active" : "")" aria-current="@(isActive ? "page" : null)">
+                                <button type="button" class="page-link" @onclick="() => GoToPage(pageIndex)">
+                                    @(pageIndex + 1)
+                                </button>
+                            </li>
+                        }
+
+                        <li class="page-item @(pagination.CurrentPageIndex >= TotalPages - 1 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex + 1)" disabled="@(pagination.CurrentPageIndex >= TotalPages - 1)" aria-label="Next">
+                                Next
+                            </button>
+                        </li>
+                    </ul>
+                </nav>
             </div>
         }
     </div>
@@ -109,48 +218,127 @@
     <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
             <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
-                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
-                    <div>
-                        <h5 class="fw-bold text-dark mb-0">Transaction Details (#@selectedOrder.OrderNumber)</h5>
-                        <small class="text-secondary">Invoice: @(selectedOrder.InvoiceNumber ?? "N/A") | Date: @selectedOrder.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</small>
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center bg-white">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 42px; height: 42px;">
+                            <i class="bi bi-receipt fs-4"></i>
+                        </div>
+                        <div>
+                            <div class="d-flex align-items-center gap-2">
+                                <h5 class="fw-bold text-dark mb-0">Transaction #@selectedOrder.OrderNumber</h5>
+                                @if (selectedOrder.PaymentStatus == "PAID")
+                                {
+                                    <span class="status-badge paid">PAID</span>
+                                }
+                                else
+                                {
+                                    <span class="status-badge unpaid">UNPAID</span>
+                                }
+                            </div>
+                            <small class="text-secondary">
+                                Invoice: <span class="fw-semibold text-dark">@(selectedOrder.InvoiceNumber ?? "N/A")</span> &bull; 
+                                Date: <span class="fw-semibold text-dark">@selectedOrder.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                            </small>
+                        </div>
                     </div>
                     <button type="button" class="btn-close shadow-none" @onclick="CloseDetailModal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body px-4 py-3">
                     <div class="row g-3 mb-4">
-                        <div class="col-sm-6">
-                            <div class="p-3 bg-light rounded-3 border">
-                                <span class="text-muted small d-block">Cashier / Terminal</span>
-                                <strong class="text-dark">@selectedOrder.CashierId (Outlet #@selectedOrder.OutletId)</strong>
+                        <div class="col-sm-4">
+                            <div class="p-3 bg-light rounded-3 border h-100">
+                                <span class="text-muted small d-block mb-1">Cashier & Outlet</span>
+                                <strong class="text-dark d-block">@selectedOrder.CashierId</strong>
+                                <span class="text-secondary small">Outlet #@selectedOrder.OutletId &bull; Branch #@selectedOrder.BranchId</span>
                             </div>
                         </div>
-                        <div class="col-sm-6">
-                            <div class="p-3 bg-light rounded-3 border">
-                                <span class="text-muted small d-block">Payment Status</span>
-                                <strong class="text-success">@selectedOrder.PaymentStatus</strong>
+                        <div class="col-sm-4">
+                            <div class="p-3 bg-light rounded-3 border h-100">
+                                <span class="text-muted small d-block mb-1">Customer Details</span>
+                                @if (!string.IsNullOrWhiteSpace(selectedOrder.CustomerName))
+                                {
+                                    <strong class="text-dark d-block">@selectedOrder.CustomerName</strong>
+                                    @if (!string.IsNullOrWhiteSpace(selectedOrder.CustomerTin))
+                                    {
+                                        <span class="text-secondary small">TIN: @selectedOrder.CustomerTin</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-secondary fw-medium">Walk-in Customer</span>
+                                    <span class="text-muted small d-block">Type: @(selectedOrder.OrderType ?? "Standard")</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="p-3 bg-light rounded-3 border h-100">
+                                <span class="text-muted small d-block mb-1">Payment Details</span>
+                                @if (selectedOrder.Payments != null && selectedOrder.Payments.Any())
+                                {
+                                    @foreach (var p in selectedOrder.Payments)
+                                    {
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <strong class="text-dark">@p.PaymentMethod</strong>
+                                            <span class="text-success fw-bold">₱@p.Amount.ToString("N2")</span>
+                                        </div>
+                                        @if (!string.IsNullOrWhiteSpace(p.ReferenceNumber))
+                                        {
+                                            <span class="text-muted small d-block">Ref: @p.ReferenceNumber</span>
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    <strong class="text-dark">@(selectedOrder.PaymentStatus == "PAID" ? "Cash" : "Pending")</strong>
+                                }
                             </div>
                         </div>
                     </div>
 
-                    <h6 class="fw-bold text-dark mb-2">Purchased Items</h6>
-                    <div class="table-responsive mb-4">
+                    <h6 class="fw-bold text-dark mb-2 d-flex align-items-center gap-2">
+                        <i class="bi bi-basket2 text-primary"></i>
+                        Purchased Items (@(selectedOrder.Items?.Count ?? 0))
+                    </h6>
+                    <div class="table-responsive mb-4 border rounded-3 overflow-hidden">
                         <table class="table table-sm align-middle mb-0">
                             <thead class="table-light fs-7 text-secondary">
                                 <tr>
-                                    <th class="py-2 px-3">Item</th>
-                                    <th class="py-2">Qty</th>
-                                    <th class="py-2">Unit Price</th>
-                                    <th class="py-2 text-end px-3">Line Total</th>
+                                    <th class="py-2 px-3">Item Description</th>
+                                    <th class="py-2 text-center" style="width: 80px;">Qty</th>
+                                    <th class="py-2 text-end" style="width: 120px;">Unit Price</th>
+                                    <th class="py-2 text-end px-3" style="width: 130px;">Line Total</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var item in selectedOrder.Items)
+                                @if (selectedOrder.Items != null && selectedOrder.Items.Any())
+                                {
+                                    @foreach (var item in selectedOrder.Items)
+                                    {
+                                        <tr>
+                                            <td class="px-3 py-2">
+                                                <span class="fw-semibold text-dark d-block">@item.ProductName</span>
+                                                @if (item.Modifiers != null && item.Modifiers.Any())
+                                                {
+                                                    <div class="text-muted small d-flex flex-wrap gap-1 mt-1">
+                                                        @foreach (var mod in item.Modifiers)
+                                                        {
+                                                            <span class="badge bg-light text-secondary border">
+                                                                @mod.ModifierName @(mod.AdditionalPrice > 0 ? $"(+₱{mod.AdditionalPrice:N2})" : "")
+                                                            </span>
+                                                        }
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td class="text-center py-2 text-secondary fw-semibold">@item.Quantity.ToString("0.###")</td>
+                                            <td class="text-end py-2 text-secondary">₱@item.UnitPrice.ToString("N2")</td>
+                                            <td class="text-end px-3 py-2 fw-bold text-dark">₱@item.LineTotal.ToString("N2")</td>
+                                        </tr>
+                                    }
+                                }
+                                else
                                 {
                                     <tr>
-                                        <td class="px-3 fw-medium">@item.ProductName</td>
-                                        <td>@item.Quantity.ToString("0.###")</td>
-                                        <td>₱@item.UnitPrice.ToString("N2")</td>
-                                        <td class="text-end px-3 fw-bold">₱@item.LineTotal.ToString("N2")</td>
+                                        <td colspan="4" class="text-center py-3 text-muted">No items recorded for this order</td>
                                     </tr>
                                 }
                             </tbody>
@@ -158,27 +346,60 @@
                     </div>
 
                     <div class="p-3 bg-light rounded-3 border">
-                        <div class="d-flex justify-content-between mb-1"><span>Subtotal</span><span>₱@selectedOrder.Subtotal.ToString("N2")</span></div>
-                        @if (selectedOrder.VatAmount > 0)
+                        <div class="d-flex justify-content-between mb-1 text-secondary">
+                            <span>Subtotal</span>
+                            <span class="fw-semibold text-dark">₱@selectedOrder.Subtotal.ToString("N2")</span>
+                        </div>
+
+                        @if (selectedOrder.VatAmount > 0 || selectedOrder.VatableSales > 0 || selectedOrder.VatExemptSales > 0)
                         {
                             @if (selectedOrder.VatableSales > 0)
                             {
-                                <div class="d-flex justify-content-between text-muted small"><span>Vatable Sales</span><span>₱@selectedOrder.VatableSales.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between text-muted small mb-1">
+                                    <span>Vatable Sales</span>
+                                    <span>₱@selectedOrder.VatableSales.ToString("N2")</span>
+                                </div>
                             }
                             @if (selectedOrder.VatExemptSales > 0)
                             {
-                                <div class="d-flex justify-content-between text-muted small"><span>VAT-Exempt Sales</span><span>₱@selectedOrder.VatExemptSales.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between text-muted small mb-1">
+                                    <span>VAT-Exempt Sales</span>
+                                    <span>₱@selectedOrder.VatExemptSales.ToString("N2")</span>
+                                </div>
                             }
-                            <div class="d-flex justify-content-between text-muted small"><span>VAT (12%)</span><span>₱@selectedOrder.VatAmount.ToString("N2")</span></div>
+                            @if (selectedOrder.ZeroRatedSales > 0)
+                            {
+                                <div class="d-flex justify-content-between text-muted small mb-1">
+                                    <span>Zero-Rated Sales</span>
+                                    <span>₱@selectedOrder.ZeroRatedSales.ToString("N2")</span>
+                                </div>
+                            }
+                            <div class="d-flex justify-content-between text-muted small mb-1">
+                                <span>VAT (12%)</span>
+                                <span>₱@selectedOrder.VatAmount.ToString("N2")</span>
+                            </div>
                         }
+
                         @if (selectedOrder.DiscountAmount > 0)
                         {
-                            <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(selectedOrder.DiscountCode) ? $"({selectedOrder.DiscountCode})" : "")</span><span>-₱@selectedOrder.DiscountAmount.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between text-success mb-1">
+                                <span>Discount @(!string.IsNullOrWhiteSpace(selectedOrder.DiscountCode) ? $"({selectedOrder.DiscountCode})" : "")</span>
+                                <span class="fw-semibold">-₱@selectedOrder.DiscountAmount.ToString("N2")</span>
+                            </div>
                         }
-                        <div class="d-flex justify-content-between fw-bold fs-5 mt-2 pt-2 border-top"><span>Total Payable</span><span>₱@selectedOrder.TotalAmount.ToString("N2")</span></div>
+
+                        <div class="d-flex justify-content-between align-items-center fw-bold fs-5 mt-2 pt-2 border-top text-dark">
+                            <span>Total Payable</span>
+                            <span class="text-primary fs-4">₱@selectedOrder.TotalAmount.ToString("N2")</span>
+                        </div>
                     </div>
                 </div>
-                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end">
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between">
+                    <div>
+                        <button type="button" class="btn btn-secondary rounded px-3 fw-medium" @onclick="() => ReprintInvoice(selectedOrder.OrderId)">
+                            <i class="bi bi-printer me-1"></i> Reprint Receipt
+                        </button>
+                    </div>
                     <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseDetailModal">Close</button>
                 </div>
             </div>
@@ -188,8 +409,9 @@
 
 @code {
     private List<OrderResponseDto>? transactions;
-    private TransactionFilterDto filter = new();
+    private TransactionFilterDto filter = new() { PageSize = 100 };
     private PaginationState pagination = new() { ItemsPerPage = 10 };
+    private bool isLoading = true;
 
     private bool isDetailModalOpen = false;
     private OrderResponseDto? selectedOrder;
@@ -200,18 +422,43 @@
     {
         try
         {
+            isLoading = true;
+            await pagination.SetCurrentPageIndexAsync(0);
             transactions = await TransactionService.GetTransactionsAsync(filter);
         }
         catch (Exception ex)
         {
             await SwalAlert.FireAsync("Error", "Failed to load transactions: " + ex.Message, SweetAlertIcon.Error);
         }
+        finally
+        {
+            isLoading = false;
+        }
     }
 
-    private void ResetFilters()
+    private async Task ResetFilters()
     {
-        filter = new TransactionFilterDto();
-        _ = LoadTransactions();
+        filter = new TransactionFilterDto { PageSize = 100 };
+        await LoadTransactions();
+    }
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)(transactions?.Count ?? 0) / pagination.ItemsPerPage));
+
+    private string GetShowingRangeText()
+    {
+        var total = transactions?.Count ?? 0;
+        if (total == 0) return "Showing 0 transactions";
+        int start = (pagination.CurrentPageIndex * pagination.ItemsPerPage) + 1;
+        int end = Math.Min(start + pagination.ItemsPerPage - 1, total);
+        return $"Showing {start}–{end} of {total} transactions";
+    }
+
+    private async Task GoToPage(int pageIndex)
+    {
+        if (pageIndex >= 0 && pageIndex < TotalPages)
+        {
+            await pagination.SetCurrentPageIndexAsync(pageIndex);
+        }
     }
 
     private async Task ViewDetails(long orderId)

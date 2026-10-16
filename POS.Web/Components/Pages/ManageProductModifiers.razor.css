@@ -1,0 +1,453 @@
+/* 1. QuickGrid clean reset */
+.commercial-grid ::deep table.quickgrid tbody tr:not([aria-rowindex]) {
+    display: none !important;
+}
+
+/* 2. Full-width table layout with fixed table-layout */
+.commercial-grid ::deep table.quickgrid {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-bottom: 0 !important;
+    table-layout: fixed !important;
+}
+
+/* 3. Base Header Styling */
+.commercial-grid ::deep table.quickgrid thead th {
+    background-color: #f8fafc !important;
+    color: #475569 !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    padding: 0.85rem 0.5rem !important;
+    border-top: none !important;
+    border-bottom: 2px solid #e2e8f0 !important;
+    white-space: nowrap !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th button {
+    color: inherit !important;
+    font-weight: inherit !important;
+    font-size: inherit !important;
+    text-transform: inherit !important;
+    letter-spacing: inherit !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    cursor: pointer !important;
+    display: inline-flex !important;
+    align-items: center !important;
+}
+
+/* 4. Base Cell Styling */
+.commercial-grid ::deep table.quickgrid tbody td {
+    padding: 0.85rem 0.5rem !important;
+    vertical-align: middle !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    color: #1e293b !important;
+    font-size: 0.9rem !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+/* 5. Column Spacing & Widths */
+/* Col 1: Group Name (Left Aligned) */
+.commercial-grid ::deep table.quickgrid thead th:nth-child(1),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(1) {
+    width: 22% !important;
+    min-width: 140px !important;
+    text-align: left !important;
+    padding-left: 0.85rem !important;
+    padding-right: 0.75rem !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(1) .col-header-content,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(1) .col-title,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(1) button {
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    width: 100% !important;
+    text-align: left !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(1) .col-title-text {
+    text-align: left !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(1) {
+    font-weight: 600 !important;
+    color: #0f172a !important;
+    text-align: left !important;
+}
+
+/* Col 2: Requirement (Center Aligned) */
+.commercial-grid ::deep table.quickgrid thead th:nth-child(2),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(2) {
+    width: 130px !important;
+    min-width: 110px !important;
+    text-align: center !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(2) .col-header-content,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(2) .col-title,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(2) button {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    text-align: center !important;
+    padding-right: 0 !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(2) .col-title-text {
+    text-align: center !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(2) {
+    text-align: center !important;
+}
+
+/* Col 3: Options Summary (Center Aligned - Flexible Width) */
+.commercial-grid ::deep table.quickgrid thead th:nth-child(3),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(3) {
+    width: auto !important;
+    text-align: center !important;
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(3) .col-header-content,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(3) .col-title {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    text-align: center !important;
+    padding-right: 0 !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(3) .col-title-text {
+    text-align: center !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(3) {
+    text-align: center !important;
+    white-space: normal !important;
+}
+
+/* Col 4: Status (Center Aligned) */
+.commercial-grid ::deep table.quickgrid thead th:nth-child(4),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(4) {
+    width: 110px !important;
+    min-width: 100px !important;
+    text-align: center !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(4) .col-header-content,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(4) .col-title {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    text-align: center !important;
+    padding-right: 0 !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(4) .col-title-text {
+    text-align: center !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(4) {
+    text-align: center !important;
+}
+
+/* Col 5: Actions (Far Right Aligned) */
+.commercial-grid ::deep table.quickgrid thead th:nth-child(5),
+.commercial-grid ::deep table.quickgrid thead th:last-child,
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(5),
+.commercial-grid ::deep table.quickgrid tbody td:last-child {
+    width: 140px !important;
+    min-width: 140px !important;
+    text-align: right !important;
+    padding-left: 0.5rem !important;
+    padding-right: 1rem !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(5) .col-header-content,
+.commercial-grid ::deep table.quickgrid thead th:last-child .col-header-content {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    width: 100% !important;
+    padding-right: 0 !important;
+    margin: 0 !important;
+}
+
+::deep .actions-header-wrap {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+::deep .actions-header-text {
+    display: inline-flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 112px !important;
+    text-align: center !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    color: #475569 !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(5),
+.commercial-grid ::deep table.quickgrid tbody td:last-child {
+    text-align: right !important;
+    padding-left: 0.5rem !important;
+    padding-right: 1rem !important;
+}
+
+::deep .actions-cell-wrap {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+/* 6. Smooth row hover */
+.commercial-grid ::deep table.quickgrid tbody tr {
+    transition: background-color 0.15s ease-in-out !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody tr:hover {
+    background-color: #f8fafc !important;
+}
+
+/* 7. Status & Requirement Badges */
+::deep .status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 5px;
+    letter-spacing: 0.02em;
+}
+
+::deep .status-badge.active {
+    background-color: #ecfdf5;
+    color: #059669;
+    border: 1px solid #a7f3d0;
+}
+
+::deep .status-badge.inactive {
+    background-color: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+}
+
+::deep .requirement-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 5px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+::deep .requirement-badge.required {
+    background-color: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+
+::deep .requirement-badge.optional {
+    background-color: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+}
+
+/* 8. Modifier Option Chips in Table */
+::deep .options-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    width: 100%;
+}
+
+::deep .options-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    width: 100%;
+}
+
+::deep .modifier-option-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.2rem 0.55rem;
+    border-radius: 5px;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #1e293b;
+    white-space: nowrap;
+    line-height: 1.25;
+}
+
+::deep .modifier-option-chip .price-tag {
+    color: #0284c7;
+    font-weight: 600;
+    margin-left: 0.35rem;
+}
+
+::deep .modifier-option-chip .free-tag {
+    color: #059669;
+    font-weight: 600;
+    margin-left: 0.35rem;
+}
+
+/* 9. Action Buttons (Solid Bootstrap Buttons) */
+::deep .action-btn,
+::deep .actions-cell-wrap .btn,
+.commercial-grid ::deep .btn-sm {
+    width: 32px;
+    height: 32px;
+    padding: 0 !important;
+    border-radius: 5px !important;
+    text-decoration: none;
+    transition: all 0.15s ease-in-out;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0.9rem !important;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+::deep .sub-action-btn {
+    width: 30px;
+    height: 30px;
+    padding: 0 !important;
+    border-radius: 5px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0.85rem !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* 10. Options Modal Sub-Table */
+.options-sub-table thead th {
+    background-color: #f8fafc !important;
+    color: #475569 !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    padding: 0.75rem 0.85rem !important;
+    border-bottom: 2px solid #e2e8f0 !important;
+}
+
+.options-sub-table tbody td {
+    padding: 0.75rem 0.85rem !important;
+    vertical-align: middle !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    font-size: 0.875rem !important;
+}
+
+.options-sub-table tbody tr:hover {
+    background-color: #f8fafc !important;
+}
+
+/* 11. Pagination */
+::deep .pagination {
+    margin-bottom: 0 !important;
+    display: inline-flex !important;
+    vertical-align: middle !important;
+    padding-left: 0 !important;
+    list-style: none !important;
+    border-radius: 5px !important;
+}
+
+::deep .pagination .page-item .page-link {
+    position: relative !important;
+    display: block !important;
+    color: #2563eb !important;
+    background-color: #ffffff !important;
+    border: 1px solid #d1d5db !important;
+    font-weight: 500 !important;
+    font-size: 0.875rem !important;
+    padding: 0.4rem 0.9rem !important;
+    line-height: 1.25 !important;
+    box-shadow: none !important;
+    cursor: pointer !important;
+    text-decoration: none !important;
+    transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out !important;
+}
+
+::deep .pagination .page-item:not(:first-child) .page-link {
+    margin-left: -1px !important;
+}
+
+::deep .pagination .page-item:first-child .page-link {
+    border-top-left-radius: 5px !important;
+    border-bottom-left-radius: 5px !important;
+}
+
+::deep .pagination .page-item:last-child .page-link {
+    border-top-right-radius: 5px !important;
+    border-bottom-right-radius: 5px !important;
+}
+
+::deep .pagination .page-item.active .page-link {
+    z-index: 3 !important;
+    color: #ffffff !important;
+    background-color: #0d6efd !important;
+    border-color: #0d6efd !important;
+    font-weight: 600 !important;
+}
+
+::deep .pagination .page-item:not(.active):not(.disabled) .page-link:hover {
+    z-index: 2 !important;
+    color: #1d4ed8 !important;
+    background-color: #f1f5f9 !important;
+    border-color: #9ca3af !important;
+}
+
+::deep .pagination .page-item.disabled .page-link {
+    color: #9ca3af !important;
+    background-color: #f8fafc !important;
+    border-color: #e5e7eb !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+    opacity: 0.7 !important;
+}

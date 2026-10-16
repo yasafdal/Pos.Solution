@@ -161,7 +161,12 @@ else
                                     }
                                 </div>
                                 <div class="product-info">
-                                    <div class="product-category">@GetCategoryName(product.CategoryId)</div>
+                                    <div class="product-category-wrap">
+                                        <span class="product-category-chip" title="@GetCategoryName(product.CategoryId)">
+                                            <span class="category-dot" style="background-color: @GetCategoryColor(product.CategoryId)"></span>
+                                            <span class="category-name-text text-truncate">@GetCategoryName(product.CategoryId)</span>
+                                        </span>
+                                    </div>
                                     <div class="product-name" title="@product.Name">@product.Name</div>
                                     <div class="product-bottom">
                                         <span class="product-price">₱@product.Price.ToString("N2")</span>
@@ -184,15 +189,24 @@ else
             <div class="order-card shadow-sm">
                 <!-- Order Header -->
                 <div class="order-header d-flex justify-content-between align-items-center">
-                    <div>
+                    <div class="d-flex align-items-center gap-2">
                         <h5 class="fw-bold mb-0 text-dark">Current Order</h5>
-                        <small class="text-muted">@Cart.TotalItems @(Cart.TotalItems == 1 ? "item" : "items")</small>
+                        <span class="order-badge">@Cart.TotalItems @(Cart.TotalItems == 1 ? "item" : "items")</span>
                     </div>
                     @if (Cart.Items.Any())
                     {
-                        <button type="button" class="btn btn-outline-danger btn-sm clear-cart-btn" @onclick="ClearCart" title="Clear all items">
-                            Clear
-                        </button>
+                        @if (selectedCartItems.Any())
+                        {
+                            <button type="button" class="delete-selected-btn" @onclick="DeleteSelectedItems" title="Delete selected items">
+                                <i class="bi bi-trash3 me-1"></i> Delete (@selectedCartItems.Count)
+                            </button>
+                        }
+                        else
+                        {
+                            <button type="button" class="clear-cart-btn" @onclick="ClearCart" title="Clear all items">
+                                <i class="bi bi-trash3 me-1"></i> Clear
+                            </button>
+                        }
                     }
                 </div>
 
@@ -215,28 +229,37 @@ else
                         <div class="cart-items-list">
                             @foreach (var item in Cart.Items)
                             {
-                                <div class="cart-item-row">
+                                var isItemSelected = selectedCartItems.Contains(item);
+                                <div class="cart-item-row @(isItemSelected ? "is-selected" : "")">
+                                    <div class="cart-item-select">
+                                        <label class="custom-checkbox" @onclick:stopPropagation="true">
+                                            <input type="checkbox"
+                                                   checked="@isItemSelected"
+                                                   @onchange="() => ToggleSelectCartItem(item)" />
+                                            <span class="checkmark"></span>
+                                        </label>
+                                    </div>
                                     <div class="cart-item-info">
                                         <div class="cart-item-name" title="@item.ProductName">@item.ProductName</div>
                                         <div class="cart-item-unit-price text-muted">₱@item.UnitPrice.ToString("N2") each</div>
                                         @if (item.SelectedModifiers != null && item.SelectedModifiers.Any())
                                         {
-                                            <div class="cart-item-modifiers text-muted small mt-1">
+                                            <div class="cart-item-modifiers">
                                                 @foreach (var mod in item.SelectedModifiers)
                                                 {
-                                                    <div class="d-flex justify-content-between text-secondary">
-                                                        <span>&nbsp;&nbsp;+ @mod.Name</span>
+                                                    <div class="cart-modifier-row">
+                                                        <span>+ @mod.Name</span>
                                                         @if (mod.Price > 0)
                                                         {
-                                                            <span>₱@mod.Price.ToString("N2")</span>
+                                                            <span class="mod-price">₱@mod.Price.ToString("N2")</span>
                                                         }
                                                     </div>
                                                 }
                                             </div>
                                         }
                                     </div>
-                                    <div class="cart-item-actions d-flex align-items-center gap-2">
-                                        <div class="qty-control d-flex align-items-center">
+                                    <div class="cart-item-actions">
+                                        <div class="qty-control">
                                             <button type="button" class="qty-btn" @onclick="() => Cart.DecreaseQuantity(item)" title="Decrease">
                                                 −
                                             </button>
@@ -248,12 +271,6 @@ else
                                         <div class="cart-item-total">
                                             ₱@item.LineTotal.ToString("N2")
                                         </div>
-                                        <button type="button" class="btn-remove-item" @onclick="() => Cart.RemoveItem(item)" title="Remove item">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <polyline points="3 6 5 6 21 6"></polyline>
-                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                            </svg>
-                                        </button>
                                     </div>
                                 </div>
                             }
@@ -637,6 +654,7 @@ else
 
     private void OnCartChanged()
     {
+        selectedCartItems.IntersectWith(Cart.Items);
         InvokeAsync(StateHasChanged);
     }
 
@@ -964,7 +982,27 @@ else
         if (result.IsConfirmed)
         {
             Cart.Clear();
+            selectedCartItems.Clear();
         }
+    }
+
+    private readonly HashSet<CartItem> selectedCartItems = new();
+
+    private void ToggleSelectCartItem(CartItem item)
+    {
+        if (!selectedCartItems.Add(item))
+        {
+            selectedCartItems.Remove(item);
+        }
+    }
+
+    private void DeleteSelectedItems()
+    {
+        foreach (var item in selectedCartItems.ToList())
+        {
+            Cart.RemoveItem(item);
+        }
+        selectedCartItems.Clear();
     }
 
     private DiscountModal? discountModalComponent;

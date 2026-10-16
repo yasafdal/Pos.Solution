@@ -174,7 +174,7 @@
     text-align: left !important;
 }
 
-/* Col 5: Tax Type (Equal Auto Width) */
+/* Col 5: Business Type (Equal Auto Width) */
 .commercial-grid ::deep table.quickgrid thead th:nth-child(5),
 .commercial-grid ::deep table.quickgrid tbody td:nth-child(5) {
     width: auto !important;
@@ -204,40 +204,44 @@
     text-align: left !important;
 }
 
-/* Col 6: Outlets Count (Equal Auto Width) */
+/* Col 6: Tax Type (Equal Auto Width) */
 .commercial-grid ::deep table.quickgrid thead th:nth-child(6),
 .commercial-grid ::deep table.quickgrid tbody td:nth-child(6) {
     width: auto !important;
-    text-align: center !important;
+    text-align: left !important;
     padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-    font-variant-numeric: tabular-nums !important;
+    padding-right: 0.75rem !important;
 }
 
 .commercial-grid ::deep table.quickgrid thead th:nth-child(6) .col-header-content,
 .commercial-grid ::deep table.quickgrid thead th:nth-child(6) .col-title {
     display: flex !important;
-    justify-content: center !important;
+    justify-content: flex-start !important;
     align-items: center !important;
     width: 100% !important;
-    text-align: center !important;
-    padding-right: 0 !important;
-    margin: 0 auto !important;
+    text-align: left !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 .commercial-grid ::deep table.quickgrid thead th:nth-child(6) .col-title-text {
-    text-align: center !important;
-    width: 100% !important;
-    margin: 0 auto !important;
+    text-align: left !important;
 }
 
-/* Col 7: Status (Equal Auto Width) */
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(6) {
+    color: #475569 !important;
+    font-weight: 500 !important;
+    text-align: left !important;
+}
+
+/* Col 7: Outlets Count (Equal Auto Width) */
 .commercial-grid ::deep table.quickgrid thead th:nth-child(7),
 .commercial-grid ::deep table.quickgrid tbody td:nth-child(7) {
     width: auto !important;
     text-align: center !important;
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
+    font-variant-numeric: tabular-nums !important;
 }
 
 .commercial-grid ::deep table.quickgrid thead th:nth-child(7) .col-header-content,
@@ -257,10 +261,44 @@
     margin: 0 auto !important;
 }
 
-/* Col 8: Actions (Positioned at far right) */
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(7) {
+    text-align: center !important;
+}
+
+/* Col 8: Status (Equal Auto Width) */
 .commercial-grid ::deep table.quickgrid thead th:nth-child(8),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(8) {
+    width: auto !important;
+    text-align: center !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(8) .col-header-content,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(8) .col-title {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    width: 100% !important;
+    text-align: center !important;
+    padding-right: 0 !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(8) .col-title-text {
+    text-align: center !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(8) {
+    text-align: center !important;
+}
+
+/* Col 9: Actions (Positioned at far right) */
+.commercial-grid ::deep table.quickgrid thead th:nth-child(9),
 .commercial-grid ::deep table.quickgrid thead th:last-child,
-.commercial-grid ::deep table.quickgrid tbody td:nth-child(8),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(9),
 .commercial-grid ::deep table.quickgrid tbody td:last-child {
     width: 140px !important;
     min-width: 140px !important;
@@ -269,7 +307,7 @@
     padding-right: 1rem !important;
 }
 
-.commercial-grid ::deep table.quickgrid thead th:nth-child(8) .col-header-content,
+.commercial-grid ::deep table.quickgrid thead th:nth-child(9) .col-header-content,
 .commercial-grid ::deep table.quickgrid thead th:last-child .col-header-content {
     display: flex !important;
     justify-content: flex-end !important;
@@ -299,7 +337,7 @@
     color: #475569 !important;
 }
 
-.commercial-grid ::deep table.quickgrid tbody td:nth-child(8),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(9),
 .commercial-grid ::deep table.quickgrid tbody td:last-child {
     text-align: right !important;
     padding-left: 0.5rem !important;

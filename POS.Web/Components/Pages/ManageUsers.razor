@@ -43,8 +43,8 @@
                                     </td>
                                     <td><code>@(user.PinCode ?? "N/A")</code></td>
                                     <td class="text-end pe-4">
-                                        <button class="btn btn-sm btn-outline-danger rounded-circle p-2" @onclick="() => DeleteUser(user.UserId)">
-                                            Remove
+                                        <button class="btn btn-sm btn-danger square-rectangle p-2" @onclick="() => DeleteUser(user.UserId)">
+                                           <i class="bi bi-trash"></i>
                                         </button>
                                     </td>
                                 </tr>
