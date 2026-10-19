@@ -26,7 +26,7 @@
                 }
                 @if (receiptSentToPrinter)
                 {
-                    <p role="status">Receipt sent to printer. Check the EPSON printer and Windows print queue before retrying.</p>
+                    <p role="status">Receipt sent to printer.</p>
                 }
                 @if (!string.IsNullOrEmpty(savedPdfPath))
                 {
@@ -45,6 +45,10 @@
                         <div>Branch: @receipt.BranchCode</div>
                         <div>Terminal: @receipt.TerminalName</div>
                         <div>Order: @receipt.OrderNumber</div>
+                        @if (!string.IsNullOrWhiteSpace(receipt.InvoiceNumber))
+                        {
+                            <div>Invoice: @receipt.InvoiceNumber</div>
+                        }
                         <div>Cashier: @receipt.CashierId</div>
                         <div>Paid: @receipt.PaidAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
                         @if (!string.IsNullOrWhiteSpace(receipt.CustomerName) || !string.IsNullOrWhiteSpace(receipt.CustomerTin))
@@ -71,7 +75,7 @@
                         }
                         <hr />
                         <div class="d-flex justify-content-between"><span>Subtotal</span><span>₱@receipt.Subtotal.ToString("N2")</span></div>
-                        @if (receipt.VatAmount > 0)
+                        @if (receipt.VatableSales > 0 || receipt.VatExemptSales > 0 || receipt.VatAmount > 0)
                         {
                             @if (receipt.VatableSales > 0)
                             {
@@ -121,6 +125,7 @@
 
 @code {
     [Parameter] public long OrderId { get; set; }
+    [Parameter] public ReceiptDto? OfflineReceipt { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
     private ReceiptDto? receipt;
     private string? error;
@@ -130,9 +135,22 @@
     private string? savedPdfPath;
     private bool receiptSentToPrinter;
     private long loadedOrderId;
+    private string? loadedInvoiceNumber;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (OfflineReceipt != null)
+        {
+            if (loadedInvoiceNumber == OfflineReceipt.InvoiceNumber && receipt != null) return;
+            loadedInvoiceNumber = OfflineReceipt.InvoiceNumber;
+            receipt = OfflineReceipt;
+            error = null;
+            loading = false;
+            receiptSentToPrinter = false;
+            savedPdfPath = null;
+            return;
+        }
+
         if (loadedOrderId == OrderId) return;
         loadedOrderId = OrderId;
         receipt = null;
@@ -143,6 +161,13 @@
 
     private async Task LoadReceipt()
     {
+        if (OfflineReceipt != null)
+        {
+            receipt = OfflineReceipt;
+            error = null;
+            return;
+        }
+
         loading = true;
         error = null;
         try
@@ -200,9 +225,9 @@
             await ReceiptPrinter.PrintAsync(receipt);
             receiptSentToPrinter = true;
         }
-        catch
+        catch (Exception ex)
         {
-            error = "The receipt could not be sent to the EPSON printer. Check the printer and Windows queue, then choose Retry Print.";
+            error = $"Could not print receipt: {ex.Message}";
         }
         finally { printing = false; }
     }

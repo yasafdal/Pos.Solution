@@ -148,7 +148,16 @@
                 }).ToList()
             };
 
-            var res = await DiscountService.CalculateOrderAsync(req);
+            OrderCalculationResultDto res;
+            try
+            {
+                res = await DiscountService.CalculateOrderAsync(req);
+            }
+            catch
+            {
+                var localCalculator = new POS.Shared.Services.LocalDiscountCalculationService();
+                res = localCalculator.CalculateOrder(req);
+            }
             Cart.ApplyDiscount(selectedDiscountCode, res.DiscountAmount, cardOrIdNumber);
             isDiscountModalOpen = false;
             await OnDiscountChanged.InvokeAsync();

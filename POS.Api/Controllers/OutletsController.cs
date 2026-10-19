@@ -1,9 +1,14 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
 using POS.Api.Models;
 using POS.Shared.Models;
+
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 
 namespace POS.Api.Controllers
 {
@@ -12,10 +17,12 @@ namespace POS.Api.Controllers
     public class OutletsController : ControllerBase
     {
         private readonly PosDbContext _context;
+        private readonly IConfiguration _configuration;
 
-        public OutletsController(PosDbContext context)
+        public OutletsController(PosDbContext context, IConfiguration configuration)
         {
             _context = context;
+            _configuration = configuration;
         }
 
         // The JWT authenticates the cashier. The supplied device IP only identifies
@@ -39,7 +46,10 @@ namespace POS.Api.Controllers
             var outlets = await _context.Outlets.AsNoTracking()
                 .Where(o => o.DeviceIdentifier != null)
                 .Select(o => new { o.OutletId, o.BranchId, o.Name, o.DeviceIdentifier,
-                    o.IsActive, BranchActive = o.Branch.IsActive, o.Branch.Code, o.Branch.BusinessTypeId,
+                    o.IsActive, BranchActive = o.Branch.IsActive,
+                    BranchName = o.Branch.Name, o.Branch.Code,
+                    BranchAddress = o.Branch.Address, BranchPhone = o.Branch.Phone,
+                    o.Branch.BusinessTypeId,
                     BusinessType = o.Branch.BusinessType == null ? null : o.Branch.BusinessType.Type })
                 .ToListAsync();
             var matches = outlets.Where(o => IPAddress.TryParse(o.DeviceIdentifier?.Trim(), out var stored)
@@ -51,9 +61,46 @@ namespace POS.Api.Controllers
                 return Conflict("This outlet or branch is inactive. Contact an administrator.");
             if (string.IsNullOrWhiteSpace(outlet.Code))
                 return Conflict("The outlet's branch code is not configured. Contact an administrator.");
-            return Ok(new TerminalOutletDto { OutletId = outlet.OutletId, BranchId = outlet.BranchId,
-                BranchCode = outlet.Code, OutletName = outlet.Name,
-                BusinessTypeId = outlet.BusinessTypeId, BusinessType = outlet.BusinessType });
+            string? token = null;
+            var jwtKey = _configuration["Jwt:Key"];
+            if (!string.IsNullOrEmpty(jwtKey) && User.Identity?.IsAuthenticated == true)
+            {
+                var claims = new List<Claim>
+                {
+                    new Claim(ClaimTypes.NameIdentifier, User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0"),
+                    new Claim(ClaimTypes.Name, User.Identity.Name ?? ""),
+                    new Claim(ClaimTypes.Role, User.FindFirst(ClaimTypes.Role)?.Value ?? "Cashier"),
+                    new Claim("branch_id", outlet.BranchId.ToString()),
+                    new Claim("outlet_id", outlet.OutletId.ToString())
+                };
+
+                var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+                var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+                var jwt = new JwtSecurityToken(
+                    issuer: _configuration["Jwt:Issuer"],
+                    audience: _configuration["Jwt:Audience"],
+                    claims: claims,
+                    expires: DateTime.Now.AddHours(8),
+                    signingCredentials: creds
+                );
+
+                token = new JwtSecurityTokenHandler().WriteToken(jwt);
+            }
+
+            return Ok(new TerminalOutletDto
+            {
+                OutletId = outlet.OutletId,
+                BranchId = outlet.BranchId,
+                BranchName = outlet.BranchName,
+                BranchCode = outlet.Code,
+                BranchAddress = outlet.BranchAddress,
+                BranchPhone = outlet.BranchPhone,
+                OutletName = outlet.Name,
+                BusinessTypeId = outlet.BusinessTypeId,
+                BusinessType = outlet.BusinessType,
+                Token = token
+            });
         }
 
         [HttpPost]

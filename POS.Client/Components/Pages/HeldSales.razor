@@ -1,6 +1,12 @@
 @page "/held-sales"
 @inject PosSessionService Session
 @inject NavigationManager Navigation
+@inject IHeldSaleService HeldSaleService
+@inject CartService Cart
+@inject SweetAlertService Swal
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using CurrieTechnologies.Razor.SweetAlert2
 
 @if (!Session.IsAuthenticated)
 {
@@ -8,18 +14,184 @@
 }
 else
 {
-    <div class="p-4">
-        <h3 class="fw-bold text-dark mb-1">Held Sales</h3>
-        <p class="text-muted small">Parked orders and paused customer tickets</p>
-        <div class="card p-4 border-0 shadow-sm rounded-3 mt-3">
-            <div class="text-center py-5 text-muted">
-                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-2 text-secondary">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="10" y1="15" x2="10" y2="9"></line>
-                    <line x1="14" y1="15" x2="14" y2="9"></line>
-                </svg>
-                <p class="mb-0 fw-medium">No held sales currently active.</p>
+    <div class="p-4" style="background: #f8fafc; min-height: 100vh;">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h3 class="fw-bold text-dark mb-1">Held Sales (Suspended Transactions)</h3>
+                <p class="text-secondary small mb-0">Parked customer tickets for Outlet #@(Session.Outlet?.OutletId ?? 1)</p>
+            </div>
+            <div>
+                <button class="btn btn-outline-primary btn-sm px-3 fw-medium rounded-3" @onclick="LoadHeldSales">
+                    <i class="bi bi-arrow-repeat me-1"></i> Refresh
+                </button>
             </div>
         </div>
+
+        <!-- Held Sales Table / Grid -->
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+            @if (heldSales == null)
+            {
+                <div class="text-center py-5 text-muted">
+                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                    Loading held sales...
+                </div>
+            }
+            else if (!heldSales.Any())
+            {
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-pause-circle fs-1 text-secondary mb-2 d-block"></i>
+                    <p class="mb-0 fw-medium">No held sales currently active.</p>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light text-uppercase fs-7 text-secondary">
+                            <tr>
+                                <th class="py-3 px-4">Hold Reference</th>
+                                <th class="py-3">Customer / Notes</th>
+                                <th class="py-3">Cashier</th>
+                                <th class="py-3">Time Held</th>
+                                <th class="py-3 text-center">Items</th>
+                                <th class="py-3 text-end">Total Amount</th>
+                                <th class="py-3 text-end px-4">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var h in heldSales)
+                            {
+                                <tr>
+                                    <td class="px-4 fw-bold font-monospace text-primary">@h.HoldReference</td>
+                                    <td>
+                                        <strong>@(string.IsNullOrWhiteSpace(h.CustomerName) ? "Walk-in Customer" : h.CustomerName)</strong>
+                                        @if (!string.IsNullOrWhiteSpace(h.Notes))
+                                        {
+                                            <br /><small class="text-secondary">@h.Notes</small>
+                                        }
+                                    </td>
+                                    <td>@h.CashierId</td>
+                                    <td class="text-secondary small">@h.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="text-center"><span class="badge bg-secondary-subtle text-dark">@h.Items.Sum(i => i.Quantity)</span></td>
+                                    <td class="text-end fw-bold text-dark">₱@h.TotalAmount.ToString("N2")</td>
+                                    <td class="text-end px-4">
+                                        <div class="d-flex justify-content-end gap-2">
+                                            <button type="button" class="btn btn-sm btn-success text-white rounded-3 px-3 fw-bold" @onclick="() => ResumeSale(h)" title="Resume Sale">
+                                                <i class="bi bi-play-fill me-1"></i> Resume
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-danger rounded-3 px-3" @onclick="() => CancelSale(h.HeldSaleId)" title="Cancel Sale">
+                                                <i class="bi bi-trash"></i> Cancel
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
     </div>
+}
+
+@code {
+    private List<HeldSaleDto>? heldSales;
+
+    protected override async Task OnInitializedAsync() => await LoadHeldSales();
+
+    private async Task LoadHeldSales()
+    {
+        try
+        {
+            heldSales = await HeldSaleService.GetHeldSalesAsync(null, Session.Outlet?.OutletId);
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Failed to load held sales: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+
+    private async Task ResumeSale(HeldSaleDto held)
+    {
+        if (Cart.Items.Any())
+        {
+            var confirm = await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Active Cart Not Empty",
+                Text = "Resuming this held sale will replace your current active cart. Continue?",
+                Icon = SweetAlertIcon.Warning,
+                ShowCancelButton = true,
+                ConfirmButtonColor = "#2563eb"
+            });
+
+            if (!confirm.IsConfirmed) return;
+        }
+
+        try
+        {
+            var resumed = await HeldSaleService.ResumeHeldSaleAsync(held.HeldSaleId, Session.Outlet?.OutletId);
+            if (resumed != null)
+            {
+                Cart.Clear();
+                foreach (var item in resumed.Items)
+                {
+                    var product = new ProductDto
+                    {
+                        ProductId = item.ProductId,
+                        Name = item.ProductName,
+                        ShortCode = item.ProductShortCode,
+                        Price = item.BasePrice,
+                        TaxName = item.TaxName
+                    };
+
+                    var mods = item.Modifiers.Select(m => new ModifierOptionDto
+                    {
+                        ModifierOptionId = m.ModifierOptionId,
+                        Name = m.ModifierName,
+                        Price = m.AdditionalPrice
+                    }).ToList();
+
+                    Cart.AddItem(product, (int)item.Quantity, mods);
+                }
+
+                if (!string.IsNullOrWhiteSpace(resumed.DiscountCode) && resumed.DiscountCode != "NONE")
+                {
+                    Cart.ApplyDiscount(resumed.DiscountCode, resumed.DiscountAmount, resumed.CustomerCardNumber);
+                }
+
+                await Swal.FireAsync("Resumed!", $"Held sale {resumed.HoldReference} loaded into active cart.", SweetAlertIcon.Success);
+                Navigation.NavigateTo("/new-sale");
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Failed to resume held sale: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+
+    private async Task CancelSale(long id)
+    {
+        var confirm = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Cancel Held Sale?",
+            Text = "Are you sure you want to cancel and remove this held transaction?",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#d33"
+        });
+
+        if (confirm.IsConfirmed)
+        {
+            try
+            {
+                await HeldSaleService.CancelHeldSaleAsync(id);
+                await LoadHeldSales();
+                await Swal.FireAsync("Cancelled", "Held sale has been cancelled.", SweetAlertIcon.Success);
+            }
+            catch (Exception ex)
+            {
+                await Swal.FireAsync("Error", "Failed to cancel held sale: " + ex.Message, SweetAlertIcon.Error);
+            }
+        }
+    }
 }

@@ -21,7 +21,7 @@ public static class ReceiptHtmlFormatter
             @page { margin: 0; }
             * { box-sizing: border-box; }
             html, body { margin: 0; padding: 0; background: white; color: black; }
-            body { width: 80mm; max-width: 100%; padding: 4mm; font: 12px/1.4 Consolas, monospace; overflow-wrap: anywhere; }
+            body { width: 100%; max-width: 80mm; margin: 0 auto; padding: 4mm; font: 12px/1.4 Consolas, monospace; overflow-wrap: anywhere; }
             h1 { margin: 0 0 2mm; font-size: 16px; }
             header, footer { text-align: center; }
             p { margin: 1mm 0; }
@@ -43,6 +43,22 @@ public static class ReceiptHtmlFormatter
         if (receipt.IsReprint)
         {
             html.Append("<p style=\"text-align: center; font-weight: bold;\">** REPRINT **</p>");
+        }
+        if (receipt.IsVoid)
+        {
+            html.Append("<p style=\"text-align: center; font-weight: bold;\">** TRANSACTION VOIDED **</p>");
+            if (!string.IsNullOrWhiteSpace(receipt.VoidReason))
+            {
+                html.Append("<p style=\"text-align: center; font-size: 11px;\">Reason: ").Append(Encode(receipt.VoidReason)).Append("</p>");
+            }
+        }
+        if (receipt.IsReturn)
+        {
+            html.Append("<p style=\"text-align: center; font-weight: bold;\">** CREDIT MEMO / RETURN **</p>");
+            if (!string.IsNullOrWhiteSpace(receipt.ReturnReference))
+            {
+                html.Append("<p style=\"text-align: center; font-size: 11px;\">Ref: ").Append(Encode(receipt.ReturnReference)).Append("</p>");
+            }
         }
         Line(html, "Order: " + receipt.OrderNumber);
         OptionalLine(html, receipt.InvoiceNumber is null ? null : "Invoice: " + receipt.InvoiceNumber);
@@ -83,7 +99,7 @@ public static class ReceiptHtmlFormatter
         }
         html.Append("</section><hr><section class=\"totals\">");
         Row(html, "Subtotal", Money(receipt.Subtotal));
-        if (receipt.VatAmount > 0)
+        if (receipt.VatableSales > 0 || receipt.VatExemptSales > 0 || receipt.VatAmount > 0)
         {
             if (receipt.VatableSales > 0) Row(html, "Vatable Sales", Money(receipt.VatableSales));
             if (receipt.VatExemptSales > 0) Row(html, "VAT-Exempt Sales", Money(receipt.VatExemptSales));

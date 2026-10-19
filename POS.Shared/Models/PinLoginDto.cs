@@ -7,5 +7,7 @@ namespace POS.Shared.Models
     public class PinLoginDto
     {
         public string PinCode { get; set; } = string.Empty;
+        public int? BranchId { get; set; }
+        public int? OutletId { get; set; }
     }
 }

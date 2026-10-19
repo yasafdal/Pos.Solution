@@ -8,13 +8,11 @@ using NativeWindow = Microsoft.UI.Xaml.Window;
 namespace POS.Client.Platforms.Windows;
 
 /// <summary>
-/// Direct WebView2 printing to the EPSON queue using a hidden receipt-only host.
-/// The cashier's BlazorWebView, navigation, and cart are never replaced.
+/// Printer-agnostic WebView2 receipt printer using the OS default printer or print dialog fallback.
+/// Does not rely on any hardcoded printer queue name or driver paper size configuration.
 /// </summary>
 public sealed class WindowsReceiptPrinter : IReceiptPrinter
 {
-    // Windows queue name, not the ReceiptE4 driver name. Never use the default printer.
-    private const string PrinterName = "EPSON TM-T88IV Receipt";
     private int _printing;
 
     public async Task PrintAsync(ReceiptDto receipt)
@@ -68,14 +66,7 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
                 core.NavigateToString(html);
                 await loaded.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-                var settings = core.Environment.CreatePrintSettings();
-                settings.PageWidth = 80d / 25.4d;
-                settings.PageHeight = 297d / 25.4d;
-                settings.MarginTop = settings.MarginBottom = settings.MarginLeft = settings.MarginRight = 0;
-                settings.ShouldPrintHeaderAndFooter = false;
-                settings.ShouldPrintBackgrounds = true;
-
-                var written = await core.PrintToPdfAsync(filePath, settings);
+                var written = await core.PrintToPdfAsync(filePath, null);
                 window.Close();
 
                 if (!written || !File.Exists(filePath))
@@ -94,11 +85,12 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
     private static async Task PrintDirectAsync(string html)
     {
         var webView = new WebView2();
-        var window = new NativeWindow { Title = "Receipt printing" };
+        var window = new NativeWindow { Title = "Print Receipt" };
         var layout = new Microsoft.UI.Xaml.Controls.Grid();
         layout.Children.Add(webView);
         window.Content = layout;
-        // Initialize a native host without activating a preview or taking cashier focus.
+
+        bool keepWindowOpenForDialog = false;
         try
         {
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null,
@@ -114,6 +106,7 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
                 if (!ReceiptNavigationPolicy.IsAllowed(args.Uri)) args.Cancel = true;
             };
             core.NewWindowRequested += (_, args) => args.Handled = true;
+
             var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             core.NavigationCompleted += (_, args) =>
             {
@@ -123,34 +116,43 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
             core.NavigateToString(html);
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-            // Matches the installed EPSON driver's 80 x 297 mm portrait form.
-            var settings = core.Environment.CreatePrintSettings();
-            settings.PrinterName = PrinterName;
-            settings.MediaSize = CoreWebView2PrintMediaSize.Custom;
-            settings.PageWidth = 80d / 25.4d;
-            settings.PageHeight = 297d / 25.4d;
-            settings.Orientation = CoreWebView2PrintOrientation.Portrait;
-            settings.MarginTop = settings.MarginBottom = settings.MarginLeft = settings.MarginRight = 0;
-            settings.ScaleFactor = 1;
-            settings.Copies = 1;
-            settings.PagesPerSide = 1;
-            settings.ColorMode = CoreWebView2PrintColorMode.Grayscale;
-            settings.Duplex = CoreWebView2PrintDuplex.OneSided;
-            settings.ShouldPrintHeaderAndFooter = false;
-            settings.ShouldPrintBackgrounds = true;
-            settings.ShouldPrintSelectionOnly = false;
+            // First try silent printing to the OS default printer using its native driver configuration (no hardcoded printer name or page size).
+            CoreWebView2PrintStatus status = CoreWebView2PrintStatus.OtherError;
+            try
+            {
+                status = await core.PrintAsync(null);
+            }
+            catch
+            {
+                status = CoreWebView2PrintStatus.OtherError;
+            }
 
-            // No timeout or automatic retry after submission: an ambiguous result can print duplicates.
-            var result = await core.PrintAsync(settings);
-            if (result == CoreWebView2PrintStatus.PrinterUnavailable)
-                throw new InvalidOperationException($"Printer '{PrinterName}' is unavailable. Check its connection and Windows print queue.");
-            if (result != CoreWebView2PrintStatus.Succeeded)
-                throw new InvalidOperationException($"Could not submit the receipt to '{PrinterName}'. Check the Windows print queue before retrying to avoid duplicates.");
+            if (status == CoreWebView2PrintStatus.Succeeded)
+            {
+                return;
+            }
+
+            // Fallback: if no silent default printer is ready or the default printer requires interactive selection (e.g., Print to PDF),
+            // show the standard print dialog so the user can choose any available printer and configuration.
+            keepWindowOpenForDialog = true;
+            var windowClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            window.Closed += (_, _) =>
+            {
+                try { webView.Close(); } catch { }
+                windowClosed.TrySetResult();
+            };
+
+            window.Activate();
+            core.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
+            await windowClosed.Task;
         }
         finally
         {
-            try { webView.Close(); }
-            finally { window.Close(); }
+            if (!keepWindowOpenForDialog)
+            {
+                try { webView.Close(); }
+                finally { window.Close(); }
+            }
         }
     }
 }

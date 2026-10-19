@@ -1,7 +1,13 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 @inject PosSessionService Session
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject IJSRuntime Js
+@inject IPosConnectivityService ConnectivityService
+@inject POS.Shared.Interfaces.IUserService UserService
+@inject POS.Client.Data.LocalPosDbContext LocalDb
+@using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 <div class="page">
     @if (Session.IsAuthenticated)
@@ -17,8 +23,22 @@
                 </button>
                 <span class="terminal-identity">@Session.Outlet!.BranchCode • @Session.Outlet.OutletName</span>
             </div>
-            <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 fw-medium" @onclick="LockTerminal">Lock Terminal</button>
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-outline-warning btn-sm rounded-pill px-3 fw-medium text-dark" @onclick="SwitchCashier">Switch Cashier</button>
+                <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 fw-medium" @onclick="LockTerminal">Lock Terminal</button>
+            </div>
         </header>
+
+        @if (_connectivityState != TerminalConnectivityState.OnlineAndHealthy)
+        {
+            <div class="alert alert-warning rounded-0 m-0 py-2 px-4 d-flex justify-content-between align-items-center shadow-sm" role="alert">
+                <div class="d-flex align-items-center gap-2 small fw-medium">
+                    <i class="bi bi-exclamation-triangle-fill text-warning fs-5"></i>
+                    <span>Offline Mode — Cash sales are saved locally and will synchronize when the server is available. (@_pendingCount pending)</span>
+                </div>
+                <span class="badge bg-secondary">Offline Ready</span>
+            </div>
+        }
     }
 
     <div class="main-body">
@@ -40,6 +60,49 @@
 
 @code {
     private bool isNavVisible = false;
+    private TerminalConnectivityState _connectivityState = TerminalConnectivityState.OnlineAndHealthy;
+    private int _pendingCount = 0;
+    private System.Threading.Timer? _statusTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            LocalDb.InitializeDatabase();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Auto DB Init Error: {ex.Message}");
+        }
+
+        await CheckStatusAsync();
+        _statusTimer = new System.Threading.Timer(async _ => await InvokeAsync(CheckStatusAsync), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(15));
+    }
+
+    private async Task CheckStatusAsync()
+    {
+        try
+        {
+            _connectivityState = await ConnectivityService.CheckConnectivityAsync();
+            using var db = new POS.Client.Data.LocalPosDbContext();
+            db.InitializeDatabase();
+            _pendingCount = db.SyncOutboxes.Count(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING");
+            if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy && db.Cashiers.Count() <= 1)
+            {
+                await EnsureCashiersCachedAsync();
+            }
+            StateHasChanged();
+        }
+        catch
+        {
+            // Suppress background poll errors
+        }
+    }
+
+    public void Dispose()
+    {
+        _statusTimer?.Dispose();
+    }
 
     private void CloseNavMenu() => isNavVisible = false;
 
@@ -48,10 +111,108 @@
         isNavVisible = !isNavVisible;
     }
 
-    private void LockTerminal()
+    private async Task EnsureCashiersCachedAsync()
     {
+        try
+        {
+            var users = await UserService.GetUsersAsync();
+            var validUsers = users?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode)).ToList();
+            if (validUsers == null || validUsers.Count == 0) return;
+
+            await POS.Client.Data.LocalPosDbContext.WriteLock.WaitAsync();
+            try
+            {
+                using var db = new POS.Client.Data.LocalPosDbContext();
+                db.InitializeDatabase();
+                await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
+                db.ChangeTracker.Clear();
+                foreach (var u in validUsers)
+                {
+                    var pinHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(u.PinCode!.Trim())));
+                    db.Cashiers.Add(new POS.Client.Data.LocalCashier
+                    {
+                        UserId = u.UserId,
+                        Username = u.Username,
+                        Role = u.Role ?? "Cashier",
+                        PinHash = pinHash
+                    });
+                }
+                await db.SaveChangesAsync();
+            }
+            finally
+            {
+                POS.Client.Data.LocalPosDbContext.WriteLock.Release();
+            }
+        }
+        catch { }
+    }
+
+    private async Task CacheCurrentOutletAsync(POS.Shared.Models.TerminalOutletDto? outlet)
+    {
+        if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy)
+        {
+            await EnsureCashiersCachedAsync();
+        }
+        if (outlet == null) return;
+        try
+        {
+            await POS.Client.Data.LocalPosDbContext.WriteLock.WaitAsync();
+            try
+            {
+                using var db = new POS.Client.Data.LocalPosDbContext();
+                db.InitializeDatabase();
+                var existing = db.OutletConfigs.FirstOrDefault(o => o.OutletId == outlet.OutletId);
+                if (existing == null)
+                {
+                    db.OutletConfigs.Add(new POS.Client.Data.LocalOutletConfig
+                    {
+                        OutletId = outlet.OutletId,
+                        BranchId = outlet.BranchId,
+                        BusinessTypeId = outlet.BusinessTypeId ?? 1,
+                        BusinessType = outlet.BusinessType ?? "FNB",
+                        BranchName = outlet.BranchName,
+                        BranchCode = outlet.BranchCode,
+                        BranchAddress = outlet.BranchAddress,
+                        BranchPhone = outlet.BranchPhone,
+                        OutletName = outlet.OutletName,
+                        BranchTaxType = "VAT-Registered",
+                        TerminalIdentifier = outlet.OutletName
+                    });
+                    await db.SaveChangesAsync();
+                }
+            }
+            finally
+            {
+                POS.Client.Data.LocalPosDbContext.WriteLock.Release();
+            }
+        }
+        catch { }
+    }
+
+    private async Task LockTerminal()
+    {
+        await CacheCurrentOutletAsync(Session.Outlet);
         Session.ClearSession();
         Http.DefaultRequestHeaders.Authorization = null;
         Navigation.NavigateTo("/login");
+    }
+
+    private async Task SwitchCashier()
+    {
+        bool confirmed = await Js.InvokeAsync<bool>("confirm", "Switch cashier? The current user will be signed out of this terminal.");
+        if (!confirmed) return;
+
+        var currentOutlet = Session.Outlet;
+        await CacheCurrentOutletAsync(currentOutlet);
+        Session.ClearSession();
+        Http.DefaultRequestHeaders.Authorization = null;
+        if (currentOutlet != null)
+        {
+            Navigation.NavigateTo($"/login?outletId={currentOutlet.OutletId}");
+        }
+        else
+        {
+            Navigation.NavigateTo("/login");
+        }
     }
 }

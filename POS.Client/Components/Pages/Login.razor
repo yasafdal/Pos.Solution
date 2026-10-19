@@ -1,3 +1,4 @@
+@using System.Net.Http.Headers
 @page "/login"
 @layout Layout.AuthLayout
 @inject IUserService UserService
@@ -6,6 +7,7 @@
 @inject PosSessionService Session
 @inject NavigationManager Navigation
 @inject HttpClient Http
+@inject IReferenceDataSyncService ReferenceDataSync
 
 <div class="pos-login-card">
     <!-- POS Terminal Branding -->
@@ -377,6 +379,149 @@
         }
     }
 
+    private static string ComputePinHash(string rawPin) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawPin.Trim())));
+
+    private async Task CacheOnlineLoginAsync(string rawPin, string username, string role, TerminalOutletDto outlet, string address)
+    {
+        List<UserDto>? allUsers = null;
+        try
+        {
+            allUsers = await UserService.GetUsersAsync();
+        }
+        catch { }
+
+        try
+        {
+            await POS.Client.Data.LocalPosDbContext.WriteLock.WaitAsync();
+            try
+            {
+                using var db = new POS.Client.Data.LocalPosDbContext();
+                db.InitializeDatabase();
+
+                if (allUsers != null && allUsers.Count > 0)
+                {
+                    await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRawAsync(
+                        db.Database, "DELETE FROM LocalCashiers;");
+                    db.ChangeTracker.Clear();
+
+                    foreach (var u in allUsers.Where(u => !string.IsNullOrWhiteSpace(u.PinCode)))
+                    {
+                        db.Cashiers.Add(new POS.Client.Data.LocalCashier
+                        {
+                            UserId = u.UserId,
+                            Username = u.Username,
+                            Role = u.Role,
+                            PinHash = ComputePinHash(u.PinCode!)
+                        });
+                    }
+                }
+                else
+                {
+                    string pinHash = ComputePinHash(rawPin);
+                    var existingCashier = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                        db.Cashiers, c => c.Username == username || c.PinHash == pinHash);
+                    if (existingCashier != null)
+                    {
+                        existingCashier.Username = username;
+                        existingCashier.Role = role;
+                        existingCashier.PinHash = pinHash;
+                    }
+                    else
+                    {
+                        int nextId = (db.Cashiers.Any() ? db.Cashiers.Max(c => c.UserId) : 0) + 1;
+                        db.Cashiers.Add(new POS.Client.Data.LocalCashier
+                        {
+                            UserId = nextId,
+                            Username = username,
+                            Role = role,
+                            PinHash = pinHash
+                        });
+                    }
+                }
+
+                var existingOutlet = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                    db.OutletConfigs, o => o.OutletId == outlet.OutletId);
+                if (existingOutlet != null)
+                {
+                    existingOutlet.BranchId = outlet.BranchId;
+                    existingOutlet.BusinessTypeId = outlet.BusinessTypeId ?? 1;
+                    existingOutlet.BusinessType = outlet.BusinessType ?? "FNB";
+                    existingOutlet.BranchName = outlet.BranchName;
+                    existingOutlet.BranchCode = outlet.BranchCode;
+                    existingOutlet.BranchAddress = outlet.BranchAddress;
+                    existingOutlet.BranchPhone = outlet.BranchPhone;
+                    existingOutlet.OutletName = outlet.OutletName;
+                    existingOutlet.TerminalIdentifier = address;
+                }
+                else
+                {
+                    db.OutletConfigs.Add(new POS.Client.Data.LocalOutletConfig
+                    {
+                        OutletId = outlet.OutletId,
+                        BranchId = outlet.BranchId,
+                        BusinessTypeId = outlet.BusinessTypeId ?? 1,
+                        BusinessType = outlet.BusinessType ?? "FNB",
+                        BranchName = outlet.BranchName,
+                        BranchCode = outlet.BranchCode,
+                        BranchAddress = outlet.BranchAddress,
+                        BranchPhone = outlet.BranchPhone,
+                        OutletName = outlet.OutletName,
+                        BranchTaxType = "VAT-Registered",
+                        TerminalIdentifier = address
+                    });
+                }
+                await db.SaveChangesAsync();
+            }
+            finally
+            {
+                POS.Client.Data.LocalPosDbContext.WriteLock.Release();
+            }
+        }
+        catch { }
+    }
+
+    private async Task<bool> TryOfflinePinLoginAsync(string rawPin)
+    {
+        try
+        {
+            using var db = new POS.Client.Data.LocalPosDbContext();
+            db.InitializeDatabase();
+            string pinHash = ComputePinHash(rawPin);
+
+            var localCashier = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Cashiers),
+                c => c.PinHash == pinHash);
+            if (localCashier == null) return false;
+
+            var localOutlet = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.OutletConfigs));
+            if (localOutlet == null) return false;
+
+            var outletDto = new TerminalOutletDto
+            {
+                OutletId = localOutlet.OutletId,
+                BranchId = localOutlet.BranchId,
+                BusinessTypeId = localOutlet.BusinessTypeId ?? 1,
+                BusinessType = localOutlet.BusinessType ?? "FNB",
+                BranchName = localOutlet.BranchName ?? localOutlet.OutletName,
+                BranchCode = localOutlet.BranchCode ?? $"BR-{localOutlet.BranchId:D2}",
+                BranchAddress = localOutlet.BranchAddress,
+                BranchPhone = localOutlet.BranchPhone,
+                OutletName = localOutlet.OutletName
+            };
+
+            Session.SetSession("OFFLINE-SESSION-TOKEN", localCashier.Username, localCashier.Role, outletDto);
+            Http.DefaultRequestHeaders.Authorization = null;
+            Navigation.NavigateTo("/");
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private async Task SubmitPinAsync()
     {
         if (string.IsNullOrWhiteSpace(pin) || isLoading) return;
@@ -386,7 +531,16 @@
 
         try
         {
-            var authResult = await UserService.PinLoginAsync(pin);
+            (string Token, string Username, string Role)? authResult = null;
+            bool isNetworkError = false;
+            try
+            {
+                authResult = await UserService.PinLoginAsync(pin);
+            }
+            catch (Exception)
+            {
+                isNetworkError = true;
+            }
 
             if (authResult != null)
             {
@@ -399,18 +553,53 @@
                     errorMessage = "This IP address is not listed";
                     return;
                 }
+                if (!string.IsNullOrEmpty(outlet.Token))
+                {
+                    token = outlet.Token;
+                }
                 Session.SetSession(token, username, role, outlet);
+                await CacheOnlineLoginAsync(pin, username, role, outlet, address);
 
-                // Set token for future API requests
+                // Set token for future API requests FIRST so ReferenceDataSync has Authorization header
                 Http.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+                // Notify backend cashier session activation
+                try
+                {
+                    await Http.PostAsJsonAsync("api/cashier-sessions/activate", new CashierSessionActivateDto
+                    {
+                        BranchId = outlet.BranchId,
+                        OutletId = outlet.OutletId,
+                        DeviceIdentifier = address
+                    });
+
+                    // Ensure token is attached for reference data sync call
+                    Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                    var syncResult = await ReferenceDataSync.SyncReferenceDataAsync(outlet.OutletId, Http);
+                    Console.WriteLine($"[Login] ReferenceDataSync result: {syncResult} for OutletId: {outlet.OutletId}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Login] ReferenceDataSync exception: {ex.Message}");
+                }
 
                 // Navigate to main POS dashboard
                 Navigation.NavigateTo("/");
             }
+            else if (isNetworkError && await TryOfflinePinLoginAsync(pin))
+            {
+                return;
+            }
+            else if (await TryOfflinePinLoginAsync(pin))
+            {
+                return;
+            }
             else
             {
-                errorMessage = "Invalid PIN. Please try again.";
+                errorMessage = isNetworkError
+                    ? "Offline PIN not found in local cache. Log in online once to sync staff PINs."
+                    : "Invalid PIN. Please try again.";
                 pin = string.Empty;
             }
         }
@@ -418,9 +607,10 @@
         {
             errorMessage = ex.Message;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            errorMessage = "Server error. Ensure the POS API is running.";
+            if (await TryOfflinePinLoginAsync(pin)) return;
+            errorMessage = $"Server error: {ex.Message}";
             pin = string.Empty;
         }
         finally

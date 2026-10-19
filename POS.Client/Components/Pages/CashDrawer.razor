@@ -1,25 +1,1434 @@
 @page "/cash-drawer"
+@using POS.Shared.Models
+@using POS.Client.Data
+@using POS.Client.Services
+@using POS.Client.Workers
+@using Microsoft.EntityFrameworkCore
 @inject PosSessionService Session
+@inject HttpClient Http
+@inject IPosConnectivityService ConnectivityService
+@inject IOfflineBackgroundSyncService SyncManager
+@inject CurrieTechnologies.Razor.SweetAlert2.SweetAlertService Swal
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
-@if (!Session.IsAuthenticated)
+<PageTitle>Cash Drawer & Petty Cash Management - POS</PageTitle>
+
+<div class="w-100 py-3 px-4">
+    <!-- Top Header -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <h2 class="fw-bolder mb-0 text-dark" style="letter-spacing: -0.5px;">Petty Cash &amp; Cash Drawer Management</h2>
+                @if (isOffline)
+                {
+                    <span class="badge bg-warning text-dark">OFFLINE MODE</span>
+                }
+                else
+                {
+                    <span class="badge bg-success-subtle text-success border border-success-subtle">ONLINE</span>
+                }
+            </div>
+            <span class="text-secondary" style="font-size: 0.92rem;">
+                Outlet #@(Session.Outlet?.OutletId ?? 1) (@(Session.Outlet?.OutletName ?? "Terminal")) • Cashier: @(Session.Username ?? "Unknown") (@(Session.Role ?? "Cashier"))
+            </span>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary rounded-3 px-3 py-2 fw-semibold" @onclick="TriggerSyncAndReloadAsync" disabled="@isLoading">
+                <i class="bi bi-cloud-arrow-up me-1"></i> Sync &amp; Refresh
+            </button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(statusAlertMessage))
+    {
+        <div class="alert @(statusAlertIsError ? "alert-danger" : "alert-success") alert-dismissible fade show rounded-3 shadow-sm mb-3" role="alert">
+            <i class="bi @(statusAlertIsError ? "bi-exclamation-octagon-fill" : "bi-check-circle-fill") me-2"></i>
+            @statusAlertMessage
+            <button type="button" class="btn-close" @onclick="() => statusAlertMessage = null"></button>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="text-muted small mt-2">Loading cash drawer shift and petty cash records...</p>
+        </div>
+    }
+    else if (currentShift == null)
+    {
+        <!-- Open Shift Card -->
+        <div class="card border-0 shadow-sm rounded-4 p-5 bg-white text-center mx-auto" style="max-width: 600px;">
+            <div class="mb-3 text-primary">
+                <i class="bi bi-cash-stack" style="font-size: 3rem;"></i>
+            </div>
+            <h4 class="fw-bold mb-2">No Active Cashier Drawer Shift</h4>
+            <p class="text-muted small mb-4">
+                Cash movements (Petty Cash, Paid-In, Paid-Out, and Cash Drops) require an active open drawer shift. Enter the starting opening float in PHP (₱) below.
+            </p>
+
+            <div class="mb-3 text-start">
+                <label class="form-label fw-semibold text-dark small">Opening Float Amount (₱)</label>
+                <input type="number" step="0.01" min="0" class="form-control form-control-lg rounded-3 fw-bold" @bind="openingFloat" placeholder="0.00" />
+            </div>
+
+            <div class="mb-4 text-start">
+                <label class="form-label fw-semibold text-dark small">Shift Notes / Remarks</label>
+                <input type="text" class="form-control rounded-3 py-2" @bind="shiftNotes" placeholder="Optional remarks..." />
+            </div>
+
+            <button class="btn btn-success rounded-3 py-3 fw-bold shadow-sm w-100" @onclick="OpenShift" disabled="@isSubmittingShift">
+                <i class="bi bi-unlock-fill me-1"></i> @(isSubmittingShift ? "Opening Shift..." : "Open Cash Drawer Shift")
+            </button>
+        </div>
+    }
+    else
+    {
+        <!-- Shift Reconciliation Summary Cards (Layer 5) -->
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-md-4 col-xl-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-primary border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Opening Cash</span>
+                    <h4 class="fw-bolder text-dark mb-0 mt-1">₱@currentShift.OpeningFloat.ToString("N2")</h4>
+                    <small class="text-muted" style="font-size: 0.75rem;">Opened @currentShift.OpenedAt.ToLocalTime().ToString("HH:mm")</small>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-xl-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-success border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Cash Sales (Net)</span>
+                    <h4 class="fw-bolder text-success mb-0 mt-1">+₱@currentShift.TotalCashSales.ToString("N2")</h4>
+                    <small class="text-danger" style="font-size: 0.75rem;">Refunds: -₱@currentShift.TotalCashRefunds.ToString("N2")</small>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-xl-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-info border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Cash Paid-In</span>
+                    <h4 class="fw-bolder text-info mb-0 mt-1">+₱@currentShift.TotalCashIn.ToString("N2")</h4>
+                    <small class="text-muted" style="font-size: 0.75rem;">Change fund / Replenish</small>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-xl-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-danger border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Paid-Out / Petty Cash</span>
+                    <h4 class="fw-bolder text-danger mb-0 mt-1">-₱@currentShift.TotalCashOut.ToString("N2")</h4>
+                    <small class="text-muted" style="font-size: 0.75rem;">Petty Cash: ₱@currentShift.TotalPettyCashOut.ToString("N2")</small>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-xl-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-secondary border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Safe Cash Drops</span>
+                    <h4 class="fw-bolder text-secondary mb-0 mt-1">-₱@currentShift.TotalCashDrops.ToString("N2")</h4>
+                    <small class="text-muted" style="font-size: 0.75rem;">Remitted to safe</small>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-xl-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-dark text-white h-100">
+                    <span class="text-uppercase text-warning fw-bold" style="font-size: 0.72rem;">Available Expected Cash</span>
+                    <h4 class="fw-bolder text-white mb-0 mt-1">₱@currentShift.ExpectedBalance.ToString("N2")</h4>
+                    <small class="text-light opacity-75" style="font-size: 0.72rem;">Physical Drawer Balance</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4 mb-4">
+            <!-- Left: Record Petty Cash / Paid-In / Paid-Out / Drop -->
+            <div class="col-lg-7">
+                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-dark mb-0">
+                            <i class="bi bi-wallet2 me-2 text-primary"></i> Record Cash Movement / Petty Cash Voucher
+                        </h5>
+                        <span class="badge bg-light text-secondary border">BIR Non-Sales Voucher</span>
+                    </div>
+
+                    <!-- Touch-friendly Movement Type Buttons -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-6 col-sm-3">
+                            <button type="button"
+                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "PETTY_CASH" ? "btn-danger shadow-sm" : "btn-outline-danger")"
+                                    @onclick='() => SelectMovementType("PETTY_CASH")'>
+                                <i class="bi bi-receipt me-1"></i> Petty Cash Out
+                            </button>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <button type="button"
+                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_OUT" ? "btn-warning text-dark shadow-sm" : "btn-outline-warning text-dark")"
+                                    @onclick='() => SelectMovementType("CASH_OUT")'>
+                                <i class="bi bi-box-arrow-up-right me-1"></i> Cash Paid-Out
+                            </button>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <button type="button"
+                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_IN" ? "btn-success shadow-sm" : "btn-outline-success")"
+                                    @onclick='() => SelectMovementType("CASH_IN")'>
+                                <i class="bi bi-box-arrow-in-down-left me-1"></i> Cash Paid-In
+                            </button>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <button type="button"
+                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_DROP" ? "btn-secondary shadow-sm" : "btn-outline-secondary")"
+                                    @onclick='() => SelectMovementType("CASH_DROP")'>
+                                <i class="bi bi-safe2 me-1"></i> Cash Drop
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold text-dark small mb-1">Movement Category</label>
+                            <select class="form-select rounded-3 py-2" @bind="selectedCategoryId">
+                                <option value="0">-- Select Category --</option>
+                                @foreach (var cat in FilteredCategories)
+                                {
+                                    <option value="@cat.CategoryId">@cat.Name @(cat.RequiresApproval ? "(Approval Req.)" : "")</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold text-dark small mb-1">
+                                Amount in PHP (₱)
+                                @if (IsOutflow(movementType))
+                                {
+                                    <span class="text-muted fw-normal">(Max: ₱@currentShift.ExpectedBalance.ToString("N2"))</span>
+                                }
+                            </label>
+                            <input type="number" step="0.01" min="0.01" class="form-control rounded-3 py-2 fw-bold fs-5" @bind="movementAmount" placeholder="0.00" />
+                        </div>
+                    </div>
+
+                    <!-- Touch Quick Amount Presets -->
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        @foreach (var preset in new decimal[] { 50m, 100m, 200m, 500m, 1000m })
+                        {
+                            <button type="button" class="btn btn-outline-dark btn-sm rounded-pill px-3 fw-semibold" @onclick="() => movementAmount += preset">
+                                +₱@preset.ToString("N0")
+                            </button>
+                        }
+                        <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3" @onclick="() => movementAmount = 0m">
+                            Clear Amount
+                        </button>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark small mb-1">Reason / Particulars / Payee &amp; Supplier Reference</label>
+                        <input type="text" maxlength="255" class="form-control rounded-3 py-2" @bind="movementReason"
+                               placeholder="e.g., 5 bags tube ice from ABC Ice Plant (OR #1042) / Change fund coins" />
+                    </div>
+
+                    @if (CurrentSelectionRequiresApproval)
+                    {
+                        <div class="p-3 rounded-3 bg-warning-subtle border border-warning mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="fw-bold text-dark small">
+                                    <i class="bi bi-shield-lock-fill text-warning me-1"></i> Supervisor Approval Required
+                                </span>
+                                <span class="badge bg-warning text-dark">Manager / Senior Cashier</span>
+                            </div>
+                            <p class="small text-secondary mb-2">
+                                Enter a Supervisor 4-digit PIN below to post and disburse immediately, or leave blank to submit as <strong>PENDING_APPROVAL</strong> (will not affect drawer balance until approved).
+                            </p>
+                            <input type="password" maxlength="10" class="form-control form-control-sm rounded-3" style="max-width: 240px;"
+                                   @bind="supervisorPin" placeholder="Supervisor PIN (optional for pending)" />
+                        </div>
+                    }
+
+                    <button type="button"
+                            class="btn btn-dark rounded-3 py-3 fw-bold w-100 shadow-sm"
+                            @onclick="OpenConfirmMovementModal"
+                            disabled="@isSubmittingMovement">
+                        <i class="bi bi-check2-circle me-1"></i>
+                        @(isSubmittingMovement ? "Processing..." : $"Review & Submit {FormatMovementTypeLabel(movementType)}")
+                    </button>
+                </div>
+            </div>
+
+            <!-- Right: Close Shift & Reconcile (Layer 5) -->
+            <div class="col-lg-5">
+                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white h-100">
+                    <h5 class="fw-bold text-dark mb-2">
+                        <i class="bi bi-calculator-fill me-2 text-danger"></i> Shift Closing &amp; Cash Reconciliation
+                    </h5>
+                    <p class="text-secondary small mb-3">
+                        Verify physical drawer cash against the expected balance. Petty cash paid-outs do not reduce BIR Gross Sales or Output VAT.
+                    </p>
+
+                    <div class="bg-light rounded-3 p-3 mb-3 small">
+                        <div class="d-flex justify-content-between py-1">
+                            <span class="text-secondary">Opening Cash Float:</span>
+                            <span class="fw-semibold">₱@currentShift.OpeningFloat.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between py-1">
+                            <span class="text-secondary">(+) Cash Sales Collected:</span>
+                            <span class="fw-semibold text-success">+₱@currentShift.TotalCashSales.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between py-1">
+                            <span class="text-secondary">(+) Cash Paid-In:</span>
+                            <span class="fw-semibold text-info">+₱@currentShift.TotalCashIn.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between py-1">
+                            <span class="text-secondary">(-) Cash Paid-Out &amp; Petty Cash:</span>
+                            <span class="fw-semibold text-danger">-₱@currentShift.TotalCashOut.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between py-1">
+                            <span class="text-secondary">(-) Safe Cash Drops:</span>
+                            <span class="fw-semibold text-secondary">-₱@currentShift.TotalCashDrops.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between py-1 border-bottom pb-2">
+                            <span class="text-secondary">(-) Cash Refunds:</span>
+                            <span class="fw-semibold text-danger">-₱@currentShift.TotalCashRefunds.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between pt-2 fs-6">
+                            <span class="fw-bold text-dark">Expected Drawer Cash:</span>
+                            <span class="fw-bolder text-primary">₱@currentShift.ExpectedBalance.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between pt-1">
+                            <span class="fw-semibold text-secondary">Counted Over / (Short):</span>
+                            @{
+                                decimal previewDiff = Math.Round(actualCounted - currentShift.ExpectedBalance, 2);
+                            }
+                            <span class="fw-bold @(previewDiff == 0 ? "text-success" : previewDiff > 0 ? "text-primary" : "text-danger")">
+                                @(previewDiff >= 0 ? $"+₱{previewDiff:N2}" : $"-₱{Math.Abs(previewDiff):N2}")
+                            </span>
+                        </div>
+                    </div>
+
+                    @if (currentShift.PendingApprovalsCount > 0)
+                    {
+                        <div class="alert alert-warning py-2 px-3 small mb-3">
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                            <strong>@currentShift.PendingApprovalsCount pending movement(s)</strong> must be approved or rejected before closing the shift.
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark small mb-1">Actual Counted Physical Cash (₱)</label>
+                        <input type="number" step="0.01" min="0" class="form-control rounded-3 fw-bold text-success fs-5" @bind="actualCounted" @bind:event="oninput" placeholder="0.00" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark small mb-1">Closing Remarks / Discrepancy Explanation</label>
+                        <input type="text" class="form-control rounded-3" @bind="closingNotes" placeholder="Optional explanation for overage/shortage..." />
+                    </div>
+                    <button class="btn btn-danger rounded-3 py-2 fw-bold w-100"
+                            @onclick="CloseShift"
+                            disabled="@(isSubmittingShift || isOffline || currentShift.PendingApprovalsCount > 0)">
+                        <i class="bi bi-shield-lock-fill me-1"></i>
+                        @(isOffline ? "Reconnect Online to Finalize Shift Close" : "Close Drawer Shift & Reconcile")
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shift Cash Movement History Table -->
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+            <div class="card-header bg-light py-3 px-4 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div>
+                    <h5 class="fw-bold text-dark mb-0">
+                        <i class="bi bi-clock-history me-2 text-primary"></i> Shift Cash Movement &amp; Petty Cash History
+                    </h5>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm rounded-3" style="width: 170px;" @bind="historyFilterStatus">
+                        <option value="">All Statuses</option>
+                        <option value="POSTED">Posted</option>
+                        <option value="PENDING_APPROVAL">Pending Approval</option>
+                        <option value="REJECTED">Rejected</option>
+                        <option value="REVERSED">Reversed</option>
+                    </select>
+                </div>
+            </div>
+
+            @if (!FilteredMovements.Any())
+            {
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                    <p class="mb-0 small">No cash movements recorded for this shift yet.</p>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light text-uppercase text-secondary" style="font-size: 0.75rem;">
+                            <tr>
+                                <th class="py-3 px-4">Voucher #</th>
+                                <th class="py-3">Type</th>
+                                <th class="py-3">Category</th>
+                                <th class="py-3">Reason / Particulars</th>
+                                <th class="py-3">Cashier / Approver</th>
+                                <th class="py-3">Status</th>
+                                <th class="py-3">Sync</th>
+                                <th class="py-3">Time</th>
+                                <th class="py-3 text-end">Amount (₱)</th>
+                                <th class="py-3 text-end px-4">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in FilteredMovements)
+                            {
+                                <tr>
+                                    <td class="px-4 fw-bold font-monospace text-primary">@m.ReferenceNumber</td>
+                                    <td>
+                                        <span class="badge @GetMovementTypeBadgeClass(m.MovementType)">
+                                            @FormatMovementTypeLabel(m.MovementType)
+                                        </span>
+                                    </td>
+                                    <td class="small fw-medium">@(string.IsNullOrWhiteSpace(m.CategoryName) ? "General" : m.CategoryName)</td>
+                                    <td>
+                                        <div class="small text-dark">@m.Reason</div>
+                                        @if (!string.IsNullOrWhiteSpace(m.RejectionReason))
+                                        {
+                                            <small class="text-danger">Rejected: @m.RejectionReason</small>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(m.ReversalReason))
+                                        {
+                                            <small class="text-secondary">Reversed by @m.ReversedBy: @m.ReversalReason</small>
+                                        }
+                                    </td>
+                                    <td class="small">
+                                        <div>By: <strong>@m.CreatedBy</strong></div>
+                                        @if (!string.IsNullOrWhiteSpace(m.ApprovedBy))
+                                        {
+                                            <div class="text-muted">Appr: @m.ApprovedBy</div>
+                                        }
+                                    </td>
+                                    <td>
+                                        <span class="badge @GetStatusBadgeClass(m.Status)">@m.Status</span>
+                                    </td>
+                                    <td>
+                                        <span class="badge @(m.SyncStatus == "SYNCED" ? "bg-success-subtle text-success" : m.SyncStatus == "CONFLICT" ? "bg-danger text-white" : "bg-warning text-dark")">
+                                            @m.SyncStatus
+                                        </span>
+                                    </td>
+                                    <td class="text-secondary small">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="text-end fw-bold @(m.MovementType == "CASH_IN" ? "text-success" : "text-danger")">
+                                        @(m.MovementType == "CASH_IN" ? "+" : "-")₱@m.Amount.ToString("N2")
+                                    </td>
+                                    <td class="text-end px-4">
+                                        <div class="d-flex justify-content-end gap-1">
+                                            <button class="btn btn-outline-primary btn-sm rounded-3" title="Print Voucher" @onclick="() => OpenVoucherPreview(m)">
+                                                <i class="bi bi-printer"></i> Voucher
+                                            </button>
+                                            @if (m.Status == "PENDING_APPROVAL" && !isOffline && m.MovementId > 0)
+                                            {
+                                                <button class="btn btn-success btn-sm rounded-3" title="Approve" @onclick='() => OpenSupervisorActionModal(m, "APPROVE")'>
+                                                    Approve
+                                                </button>
+                                                <button class="btn btn-outline-danger btn-sm rounded-3" title="Reject" @onclick='() => OpenSupervisorActionModal(m, "REJECT")'>
+                                                    Reject
+                                                </button>
+                                            }
+                                            @if (m.Status == "POSTED" && m.MovementType != "REVERSAL" && !isOffline && m.MovementId > 0)
+                                            {
+                                                <button class="btn btn-outline-secondary btn-sm rounded-3" title="Reverse" @onclick='() => OpenSupervisorActionModal(m, "REVERSE")'>
+                                                    Reverse
+                                                </button>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<!-- Confirmation Modal Before Submitting Movement -->
+@if (showConfirmModal && currentShift != null)
 {
-    Navigation.NavigateTo("/login");
-}
-else
-{
-    <div class="p-4">
-        <h3 class="fw-bold text-dark mb-1">Cash Drawer</h3>
-        <p class="text-muted small">Drawer management, cash in/out, and float balance</p>
-        <div class="card p-4 border-0 shadow-sm rounded-3 mt-3">
-            <div class="text-center py-5 text-muted">
-                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="mb-2 text-secondary">
-                    <rect x="2" y="6" width="20" height="12" rx="2"></rect>
-                    <circle cx="12" cy="12" r="2"></circle>
-                    <path d="M6 12h.01M18 12h.01"></path>
-                </svg>
-                <p class="mb-0 fw-medium">Cash drawer status: Closed / Ready for shift actions.</p>
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.65);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold text-dark">Confirm Cash Movement</h5>
+                    <button type="button" class="btn-close" @onclick="() => showConfirmModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="p-3 rounded-3 bg-light mb-3">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-secondary small">Movement Type:</span>
+                            <span class="fw-bold">@FormatMovementTypeLabel(movementType)</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-secondary small">Category:</span>
+                            <span class="fw-semibold">@(SelectedCategory?.Name ?? "General")</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-secondary small">Amount:</span>
+                            <span class="fw-bolder fs-5 @(movementType == "CASH_IN" ? "text-success" : "text-danger")">₱@movementAmount.ToString("N2")</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-secondary small">Reason / Particulars:</span>
+                            <span class="fw-medium text-end">@movementReason</span>
+                        </div>
+                        <div class="d-flex justify-content-between border-top pt-2 mt-2">
+                            <span class="text-secondary small">Projected Drawer Cash After Posting:</span>
+                            @{
+                                decimal projected = movementType == "CASH_IN"
+                                    ? currentShift.ExpectedBalance + movementAmount
+                                    : currentShift.ExpectedBalance - movementAmount;
+                            }
+                            <span class="fw-bold text-primary">₱@projected.ToString("N2")</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary rounded-3 px-4" @onclick="() => showConfirmModal = false" disabled="@isSubmittingMovement">
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-primary rounded-3 px-4 fw-bold" @onclick="ConfirmAndSubmitMovementAsync" disabled="@isSubmittingMovement">
+                        @(isSubmittingMovement ? "Saving..." : "Confirm & Record")
+                    </button>
+                </div>
             </div>
         </div>
     </div>
+}
+
+<!-- Supervisor Approve / Reject / Reverse Modal -->
+@if (actionModalMovement != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.65);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold text-dark">
+                        @actionModalType Cash Movement (@actionModalMovement.ReferenceNumber)
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseSupervisorActionModal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-secondary mb-3">
+                        Amount: <strong>₱@actionModalMovement.Amount.ToString("N2")</strong> • @actionModalMovement.Reason
+                    </p>
+                    @if (actionModalType is "REJECT" or "REVERSE")
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold small">Reason (Required)</label>
+                            <input type="text" class="form-control rounded-3" @bind="actionModalReason" placeholder="Enter reason for audit log..." />
+                        </div>
+                    }
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold small">Supervisor 4-Digit PIN</label>
+                        <input type="password" maxlength="10" class="form-control rounded-3" @bind="actionModalSupervisorPin" placeholder="Enter Admin / Manager / Senior Cashier PIN" />
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary rounded-3" @onclick="CloseSupervisorActionModal">Cancel</button>
+                    <button type="button" class="btn btn-dark rounded-3 fw-bold" @onclick="ExecuteSupervisorActionAsync" disabled="@isSubmittingAction">
+                        @(isSubmittingAction ? "Processing..." : $"Confirm {actionModalType}")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Printable Cash Movement Voucher Modal -->
+@if (selectedVoucher != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.65);">
+        <div class="modal-dialog modal-dialog-centered" style="max-width: 420px;">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold text-dark">Cash Movement Voucher</h5>
+                    <button type="button" class="btn-close" @onclick="() => selectedVoucher = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="printable-cash-voucher" class="p-3 border rounded-3 bg-white font-monospace" style="font-size: 0.84rem; line-height: 1.45;">
+                        <div class="text-center border-bottom pb-2 mb-2">
+                            <div class="fw-bold fs-6">@(Session.Outlet?.BranchName ?? "POS F&B QUICK SERVICE")</div>
+                            @if (!string.IsNullOrWhiteSpace(Session.Outlet?.BranchAddress))
+                            {
+                                <div class="small">@Session.Outlet.BranchAddress</div>
+                            }
+                            <div class="small">Terminal: @(Session.Outlet?.OutletName ?? $"Outlet #{selectedVoucher.OutletId}")</div>
+                            <div class="fw-bold mt-1 text-uppercase border-top pt-1">
+                                @FormatMovementTypeLabel(selectedVoucher.MovementType) VOUCHER
+                            </div>
+                            <div class="small text-muted">(INTERNAL NON-SALES CASH VOUCHER)</div>
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <span>Voucher No:</span>
+                            <span class="fw-bold">@selectedVoucher.ReferenceNumber</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span>Shift ID:</span>
+                            <span>#@selectedVoucher.ShiftId</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span>Date/Time:</span>
+                            <span>@selectedVoucher.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span>Status:</span>
+                            <span class="fw-bold">@selectedVoucher.Status</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span>Category:</span>
+                            <span>@(selectedVoucher.CategoryName ?? "General")</span>
+                        </div>
+
+                        <div class="border-top border-bottom my-2 py-2">
+                            <div class="small text-secondary">Particulars / Reason:</div>
+                            <div class="fw-semibold">@selectedVoucher.Reason</div>
+                            <div class="d-flex justify-content-between align-items-center mt-2 pt-1 border-top">
+                                <span class="fw-bold">AMOUNT (PHP):</span>
+                                <span class="fw-bolder fs-5">₱@selectedVoucher.Amount.ToString("N2")</span>
+                            </div>
+                        </div>
+
+                        <div class="small mb-3">
+                            <div>Prepared By: <strong>@selectedVoucher.CreatedBy</strong></div>
+                            <div>Approved By: <strong>@(selectedVoucher.ApprovedBy ?? "Pending Supervisor")</strong></div>
+                        </div>
+
+                        <div class="mt-4 pt-2 border-top text-center small">
+                            <div class="mb-3">_______________________________<br />Cashier / Prepared By</div>
+                            <div class="mb-3">_______________________________<br />Supervisor / Approved By</div>
+                            <div class="mb-1">_______________________________<br />Payee / Received By (Signature)</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary rounded-3" @onclick="() => selectedVoucher = null">Close</button>
+                    <button type="button" class="btn btn-primary rounded-3 fw-bold" @onclick="PrintVoucherAsync">
+                        <i class="bi bi-printer-fill me-1"></i> Print Voucher
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool isOffline = false;
+    private bool isSubmittingShift = false;
+    private bool isSubmittingMovement = false;
+    private bool showConfirmModal = false;
+
+    private string? statusAlertMessage;
+    private bool statusAlertIsError;
+
+    private CashDrawerShiftDto? currentShift;
+    private List<CashMovementCategoryDto> categories = new();
+
+    private decimal openingFloat = 1000.00m;
+    private string shiftNotes = string.Empty;
+
+    private string movementType = "PETTY_CASH";
+    private int selectedCategoryId = 0;
+    private decimal movementAmount = 0.00m;
+    private string movementReason = string.Empty;
+    private string supervisorPin = string.Empty;
+    private string pendingClientMovementId = Guid.NewGuid().ToString("N");
+
+    private decimal actualCounted = 0.00m;
+    private string closingNotes = string.Empty;
+    private string historyFilterStatus = string.Empty;
+
+    private CashMovementResponseDto? selectedVoucher;
+    private CashMovementResponseDto? actionModalMovement;
+    private string actionModalType = "APPROVE";
+    private string actionModalReason = string.Empty;
+    private string actionModalSupervisorPin = string.Empty;
+    private bool isSubmittingAction = false;
+
+    private IEnumerable<CashMovementCategoryDto> FilteredCategories =>
+        categories.Where(c => c.IsActive && string.Equals(c.MovementType, movementType, StringComparison.OrdinalIgnoreCase));
+
+    private CashMovementCategoryDto? SelectedCategory =>
+        categories.FirstOrDefault(c => c.CategoryId == selectedCategoryId);
+
+    private bool CurrentSelectionRequiresApproval
+    {
+        get
+        {
+            if (SelectedCategory != null)
+            {
+                return SelectedCategory.RequiresApproval ||
+                       (SelectedCategory.ApprovalThreshold > 0m && movementAmount >= SelectedCategory.ApprovalThreshold);
+            }
+            return IsOutflow(movementType);
+        }
+    }
+
+    private IEnumerable<CashMovementResponseDto> FilteredMovements =>
+        (currentShift?.Movements ?? Enumerable.Empty<CashMovementResponseDto>())
+            .Where(m => string.IsNullOrWhiteSpace(historyFilterStatus) || string.Equals(m.Status, historyFilterStatus, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+        await LoadShiftData();
+    }
+
+    private void SelectMovementType(string type)
+    {
+        movementType = type;
+        var firstCat = FilteredCategories.FirstOrDefault();
+        selectedCategoryId = firstCat?.CategoryId ?? 0;
+    }
+
+    private static bool IsOutflow(string type) =>
+        type is "PETTY_CASH" or "CASH_OUT" or "CASH_DROP";
+
+    private static string FormatMovementTypeLabel(string type) =>
+        (type ?? string.Empty).ToUpperInvariant() switch
+        {
+            "PETTY_CASH" => "Petty Cash Out",
+            "CASH_OUT" => "Cash Paid-Out",
+            "CASH_IN" => "Cash Paid-In",
+            "CASH_DROP" => "Safe Cash Drop",
+            "REVERSAL" => "Reversal",
+            _ => type ?? "Movement"
+        };
+
+    private static string GetMovementTypeBadgeClass(string type) =>
+        (type ?? string.Empty).ToUpperInvariant() switch
+        {
+            "PETTY_CASH" => "bg-danger-subtle text-danger border border-danger-subtle",
+            "CASH_OUT" => "bg-warning-subtle text-dark border border-warning-subtle",
+            "CASH_IN" => "bg-success-subtle text-success border border-success-subtle",
+            "CASH_DROP" => "bg-secondary-subtle text-secondary border border-secondary-subtle",
+            "REVERSAL" => "bg-dark text-white",
+            _ => "bg-light text-dark"
+        };
+
+    private static string GetStatusBadgeClass(string status) =>
+        (status ?? string.Empty).ToUpperInvariant() switch
+        {
+            "POSTED" => "bg-success",
+            "PENDING_APPROVAL" => "bg-warning text-dark",
+            "REJECTED" => "bg-danger",
+            "REVERSED" => "bg-secondary",
+            _ => "bg-primary"
+        };
+
+    private async Task TriggerSyncAndReloadAsync()
+    {
+        try
+        {
+            await SyncManager.TriggerManualSyncAsync();
+        }
+        catch { }
+        await LoadShiftData();
+    }
+
+    private async Task LoadShiftData()
+    {
+        isLoading = true;
+        try
+        {
+            var outletId = Session.Outlet?.OutletId ?? 1;
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            if (!isOffline)
+            {
+                try
+                {
+                    var onlineCats = await Http.GetFromJsonAsync<List<CashMovementCategoryDto>>("api/cash-drawer/categories");
+                    if (onlineCats != null && onlineCats.Count > 0)
+                    {
+                        categories = onlineCats;
+                        await CacheCategoriesLocallyAsync(onlineCats);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    var shiftResp = await Http.GetAsync($"api/cash-drawer/current?outletId={outletId}");
+                    if (shiftResp.IsSuccessStatusCode)
+                    {
+                        currentShift = await shiftResp.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                        if (currentShift != null)
+                        {
+                            await CacheShiftLocallyAsync(currentShift);
+                            actualCounted = currentShift.ExpectedBalance;
+                        }
+                    }
+                    else
+                    {
+                        currentShift = null;
+                    }
+                }
+                catch
+                {
+                    isOffline = true;
+                }
+            }
+
+            if (isOffline || categories.Count == 0)
+            {
+                await LoadOfflineShiftAndCategoriesAsync(outletId);
+            }
+
+            if (selectedCategoryId == 0 && FilteredCategories.Any())
+            {
+                selectedCategoryId = FilteredCategories.First().CategoryId;
+            }
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task CacheCategoriesLocallyAsync(List<CashMovementCategoryDto> onlineCats)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashMovementCategories;");
+            db.ChangeTracker.Clear();
+            foreach (var c in onlineCats)
+            {
+                db.CashMovementCategories.Add(new LocalCashMovementCategory
+                {
+                    CategoryId = c.CategoryId,
+                    Name = c.Name,
+                    Description = c.Description,
+                    MovementType = c.MovementType,
+                    RequiresApproval = c.RequiresApproval,
+                    ApprovalThreshold = c.ApprovalThreshold,
+                    IsActive = c.IsActive
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        catch { }
+        finally
+        {
+            LocalPosDbContext.WriteLock.Release();
+        }
+    }
+
+    private async Task CacheShiftLocallyAsync(CashDrawerShiftDto shiftDto)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var localShift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == shiftDto.ShiftId);
+            if (localShift == null)
+            {
+                db.CashDrawerShifts.Add(new LocalCashDrawerShift
+                {
+                    ShiftId = shiftDto.ShiftId,
+                    BranchId = shiftDto.BranchId,
+                    OutletId = shiftDto.OutletId,
+                    CashierId = shiftDto.CashierId,
+                    OpeningFloat = shiftDto.OpeningFloat,
+                    TotalCashSales = shiftDto.TotalCashSales,
+                    TotalCashRefunds = shiftDto.TotalCashRefunds,
+                    TotalCashIn = shiftDto.TotalCashIn,
+                    TotalCashOut = shiftDto.TotalCashOut,
+                    TotalCashDrops = shiftDto.TotalCashDrops,
+                    ExpectedBalance = shiftDto.ExpectedBalance,
+                    Status = shiftDto.Status,
+                    OpenedAt = shiftDto.OpenedAt
+                });
+            }
+            else
+            {
+                localShift.OpeningFloat = shiftDto.OpeningFloat;
+                localShift.TotalCashSales = shiftDto.TotalCashSales;
+                localShift.TotalCashRefunds = shiftDto.TotalCashRefunds;
+                localShift.TotalCashIn = shiftDto.TotalCashIn;
+                localShift.TotalCashOut = shiftDto.TotalCashOut;
+                localShift.TotalCashDrops = shiftDto.TotalCashDrops;
+                localShift.ExpectedBalance = shiftDto.ExpectedBalance;
+                localShift.Status = shiftDto.Status;
+            }
+            await db.SaveChangesAsync();
+        }
+        catch { }
+        finally
+        {
+            LocalPosDbContext.WriteLock.Release();
+        }
+    }
+
+    private async Task LoadOfflineShiftAndCategoriesAsync(int outletId)
+    {
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+
+        var localCats = await db.CashMovementCategories.AsNoTracking().Where(c => c.IsActive).ToListAsync();
+        if (localCats.Count > 0)
+        {
+            categories = localCats.Select(c => new CashMovementCategoryDto
+            {
+                CategoryId = c.CategoryId,
+                Name = c.Name,
+                Description = c.Description,
+                MovementType = c.MovementType,
+                RequiresApproval = c.RequiresApproval,
+                ApprovalThreshold = c.ApprovalThreshold,
+                IsActive = c.IsActive
+            }).ToList();
+        }
+
+        if (!isOffline) return;
+
+        var localShift = await db.CashDrawerShifts
+            .AsNoTracking()
+            .Where(s => s.OutletId == outletId && s.Status == "OPEN")
+            .OrderByDescending(s => s.OpenedAt)
+            .FirstOrDefaultAsync();
+
+        if (localShift == null)
+        {
+            currentShift = null;
+            return;
+        }
+
+        var localMovements = await db.CashDrawerMovements
+            .AsNoTracking()
+            .Where(m => m.ShiftId == localShift.ShiftId)
+            .OrderByDescending(m => m.CreatedAt)
+            .ToListAsync();
+
+        decimal pettyCash = localMovements
+            .Where(m => m.Status == "POSTED" && m.MovementType == "PETTY_CASH")
+            .Sum(m => m.Amount);
+
+        currentShift = new CashDrawerShiftDto
+        {
+            ShiftId = localShift.ShiftId,
+            BranchId = localShift.BranchId,
+            OutletId = localShift.OutletId,
+            CashierId = localShift.CashierId,
+            OpeningFloat = localShift.OpeningFloat,
+            TotalCashSales = localShift.TotalCashSales,
+            TotalCashRefunds = localShift.TotalCashRefunds,
+            TotalCashIn = localShift.TotalCashIn,
+            TotalCashOut = localShift.TotalCashOut,
+            TotalCashDrops = localShift.TotalCashDrops,
+            TotalPettyCashOut = pettyCash,
+            ExpectedBalance = localShift.ExpectedBalance,
+            Status = localShift.Status,
+            OpenedAt = localShift.OpenedAt,
+            PendingApprovalsCount = localMovements.Count(m => m.Status == "PENDING_APPROVAL"),
+            Movements = localMovements.Select(m => new CashMovementResponseDto
+            {
+                MovementId = m.MovementId,
+                ShiftId = m.ShiftId,
+                BranchId = m.BranchId,
+                OutletId = m.OutletId,
+                MovementType = m.MovementType,
+                CategoryId = m.CategoryId,
+                CategoryName = m.CategoryName,
+                Amount = m.Amount,
+                Reason = m.Reason,
+                ReferenceNumber = m.ReferenceNumber,
+                ClientMovementId = m.ClientMovementId,
+                Status = m.Status,
+                CreatedBy = m.CreatedBy,
+                AuthorizedBy = m.AuthorizedBy,
+                ApprovedBy = m.ApprovedBy,
+                CreatedAt = m.CreatedAt,
+                ApprovedAt = m.ApprovedAt,
+                PostedAt = m.PostedAt,
+                SyncStatus = m.SyncStatus
+            }).ToList()
+        };
+        actualCounted = currentShift.ExpectedBalance;
+    }
+
+    private async Task OpenShift()
+    {
+        if (isSubmittingShift) return;
+        if (openingFloat < 0)
+        {
+            ShowAlert("Opening float cannot be negative.", isError: true);
+            return;
+        }
+
+        isSubmittingShift = true;
+        try
+        {
+            var branchId = Session.Outlet?.BranchId ?? 1;
+            var outletId = Session.Outlet?.OutletId ?? 1;
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            if (!isOffline)
+            {
+                var dto = new OpenShiftDto
+                {
+                    BranchId = branchId,
+                    OutletId = outletId,
+                    OpeningFloat = openingFloat,
+                    Notes = shiftNotes
+                };
+
+                var response = await Http.PostAsJsonAsync("api/cash-drawer/open-shift", dto);
+                if (response.IsSuccessStatusCode)
+                {
+                    ShowAlert("Cash drawer shift opened successfully!", isError: false);
+                    await LoadShiftData();
+                }
+                else
+                {
+                    var err = await response.Content.ReadAsStringAsync();
+                    ShowAlert(err, isError: true);
+                }
+            }
+            else
+            {
+                await LocalPosDbContext.WriteLock.WaitAsync();
+                try
+                {
+                    using var db = new LocalPosDbContext();
+                    db.InitializeDatabase();
+                    var existing = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.OutletId == outletId && s.Status == "OPEN");
+                    if (existing != null)
+                    {
+                        ShowAlert("An open shift already exists locally for this outlet.", isError: true);
+                        return;
+                    }
+
+                    long localShiftId = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    db.CashDrawerShifts.Add(new LocalCashDrawerShift
+                    {
+                        ShiftId = localShiftId,
+                        BranchId = branchId,
+                        OutletId = outletId,
+                        CashierId = Session.Username ?? "offline_cashier",
+                        OpeningFloat = Math.Round(openingFloat, 2),
+                        ExpectedBalance = Math.Round(openingFloat, 2),
+                        Status = "OPEN",
+                        OpenedAt = DateTime.UtcNow,
+                        Notes = shiftNotes
+                    });
+                    await db.SaveChangesAsync();
+                }
+                finally
+                {
+                    LocalPosDbContext.WriteLock.Release();
+                }
+
+                ShowAlert("Offline cash drawer shift opened locally.", isError: false);
+                await LoadShiftData();
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isSubmittingShift = false;
+        }
+    }
+
+    private void OpenConfirmMovementModal()
+    {
+        if (currentShift == null || isSubmittingMovement) return;
+
+        decimal rounded = Math.Round(movementAmount, 2);
+        if (rounded <= 0)
+        {
+            ShowAlert("Amount must be greater than zero.", isError: true);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(movementReason))
+        {
+            ShowAlert("Reason / particulars is required for all cash movements.", isError: true);
+            return;
+        }
+        if (IsOutflow(movementType) && rounded > currentShift.ExpectedBalance)
+        {
+            ShowAlert($"Insufficient cash in drawer! Available expected cash is ₱{currentShift.ExpectedBalance:N2}, requested is ₱{rounded:N2}.", isError: true);
+            return;
+        }
+
+        movementAmount = rounded;
+        showConfirmModal = true;
+    }
+
+    private async Task ConfirmAndSubmitMovementAsync()
+    {
+        if (currentShift == null || isSubmittingMovement) return;
+        isSubmittingMovement = true;
+
+        try
+        {
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            if (!isOffline)
+            {
+                var dto = new CashDrawerMovementDto
+                {
+                    ShiftId = currentShift.ShiftId,
+                    BranchId = currentShift.BranchId,
+                    OutletId = currentShift.OutletId,
+                    MovementType = movementType,
+                    CategoryId = selectedCategoryId > 0 ? selectedCategoryId : null,
+                    CategoryName = SelectedCategory?.Name,
+                    Amount = movementAmount,
+                    Reason = movementReason.Trim(),
+                    ClientMovementId = pendingClientMovementId,
+                    SupervisorPin = string.IsNullOrWhiteSpace(supervisorPin) ? null : supervisorPin.Trim()
+                };
+
+                string endpoint = movementType == "CASH_IN" ? "api/cash-drawer/paid-in" : "api/cash-drawer/paid-out";
+                var response = await Http.PostAsJsonAsync(endpoint, dto);
+                if (response.IsSuccessStatusCode)
+                {
+                    var created = await response.Content.ReadFromJsonAsync<CashMovementResponseDto>();
+                    showConfirmModal = false;
+                    ResetMovementForm();
+                    await LoadShiftData();
+                    if (created != null)
+                    {
+                        selectedVoucher = created;
+                        ShowAlert($"Recorded {created.ReferenceNumber} ({created.Status}).", isError: false);
+                    }
+                }
+                else
+                {
+                    var err = await response.Content.ReadAsStringAsync();
+                    showConfirmModal = false;
+                    ShowAlert(err, isError: true);
+                }
+            }
+            else
+            {
+                await RecordOfflineMovementAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            showConfirmModal = false;
+            ShowAlert($"Error recording movement: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            isSubmittingMovement = false;
+        }
+    }
+
+    private async Task RecordOfflineMovementAsync()
+    {
+        if (currentShift == null) return;
+
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            using var tx = await db.Database.BeginTransactionAsync();
+
+            // Prevent duplicate local ClientMovementId
+            if (await db.CashDrawerMovements.AnyAsync(m => m.ClientMovementId == pendingClientMovementId))
+            {
+                showConfirmModal = false;
+                ShowAlert("Duplicate movement submission prevented.", isError: false);
+                return;
+            }
+
+            var localShift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == currentShift.ShiftId && s.Status == "OPEN");
+            if (localShift == null)
+            {
+                showConfirmModal = false;
+                ShowAlert("No active open shift found in local database.", isError: true);
+                return;
+            }
+
+            if (IsOutflow(movementType) && movementAmount > localShift.ExpectedBalance)
+            {
+                showConfirmModal = false;
+                ShowAlert($"Insufficient offline drawer balance (Available: ₱{localShift.ExpectedBalance:N2}).", isError: true);
+                return;
+            }
+
+            string? verifiedApprover = null;
+            string? verifiedPinHash = null;
+
+            if (CurrentSelectionRequiresApproval)
+            {
+                if (!string.IsNullOrWhiteSpace(supervisorPin))
+                {
+                    string pinHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes(supervisorPin.Trim())));
+
+                    var cachedSupervisor = await db.Cashiers
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(c => c.PinHash == pinHash);
+
+                    if (cachedSupervisor == null || !IsSupervisorRole(cachedSupervisor.Role))
+                    {
+                        await tx.RollbackAsync();
+                        showConfirmModal = false;
+                        ShowAlert("Invalid offline supervisor PIN or cashier does not have supervisor privileges.", isError: true);
+                        return;
+                    }
+
+                    verifiedApprover = cachedSupervisor.Username;
+                    verifiedPinHash = pinHash;
+                }
+            }
+            else
+            {
+                verifiedApprover = Session.Username ?? "offline_cashier";
+            }
+
+            // Critical Offline Rule: If approval is required and cannot be cryptographically verified against a supervisor PIN hash, keep PENDING_APPROVAL
+            string status = (CurrentSelectionRequiresApproval && verifiedApprover == null) ? "PENDING_APPROVAL" : "POSTED";
+            var now = DateTime.UtcNow;
+
+            string prefix = movementType switch
+            {
+                "PETTY_CASH" => "PCV",
+                "CASH_OUT" => "COU",
+                "CASH_IN" => "CIN",
+                "CASH_DROP" => "CDP",
+                _ => "CMV"
+            };
+            string refNumber = $"{prefix}-OFF-{now:yyMMdd}-{pendingClientMovementId[..4].ToUpperInvariant()}";
+
+            var localMovement = new LocalCashDrawerMovement
+            {
+                ClientMovementId = pendingClientMovementId,
+                ShiftId = localShift.ShiftId,
+                BranchId = localShift.BranchId,
+                OutletId = localShift.OutletId,
+                MovementType = movementType,
+                CategoryId = selectedCategoryId > 0 ? selectedCategoryId : null,
+                CategoryName = SelectedCategory?.Name,
+                Amount = movementAmount,
+                Reason = movementReason.Trim(),
+                ReferenceNumber = refNumber,
+                Status = status,
+                CreatedBy = Session.Username ?? localShift.CashierId,
+                AuthorizedBy = verifiedApprover ?? (Session.Username ?? localShift.CashierId),
+                ApprovedBy = verifiedApprover,
+                SupervisorPinHash = verifiedPinHash,
+                CreatedAt = now,
+                ApprovedAt = verifiedApprover != null ? now : null,
+                PostedAt = status == "POSTED" ? now : null,
+                SyncStatus = "PENDING"
+            };
+
+            db.CashDrawerMovements.Add(localMovement);
+
+            if (status == "POSTED")
+            {
+                if (movementType == "CASH_IN") localShift.TotalCashIn += movementAmount;
+                else if (movementType is "CASH_OUT" or "PETTY_CASH") localShift.TotalCashOut += movementAmount;
+                else if (movementType == "CASH_DROP") localShift.TotalCashDrops += movementAmount;
+
+                localShift.ExpectedBalance = localShift.OpeningFloat
+                    + localShift.TotalCashSales
+                    - localShift.TotalCashRefunds
+                    + localShift.TotalCashIn
+                    - localShift.TotalCashOut
+                    - localShift.TotalCashDrops;
+            }
+
+            db.SyncOutboxes.Add(new LocalSyncOutbox
+            {
+                EntityType = "CASH_MOVEMENT",
+                EntityId = localMovement.ClientMovementId,
+                PayloadJson = System.Text.Json.JsonSerializer.Serialize(localMovement),
+                Status = "PENDING",
+                RetryCount = 0,
+                CreatedAt = now
+            });
+
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            showConfirmModal = false;
+            ResetMovementForm();
+            await LoadShiftData();
+
+            selectedVoucher = currentShift?.Movements.FirstOrDefault(m => m.ClientMovementId == localMovement.ClientMovementId);
+            ShowAlert($"Saved offline voucher {refNumber} ({status}). Will synchronize automatically on reconnection.", isError: false);
+        }
+        finally
+        {
+            LocalPosDbContext.WriteLock.Release();
+        }
+    }
+
+    private static bool IsSupervisorRole(string? role)
+    {
+        if (string.IsNullOrWhiteSpace(role)) return false;
+        var r = role.Trim();
+        return r.Equals("Admin", StringComparison.OrdinalIgnoreCase) ||
+               r.Equals("Manager", StringComparison.OrdinalIgnoreCase) ||
+               r.Equals("Senior Cashier", StringComparison.OrdinalIgnoreCase) ||
+               r.Equals("SeniorCashier", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ResetMovementForm()
+    {
+        movementAmount = 0.00m;
+        movementReason = string.Empty;
+        supervisorPin = string.Empty;
+        pendingClientMovementId = Guid.NewGuid().ToString("N");
+    }
+
+    private void OpenVoucherPreview(CashMovementResponseDto m)
+    {
+        selectedVoucher = m;
+    }
+
+    private async Task PrintVoucherAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("window.print");
+        }
+        catch { }
+    }
+
+    private void OpenSupervisorActionModal(CashMovementResponseDto m, string actionType)
+    {
+        actionModalMovement = m;
+        actionModalType = actionType;
+        actionModalReason = string.Empty;
+        actionModalSupervisorPin = string.Empty;
+    }
+
+    private void CloseSupervisorActionModal()
+    {
+        actionModalMovement = null;
+        actionModalReason = string.Empty;
+        actionModalSupervisorPin = string.Empty;
+    }
+
+    private async Task ExecuteSupervisorActionAsync()
+    {
+        if (actionModalMovement == null || isSubmittingAction) return;
+
+        if (actionModalType is "REJECT" or "REVERSE" && string.IsNullOrWhiteSpace(actionModalReason))
+        {
+            ShowAlert("Reason is required for rejection or reversal.", isError: true);
+            return;
+        }
+
+        isSubmittingAction = true;
+        try
+        {
+            HttpResponseMessage response;
+            if (actionModalType == "APPROVE")
+            {
+                response = await Http.PostAsJsonAsync($"api/cash-drawer/movements/{actionModalMovement.MovementId}/approve", new CashMovementApproveRejectDto
+                {
+                    SupervisorPin = actionModalSupervisorPin
+                });
+            }
+            else if (actionModalType == "REJECT")
+            {
+                response = await Http.PostAsJsonAsync($"api/cash-drawer/movements/{actionModalMovement.MovementId}/reject", new CashMovementApproveRejectDto
+                {
+                    SupervisorPin = actionModalSupervisorPin,
+                    Reason = actionModalReason
+                });
+            }
+            else
+            {
+                response = await Http.PostAsJsonAsync($"api/cash-drawer/movements/{actionModalMovement.MovementId}/reverse", new CashMovementReverseDto
+                {
+                    SupervisorPin = actionModalSupervisorPin,
+                    Reason = actionModalReason
+                });
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                ShowAlert($"Movement {actionModalMovement.ReferenceNumber} {actionModalType.ToLowerInvariant()}d successfully.", isError: false);
+                CloseSupervisorActionModal();
+                await LoadShiftData();
+            }
+            else
+            {
+                var err = await response.Content.ReadAsStringAsync();
+                ShowAlert(err, isError: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isSubmittingAction = false;
+        }
+    }
+
+    private async Task CloseShift()
+    {
+        if (currentShift == null || isSubmittingShift) return;
+
+        decimal diff = Math.Round(actualCounted - currentShift.ExpectedBalance, 2);
+        bool confirm = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Close Drawer Shift & Reconcile?",
+            Text = $"Expected Cash: ₱{currentShift.ExpectedBalance:N2} | Counted Cash: ₱{actualCounted:N2} | Over/(Short): ₱{diff:N2}. Proceed?",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonText = "Yes, Close Shift"
+        }).ContinueWith(t => t.Result.IsConfirmed);
+
+        if (!confirm) return;
+
+        isSubmittingShift = true;
+        try
+        {
+            var dto = new CloseShiftDto
+            {
+                ShiftId = currentShift.ShiftId,
+                ActualCountedBalance = actualCounted,
+                Notes = closingNotes
+            };
+
+            var response = await Http.PostAsJsonAsync("api/cash-drawer/close-shift", dto);
+            if (response.IsSuccessStatusCode)
+            {
+                ShowAlert($"Cash drawer shift closed! Over/(Short): ₱{diff:N2}", isError: false);
+                actualCounted = 0.00m;
+                closingNotes = string.Empty;
+                await LoadShiftData();
+            }
+            else
+            {
+                var err = await response.Content.ReadAsStringAsync();
+                ShowAlert(err, isError: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isSubmittingShift = false;
+        }
+    }
+
+    private void ShowAlert(string message, bool isError)
+    {
+        statusAlertMessage = message;
+        statusAlertIsError = isError;
+    }
 }

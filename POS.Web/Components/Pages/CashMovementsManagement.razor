@@ -1,0 +1,927 @@
+@page "/cash-movements"
+@using System.Net.Http.Json
+@using System.Security.Claims
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using CurrieTechnologies.Razor.SweetAlert2
+@using Microsoft.AspNetCore.Components.Authorization
+@inject HttpClient Http
+@inject IBranchService BranchService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject SweetAlertService Swal
+
+<PageTitle>Petty Cash & Cash Movements - POS Admin</PageTitle>
+
+<div class="w-100 py-2">
+    <!-- Header Toolbar -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Petty Cash & Cash Movement Management</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">
+                Manage petty cash disbursements, paid-in/paid-out ledger, pending supervisor approvals, reversals, categories, and audit reports
+            </span>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-primary rounded px-3 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenNewCategoryModal">
+                <i class="bi bi-tags me-1"></i> + New Category
+            </button>
+            <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="LoadAllDataAsync" disabled="@isLoading">
+                <i class="bi bi-arrow-repeat me-1"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <ul class="nav nav-tabs mb-3 fw-semibold">
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "HISTORY" ? "active fw-bold" : "")" @onclick='() => activeTab = "HISTORY"'>
+                <i class="bi bi-journal-text me-1"></i> Movement History (@movements.Count)
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "PENDING" ? "active fw-bold" : "")" @onclick='() => activeTab = "PENDING"'>
+                <i class="bi bi-shield-exclamation me-1 text-warning"></i> Pending Approvals
+                @if (PendingMovements.Any())
+                {
+                    <span class="badge bg-warning text-dark ms-1">@PendingMovements.Count()</span>
+                }
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "REVERSALS" ? "active fw-bold" : "")" @onclick='() => activeTab = "REVERSALS"'>
+                <i class="bi bi-arrow-counterclockwise me-1 text-danger"></i> Reversal & Audit Trail (@ReversedOrReversalMovements.Count())
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "SUMMARY" ? "active fw-bold" : "")" @onclick='() => activeTab = "SUMMARY"'>
+                <i class="bi bi-bar-chart-line me-1 text-success"></i> Summary Reports
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "CATEGORIES" ? "active fw-bold" : "")" @onclick='() => activeTab = "CATEGORIES"'>
+                <i class="bi bi-tags me-1"></i> Movement Categories (@categories.Count)
+            </button>
+        </li>
+    </ul>
+
+    <!-- Filter Bar (Shared across History, Pending, Reversals, Summary) -->
+    @if (activeTab != "CATEGORIES")
+    {
+        <div class="card border-0 shadow-sm rounded-4 p-3 mb-3 bg-white">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Branch</label>
+                    <select class="form-select form-select-sm" @bind="filterBranchId">
+                        <option value="">All Branches</option>
+                        @foreach (var b in branches)
+                        {
+                            <option value="@b.BranchId">@b.Name (#@b.BranchId)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Outlet #</label>
+                    <input type="number" class="form-control form-control-sm" placeholder="All Outlets" @bind="filterOutletId" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Cashier</label>
+                    <input type="text" class="form-control form-control-sm" placeholder="Cashier ID / Name" @bind="filterCashierId" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Movement Type</label>
+                    <select class="form-select form-select-sm" @bind="filterMovementType">
+                        <option value="">All Types</option>
+                        <option value="PETTY_CASH">PETTY_CASH</option>
+                        <option value="CASH_OUT">CASH_OUT</option>
+                        <option value="CASH_IN">CASH_IN</option>
+                        <option value="CASH_DROP">CASH_DROP</option>
+                        <option value="REVERSAL">REVERSAL</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Status</label>
+                    <select class="form-select form-select-sm" @bind="filterStatus">
+                        <option value="">All Statuses</option>
+                        <option value="POSTED">POSTED</option>
+                        <option value="PENDING_APPROVAL">PENDING_APPROVAL</option>
+                        <option value="REJECTED">REJECTED</option>
+                        <option value="REVERSED">REVERSED</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex gap-1">
+                    <button class="btn btn-sm btn-primary w-100 fw-bold" @onclick="ApplyFiltersAsync">
+                        <i class="bi bi-funnel me-1"></i> Filter
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFiltersAsync" title="Reset Filters">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+                <div class="col-md-3 mt-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Start Date</label>
+                    <input type="date" class="form-control form-control-sm" @bind="filterStartDate" />
+                </div>
+                <div class="col-md-3 mt-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">End Date</label>
+                    <input type="date" class="form-control form-control-sm" @bind="filterEndDate" />
+                </div>
+                <div class="col-md-3 mt-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">Category</label>
+                    <select class="form-select form-select-sm" @bind="filterCategoryId">
+                        <option value="">All Categories</option>
+                        @foreach (var cat in categories)
+                        {
+                            <option value="@cat.CategoryId">@cat.Name (@cat.MovementType)</option>
+                        }
+                    </select>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- KPI Summary Cards -->
+    @if (summaryReport != null && activeTab != "CATEGORIES")
+    {
+        <div class="row g-3 mb-3">
+            <div class="col-md-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                    <div class="small text-secondary fw-semibold">Posted Paid-In</div>
+                    <div class="fs-5 fw-bold text-success">+₱@summaryReport.TotalPaidIn.ToString("N2")</div>
+                    <small class="text-muted">@summaryReport.TotalPostedCount total posted</small>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                    <div class="small text-secondary fw-semibold">Petty Cash (Posted)</div>
+                    <div class="fs-5 fw-bold text-danger">-₱@summaryReport.TotalPettyCash.ToString("N2")</div>
+                    <small class="text-muted">Non-sales expense</small>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                    <div class="small text-secondary fw-semibold">Total Paid-Out</div>
+                    <div class="fs-5 fw-bold text-danger">-₱@summaryReport.TotalPaidOut.ToString("N2")</div>
+                    <small class="text-muted">Includes Petty Cash</small>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                    <div class="small text-secondary fw-semibold">Safe Cash Drops</div>
+                    <div class="fs-5 fw-bold text-warning">-₱@summaryReport.TotalCashDrops.ToString("N2")</div>
+                    <small class="text-muted">Safekeep Skims</small>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                    <div class="small text-secondary fw-semibold">Net Cash Movement</div>
+                    <div class="fs-5 fw-bold @(summaryReport.NetCashMovement >= 0 ? "text-primary" : "text-danger")">
+                        ₱@summaryReport.NetCashMovement.ToString("N2")
+                    </div>
+                    <small class="text-muted">Paid-In minus Out/Drops</small>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                    <div class="small text-secondary fw-semibold">Pending / Reversed</div>
+                    <div class="fs-5 fw-bold text-dark">
+                        <span class="text-warning">@summaryReport.TotalPendingCount</span> /
+                        <span class="text-secondary">@summaryReport.TotalReversedCount</span>
+                    </div>
+                    <small class="text-muted">Rejected: @summaryReport.TotalRejectedCount</small>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="text-center py-5 text-muted">
+            <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+            Loading cash movement records...
+        </div>
+    }
+    else if (activeTab == "HISTORY")
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+            <div class="table-responsive">
+                <table class="table align-middle mb-0 table-hover">
+                    <thead class="table-light text-uppercase small text-secondary">
+                        <tr>
+                            <th class="py-3 px-3">Voucher Ref</th>
+                            <th class="py-3">Created At</th>
+                            <th class="py-3">Branch / Outlet</th>
+                            <th class="py-3">Shift #</th>
+                            <th class="py-3">Type / Category</th>
+                            <th class="py-3">Reason</th>
+                            <th class="py-3">Created / Approved By</th>
+                            <th class="py-3">Status</th>
+                            <th class="py-3 text-end">Amount (PHP)</th>
+                            <th class="py-3 text-end px-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!movements.Any())
+                        {
+                            <tr>
+                                <td colspan="10" class="text-center py-4 text-muted">No cash movements match the selected filters.</td>
+                            </tr>
+                        }
+                        @foreach (var m in movements)
+                        {
+                            <tr>
+                                <td class="px-3 fw-bold font-monospace text-primary">@m.ReferenceNumber</td>
+                                <td class="small text-secondary">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>
+                                    <span class="badge bg-light text-dark border">B#@m.BranchId / O#@m.OutletId</span>
+                                </td>
+                                <td class="font-monospace">#@m.ShiftId</td>
+                                <td>
+                                    <span class="badge @GetTypeBadgeClass(m.MovementType)">@m.MovementType</span>
+                                    <div class="small text-secondary">@(m.CategoryName ?? "Uncategorized")</div>
+                                </td>
+                                <td>
+                                    <div class="fw-semibold text-dark">@m.Reason</div>
+                                    @if (!string.IsNullOrWhiteSpace(m.RejectionReason))
+                                    {
+                                        <small class="text-danger">Rejected: @m.RejectionReason</small>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(m.ReversalReason))
+                                    {
+                                        <small class="text-secondary">Reversed: @m.ReversalReason</small>
+                                    }
+                                </td>
+                                <td class="small">
+                                    <div>By: <strong>@m.CreatedBy</strong></div>
+                                    @if (!string.IsNullOrWhiteSpace(m.ApprovedBy))
+                                    {
+                                        <div class="text-success">Appr: @m.ApprovedBy</div>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="badge @GetStatusBadgeClass(m.Status)">@m.Status</span>
+                                </td>
+                                <td class="text-end fw-bold @(IsInflow(m.MovementType) ? "text-success" : "text-danger")">
+                                    @(IsInflow(m.MovementType) ? "+" : "-")₱@m.Amount.ToString("N2")
+                                </td>
+                                <td class="text-end px-3">
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-secondary" title="Details & Voucher" @onclick="() => selectedMovement = m">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                        @if (m.Status == "PENDING_APPROVAL")
+                                        {
+                                            <button class="btn btn-outline-success" title="Approve" @onclick='() => OpenActionModal(m, "APPROVE")'>
+                                                <i class="bi bi-check-lg"></i>
+                                            </button>
+                                            <button class="btn btn-outline-danger" title="Reject" @onclick='() => OpenActionModal(m, "REJECT")'>
+                                                <i class="bi bi-x-lg"></i>
+                                            </button>
+                                        }
+                                        @if (m.Status == "POSTED" && m.MovementType != "REVERSAL")
+                                        {
+                                            <button class="btn btn-outline-warning" title="Reverse Movement" @onclick='() => OpenActionModal(m, "REVERSE")'>
+                                                <i class="bi bi-arrow-counterclockwise"></i>
+                                            </button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    else if (activeTab == "PENDING")
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+            <div class="card-header bg-warning-subtle py-3 px-4 border-0">
+                <h6 class="fw-bold mb-0 text-dark">
+                    <i class="bi bi-shield-lock me-1"></i> Pending Supervisor Approvals (@PendingMovements.Count())
+                </h6>
+                <small class="text-secondary">Pending requests do not affect Expected Cash Drawer Balance until approved and posted.</small>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead class="table-light text-uppercase small text-secondary">
+                        <tr>
+                            <th class="py-3 px-4">Voucher Ref</th>
+                            <th class="py-3">Requested At</th>
+                            <th class="py-3">Branch / Outlet / Shift</th>
+                            <th class="py-3">Type / Category</th>
+                            <th class="py-3">Reason</th>
+                            <th class="py-3">Requested By</th>
+                            <th class="py-3 text-end">Amount</th>
+                            <th class="py-3 text-end px-4">Decision</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!PendingMovements.Any())
+                        {
+                            <tr>
+                                <td colspan="8" class="text-center py-4 text-muted">No pending cash movement approval requests.</td>
+                            </tr>
+                        }
+                        @foreach (var m in PendingMovements)
+                        {
+                            <tr>
+                                <td class="px-4 fw-bold font-monospace">@m.ReferenceNumber</td>
+                                <td class="small text-secondary">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>B#@m.BranchId / O#@m.OutletId / Shift #@m.ShiftId</td>
+                                <td>
+                                    <span class="badge @GetTypeBadgeClass(m.MovementType)">@m.MovementType</span>
+                                    <span class="small text-secondary ms-1">@m.CategoryName</span>
+                                </td>
+                                <td>@m.Reason</td>
+                                <td>@m.CreatedBy</td>
+                                <td class="text-end fw-bold text-danger">₱@m.Amount.ToString("N2")</td>
+                                <td class="text-end px-4">
+                                    <button class="btn btn-sm btn-success fw-bold me-1" @onclick='() => OpenActionModal(m, "APPROVE")'>
+                                        <i class="bi bi-check-lg me-1"></i> Approve
+                                    </button>
+                                    <button class="btn btn-sm btn-danger fw-bold" @onclick='() => OpenActionModal(m, "REJECT")'>
+                                        <i class="bi bi-x-lg me-1"></i> Reject
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    else if (activeTab == "REVERSALS")
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+            <div class="card-header bg-light py-3 px-4 border-0">
+                <h6 class="fw-bold mb-0 text-dark">Reversal History & Full Audit Trail</h6>
+                <small class="text-secondary">Posted movements are immutable; corrections create linked REVERSAL audit entries.</small>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead class="table-light text-uppercase small text-secondary">
+                        <tr>
+                            <th class="py-3 px-4">Voucher Ref</th>
+                            <th class="py-3">Type</th>
+                            <th class="py-3">Status</th>
+                            <th class="py-3">Created Audit</th>
+                            <th class="py-3">Approval Audit</th>
+                            <th class="py-3">Reversal / Rejection Audit</th>
+                            <th class="py-3 text-end px-4">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!ReversedOrReversalMovements.Any())
+                        {
+                            <tr>
+                                <td colspan="7" class="text-center py-4 text-muted">No reversals or rejected movements recorded in this period.</td>
+                            </tr>
+                        }
+                        @foreach (var m in ReversedOrReversalMovements)
+                        {
+                            <tr>
+                                <td class="px-4 fw-bold font-monospace">
+                                    @m.ReferenceNumber
+                                    @if (m.OriginalMovementId.HasValue)
+                                    {
+                                        <div class="small text-muted">Orig ID: #@m.OriginalMovementId</div>
+                                    }
+                                </td>
+                                <td><span class="badge @GetTypeBadgeClass(m.MovementType)">@m.MovementType</span></td>
+                                <td><span class="badge @GetStatusBadgeClass(m.Status)">@m.Status</span></td>
+                                <td class="small">
+                                    <div>By: <strong>@m.CreatedBy</strong></div>
+                                    <div class="text-secondary">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</div>
+                                </td>
+                                <td class="small">
+                                    @if (!string.IsNullOrWhiteSpace(m.ApprovedBy))
+                                    {
+                                        <div>By: <strong>@m.ApprovedBy</strong></div>
+                                        <div class="text-secondary">@m.ApprovedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">—</span>
+                                    }
+                                </td>
+                                <td class="small">
+                                    @if (!string.IsNullOrWhiteSpace(m.ReversedBy))
+                                    {
+                                        <div class="text-danger fw-semibold">Reversed by @m.ReversedBy (@m.ReversedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))</div>
+                                        <div>Reason: @m.ReversalReason</div>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(m.RejectionReason))
+                                    {
+                                        <div class="text-danger fw-semibold">Rejected: @m.RejectionReason</div>
+                                    }
+                                    else
+                                    {
+                                        <div>@m.Reason</div>
+                                    }
+                                </td>
+                                <td class="text-end px-4 fw-bold">₱@m.Amount.ToString("N2")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    else if (activeTab == "SUMMARY")
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+            <div class="card-header bg-light py-3 px-4 border-0 d-flex justify-content-between align-items-center">
+                <div>
+                    <h6 class="fw-bold mb-0 text-dark">Cash Movement Summary by Category & Type</h6>
+                    <small class="text-secondary">Note: Petty Cash and Cash Paid-Out are non-sales drawer movements and never reduce BIR Gross Sales or Output VAT.</small>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead class="table-light text-uppercase small text-secondary">
+                        <tr>
+                            <th class="py-3 px-4">Category</th>
+                            <th class="py-3">Movement Type</th>
+                            <th class="py-3 text-center">Posted Transactions</th>
+                            <th class="py-3 text-end px-4">Total Amount (PHP)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (summaryReport == null || !summaryReport.ByCategory.Any())
+                        {
+                            <tr>
+                                <td colspan="4" class="text-center py-4 text-muted">No posted movements for the selected criteria.</td>
+                            </tr>
+                        }
+                        else
+                        {
+                            @foreach (var item in summaryReport.ByCategory)
+                            {
+                                <tr>
+                                    <td class="px-4 fw-bold">@item.CategoryName</td>
+                                    <td><span class="badge @GetTypeBadgeClass(item.MovementType)">@item.MovementType</span></td>
+                                    <td class="text-center">@item.Count</td>
+                                    <td class="text-end px-4 fw-bold @(IsInflow(item.MovementType) ? "text-success" : "text-danger")">
+                                        @(IsInflow(item.MovementType) ? "+" : "-")₱@item.TotalAmount.ToString("N2")
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    else if (activeTab == "CATEGORIES")
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead class="table-light text-uppercase small text-secondary">
+                        <tr>
+                            <th class="py-3 px-4">ID</th>
+                            <th class="py-3">Name</th>
+                            <th class="py-3">Movement Type</th>
+                            <th class="py-3">Description</th>
+                            <th class="py-3 text-center">Requires Supervisor Approval</th>
+                            <th class="py-3 text-center">Active</th>
+                            <th class="py-3 text-end px-4">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var cat in categories)
+                        {
+                            <tr>
+                                <td class="px-4 font-monospace">#@cat.CategoryId</td>
+                                <td class="fw-bold">@cat.Name</td>
+                                <td><span class="badge @GetTypeBadgeClass(cat.MovementType)">@cat.MovementType</span></td>
+                                <td class="text-secondary small">@(cat.Description ?? "—")</td>
+                                <td class="text-center">
+                                    @if (cat.RequiresApproval)
+                                    {
+                                        <span class="badge bg-warning text-dark">Required</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary-subtle text-dark">Standard</span>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge @(cat.IsActive ? "bg-success" : "bg-secondary")">@(cat.IsActive ? "Active" : "Inactive")</span>
+                                </td>
+                                <td class="text-end px-4">
+                                    <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => OpenEditCategoryModal(cat)">
+                                        <i class="bi bi-pencil"></i> Edit
+                                    </button>
+                                    @if (cat.IsActive)
+                                    {
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeactivateCategoryAsync(cat)">
+                                            <i class="bi bi-slash-circle"></i> Deactivate
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Category Create / Edit Modal -->
+@if (showCategoryModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content rounded-4 border-0 shadow">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold">@(editingCategoryId.HasValue ? "Edit Movement Category" : "New Movement Category")</h5>
+                    <button type="button" class="btn-close" @onclick="() => showCategoryModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Category Name</label>
+                        <input type="text" class="form-control" @bind="categoryForm.Name" placeholder="e.g., Ice & Emergency Supplies" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Movement Type</label>
+                        <select class="form-select" @bind="categoryForm.MovementType">
+                            <option value="PETTY_CASH">PETTY_CASH (Petty Cash Expense)</option>
+                            <option value="CASH_OUT">CASH_OUT (Cash Paid-Out)</option>
+                            <option value="CASH_IN">CASH_IN (Cash Paid-In / Additional Float)</option>
+                            <option value="CASH_DROP">CASH_DROP (Safe Drop / Skim)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Description</label>
+                        <textarea class="form-control" rows="2" @bind="categoryForm.Description"></textarea>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="reqApprCheck" @bind="categoryForm.RequiresApproval" />
+                        <label class="form-check-label fw-semibold" for="reqApprCheck">Require Supervisor / Manager Approval</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="isActiveCheck" @bind="categoryForm.IsActive" />
+                        <label class="form-check-label fw-semibold" for="isActiveCheck">Category Active</label>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button class="btn btn-light" @onclick="() => showCategoryModal = false">Cancel</button>
+                    <button class="btn btn-primary fw-bold" @onclick="SaveCategoryAsync" disabled="@isSubmitting">Save Category</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Approve / Reject / Reverse Action Modal -->
+@if (actionMovement != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content rounded-4 border-0 shadow">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold">
+                        @(actionMode == "APPROVE" ? "Approve Cash Movement" : actionMode == "REJECT" ? "Reject Cash Movement" : "Reverse Posted Cash Movement")
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="() => actionMovement = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="p-3 rounded-3 bg-light mb-3 small">
+                        <div><strong>Voucher Ref:</strong> @actionMovement.ReferenceNumber</div>
+                        <div><strong>Type / Category:</strong> @actionMovement.MovementType — @actionMovement.CategoryName</div>
+                        <div><strong>Amount:</strong> ₱@actionMovement.Amount.ToString("N2")</div>
+                        <div><strong>Reason:</strong> @actionMovement.Reason</div>
+                        <div><strong>Created By:</strong> @actionMovement.CreatedBy</div>
+                    </div>
+
+                    @if (actionMode != "APPROVE")
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">@(actionMode == "REJECT" ? "Rejection Reason" : "Reversal Reason") *</label>
+                            <textarea class="form-control" rows="2" @bind="actionReason" placeholder="Enter mandatory audit reason..."></textarea>
+                        </div>
+                    }
+
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">Supervisor PIN *</label>
+                        <input type="password" class="form-control" @bind="actionPin" placeholder="Enter Supervisor / Manager PIN" />
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button class="btn btn-light" @onclick="() => actionMovement = null">Cancel</button>
+                    <button class="btn @(actionMode == "APPROVE" ? "btn-success" : "btn-danger") fw-bold"
+                            @onclick="SubmitActionAsync" disabled="@isSubmitting">
+                        Confirm @actionMode
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Movement Details & Printable Voucher Modal -->
+@if (selectedMovement != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content rounded-4 border-0 shadow">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title fw-bold">Cash Movement Voucher</h5>
+                    <button type="button" class="btn-close" @onclick="() => selectedMovement = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="border rounded-3 p-3 font-monospace small bg-light">
+                        <div class="text-center fw-bold fs-6 mb-2">CASH MOVEMENT VOUCHER</div>
+                        <div class="text-center text-secondary mb-2">(NON-FISCAL INTERNAL VOUCHER - NOT A BIR INVOICE)</div>
+                        <hr class="my-2" />
+                        <div><strong>Voucher Ref:</strong> @selectedMovement.ReferenceNumber</div>
+                        <div><strong>Movement ID:</strong> #@selectedMovement.MovementId</div>
+                        <div><strong>Branch / Outlet:</strong> Branch #@selectedMovement.BranchId / Outlet #@selectedMovement.OutletId</div>
+                        <div><strong>Shift ID:</strong> #@selectedMovement.ShiftId</div>
+                        <div><strong>Type:</strong> @selectedMovement.MovementType</div>
+                        <div><strong>Category:</strong> @(selectedMovement.CategoryName ?? "Uncategorized")</div>
+                        <div><strong>Status:</strong> @selectedMovement.Status</div>
+                        <div><strong>Amount:</strong> PHP @selectedMovement.Amount.ToString("N2")</div>
+                        <div><strong>Reason:</strong> @selectedMovement.Reason</div>
+                        <hr class="my-2" />
+                        <div><strong>Created By:</strong> @selectedMovement.CreatedBy (@selectedMovement.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))</div>
+                        @if (!string.IsNullOrWhiteSpace(selectedMovement.ApprovedBy))
+                        {
+                            <div><strong>Approved By:</strong> @selectedMovement.ApprovedBy (@selectedMovement.ApprovedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(selectedMovement.ReversedBy))
+                        {
+                            <div><strong>Reversed By:</strong> @selectedMovement.ReversedBy (@selectedMovement.ReversedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))</div>
+                            <div><strong>Reversal Reason:</strong> @selectedMovement.ReversalReason</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button class="btn btn-secondary" @onclick="() => selectedMovement = null">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string activeTab = "HISTORY";
+    private bool isLoading;
+    private bool isSubmitting;
+
+    private List<BranchDto> branches = new();
+    private List<CashMovementCategoryDto> categories = new();
+    private List<CashMovementResponseDto> movements = new();
+    private CashMovementSummaryReportDto? summaryReport;
+
+    // Filters
+    private int? filterBranchId;
+    private int? filterOutletId;
+    private string? filterCashierId;
+    private string? filterMovementType;
+    private string? filterStatus;
+    private int? filterCategoryId;
+    private DateTime? filterStartDate = DateTime.Today.AddDays(-30);
+    private DateTime? filterEndDate = DateTime.Today;
+
+    // Category Modal
+    private bool showCategoryModal;
+    private int? editingCategoryId;
+    private CashMovementCategoryDto categoryForm = new();
+
+    // Action Modal
+    private CashMovementResponseDto? actionMovement;
+    private string actionMode = "APPROVE";
+    private string actionReason = string.Empty;
+    private string actionPin = string.Empty;
+
+    // Voucher Modal
+    private CashMovementResponseDto? selectedMovement;
+
+    private IEnumerable<CashMovementResponseDto> PendingMovements =>
+        movements.Where(m => m.Status == "PENDING_APPROVAL");
+
+    private IEnumerable<CashMovementResponseDto> ReversedOrReversalMovements =>
+        movements.Where(m => m.Status == "REVERSED" || m.Status == "REJECTED" || m.MovementType == "REVERSAL");
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAllDataAsync();
+    }
+
+    private async Task LoadAllDataAsync()
+    {
+        isLoading = true;
+        try
+        {
+            branches = await BranchService.GetBranchesAsync();
+            categories = await Http.GetFromJsonAsync<List<CashMovementCategoryDto>>("api/cash-drawer/categories?activeOnly=false") ?? new();
+            await ApplyFiltersAsync();
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Failed to load cash movement management data: " + ex.Message, SweetAlertIcon.Error);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var query = new List<string>();
+            if (filterBranchId.HasValue) query.Add($"branchId={filterBranchId.Value}");
+            if (filterOutletId.HasValue) query.Add($"outletId={filterOutletId.Value}");
+            if (!string.IsNullOrWhiteSpace(filterCashierId)) query.Add($"cashierId={Uri.EscapeDataString(filterCashierId)}");
+            if (!string.IsNullOrWhiteSpace(filterMovementType)) query.Add($"movementType={Uri.EscapeDataString(filterMovementType)}");
+            if (!string.IsNullOrWhiteSpace(filterStatus)) query.Add($"status={Uri.EscapeDataString(filterStatus)}");
+            if (filterCategoryId.HasValue) query.Add($"categoryId={filterCategoryId.Value}");
+            if (filterStartDate.HasValue) query.Add($"startDate={filterStartDate.Value:yyyy-MM-dd}");
+            if (filterEndDate.HasValue) query.Add($"endDate={filterEndDate.Value:yyyy-MM-dd}");
+
+            string qs = query.Count > 0 ? "?" + string.Join("&", query) : string.Empty;
+            movements = await Http.GetFromJsonAsync<List<CashMovementResponseDto>>($"api/cash-drawer/movements{qs}") ?? new();
+            summaryReport = await Http.GetFromJsonAsync<CashMovementSummaryReportDto>($"api/cash-drawer/reports/summary{qs}");
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Failed to filter cash movements: " + ex.Message, SweetAlertIcon.Error);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ClearFiltersAsync()
+    {
+        filterBranchId = null;
+        filterOutletId = null;
+        filterCashierId = null;
+        filterMovementType = null;
+        filterStatus = null;
+        filterCategoryId = null;
+        filterStartDate = DateTime.Today.AddDays(-30);
+        filterEndDate = DateTime.Today;
+        await ApplyFiltersAsync();
+    }
+
+    private void OpenNewCategoryModal()
+    {
+        editingCategoryId = null;
+        categoryForm = new CashMovementCategoryDto
+        {
+            MovementType = "PETTY_CASH",
+            RequiresApproval = true,
+            IsActive = true
+        };
+        showCategoryModal = true;
+    }
+
+    private void OpenEditCategoryModal(CashMovementCategoryDto cat)
+    {
+        editingCategoryId = cat.CategoryId;
+        categoryForm = new CashMovementCategoryDto
+        {
+            CategoryId = cat.CategoryId,
+            Name = cat.Name,
+            Description = cat.Description,
+            MovementType = cat.MovementType,
+            RequiresApproval = cat.RequiresApproval,
+            IsActive = cat.IsActive
+        };
+        showCategoryModal = true;
+    }
+
+    private async Task SaveCategoryAsync()
+    {
+        if (string.IsNullOrWhiteSpace(categoryForm.Name))
+        {
+            await Swal.FireAsync("Validation", "Category name is required.", SweetAlertIcon.Warning);
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            HttpResponseMessage resp;
+            if (editingCategoryId.HasValue)
+            {
+                resp = await Http.PutAsJsonAsync($"api/cash-drawer/categories/{editingCategoryId.Value}", categoryForm);
+            }
+            else
+            {
+                resp = await Http.PostAsJsonAsync("api/cash-drawer/categories", categoryForm);
+            }
+
+            if (resp.IsSuccessStatusCode)
+            {
+                showCategoryModal = false;
+                await LoadAllDataAsync();
+                await Swal.FireAsync("Saved", "Category saved successfully.", SweetAlertIcon.Success);
+            }
+            else
+            {
+                var err = await resp.Content.ReadAsStringAsync();
+                await Swal.FireAsync("Error", err, SweetAlertIcon.Error);
+            }
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task DeactivateCategoryAsync(CashMovementCategoryDto cat)
+    {
+        var resp = await Http.DeleteAsync($"api/cash-drawer/categories/{cat.CategoryId}");
+        if (resp.IsSuccessStatusCode)
+        {
+            await LoadAllDataAsync();
+        }
+    }
+
+    private void OpenActionModal(CashMovementResponseDto movement, string mode)
+    {
+        actionMovement = movement;
+        actionMode = mode;
+        actionReason = string.Empty;
+        actionPin = string.Empty;
+    }
+
+    private async Task SubmitActionAsync()
+    {
+        if (actionMovement == null) return;
+        isSubmitting = true;
+        try
+        {
+            HttpResponseMessage resp;
+            if (actionMode == "APPROVE")
+            {
+                resp = await Http.PostAsJsonAsync($"api/cash-drawer/movements/{actionMovement.MovementId}/approve", new CashMovementApproveRejectDto
+                {
+                    SupervisorPin = actionPin
+                });
+            }
+            else if (actionMode == "REJECT")
+            {
+                resp = await Http.PostAsJsonAsync($"api/cash-drawer/movements/{actionMovement.MovementId}/reject", new CashMovementApproveRejectDto
+                {
+                    Reason = actionReason,
+                    SupervisorPin = actionPin
+                });
+            }
+            else
+            {
+                resp = await Http.PostAsJsonAsync($"api/cash-drawer/movements/{actionMovement.MovementId}/reverse", new CashMovementReverseDto
+                {
+                    Reason = actionReason,
+                    SupervisorPin = actionPin
+                });
+            }
+
+            if (resp.IsSuccessStatusCode)
+            {
+                actionMovement = null;
+                await ApplyFiltersAsync();
+                await Swal.FireAsync("Success", $"Cash movement {actionMode.ToLowerInvariant()}d successfully.", SweetAlertIcon.Success);
+            }
+            else
+            {
+                var err = await resp.Content.ReadAsStringAsync();
+                await Swal.FireAsync("Action Failed", err, SweetAlertIcon.Error);
+            }
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private static bool IsInflow(string movementType) =>
+        string.Equals(movementType, "CASH_IN", StringComparison.OrdinalIgnoreCase);
+
+    private static string GetTypeBadgeClass(string movementType) => movementType?.ToUpperInvariant() switch
+    {
+        "CASH_IN" => "bg-success-subtle text-success",
+        "PETTY_CASH" => "bg-danger-subtle text-danger",
+        "CASH_OUT" => "bg-warning-subtle text-dark",
+        "CASH_DROP" => "bg-info-subtle text-dark",
+        "REVERSAL" => "bg-secondary-subtle text-dark",
+        _ => "bg-light text-dark"
+    };
+
+    private static string GetStatusBadgeClass(string status) => status?.ToUpperInvariant() switch
+    {
+        "POSTED" => "bg-success",
+        "PENDING_APPROVAL" => "bg-warning text-dark",
+        "REJECTED" => "bg-danger",
+        "REVERSED" => "bg-secondary",
+        _ => "bg-light text-dark"
+    };
+}

@@ -17,6 +17,22 @@ namespace POS.Api.Controllers;
 [Authorize]
 public class TransactionsController(PosDbContext context, IReceiptService receiptService) : ControllerBase
 {
+    private bool IsSupervisor() =>
+        User.IsInRole("Admin") || User.IsInRole("Manager") || User.IsInRole("SeniorCashier");
+
+    // Orders.CreatedAt is stored as UTC in a 'timestamp without time zone' column.
+    private static DateTime ToUtcUnspecified(DateTime value) =>
+        DateTime.SpecifyKind(value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value, DateTimeKind.Unspecified);
+
+    // Business day starts at 04:00 AM Philippine Time (UTC+8).
+    private static DateTime GetBusinessDayCutoffUtc()
+    {
+        var nowPht = DateTime.UtcNow.AddHours(8);
+        var businessDate = nowPht.TimeOfDay < TimeSpan.FromHours(4) ? nowPht.Date.AddDays(-1) : nowPht.Date;
+        var businessDayStartPht = businessDate.AddHours(4);
+        return businessDayStartPht.AddHours(-8);
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<OrderResponseDto>>> GetTransactions(
         [FromQuery] DateTime? dateFrom,
@@ -43,7 +59,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             .AsQueryable();
 
         // Non-Admin/Manager/SeniorCashier users (Ordinary Cashiers) can only view their own transactions
-        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && !User.IsInRole("SeniorCashier"))
+        if (!IsSupervisor())
         {
             var currentUsername = User.Identity?.Name;
             if (!string.IsNullOrWhiteSpace(currentUsername))
@@ -54,22 +70,59 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             {
                 return Forbid();
             }
+
+            // Enforce branch and outlet scoping from token claims if present
+            var branchClaim = User.FindFirst("branch_id")?.Value;
+            var outletClaim = User.FindFirst("outlet_id")?.Value;
+
+            if (int.TryParse(branchClaim, out var bClaimId))
+            {
+                if (branchId.HasValue && branchId.Value != bClaimId) return Forbid();
+                query = query.Where(o => o.BranchId == bClaimId);
+            }
+            else if (branchId.HasValue)
+            {
+                query = query.Where(o => o.BranchId == branchId.Value);
+            }
+
+            if (int.TryParse(outletClaim, out var oClaimId))
+            {
+                if (outletId.HasValue && outletId.Value != oClaimId) return Forbid();
+                query = query.Where(o => o.OutletId == oClaimId);
+            }
+            else if (outletId.HasValue)
+            {
+                query = query.Where(o => o.OutletId == outletId.Value);
+            }
+
+            // Safety net: 4:00 AM cutoff of current business day (sales reset at 4am)
+            var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
+            var requested = dateFrom.HasValue ? ToUtcUnspecified(dateFrom.Value) : floor;
+            dateFrom = requested < floor ? floor : requested;
+        }
+        else
+        {
+            if (branchId.HasValue)
+                query = query.Where(o => o.BranchId == branchId.Value);
+
+            if (outletId.HasValue)
+                query = query.Where(o => o.OutletId == outletId.Value);
+
+            if (!string.IsNullOrWhiteSpace(cashierId))
+                query = query.Where(o => o.CashierId == cashierId);
         }
 
         if (dateFrom.HasValue)
-            query = query.Where(o => o.CreatedAt >= dateFrom.Value);
+        {
+            var from = ToUtcUnspecified(dateFrom.Value);
+            query = query.Where(o => o.CreatedAt >= from);
+        }
 
         if (dateTo.HasValue)
-            query = query.Where(o => o.CreatedAt <= dateTo.Value);
-
-        if (branchId.HasValue)
-            query = query.Where(o => o.BranchId == branchId.Value);
-
-        if (outletId.HasValue)
-            query = query.Where(o => o.OutletId == outletId.Value);
-
-        if (!string.IsNullOrWhiteSpace(cashierId) && (User.IsInRole("Admin") || User.IsInRole("Manager") || User.IsInRole("SeniorCashier")))
-            query = query.Where(o => o.CashierId == cashierId);
+        {
+            var to = ToUtcUnspecified(dateTo.Value);
+            query = query.Where(o => o.CreatedAt <= to);
+        }
 
         if (!string.IsNullOrWhiteSpace(orderNumber))
             query = query.Where(o => o.OrderNumber.Contains(orderNumber));
@@ -171,6 +224,25 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
 
         if (order == null) return NotFound();
 
+        if (!IsSupervisor())
+        {
+            if (string.IsNullOrWhiteSpace(User.Identity?.Name) ||
+                !string.Equals(order.CashierId, User.Identity.Name, StringComparison.OrdinalIgnoreCase))
+                return Forbid();
+
+            var branchClaim = User.FindFirst("branch_id")?.Value;
+            if (int.TryParse(branchClaim, out var bClaimId) && order.BranchId != bClaimId)
+                return Forbid();
+
+            var outletClaim = User.FindFirst("outlet_id")?.Value;
+            if (int.TryParse(outletClaim, out var oClaimId) && order.OutletId != oClaimId)
+                return Forbid();
+
+            var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
+            if (order.CreatedAt < floor)
+                return Forbid();
+        }
+
         var dto = new OrderResponseDto
         {
             OrderId = order.OrderId,
@@ -242,13 +314,23 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         }
 
         var owner = await context.Orders.AsNoTracking()
-            .Where(o => o.OrderId == id).Select(o => new { o.CashierId }).SingleOrDefaultAsync(cancellationToken);
+            .Where(o => o.OrderId == id).Select(o => new { o.CashierId, o.BranchId, o.OutletId }).SingleOrDefaultAsync(cancellationToken);
         if (owner == null) return NotFound();
 
-        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && !User.IsInRole("SeniorCashier") &&
-            (string.IsNullOrWhiteSpace(User.Identity?.Name) ||
-             !string.Equals(owner.CashierId, User.Identity.Name, StringComparison.OrdinalIgnoreCase)))
-            return Forbid();
+        if (!IsSupervisor())
+        {
+            if (string.IsNullOrWhiteSpace(User.Identity?.Name) ||
+                !string.Equals(owner.CashierId, User.Identity.Name, StringComparison.OrdinalIgnoreCase))
+                return Forbid();
+
+            var branchClaim = User.FindFirst("branch_id")?.Value;
+            if (int.TryParse(branchClaim, out var bClaimId) && owner.BranchId != bClaimId)
+                return Forbid();
+
+            var outletClaim = User.FindFirst("outlet_id")?.Value;
+            if (int.TryParse(outletClaim, out var oClaimId) && owner.OutletId != oClaimId)
+                return Forbid();
+        }
 
         var receipt = await receiptService.GetReceiptAsync(id, reprint);
         if (receipt == null) return NotFound();
@@ -263,7 +345,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
                     // Use a new context instance or direct raw insert to avoid tracking conflicts on audit logging
                     await context.Database.ExecuteSqlRawAsync(
                         "INSERT INTO \"ReceiptReprintLogs\" (\"OrderId\", \"InvoiceNumber\", \"BranchId\", \"OutletId\", \"CashierId\", \"ReprintReason\", \"ReprintedAt\", \"PrinterName\", \"PrintStatus\") VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8})",
-                        [order.OrderId, (object?)order.InvoiceNumber ?? DBNull.Value, order.BranchId, order.OutletId, order.CashierId, "CONTROLLED_REPRINT", DateTime.UtcNow, "EPSON TM-T88IV Receipt", "SUCCESS"],
+                        [order.OrderId, (object?)order.InvoiceNumber ?? DBNull.Value, order.BranchId, order.OutletId, order.CashierId, "CONTROLLED_REPRINT", DateTime.UtcNow, "SYSTEM_DEFAULT_PRINTER", "SUCCESS"],
                         cancellationToken);
                 }
             }
@@ -277,6 +359,41 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         return Ok(receipt);
     }
 
+    [HttpPost("{id:long}/void")]
+    public async Task<ActionResult<VoidResponseDto>> VoidSpecificTransaction(long id, [FromBody] VoidRequestDto dto, CancellationToken cancellationToken = default)
+    {
+        if (dto == null || string.IsNullOrWhiteSpace(dto.VoidReason))
+            return BadRequest("Void reason is required.");
+
+        dto.OriginalOrderId = id;
+        var returnsController = new ReturnsController(context);
+        returnsController.ControllerContext = ControllerContext;
+        return await returnsController.VoidTransaction(dto, cancellationToken);
+    }
+
+    [HttpGet("{id:long}/void")]
+    public async Task<ActionResult<VoidResponseDto>> GetTransactionVoid(long id, CancellationToken cancellationToken = default)
+    {
+        var voidRecord = await context.TransactionVoids
+            .AsNoTracking()
+            .SingleOrDefaultAsync(v => v.OriginalOrderId == id, cancellationToken);
+
+        if (voidRecord == null) return NotFound("No void record found for this transaction.");
+
+        return Ok(new VoidResponseDto
+        {
+            VoidId = voidRecord.VoidId,
+            OriginalOrderId = voidRecord.OriginalOrderId,
+            OriginalInvoiceNumber = voidRecord.OriginalInvoiceNumber,
+            VoidReason = voidRecord.VoidReason,
+            RequestedBy = voidRecord.RequestedBy,
+            ApprovedBy = voidRecord.ApprovedBy,
+            VoidedAt = voidRecord.VoidedAt,
+            Status = voidRecord.Status,
+            ReversalReference = voidRecord.ReversalReference
+        });
+    }
+
     [HttpGet("summary")]
     public async Task<ActionResult<TransactionSummaryDto>> GetTransactionSummary(
         [FromQuery] DateTime? dateFrom,
@@ -288,20 +405,62 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
     {
         var query = context.Orders.AsNoTracking().Where(o => o.PaymentStatus == "PAID");
 
+        if (!IsSupervisor())
+        {
+            var currentUsername = User.Identity?.Name;
+            if (!string.IsNullOrWhiteSpace(currentUsername))
+            {
+                query = query.Where(o => o.CashierId == currentUsername);
+            }
+            else
+            {
+                return Forbid();
+            }
+
+            var branchClaim = User.FindFirst("branch_id")?.Value;
+            var outletClaim = User.FindFirst("outlet_id")?.Value;
+
+            if (int.TryParse(branchClaim, out var bClaimId))
+            {
+                if (branchId.HasValue && branchId.Value != bClaimId) return Forbid();
+                query = query.Where(o => o.BranchId == bClaimId);
+            }
+            else if (branchId.HasValue)
+            {
+                query = query.Where(o => o.BranchId == branchId.Value);
+            }
+
+            if (int.TryParse(outletClaim, out var oClaimId))
+            {
+                if (outletId.HasValue && outletId.Value != oClaimId) return Forbid();
+                query = query.Where(o => o.OutletId == oClaimId);
+            }
+            else if (outletId.HasValue)
+            {
+                query = query.Where(o => o.OutletId == outletId.Value);
+            }
+
+            var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
+            var requested = dateFrom.HasValue ? ToUtcUnspecified(dateFrom.Value) : floor;
+            dateFrom = requested < floor ? floor : requested;
+        }
+        else
+        {
+            if (branchId.HasValue)
+                query = query.Where(o => o.BranchId == branchId.Value);
+
+            if (outletId.HasValue)
+                query = query.Where(o => o.OutletId == outletId.Value);
+
+            if (!string.IsNullOrWhiteSpace(cashierId))
+                query = query.Where(o => o.CashierId == cashierId);
+        }
+
         if (dateFrom.HasValue)
-            query = query.Where(o => o.CreatedAt >= dateFrom.Value);
+            query = query.Where(o => o.CreatedAt >= ToUtcUnspecified(dateFrom.Value));
 
         if (dateTo.HasValue)
-            query = query.Where(o => o.CreatedAt <= dateTo.Value);
-
-        if (branchId.HasValue)
-            query = query.Where(o => o.BranchId == branchId.Value);
-
-        if (outletId.HasValue)
-            query = query.Where(o => o.OutletId == outletId.Value);
-
-        if (!string.IsNullOrWhiteSpace(cashierId))
-            query = query.Where(o => o.CashierId == cashierId);
+            query = query.Where(o => o.CreatedAt <= ToUtcUnspecified(dateTo.Value));
 
         var count = await query.CountAsync(cancellationToken);
         var grossSales = await query.SumAsync(o => (decimal?)o.Subtotal, cancellationToken) ?? 0m;

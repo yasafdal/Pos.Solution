@@ -123,6 +123,26 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
             if (order.PaymentStatus == "PAID")
             {
                 await sequenceService.IssueInvoiceNumberAsync(order.OrderId, order.OutletId);
+
+                // Accumulate online CASH payments into active CashDrawerShift for accurate shift reconciliation
+                decimal cashPaid = order.Payments
+                    .Where(p => p.PaymentStatus == "SUCCESS" && string.Equals(p.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
+                    .Sum(p => p.Amount);
+
+                if (cashPaid > 0m)
+                {
+                    var openShift = await context.CashDrawerShifts
+                        .Where(s => s.OutletId == order.OutletId && s.Status == "OPEN")
+                        .OrderByDescending(s => s.OpenedAt)
+                        .FirstOrDefaultAsync();
+
+                    if (openShift != null)
+                    {
+                        openShift.TotalCashSales += cashPaid;
+                        CashDrawerController.RecalculateShiftExpectedBalance(openShift);
+                        await context.SaveChangesAsync();
+                    }
+                }
             }
 
             await transaction.CommitAsync();

@@ -1,0 +1,101 @@
+@page "/held-sales"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject IHeldSaleService HeldSaleService
+@inject SweetAlertService Swal
+
+<PageTitle>Held Sales Management - POS Admin</PageTitle>
+
+<div class="w-100 py-2">
+    <!-- Header Toolbar -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Held Sales Management</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Monitor suspended customer tickets and active parked orders across outlets</span>
+        </div>
+        <div>
+            <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="LoadHeldSales">
+                <i class="bi bi-arrow-repeat me-1"></i> Refresh List
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="w-100">
+        @if (heldSales == null)
+        {
+            <div class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                Loading held sales...
+            </div>
+        }
+        else if (!heldSales.Any())
+        {
+            <div class="card border-0 shadow-sm rounded-4 p-5 text-center bg-white">
+                <i class="bi bi-pause-circle fs-1 text-secondary mb-2"></i>
+                <h5 class="fw-bold text-dark">No Active Held Sales</h5>
+                <p class="text-secondary small mb-0">There are currently no suspended transactions parked on any terminal.</p>
+            </div>
+        }
+        else
+        {
+            <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light text-uppercase fs-7 text-secondary">
+                            <tr>
+                                <th class="py-3 px-4">Hold Reference</th>
+                                <th class="py-3">Outlet #</th>
+                                <th class="py-3">Customer / Notes</th>
+                                <th class="py-3">Cashier</th>
+                                <th class="py-3">Time Held</th>
+                                <th class="py-3 text-center">Items</th>
+                                <th class="py-3 text-end px-4">Total Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var h in heldSales)
+                            {
+                                <tr>
+                                    <td class="px-4 fw-bold font-monospace text-primary">@h.HoldReference</td>
+                                    <td>Outlet #@h.OutletId</td>
+                                    <td>
+                                        <strong>@(string.IsNullOrWhiteSpace(h.CustomerName) ? "Walk-in" : h.CustomerName)</strong>
+                                        @if (!string.IsNullOrWhiteSpace(h.Notes))
+                                        {
+                                            <br /><small class="text-secondary">@h.Notes</small>
+                                        }
+                                    </td>
+                                    <td>@h.CashierId</td>
+                                    <td class="text-secondary small">@h.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="text-center"><span class="badge bg-secondary-subtle text-dark">@h.Items.Sum(i => i.Quantity)</span></td>
+                                    <td class="text-end px-4 fw-bold text-dark">₱@h.TotalAmount.ToString("N2")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<HeldSaleDto>? heldSales;
+
+    protected override async Task OnInitializedAsync() => await LoadHeldSales();
+
+    private async Task LoadHeldSales()
+    {
+        try
+        {
+            heldSales = await HeldSaleService.GetHeldSalesAsync();
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Failed to load held sales: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+}

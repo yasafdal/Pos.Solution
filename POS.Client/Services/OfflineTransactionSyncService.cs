@@ -1,0 +1,403 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http.Json;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using POS.Client.Data;
+using POS.Shared.Models;
+
+namespace POS.Client.Services;
+
+public interface IOfflineTransactionSyncService
+{
+    Task<List<LocalSyncOutbox>> GetPendingOutboxItemsAsync();
+    Task<bool> UploadTransactionAsync(LocalSyncOutbox outboxItem, HttpClient httpClient);
+    Task<string> CheckServerStatusAsync(string localTransactionId, HttpClient httpClient);
+}
+
+public class OfflineTransactionSyncService : IOfflineTransactionSyncService
+{
+    private readonly LocalPosDbContext _localDb;
+
+    public OfflineTransactionSyncService(LocalPosDbContext localDb)
+    {
+        _localDb = localDb;
+    }
+
+    public async Task<List<LocalSyncOutbox>> GetPendingOutboxItemsAsync()
+    {
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+        var now = DateTime.UtcNow;
+        return await db.SyncOutboxes
+            .AsNoTracking()
+            .Where(o => (o.Status == "PENDING" || o.Status == "RETRY_PENDING") && (o.NextRetryAt == null || o.NextRetryAt <= now))
+            .OrderBy(o => o.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<bool> UploadTransactionAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
+    {
+        if (string.Equals(outboxItem.EntityType, "CASH_MOVEMENT", StringComparison.OrdinalIgnoreCase))
+        {
+            return await UploadCashMovementAsync(outboxItem, httpClient);
+        }
+
+        try
+        {
+            LocalOrder? localOrder;
+            List<LocalOrderItem> localItems;
+            List<LocalPayment> localPayments;
+            string terminalId;
+
+            using (var readDb = new LocalPosDbContext())
+            {
+                readDb.InitializeDatabase();
+                localOrder = await readDb.Orders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.OrderId == outboxItem.EntityId);
+
+                if (localOrder == null)
+                {
+                    await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", "Local order record not found for outbox entity.", incrementRetry: false, nextRetryAt: null);
+                    return false;
+                }
+
+                localItems = await readDb.OrderItems
+                    .AsNoTracking()
+                    .Where(i => i.OrderId == localOrder.OrderId)
+                    .ToListAsync();
+
+                localPayments = await readDb.Payments
+                    .AsNoTracking()
+                    .Where(p => p.OrderId == localOrder.OrderId)
+                    .ToListAsync();
+
+                var outletConfig = await readDb.OutletConfigs
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.OutletId == localOrder.OutletId);
+                terminalId = outletConfig?.TerminalIdentifier ?? "TERM-01";
+            }
+
+            OrderCreateDto? payloadOrder = null;
+            try
+            {
+                payloadOrder = System.Text.Json.JsonSerializer.Deserialize<OrderCreateDto>(outboxItem.PayloadJson);
+            }
+            catch
+            {
+                // Fallback to LocalOrderItems snapshot if payload deserialization fails
+            }
+
+            // Build payload mapping exact historical financial snapshots (including modifiers from payloadJson if available)
+            var requestDto = new OfflineTransactionSyncRequest
+            {
+                LocalTransactionId = localOrder.OrderId,
+                TerminalId = terminalId,
+                BranchId = localOrder.BranchId,
+                OutletId = localOrder.OutletId,
+                CashierId = localOrder.CashierId,
+                InvoiceNumber = localOrder.InvoiceNumber,
+                TransactionDate = localOrder.CreatedAt,
+                SchemaVersion = "1.0",
+                FinancialCalculationVersion = "1.0",
+                ReferenceDataVersion = "1.0",
+                IdempotencyKey = localOrder.OrderId,
+                PayloadHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(outboxItem.PayloadJson ?? string.Empty))),
+                Subtotal = localOrder.Subtotal,
+                DiscountAmount = localOrder.DiscountAmount,
+                DiscountCode = localOrder.DiscountCode,
+                VatableSales = localOrder.VatableSales,
+                VatExemptSales = localOrder.VatExemptSales,
+                ZeroRatedSales = localOrder.ZeroRatedSales,
+                VatAmount = localOrder.VatAmount,
+                TotalAmount = localOrder.TotalAmount,
+                Items = localItems.Select((i, idx) =>
+                {
+                    var payloadItem = payloadOrder?.Items != null && idx < payloadOrder.Items.Count
+                        ? payloadOrder.Items[idx]
+                        : null;
+                    return new OfflineTransactionItemDto
+                    {
+                        ProductId = i.ProductId,
+                        ProductName = i.ProductName,
+                        Quantity = i.Quantity,
+                        UnitPrice = i.UnitPrice,
+                        LineTotal = i.LineTotal,
+                        TaxName = i.TaxName,
+                        Modifiers = payloadItem?.Modifiers?.Select(m => new OfflineModifierDto
+                        {
+                            OptionId = m.ModifierOptionId,
+                            Name = m.ModifierName ?? string.Empty,
+                            AdditionalPrice = m.AdditionalPrice
+                        }).ToList() ?? new()
+                    };
+                }).ToList(),
+                Payments = localPayments.Select(p => new OfflinePaymentDto
+                {
+                    Amount = p.Amount,
+                    TenderedAmount = p.TenderedAmount,
+                    ChangeAmount = p.ChangeAmount,
+                    PaymentMethod = p.PaymentMethod,
+                    PaymentStatus = p.PaymentStatus,
+                    PaidAt = p.PaidAt
+                }).ToList()
+            };
+
+            // Mark outbox as UPLOADING using tracked entity under WriteLock
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
+
+            var response = await httpClient.PostAsJsonAsync("api/offline-sync/transactions", requestDto);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<OfflineTransactionSyncResponse>();
+                if (result != null && result.Success)
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "SYNCED",
+                        null,
+                        incrementRetry: false,
+                        nextRetryAt: null,
+                        auditMessage: $"Successfully uploaded and acknowledged offline transaction {localOrder.OrderId} (Invoice: {localOrder.InvoiceNumber})");
+                    return true;
+                }
+            }
+
+            // Handle timeout or unknown state via status check endpoint
+            string serverStatus = await CheckServerStatusAsync(localOrder.OrderId, httpClient);
+            if (serverStatus == "SYNCED")
+            {
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "SYNCED", null, incrementRetry: false, nextRetryAt: null);
+                return true;
+            }
+
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5 || OfflineRetryPolicy.IsPermanentFailureStatusCode((int)response.StatusCode);
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                $"HTTP Upload failed. Status: {response.StatusCode}. Server Status: {serverStatus}",
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5;
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, nextStatus, ex.Message, incrementRetry: true, nextRetryAt: nextRetryTime);
+            return false;
+        }
+    }
+
+    private static async Task UpdateOutboxStatusAsync(
+        long outboxId,
+        string status,
+        string? lastError,
+        bool incrementRetry,
+        DateTime? nextRetryAt,
+        string? auditMessage = null)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var dbItem = await db.SyncOutboxes.FindAsync(outboxId);
+            if (dbItem != null)
+            {
+                dbItem.Status = status;
+                dbItem.LastError = lastError;
+                if (incrementRetry)
+                {
+                    dbItem.RetryCount++;
+                }
+                dbItem.NextRetryAt = nextRetryAt;
+            }
+
+            if (!string.IsNullOrWhiteSpace(auditMessage))
+            {
+                db.SyncAuditLogs.Add(new LocalSyncAuditLog
+                {
+                    Message = auditMessage,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+
+            await db.SaveChangesAsync();
+        }
+        finally
+        {
+            LocalPosDbContext.WriteLock.Release();
+        }
+    }
+
+    public async Task<string> CheckServerStatusAsync(string localTransactionId, HttpClient httpClient)
+    {
+        try
+        {
+            var res = await httpClient.GetAsync($"api/offline-sync/transactions/{localTransactionId}/status");
+            if (res.IsSuccessStatusCode)
+            {
+                return "SYNCED";
+            }
+            return "UNKNOWN";
+        }
+        catch
+        {
+            return "UNREACHABLE";
+        }
+    }
+
+    private async Task<bool> UploadCashMovementAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
+    {
+        try
+        {
+            LocalCashDrawerMovement? localMovement;
+            using (var readDb = new LocalPosDbContext())
+            {
+                readDb.InitializeDatabase();
+                localMovement = await readDb.CashDrawerMovements
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.ClientMovementId == outboxItem.EntityId);
+            }
+
+            if (localMovement == null)
+            {
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", "Local cash movement record not found for outbox entity.", incrementRetry: false, nextRetryAt: null);
+                return false;
+            }
+
+            var requestDto = new OfflineCashMovementSyncRequest
+            {
+                ClientMovementId = localMovement.ClientMovementId,
+                ShiftId = localMovement.ShiftId,
+                BranchId = localMovement.BranchId,
+                OutletId = localMovement.OutletId,
+                MovementType = localMovement.MovementType,
+                CategoryId = localMovement.CategoryId,
+                CategoryName = localMovement.CategoryName,
+                Amount = localMovement.Amount,
+                Reason = localMovement.Reason,
+                ReferenceNumber = localMovement.ReferenceNumber,
+                Status = localMovement.Status,
+                CreatedBy = localMovement.CreatedBy,
+                ApprovedBy = localMovement.ApprovedBy,
+                SupervisorPinHash = localMovement.SupervisorPinHash,
+                CreatedAt = localMovement.CreatedAt,
+                ApprovedAt = localMovement.ApprovedAt,
+                PostedAt = localMovement.PostedAt
+            };
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
+
+            var response = await httpClient.PostAsJsonAsync("api/offline-sync/cash-movements", requestDto);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<OfflineCashMovementSyncResponse>();
+                if (result != null && result.Success)
+                {
+                    await UpdateCashMovementSyncStateAsync(localMovement.ClientMovementId, "SYNCED", result.ServerStatus, result.ReferenceNumber, null);
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "SYNCED",
+                        null,
+                        incrementRetry: false,
+                        nextRetryAt: null,
+                        auditMessage: $"Synchronized offline cash movement {localMovement.ClientMovementId} ({result.ReferenceNumber}) as {result.ServerStatus}");
+                    return true;
+                }
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                var conflictRes = await response.Content.ReadFromJsonAsync<OfflineCashMovementSyncResponse>();
+                string conflictMsg = conflictRes?.Message ?? "Server conflict during cash movement sync.";
+                await UpdateCashMovementSyncStateAsync(localMovement.ClientMovementId, "CONFLICT", localMovement.Status, null, conflictMsg);
+                await UpdateOutboxStatusAsync(
+                    outboxItem.OutboxId,
+                    "NEEDS_ATTENTION",
+                    conflictMsg,
+                    incrementRetry: true,
+                    nextRetryAt: null,
+                    auditMessage: $"Conflict syncing offline cash movement {localMovement.ClientMovementId}: {conflictMsg}");
+                return false;
+            }
+
+            // Check server status in case of timeout after commit
+            var statusRes = await httpClient.GetAsync($"api/offline-sync/cash-movements/{localMovement.ClientMovementId}/status");
+            if (statusRes.IsSuccessStatusCode)
+            {
+                await UpdateCashMovementSyncStateAsync(localMovement.ClientMovementId, "SYNCED", null, null, null);
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "SYNCED", null, incrementRetry: false, nextRetryAt: null);
+                return true;
+            }
+
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5 || OfflineRetryPolicy.IsPermanentFailureStatusCode((int)response.StatusCode);
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            if (isPermanent)
+            {
+                await UpdateCashMovementSyncStateAsync(localMovement.ClientMovementId, "NEEDS_ATTENTION", null, null, $"Upload failed with HTTP {(int)response.StatusCode}");
+            }
+
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                $"Cash movement HTTP upload failed: {response.StatusCode}",
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5;
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, nextStatus, ex.Message, incrementRetry: true, nextRetryAt: nextRetryTime);
+            return false;
+        }
+    }
+
+    private static async Task UpdateCashMovementSyncStateAsync(
+        string clientMovementId,
+        string syncStatus,
+        string? serverStatus,
+        string? serverReferenceNumber,
+        string? syncError)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var m = await db.CashDrawerMovements.FirstOrDefaultAsync(x => x.ClientMovementId == clientMovementId);
+            if (m != null)
+            {
+                m.SyncStatus = syncStatus;
+                m.SyncError = syncError;
+                if (!string.IsNullOrWhiteSpace(serverStatus))
+                    m.Status = serverStatus;
+                if (!string.IsNullOrWhiteSpace(serverReferenceNumber))
+                    m.ReferenceNumber = serverReferenceNumber;
+                await db.SaveChangesAsync();
+            }
+        }
+        finally
+        {
+            LocalPosDbContext.WriteLock.Release();
+        }
+    }
+}
+

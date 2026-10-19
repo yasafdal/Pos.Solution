@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text;
@@ -12,5 +12,8 @@ namespace POS.Shared.Models
 
         [Required]
         public string Password { get; set; } = string.Empty;
+
+        public int? BranchId { get; set; }
+        public int? OutletId { get; set; }
     }
 }

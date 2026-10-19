@@ -1,8 +1,9 @@
-﻿using CurrieTechnologies.Razor.SweetAlert2;
+using CurrieTechnologies.Razor.SweetAlert2;
 using Microsoft.Extensions.Logging;
 using POS.Shared.Interfaces;
 using POS.Shared.Services;
 using POS.Client.Services;
+using POS.Client.Workers;
 
 namespace POS.Client
 {
@@ -25,16 +26,24 @@ namespace POS.Client
 #endif
 
             //Configure the HttpClient to point to your running API (Update the port to match yours)
+            builder.Services.AddSingleton<PosSessionService>();
             builder.Services.AddScoped(sp => new HttpClient
             {
-                BaseAddress = new Uri("https://localhost:7139/")
+                BaseAddress = new Uri("http://localhost:5032/")
             });
 
             //plugins
             builder.Services.AddSweetAlert2();
 
-            // Services
-            builder.Services.AddSingleton<PosSessionService>();
+            // Offline-first services and background worker (Transient DbContext prevents cross-thread collisions)
+            builder.Services.AddTransient<POS.Client.Data.LocalPosDbContext>();
+            builder.Services.AddTransient<IReferenceDataSyncService, ReferenceDataSyncService>();
+            builder.Services.AddTransient<IOfflineCheckoutService, OfflineCheckoutService>();
+            builder.Services.AddTransient<IOfflineTransactionSyncService, OfflineTransactionSyncService>();
+            builder.Services.AddTransient<IOfflineSyncCoordinator, OfflineSyncCoordinator>();
+            builder.Services.AddSingleton<IPosConnectivityService, PosConnectivityService>();
+            builder.Services.AddSingleton<IOfflineBackgroundSyncService, OfflineBackgroundSyncManager>();
+            builder.Services.AddHostedService(sp => (OfflineBackgroundSyncManager)sp.GetRequiredService<IOfflineBackgroundSyncService>());
             builder.Services.AddScoped<CartService>();
             builder.Services.AddScoped<IUserService, UserService>();
             builder.Services.AddScoped<IOutletService, OutletService>();
@@ -46,6 +55,7 @@ namespace POS.Client
             builder.Services.AddScoped<IReceiptService, ReceiptService>();
             builder.Services.AddScoped<IDiscountService, DiscountService>();
             builder.Services.AddScoped<ITransactionService, TransactionService>();
+            builder.Services.AddScoped<IHeldSaleService, ClientHeldSaleService>();
 #if WINDOWS
             builder.Services.AddSingleton<IReceiptPrinter, POS.Client.Platforms.Windows.WindowsReceiptPrinter>();
 #else
@@ -54,7 +64,7 @@ namespace POS.Client
 #if DEBUG
             // Development only: match Outlets.DeviceIdentifier while the API stays on localhost.
             // Set to null to restore OS route detection. Never included in Release builds.
-            const string? developmentTerminalIp = "192.168.1.8";
+            const string? developmentTerminalIp = "192.168.1.6";
             builder.Services.AddScoped<ITerminalAddressProvider>(sp =>
                 new TerminalAddressProvider(sp.GetRequiredService<HttpClient>())
                 {

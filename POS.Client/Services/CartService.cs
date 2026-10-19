@@ -18,7 +18,8 @@ namespace POS.Client.Services
         public IReadOnlyList<CartItem> Items => _items.AsReadOnly();
 
         public decimal Subtotal => _items.Sum(i => i.LineTotal);
-        public decimal Total => Subtotal;
+        public decimal TotalAmount => System.Math.Max(0m, Subtotal - activeDiscountAmount);
+        public decimal Total => TotalAmount;
         public int TotalItems => _items.Sum(i => i.Quantity);
 
         public event Action? OnChange;

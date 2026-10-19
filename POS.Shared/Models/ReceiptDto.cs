@@ -30,6 +30,11 @@ public class ReceiptDto
     public string? CustomerTin { get; set; }
     public string? CustomerBusinessStyle { get; set; }
     public bool IsReprint { get; set; }
+    public bool IsVoid { get; set; }
+    public string? VoidReason { get; set; }
+    public bool IsReturn { get; set; }
+    public string? ReturnReference { get; set; }
+    public string? ReturnReason { get; set; }
     public List<OrderItemResponseDto> Items { get; set; } = new();
     public List<PaymentResponseDto> Payments { get; set; } = new();
 }

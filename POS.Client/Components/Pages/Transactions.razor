@@ -6,8 +6,11 @@
 @inject SweetAlertService Swal
 @inject IUserService UserService
 @inject HttpClient Http
+@inject POS.Client.Services.IPosConnectivityService ConnectivityService
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
+@using POS.Client.Data
+@using Microsoft.EntityFrameworkCore
 
 @if (!Session.IsAuthenticated)
 {
@@ -19,7 +22,17 @@ else
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
                 <h3 class="fw-bold text-dark mb-1">Transaction History</h3>
-                <p class="text-secondary small mb-0">Completed sales for Outlet #@(Session.Outlet?.OutletId ?? 1) (@(Session.Outlet?.OutletName ?? "Terminal"))</p>
+                <p class="text-secondary small mb-0">
+                    Sales since @currentBusinessDayStartLocal.ToString("MMM dd, yyyy 04:00 tt") for Outlet #@(Session.Outlet?.OutletId.ToString() ?? "—") (@(Session.Outlet?.OutletName ?? "Terminal"))
+                    @if (isOfflineMode)
+                    {
+                        <span class="badge bg-warning text-dark px-2 py-1 ms-2"><i class="bi bi-wifi-off me-1"></i> Offline Mode (Local)</span>
+                    }
+                </p>
+                @if (!string.IsNullOrEmpty(loadError))
+                {
+                    <div class="alert alert-warning py-2 px-3 mt-2 mb-0 small" role="alert">@loadError</div>
+                }
             </div>
             <div class="d-flex gap-2">
                 <button class="btn btn-outline-primary btn-sm px-3 fw-medium rounded-3" @onclick="LoadTransactions">
@@ -41,6 +54,7 @@ else
                         <option value="">All Statuses</option>
                         <option value="PAID">Paid</option>
                         <option value="UNPAID">Unpaid</option>
+                        <option value="VOIDED">Voided</option>
                     </select>
                 </div>
                 <div class="col-md-4 d-flex gap-2">
@@ -73,51 +87,58 @@ else
             else
             {
                 <div class="table-responsive">
-                    <table class="table align-middle mb-0">
-                        <thead class="table-light text-uppercase fs-7 text-secondary">
-                            <tr>
-                                <th class="py-3 px-4">Date / Time</th>
-                                <th class="py-3">Invoice #</th>
-                                <th class="py-3">Order #</th>
-                                <th class="py-3">Cashier</th>
-                                <th class="py-3">Status</th>
-                                <th class="py-3 text-end">Total</th>
-                                <th class="py-3 text-end px-4">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var t in transactions)
-                            {
-                                <tr>
-                                    <td class="px-4 text-secondary small">@t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                                    <td class="fw-semibold font-monospace">@(t.InvoiceNumber ?? "—")</td>
-                                    <td>@t.OrderNumber</td>
-                                    <td>@t.CashierId</td>
-                                    <td>
-                                        @if (t.PaymentStatus == "PAID")
-                                        {
-                                            <span class="badge bg-success">PAID</span>
-                                        }
-                                        else
-                                        {
-                                            <span class="badge bg-warning text-dark">UNPAID</span>
-                                        }
-                                    </td>
-                                    <td class="text-end fw-bold text-dark">₱@t.TotalAmount.ToString("N2")</td>
-                                    <td class="text-end px-4">
-                                        <div class="d-flex justify-content-end gap-2">
-                                            <button type="button" class="btn btn-sm btn-info text-white rounded-3 px-3" @onclick="() => ViewDetails(t.OrderId)" title="View Details">
-                                                <i class="bi bi-eye"></i> View
-                                            </button>
-                                            <button type="button" class="btn btn-sm btn-secondary text-white rounded-3 px-3" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint">
-                                                <i class="bi bi-printer"></i> Reprint
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+                <table class="table align-middle mb-0">
+                <thead class="table-light text-uppercase fs-7 text-secondary">
+                    <tr>
+                        <th class="py-3 px-4">Date / Time</th>
+                        <th class="py-3">Invoice #</th>
+                        <th class="py-3">Order #</th>
+                        <th class="py-3">Cashier</th>
+                        <th class="py-3">Status</th>
+                        <th class="py-3 text-end">Total</th>
+                        <th class="py-3 text-end px-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in transactions)
+                    {
+                        <tr>
+                            <td class="px-4 text-secondary small">@t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td class="fw-semibold font-monospace">@(t.InvoiceNumber ?? "—")</td>
+                            <td>@t.OrderNumber</td>
+                            <td>@t.CashierId</td>
+                            <td>
+                                @if (t.PaymentStatus == "PAID")
+                                {
+                                    <span class="badge bg-success">PAID</span>
+                                }
+                                else if (t.PaymentStatus == "VOIDED" || t.OrderStatus == "VOIDED")
+                                {
+                                    <span class="badge bg-danger">VOIDED</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-warning text-dark">UNPAID</span>
+                                }
+                            </td>
+                            <td class="text-end fw-bold text-dark">₱@t.TotalAmount.ToString("N2")</td>
+                            <td class="text-end px-4">
+                                <div class="d-flex justify-content-end gap-2">
+                                    <button type="button" class="btn btn-sm btn-info text-white rounded-3 px-3" @onclick="() => ViewDetails(t.OrderId)" title="View Details">
+                                        <i class="bi bi-eye"></i> View
+                                    </button>
+                                    @if (t.PaymentStatus == "PAID")
+                                    {
+                                        <button type="button" class="btn btn-sm btn-secondary text-white rounded-3 px-3" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint">
+                                            <i class="bi bi-printer"></i> Reprint
+                                        </button>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                </table>
                 </div>
             }
         </div>
@@ -178,9 +199,118 @@ else
                     </div>
                     <div class="modal-footer border-top bg-white px-4 py-3 d-flex justify-content-end gap-2">
                         <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseDetailModal">Close</button>
+                        @if (selectedOrder.PaymentStatus == "PAID" && selectedOrder.OrderStatus != "VOIDED")
+                        {
+                            <button type="button" class="btn btn-outline-danger rounded px-3 fw-bold" @onclick="() => OpenVoidModal(selectedOrder)">
+                                <i class="bi bi-x-circle me-1"></i> Void
+                            </button>
+                            <button type="button" class="btn btn-outline-warning text-dark rounded px-3 fw-bold" @onclick="() => OpenReturnModal(selectedOrder)">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i> Return
+                            </button>
+                        }
                         <button type="button" class="btn btn-primary rounded px-4 fw-bold shadow-sm" @onclick="() => ReprintInvoice(selectedOrder.OrderId)">
-                            <i class="bi bi-printer me-1"></i> Reprint Receipt
+                            <i class="bi bi-printer me-1"></i> Reprint
                         </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+    <!-- Void Modal -->
+    @if (isVoidModalOpen && selectedOrder != null)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                    <div class="modal-header border-bottom px-4 py-3 bg-danger text-white">
+                        <h5 class="modal-title fw-bold mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i> Void Transaction (#@selectedOrder.OrderNumber)</h5>
+                        <button type="button" class="btn-close btn-close-white shadow-none" @onclick="CloseVoidModal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body px-4 py-4">
+                        <div class="alert alert-warning small mb-3">
+                            <strong>Warning:</strong> Voiding this transaction will mark the entire sale and invoice as voided and record offsetting refund entries. This action requires manager authorization.
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold text-dark small">Void Reason <span class="text-danger">*</span></label>
+                            <textarea class="form-control rounded-3" rows="3" placeholder="Enter reason for voiding transaction..." @bind="voidReason"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold text-dark small">Supervisor / Manager PIN <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control rounded-3" placeholder="Enter 4-digit PIN or username" @bind="voidApproverPin" />
+                        </div>
+                    </div>
+                    <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseVoidModal">Cancel</button>
+                        <button type="button" class="btn btn-danger rounded px-4 fw-bold shadow-sm" @onclick="ConfirmVoid">Authorize & Void</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Return / Refund Modal -->
+    @if (isReturnModalOpen && selectedOrder != null)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+                <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                    <div class="modal-header border-bottom px-4 py-3 bg-warning text-dark">
+                        <h5 class="modal-title fw-bold mb-0"><i class="bi bi-arrow-counterclockwise me-2"></i> Return & Refund Items (#@selectedOrder.OrderNumber)</h5>
+                        <button type="button" class="btn-close shadow-none" @onclick="CloseReturnModal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body px-4 py-4">
+                        <p class="text-secondary small mb-3">Select items and quantities to return. Specify the restock disposition for each returned item.</p>
+                        
+                        <div class="table-responsive mb-4">
+                            <table class="table align-middle mb-0">
+                                <thead class="table-light fs-7 text-uppercase text-secondary">
+                                    <tr>
+                                        <th>Product</th>
+                                        <th class="text-center">Purchased</th>
+                                        <th class="text-center" style="width: 120px;">Return Qty</th>
+                                        <th class="text-center" style="width: 160px;">Disposition</th>
+                                        <th class="text-end">Unit Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var item in selectedOrder.Items)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <span class="fw-semibold text-dark">@item.ProductName</span>
+                                            </td>
+                                            <td class="text-center fw-bold">@item.Quantity.ToString("0.###")</td>
+                                            <td class="text-center">
+                                                <input type="number" step="1" min="0" max="@item.Quantity" class="form-control form-control-sm text-center fw-bold" @bind="returnQuantities[item.OrderItemId]" />
+                                            </td>
+                                            <td class="text-center">
+                                                <select class="form-select form-select-sm" @bind="returnDispositions[item.OrderItemId]">
+                                                    <option value="RESTOCK">Restock (Sellable)</option>
+                                                    <option value="DAMAGED">Damaged / Waste</option>
+                                                    <option value="DISCARD">Discard</option>
+                                                </select>
+                                            </td>
+                                            <td class="text-end fw-semibold">₱@item.UnitPrice.ToString("N2")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="form-label fw-semibold text-dark small">Return Reason <span class="text-danger">*</span></label>
+                                <textarea class="form-control rounded-3" rows="2" placeholder="Reason for return/refund..." @bind="returnReason"></textarea>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold text-dark small">Supervisor / Manager PIN <span class="text-danger">*</span></label>
+                                <input type="password" class="form-control rounded-3" placeholder="Enter supervisor PIN or username" @bind="returnApproverPin" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseReturnModal">Cancel</button>
+                        <button type="button" class="btn btn-warning px-4 fw-bold shadow-sm" @onclick="ConfirmReturn">Process Return & Refund</button>
                     </div>
                 </div>
             </div>
@@ -195,27 +325,176 @@ else
     private bool isDetailModalOpen = false;
     private OrderResponseDto? selectedOrder;
 
-    protected override async Task OnInitializedAsync()
+    private string? loadError;
+    private DateTime currentBusinessDayStartLocal;
+    private bool isOfflineMode = false;
+
+    public static DateTime GetBusinessDayStart(DateTime localTime)
     {
+        var baseDate = localTime.TimeOfDay < TimeSpan.FromHours(4)
+            ? localTime.Date.AddDays(-1)
+            : localTime.Date;
+        return baseDate.AddHours(4);
+    }
+
+    protected override async Task OnInitializedAsync() => await LoadTransactions();
+
+    // Cashier scope is fixed: this terminal's branch + outlet, current business day only (4:00 AM cutoff).
+    // The user-editable filter fields (invoice #, status) never override it.
+    private void ApplyTerminalScope()
+    {
+        currentBusinessDayStartLocal = GetBusinessDayStart(DateTime.Now);
+        filter.BranchId = Session.Outlet?.BranchId;
         filter.OutletId = Session.Outlet?.OutletId;
-        await LoadTransactions();
+        filter.DateFrom = currentBusinessDayStartLocal.ToUniversalTime();
+        filter.DateTo = null;
+        filter.Page = 1;
+        filter.PageSize = 100;
     }
 
     private async Task LoadTransactions()
     {
+        loadError = null;
+        isOfflineMode = false;
+        if (Session.Outlet == null)
+        {
+            // Without an outlet the query would be unscoped and return every terminal's sales.
+            transactions = new();
+            loadError = "No outlet is assigned to this terminal. Transactions cannot be shown.";
+            return;
+        }
+
+        ApplyTerminalScope();
+
+        bool isOnline = false;
         try
         {
-            transactions = await TransactionService.GetTransactionsAsync(filter);
+            var netState = await ConnectivityService.CheckConnectivityAsync();
+            isOnline = (netState == POS.Client.Services.TerminalConnectivityState.OnlineAndHealthy);
+        }
+        catch
+        {
+            isOnline = false;
+        }
+
+        if (isOnline)
+        {
+            try
+            {
+                transactions = await TransactionService.GetTransactionsAsync(filter);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Online transaction load failed, attempting local fallback: {ex.Message}");
+            }
+        }
+
+        await LoadLocalTransactionsAsync();
+    }
+
+    private async Task LoadLocalTransactionsAsync()
+    {
+        try
+        {
+            isOfflineMode = true;
+            using var db = new POS.Client.Data.LocalPosDbContext();
+            db.InitializeDatabase();
+
+            var startUtc = currentBusinessDayStartLocal.ToUniversalTime();
+            var targetOutletId = Session.Outlet!.OutletId;
+            var targetCashier = Session.Username;
+            bool isSupervisor = Session.Role == "Admin" || Session.Role == "Manager" || Session.Role == "SeniorCashier";
+
+            var query = db.Orders.AsNoTracking()
+                .Where(o => o.OutletId == targetOutletId && o.CreatedAt >= startUtc);
+
+            if (!isSupervisor && !string.IsNullOrWhiteSpace(targetCashier))
+            {
+                query = query.Where(o => o.CashierId == targetCashier);
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.InvoiceNumber))
+            {
+                query = query.Where(o => o.InvoiceNumber.Contains(filter.InvoiceNumber));
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.PaymentStatus))
+            {
+                query = query.Where(o => o.PaymentStatus == filter.PaymentStatus);
+            }
+
+            var localOrders = await query
+                .OrderByDescending(o => o.CreatedAt)
+                .Take(100)
+                .ToListAsync();
+
+            var orderGuids = localOrders.Select(o => o.OrderId).ToList();
+            var localItems = await db.OrderItems.AsNoTracking()
+                .Where(i => orderGuids.Contains(i.OrderId))
+                .ToListAsync();
+            var localPayments = await db.Payments.AsNoTracking()
+                .Where(p => orderGuids.Contains(p.OrderId))
+                .ToListAsync();
+
+            var mappedList = new List<OrderResponseDto>();
+            long syntheticId = 1;
+            foreach (var lo in localOrders)
+            {
+                var dto = new OrderResponseDto
+                {
+                    OrderId = syntheticId++,
+                    OrderNumber = lo.InvoiceNumber,
+                    InvoiceNumber = lo.InvoiceNumber,
+                    BranchId = lo.BranchId,
+                    OutletId = lo.OutletId,
+                    CashierId = lo.CashierId,
+                    OrderStatus = lo.OrderStatus,
+                    PaymentStatus = lo.PaymentStatus,
+                    Subtotal = lo.Subtotal,
+                    DiscountAmount = lo.DiscountAmount,
+                    DiscountCode = lo.DiscountCode,
+                    TotalAmount = lo.TotalAmount,
+                    VatableSales = lo.VatableSales,
+                    VatExemptSales = lo.VatExemptSales,
+                    ZeroRatedSales = lo.ZeroRatedSales,
+                    VatAmount = lo.VatAmount,
+                    CreatedAt = lo.CreatedAt,
+                    Items = localItems.Where(i => i.OrderId == lo.OrderId).Select(i => new OrderItemResponseDto
+                    {
+                        OrderItemId = i.OrderItemId,
+                        ProductId = i.ProductId,
+                        ProductName = i.ProductName,
+                        Quantity = i.Quantity,
+                        UnitPrice = i.UnitPrice,
+                        LineTotal = i.LineTotal
+                    }).ToList(),
+                    Payments = localPayments.Where(p => p.OrderId == lo.OrderId).Select(p => new PaymentResponseDto
+                    {
+                        PaymentId = p.PaymentId,
+                        PaymentMethod = p.PaymentMethod,
+                        Amount = p.Amount,
+                        AmountTendered = p.TenderedAmount,
+                        ChangeAmount = p.ChangeAmount,
+                        PaymentStatus = p.PaymentStatus,
+                        PaidAt = p.PaidAt
+                    }).ToList()
+                };
+                mappedList.Add(dto);
+            }
+
+            transactions = mappedList;
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Failed to load transactions: " + ex.Message);
+            transactions = new();
+            loadError = "Unable to load local transactions: " + ex.Message;
         }
     }
 
     private void ResetFilters()
     {
-        filter = new TransactionFilterDto { OutletId = Session.Outlet?.OutletId };
+        filter = new TransactionFilterDto();
         _ = LoadTransactions();
     }
 
@@ -223,12 +502,30 @@ else
     {
         try
         {
+            if (isOfflineMode)
+            {
+                selectedOrder = transactions?.FirstOrDefault(t => t.OrderId == orderId);
+                if (selectedOrder != null)
+                {
+                    isDetailModalOpen = true;
+                    return;
+                }
+            }
+
             selectedOrder = await TransactionService.GetTransactionByIdAsync(orderId);
             isDetailModalOpen = true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Failed to load details: " + ex.Message);
+            selectedOrder = transactions?.FirstOrDefault(t => t.OrderId == orderId);
+            if (selectedOrder != null)
+            {
+                isDetailModalOpen = true;
+            }
+            else
+            {
+                Console.WriteLine("Failed to load details: " + ex.Message);
+            }
         }
     }
 
@@ -236,6 +533,45 @@ else
 
     private async Task ReprintInvoice(long orderId)
     {
+        if (isOfflineMode)
+        {
+            var target = transactions?.FirstOrDefault(t => t.OrderId == orderId);
+            if (target != null)
+            {
+                var offlineReceipt = new ReceiptDto
+                {
+                    OrderId = target.OrderId,
+                    OrderNumber = target.OrderNumber,
+                    InvoiceNumber = target.InvoiceNumber,
+                    InvoiceIssuedAt = target.CreatedAt,
+                    BranchId = target.BranchId,
+                    BranchName = Session.Outlet?.BranchName ?? "Store",
+                    BranchCode = Session.Outlet?.BranchCode ?? string.Empty,
+                    BranchAddress = Session.Outlet?.BranchAddress ?? string.Empty,
+                    BranchPhone = Session.Outlet?.BranchPhone ?? string.Empty,
+                    OutletId = target.OutletId,
+                    TerminalName = Session.Outlet?.OutletName ?? "Terminal",
+                    CashierId = target.CashierId,
+                    CreatedAt = target.CreatedAt,
+                    PaidAt = target.CreatedAt,
+                    Subtotal = target.Subtotal,
+                    DiscountAmount = target.DiscountAmount,
+                    DiscountCode = target.DiscountCode,
+                    TotalAmount = target.TotalAmount,
+                    VatableSales = target.VatableSales,
+                    VatExemptSales = target.VatExemptSales,
+                    ZeroRatedSales = target.ZeroRatedSales,
+                    VatAmount = target.VatAmount,
+                    IsReprint = true,
+                    Items = target.Items,
+                    Payments = target.Payments
+                };
+                await ReceiptPrinter.PrintAsync(offlineReceipt);
+                await Swal.FireAsync("Success", "Offline receipt sent to printer.", SweetAlertIcon.Success);
+                return;
+            }
+        }
+
         // If cashier is not authorized, prompt for Manager/SeniorCashier PIN or credentials override
         if (Session.Role != "Admin" && Session.Role != "Manager" && Session.Role != "SeniorCashier")
         {
@@ -285,6 +621,142 @@ else
         catch (Exception ex)
         {
             await Swal.FireAsync("Error", "Reprint failed: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+
+    private bool isVoidModalOpen = false;
+    private string voidReason = "";
+    private string voidApproverPin = "";
+
+    private bool isReturnModalOpen = false;
+    private string returnReason = "";
+    private string returnApproverPin = "";
+    private Dictionary<long, decimal> returnQuantities = new();
+    private Dictionary<long, string> returnDispositions = new();
+
+    private void OpenVoidModal(OrderResponseDto order)
+    {
+        isDetailModalOpen = false;
+        selectedOrder = order;
+        voidReason = "";
+        voidApproverPin = "";
+        isVoidModalOpen = true;
+    }
+
+    private void CloseVoidModal() => isVoidModalOpen = false;
+
+    private async Task ConfirmVoid()
+    {
+        if (isOfflineMode)
+        {
+            await Swal.FireAsync("Offline Mode", "Void operations require an active online connection to verify supervisor authorization.", SweetAlertIcon.Warning);
+            return;
+        }
+
+        if (selectedOrder == null || string.IsNullOrWhiteSpace(voidReason) || string.IsNullOrWhiteSpace(voidApproverPin))
+        {
+            await Swal.FireAsync("Warning", "Please provide a void reason and supervisor PIN.", SweetAlertIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            var res = await TransactionService.VoidTransactionAsync(selectedOrder.OrderId, voidReason, voidApproverPin);
+            if (res != null)
+            {
+                await Swal.FireAsync("Success", $"Transaction #{selectedOrder.OrderNumber} successfully voided.", SweetAlertIcon.Success);
+                isVoidModalOpen = false;
+                selectedOrder = null;
+                await LoadTransactions();
+            }
+            else
+            {
+                await Swal.FireAsync("Error", "Failed to void transaction. Verify supervisor authorization.", SweetAlertIcon.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Void error: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
+
+    private void OpenReturnModal(OrderResponseDto order)
+    {
+        isDetailModalOpen = false;
+        selectedOrder = order;
+        returnReason = "";
+        returnApproverPin = "";
+        returnQuantities.Clear();
+        returnDispositions.Clear();
+        foreach (var item in order.Items)
+        {
+            returnQuantities[item.OrderItemId] = 0;
+            returnDispositions[item.OrderItemId] = "RESTOCK";
+        }
+        isReturnModalOpen = true;
+    }
+
+    private void CloseReturnModal() => isReturnModalOpen = false;
+
+    private async Task ConfirmReturn()
+    {
+        if (isOfflineMode)
+        {
+            await Swal.FireAsync("Offline Mode", "Return and refund operations require an active online connection to verify supervisor authorization.", SweetAlertIcon.Warning);
+            return;
+        }
+
+        if (selectedOrder == null || string.IsNullOrWhiteSpace(returnReason) || string.IsNullOrWhiteSpace(returnApproverPin))
+        {
+            await Swal.FireAsync("Warning", "Please provide a return reason and supervisor PIN.", SweetAlertIcon.Warning);
+            return;
+        }
+
+        var itemsToReturn = returnQuantities
+            .Where(kv => kv.Value > 0)
+            .Select(kv => new ReturnItemRequestDto
+            {
+                OriginalOrderItemId = kv.Key,
+                Quantity = kv.Value,
+                RestockDisposition = returnDispositions.ContainsKey(kv.Key) ? returnDispositions[kv.Key] : "RESTOCK"
+            })
+            .ToList();
+
+        if (!itemsToReturn.Any())
+        {
+            await Swal.FireAsync("Warning", "Please specify a return quantity greater than zero for at least one item.", SweetAlertIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            var req = new ReturnRequestDto
+            {
+                OriginalOrderId = selectedOrder.OrderId,
+                BranchId = selectedOrder.BranchId,
+                OutletId = selectedOrder.OutletId,
+                ReturnReason = returnReason,
+                ApprovedByPinOrUsername = returnApproverPin,
+                RefundMethod = "CASH",
+                Items = itemsToReturn
+            };
+
+            var res = await TransactionService.ProcessReturnAsync(req);
+            if (res != null)
+            {
+                await Swal.FireAsync("Success", $"Return reference {res.ReturnReference} processed successfully. Refund: ₱{res.TotalRefundAmount:N2}", SweetAlertIcon.Success);
+                isReturnModalOpen = false;
+                selectedOrder = null;
+                await LoadTransactions();
+            }
+            else
+            {
+                await Swal.FireAsync("Error", "Failed to process return. Check supervisor authorization or item quantities.", SweetAlertIcon.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Return error: " + ex.Message, SweetAlertIcon.Error);
         }
     }
 }

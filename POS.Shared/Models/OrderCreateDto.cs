@@ -17,5 +17,6 @@ public class OrderCreateDto
     public string? CustomerAddress { get; set; }
     public string? CustomerTin { get; set; }
     public string? CustomerBusinessStyle { get; set; }
+    public string? OfflineInvoiceNumber { get; set; } // Preserves offline-issued invoice number during sync
     public List<OrderItemCreateDto> Items { get; set; } = new();
 }

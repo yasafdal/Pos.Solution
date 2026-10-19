@@ -24,9 +24,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        options.JsonSerializerOptions.MaxDepth = 32;
+    });
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// builder.Services.AddOpenApi(options =>
+// {
+//     options.ShouldInclude = (apiDescription) => false;
+// });
+builder.Services.AddEndpointsApiExplorer();
+// builder.Services.AddSwaggerGen();
+// // builder.Services.AddSwaggerGen();
+// app.UseSwagger();
+// app.UseSwaggerUI(...)
 
 // Add PostgreSQL DbContext
 builder.Services.AddDbContext<PosDbContext>(options =>
@@ -49,20 +62,29 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+// Run manual DB migrations for reprint logs and held sales
+try
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference();
+    POS.Api.MigrationRunner.Run(builder.Configuration.GetConnectionString("DefaultConnection"));
+}
+catch (Exception ex)
+{
+    Console.WriteLine("Migration Runner Error: " + ex.Message);
 }
 
+// app.UseRouting();
 app.UseStaticFiles();
 app.UseCors("AllowAll"); // Enable CORS
 
-app.UseHttpsRedirection();
-
 app.UseAuthentication();
 app.UseAuthorization();
+
+// // app.MapOpenApi();
+// app.MapScalarApiReference(options =>
+// {
+//     options.WithTitle("POS API Documentation")
+//            .WithTheme(ScalarTheme.Mars);
+// });
 
 app.MapControllers();
 

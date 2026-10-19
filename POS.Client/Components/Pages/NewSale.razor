@@ -1,16 +1,20 @@
 @page "/new-sale"
 @inject PosSessionService Session
 @inject NavigationManager Navigation
+@using Microsoft.EntityFrameworkCore
 @using POS.Shared.Helpers
 @inject ICategoryService CategoryService
 @inject IProductService ProductService
 @inject IModifierService ModifierService
 @inject IOrderService OrderService
 @inject IPaymentService PaymentService
-@inject IDiscountService DiscountService
+@inject IHeldSaleService HeldSaleService
 @inject CartService Cart
 @inject HttpClient Http
 @inject SweetAlertService Swal
+@inject POS.Client.Data.LocalPosDbContext LocalDb
+@inject IPosConnectivityService ConnectivityService
+@inject POS.Client.Services.IOfflineCheckoutService OfflineCheckoutService
 @implements IDisposable
 
 @if (!Session.IsAuthenticated)
@@ -305,10 +309,18 @@ else
                             <i class="bi bi-percent me-1"></i> Discount
                         </button>
                         <button type="button"
-                                class="btn btn-primary w-50 py-3 fw-bold btn-proceed-payment"
+                                class="btn btn-outline-warning w-50 py-2 fw-bold text-dark"
+                                disabled="@(!Cart.Items.Any())"
+                                @onclick="HoldCurrentSale">
+                            <i class="bi bi-pause-fill me-1"></i> Hold Sale
+                        </button>
+                    </div>
+                    <div class="d-grid">
+                        <button type="button"
+                                class="btn btn-primary w-100 py-3 fw-bold btn-proceed-payment"
                                 disabled="@(!Cart.Items.Any())"
                                 @onclick="ProceedToPayment">
-                            Proceed
+                            Proceed to Payment
                         </button>
                     </div>
                 </div>
@@ -390,9 +402,9 @@ else
     }
 }
 
-@if (paidReceiptOrderId.HasValue)
+@if (paidReceiptOrderId.HasValue || paidOfflineReceipt != null)
 {
-    <ReceiptPreview OrderId="@paidReceiptOrderId.Value" OnClose="CloseReceiptPreview" />
+    <ReceiptPreview OrderId="@(paidReceiptOrderId ?? 0)" OfflineReceipt="@paidOfflineReceipt" OnClose="CloseReceiptPreview" />
 }
 
 
@@ -613,7 +625,12 @@ else
 
 @code {
     private long? paidReceiptOrderId;
-    private void CloseReceiptPreview() => paidReceiptOrderId = null;
+    private ReceiptDto? paidOfflineReceipt;
+    private void CloseReceiptPreview()
+    {
+        paidReceiptOrderId = null;
+        paidOfflineReceipt = null;
+    }
     private List<CategoryDto> categories = new();
     private List<PaymentMethodDto> paymentMethods = new();
     private PaymentMethodDto? selectedPaymentMethod = null;
@@ -622,6 +639,7 @@ else
     private int? selectedCategoryId = null;
     private string searchQuery = string.Empty;
     private bool isLoading = true;
+    private bool isOffline = false;
     private bool IsRetail => Session.Outlet?.BusinessTypeId != null && Session.Outlet.BusinessType == "RETAIL";
     private bool IsSupported => IsRetail || (Session.Outlet?.BusinessTypeId != null && Session.Outlet.BusinessType == "FNB");
     private ElementReference searchInput;
@@ -669,14 +687,59 @@ else
         isLoading = true;
         try
         {
-            var catTask = CategoryService.GetCategoriesAsync();
-            var prodTask = ProductService.GetProductsAsync();
-            var pmTask = PaymentService.GetPaymentMethodsAsync();
-            await Task.WhenAll(catTask, prodTask, pmTask);
+            var connectivityState = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
+            if (!isOffline)
+            {
+                var catTask = CategoryService.GetCategoriesAsync();
+                var prodTask = ProductService.GetProductsAsync();
+                var pmTask = PaymentService.GetPaymentMethodsAsync();
+                await Task.WhenAll(catTask, prodTask, pmTask);
 
-            categories = (await catTask).Where(c => !c.IsDeleted && c.IsActive).ToList();
-            products = (await prodTask).Where(p => p.IsActive && p.ProductType != "RawMaterial").ToList();
-            paymentMethods = await pmTask;
+                categories = (await catTask).Where(c => !c.IsDeleted && c.IsActive).ToList();
+                products = (await prodTask).Where(p => p.IsActive && p.ProductType != "RawMaterial").ToList();
+                paymentMethods = await pmTask;
+            }
+            else
+            {
+                // OFFLINE FALLBACK: Read from isolated local SQLite database instance
+                using var db = new POS.Client.Data.LocalPosDbContext();
+                db.InitializeDatabase();
+                categories = db.Categories
+                    .AsNoTracking()
+                    .Select(c => new CategoryDto { CategoryId = c.CategoryId, Name = c.Name, ColorHex = c.ColorCode, IsActive = true })
+                    .ToList();
+
+                products = db.Products
+                    .AsNoTracking()
+                    .Select(p => new ProductDto
+                    {
+                        ProductId = p.ProductId,
+                        Name = p.Name,
+                        ShortCode = p.ShortCode,
+                        SKU = p.SKU,
+                        Barcode = p.Barcode,
+                        UnitValue = p.UnitValue,
+                        UnitOfMeasure = p.UnitOfMeasure,
+                        ImageUrl = p.ImageUrl,
+                        Price = p.Price,
+                        CostPrice = p.CostPrice,
+                        CategoryId = p.CategoryId,
+                        CategoryName = p.CategoryName,
+                        TaxId = p.TaxId,
+                        TaxName = p.TaxName ?? "VATable",
+                        ProductType = p.ProductType,
+                        IsActive = p.IsActive,
+                        IsKitchenItem = p.IsKitchenItem
+                    })
+                    .ToList();
+
+                paymentMethods = new List<PaymentMethodDto>
+                {
+                    new PaymentMethodDto { Code = "CASH", Name = "Cash", IsActive = true }
+                };
+            }
+
             if (paymentMethods.Any())
             {
                 selectedPaymentMethod = paymentMethods.FirstOrDefault(pm => pm.Code == "CASH") ?? paymentMethods.First();
@@ -815,7 +878,67 @@ else
 
         try
         {
-            var groups = await ModifierService.GetProductModifierGroupsAsync(product.ProductId);
+            var connectivityState = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
+            List<ProductModifierGroupDto> groups = new();
+
+            if (!isOffline)
+            {
+                var groupsTask = ModifierService.GetProductModifierGroupsAsync(product.ProductId);
+                groups = await groupsTask;
+            }
+            else
+            {
+                // OFFLINE FALLBACK: Read exact product-modifier mapping from isolated local SQLite database
+                using var db = new POS.Client.Data.LocalPosDbContext();
+                db.InitializeDatabase();
+                
+                var mappedGroupIds = db.ProductModifierGroups
+                    .AsNoTracking()
+                    .Where(pmg => pmg.ProductId == product.ProductId)
+                    .OrderBy(pmg => pmg.DisplayOrder)
+                    .Select(pmg => pmg.ModifierGroupId)
+                    .ToList();
+
+                var localGroups = db.ModifierGroups
+                    .AsNoTracking()
+                    .Where(g => mappedGroupIds.Contains(g.ModifierGroupId))
+                    .ToList();
+
+                // Preserve display order from mapping
+                localGroups = localGroups
+                    .OrderBy(g => mappedGroupIds.IndexOf(g.ModifierGroupId))
+                    .ToList();
+
+                foreach (var g in localGroups)
+                {
+                    var options = db.ModifierOptions
+                        .AsNoTracking()
+                        .Where(o => o.ModifierGroupId == g.ModifierGroupId)
+                        .OrderBy(o => o.ModifierOptionId)
+                        .Select(o => new ModifierOptionDto
+                        {
+                            ModifierOptionId = o.ModifierOptionId,
+                            ModifierGroupId = g.ModifierGroupId,
+                            Name = o.Name,
+                            Price = o.Price,
+                            DisplayOrder = o.DisplayOrder,
+                            IsActive = o.IsActive
+                        })
+                        .ToList();
+
+                    groups.Add(new ProductModifierGroupDto
+                    {
+                        ModifierGroupId = g.ModifierGroupId,
+                        ModifierGroupName = g.Name,
+                        IsRequired = g.IsRequired,
+                        MinSelections = g.MinSelections,
+                        MaxSelections = g.MaxSelections,
+                        Options = options
+                    });
+                }
+            }
+        
             if (groups != null && groups.Any())
             {
                 customizingProduct = product;
@@ -841,8 +964,9 @@ else
                 Cart.AddItem(product);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            customizationError = $"Error loading modifiers: {ex.Message}";
             Cart.AddItem(product);
         }
     }
@@ -1133,7 +1257,72 @@ else
                 }).ToList()
             };
 
-            var order = await OrderService.CreateOrderAsync(createDto);
+            var connectivityState = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
+
+            OrderResponseDto? order = null;
+            if (!isOffline)
+            {
+                try
+                {
+                    order = await OrderService.CreateOrderAsync(createDto);
+                }
+                catch
+                {
+                    // If order creation fails due to sudden network drop, fall back to offline checkout
+                    isOffline = true;
+                }
+            }
+
+            if (isOffline)
+            {
+                var calcReq = new OrderCalculationRequestDto
+                {
+                    BranchTaxType = "VAT-Registered",
+                    DiscountCode = createDto.DiscountCode ?? "NONE",
+                    Items = createDto.Items.Select(i => new CartItemCalculationDto
+                    {
+                        ProductId = i.ProductId,
+                        ProductName = i.ProductName ?? "Product",
+                        Quantity = i.Quantity,
+                        UnitPrice = i.BasePrice,
+                        ModifierTotal = i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m,
+                        TaxName = i.TaxName ?? "VATable",
+                        IsEligibleForStatutoryDiscount = true
+                    }).ToList()
+                };
+                var calcRes = new POS.Shared.Services.LocalDiscountCalculationService().CalculateOrder(calcReq);
+
+                // In offline mode, fabricate OrderResponseDto locally from cart to allow payment dialog
+                order = new OrderResponseDto
+                {
+                    OrderId = DateTime.UtcNow.Ticks, // temporary local order ID
+                    OrderNumber = "OFFLINE-PENDING",
+                    BranchId = createDto.BranchId,
+                    OutletId = createDto.OutletId,
+                    CashierId = createDto.CashierId,
+                    OrderType = createDto.OrderType,
+                    OrderStatus = "PENDING",
+                    PaymentStatus = "UNPAID",
+                    Subtotal = calcRes.Subtotal,
+                    DiscountAmount = calcRes.DiscountAmount,
+                    VatableSales = calcRes.VatableSales,
+                    VatExemptSales = calcRes.VatExemptSales,
+                    ZeroRatedSales = calcRes.ZeroRatedSales,
+                    VatAmount = calcRes.VatAmount,
+                    TotalAmount = calcRes.TotalAmount,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                if (!paymentMethods.Any(pm => pm.Code == "CASH"))
+                {
+                    paymentMethods = new List<PaymentMethodDto>
+                    {
+                        new PaymentMethodDto { Code = "CASH", Name = "Cash", IsActive = true }
+                    };
+                }
+            }
+
             if (order == null)
             {
                 paymentError = "Failed to create order on server.";
@@ -1227,6 +1416,67 @@ else
         paymentError = null;
         try
         {
+            if (isOffline)
+            {
+                // Process offline cash checkout locally
+                if (selectedPaymentMethod?.Code != "CASH")
+                {
+                    paymentError = "Only Cash payments are allowed in Offline Mode.";
+                    return;
+                }
+
+                var offlineCreateDto = new OrderCreateDto
+                {
+                    BranchId = Session.Outlet?.BranchId ?? 1,
+                    OutletId = Session.Outlet?.OutletId ?? 1,
+                    CashierId = Session.Username ?? "cashier",
+                    OrderType = IsRetail ? "RETAIL" : "DINING",
+                    DiscountAmount = Cart.ActiveDiscountAmount,
+                    DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
+                    CustomerCardNumber = Cart.CustomerCardNumber,
+                    CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
+                    CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
+                    CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
+                    CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim(),
+                    Items = Cart.Items.Select(ci => new OrderItemCreateDto
+                    {
+                        ProductId = ci.ProductId,
+                        ProductName = ci.ProductName,
+                        ProductShortCode = ci.ProductShortCode,
+                        Quantity = ci.Quantity,
+                        BasePrice = ci.BasePrice,
+                        TaxName = ci.TaxName ?? "VATable",
+                        Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
+                        {
+                            ModifierOptionId = m.ModifierOptionId,
+                            ModifierName = m.Name,
+                            AdditionalPrice = m.Price
+                        }).ToList() ?? new()
+                    }).ToList()
+                };
+
+                var offlineResult = await OfflineCheckoutService.ProcessOfflineCashSaleAsync(
+                    offlineCreateDto, 
+                    cashTendered, 
+                    Session.Username ?? "cashier");
+
+                if (!offlineResult.Success)
+                {
+                    paymentError = offlineResult.ErrorMessage ?? "Offline checkout failed.";
+                    return;
+                }
+
+                // Close payment modal, clear cart, and open ReceiptPreview for offline printing/PDF
+                isPaymentModalOpen = false;
+                currentOrderResponse = null;
+                isSplitPaymentMode = false;
+                paymentSplits.Clear();
+                Cart.Clear();
+                customerName = customerAddress = customerTin = customerBusinessStyle = string.Empty;
+                paidOfflineReceipt = offlineResult.Receipt;
+                return;
+            }
+
             var payment = await PaymentService.ProcessPaymentAsync(processDto);
             if (payment == null || payment.PaymentStatus != "SUCCESS")
             {
@@ -1277,6 +1527,71 @@ else
             if (rounded > total) suggestions.Add(rounded);
         }
         return suggestions;
+    }
+
+    private async Task HoldCurrentSale()
+    {
+        if (!Cart.Items.Any()) return;
+
+        var noteResult = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Hold Current Sale",
+            Text = "Enter optional table number or customer name/notes for this ticket:",
+            Input = SweetAlertInputType.Text,
+            ShowCancelButton = true,
+            ConfirmButtonText = "Park Ticket"
+        });
+
+        if (!noteResult.IsConfirmed) return;
+
+        try
+        {
+            var createDto = new HeldSaleCreateDto
+            {
+                BranchId = Session.Outlet?.BranchId ?? 1,
+                OutletId = Session.Outlet?.OutletId ?? 1,
+                CashierId = Session.Username ?? "cashier",
+                CustomerName = string.IsNullOrWhiteSpace(noteResult.Value) ? "Walk-in" : noteResult.Value.Trim(),
+                Notes = "Suspended at " + DateTime.Now.ToString("HH:mm"),
+                Subtotal = Cart.Subtotal,
+                DiscountAmount = Cart.ActiveDiscountAmount,
+                DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
+                CustomerCardNumber = Cart.CustomerCardNumber,
+                TotalAmount = Cart.Subtotal - Cart.ActiveDiscountAmount,
+                Items = Cart.Items.Select(ci => new HeldSaleItemDto
+                {
+                    ProductId = ci.ProductId,
+                    ProductName = ci.ProductName,
+                    ProductShortCode = ci.ProductShortCode,
+                    Quantity = ci.Quantity,
+                    BasePrice = ci.BasePrice,
+                    LineTotal = ci.LineTotal,
+                    TaxName = ci.TaxName ?? "VATable",
+                    Modifiers = ci.SelectedModifiers?.Select(m => new HeldSaleModifierDto
+                    {
+                        ModifierOptionId = m.ModifierOptionId,
+                        ModifierName = m.Name,
+                        AdditionalPrice = m.Price
+                    }).ToList() ?? new()
+                }).ToList()
+            };
+
+            var held = await HeldSaleService.CreateHeldSaleAsync(createDto);
+            if (held != null)
+            {
+                Cart.Clear();
+                await Swal.FireAsync("Sale Held!", $"Transaction successfully parked as {held.HoldReference}.", SweetAlertIcon.Success);
+                Navigation.NavigateTo("/held-sales");
+            }
+            else
+            {
+                await Swal.FireAsync("Error", "Failed to suspend transaction.", SweetAlertIcon.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Hold sale error: " + ex.Message, SweetAlertIcon.Error);
+        }
     }
 
     private string GetImageUrl(string? rawUrl)

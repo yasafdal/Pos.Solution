@@ -80,12 +80,11 @@ builder.Services.AddScoped<IServiceModeService, ServiceModeService>();
 builder.Services.AddScoped<IBusinessTypeService, BusinessTypeService>();
 builder.Services.AddScoped<IProductRecipeService, ProductRecipeService>();
 builder.Services.AddScoped<IModifierService, ModifierService>();
-builder.Services.AddScoped<IOrderService, OrderService>();
-builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<IHeldSaleService, HeldSaleService>();
+builder.Services.AddScoped<ISalesReportService, SalesReportApiService>();
+builder.Services.AddScoped<ITransactionService, TransactionService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDiscountService, DiscountService>();
-builder.Services.AddScoped<ITransactionService, TransactionService>();
-builder.Services.AddScoped<ISalesReportService, SalesReportApiService>();
 
 var app = builder.Build();
 
