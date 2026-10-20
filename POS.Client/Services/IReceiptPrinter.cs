@@ -11,9 +11,4 @@ public interface IReceiptPrinter
     /// Never creates an order, processes payment, or changes the cart.
     /// </summary>
     Task PrintAsync(ReceiptDto receipt);
-
-    /// <summary>
-    /// Generates and saves an 80mm PDF receipt directly to disk and returns the full file path.
-    /// </summary>
-    Task<string> SavePdfAsync(ReceiptDto receipt);
 }

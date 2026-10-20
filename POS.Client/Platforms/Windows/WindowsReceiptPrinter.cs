@@ -28,60 +28,6 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
         finally { Interlocked.Exchange(ref _printing, 0); }
     }
 
-    public Task<string> SavePdfAsync(ReceiptDto receipt)
-    {
-        var html = ReceiptHtmlFormatter.Format(receipt);
-        return MainThread.InvokeOnMainThreadAsync(async () =>
-        {
-            var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            var receiptsDir = Path.Combine(documentsPath, "POS_Receipts");
-            Directory.CreateDirectory(receiptsDir);
-
-            var safeOrderNumber = string.Join("_", receipt.OrderNumber.Split(Path.GetInvalidFileNameChars()));
-            var filePath = Path.Combine(receiptsDir, $"Receipt_{safeOrderNumber}.pdf");
-
-            var webView = new WebView2();
-            var window = new NativeWindow { Title = "Generating Receipt PDF..." };
-            var layout = new Microsoft.UI.Xaml.Controls.Grid();
-            layout.Children.Add(webView);
-            window.Content = layout;
-
-            var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            window.Closed += (_, _) => loaded.TrySetException(new InvalidOperationException("PDF generation window closed."));
-
-            window.Activate();
-            try
-            {
-                var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null,
-                    Path.Combine(Microsoft.Maui.Storage.FileSystem.AppDataDirectory, "ReceiptWebView2"), null);
-                await webView.EnsureCoreWebView2Async(environment);
-
-                var core = webView.CoreWebView2;
-                core.Settings.IsScriptEnabled = false;
-                core.NavigationCompleted += (_, args) =>
-                {
-                    if (args.IsSuccess) loaded.TrySetResult();
-                    else loaded.TrySetException(new InvalidOperationException("Receipt render failed: " + args.WebErrorStatus));
-                };
-                core.NavigateToString(html);
-                await loaded.Task.WaitAsync(TimeSpan.FromSeconds(20));
-
-                var written = await core.PrintToPdfAsync(filePath, null);
-                window.Close();
-
-                if (!written || !File.Exists(filePath))
-                    throw new IOException("WebView2 did not create the PDF file.");
-
-                return filePath;
-            }
-            catch
-            {
-                try { window.Close(); } catch { }
-                throw;
-            }
-        });
-    }
-
     private static async Task PrintDirectAsync(string html)
     {
         var webView = new WebView2();
@@ -93,10 +39,16 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
         bool keepWindowOpenForDialog = false;
         try
         {
-            var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null,
-                Path.Combine(Microsoft.Maui.Storage.FileSystem.AppDataDirectory, "ReceiptWebView2"), null);
-            await webView.EnsureCoreWebView2Async(environment);
-            var core = webView.CoreWebView2;
+            // Attach the receipt browser to its native window before initialization.
+            window.Activate();
+            // Match the main WinUI browser's options because the process overrides the profile folder.
+            Exception? initializationError = null;
+            webView.CoreWebView2Initialized += (_, args) => initializationError = args.Exception;
+            await webView.EnsureCoreWebView2Async();
+            if (initializationError != null)
+                throw new InvalidOperationException($"Receipt browser initialization failed (0x{initializationError.HResult:X8}): {initializationError.Message}", initializationError);
+            var core = webView.CoreWebView2
+                ?? throw new InvalidOperationException("The receipt browser did not initialize. Close the print window and retry.");
             core.Settings.IsScriptEnabled = false;
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreDevToolsEnabled = false;
@@ -116,11 +68,21 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
             core.NavigateToString(html);
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-            // First try silent printing to the OS default printer using its native driver configuration (no hardcoded printer name or page size).
+            // First try the OS default printer with 80 x 200 mm receipt paper; the driver must support this medium.
             CoreWebView2PrintStatus status = CoreWebView2PrintStatus.OtherError;
             try
             {
-                status = await core.PrintAsync(null);
+                var settings = core.Environment.CreatePrintSettings();
+                settings.MediaSize = CoreWebView2PrintMediaSize.Custom;
+                settings.PageWidth = 80d / 25.4d;
+                // shortcut: fixed 200 mm pages, configure roll length when the physical printer is selected.
+                settings.PageHeight = 200d / 25.4d;
+                settings.MarginTop = 0;
+                settings.MarginBottom = 0;
+                settings.MarginLeft = 0;
+                settings.MarginRight = 0;
+                settings.ShouldPrintHeaderAndFooter = false;
+                status = await core.PrintAsync(settings);
             }
             catch
             {
@@ -145,6 +107,12 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
             window.Activate();
             core.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
             await windowClosed.Task;
+        }
+        catch(Exception ex)
+        {
+            // Log the exception or handle it as needed
+            Console.WriteLine($"Error occurred while printing receipt: {ex.Message}");
+            throw;
         }
         finally
         {

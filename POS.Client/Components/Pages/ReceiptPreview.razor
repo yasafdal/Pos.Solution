@@ -28,15 +28,6 @@
                 {
                     <p role="status">Receipt sent to printer.</p>
                 }
-                @if (!string.IsNullOrEmpty(savedPdfPath))
-                {
-                    <div class="alert alert-success d-flex justify-content-between align-items-center" role="status">
-                        <div>
-                            <strong>✓ PDF Saved:</strong> <small class="text-break">@savedPdfPath</small>
-                        </div>
-                        <button type="button" class="btn btn-sm btn-success ms-2" @onclick="OpenPdf">Open</button>
-                    </div>
-                }
                 @if (receipt != null)
                 {
                     <article class="border rounded p-3 bg-white text-dark receipt-document">
@@ -109,12 +100,9 @@
                 }
             </div>
             <div class="modal-footer d-flex justify-content-between">
-                <button type="button" class="btn btn-outline-secondary px-3 py-2" disabled="@savingPdf" @onclick="OnClose">@(printing ? "Close" : "Skip Printing")</button>
+                <button type="button" class="btn btn-outline-secondary px-3 py-2" @onclick="OnClose">@(printing ? "Close" : "Skip Printing")</button>
                 <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-outline-primary px-3 py-2" disabled="@(loading || printing || savingPdf)" @onclick="SavePdf">
-                        @(savingPdf ? "Saving PDF…" : "Save as PDF")
-                    </button>
-                    <button type="button" class="btn btn-primary px-4 py-2" disabled="@(loading || printing || savingPdf)" @onclick="PrintReceipt">
+                    <button type="button" class="btn btn-primary px-4 py-2" disabled="@(loading || printing)" @onclick="PrintReceipt">
                         @(printing ? "Printing…" : error != null ? "Retry Print" : "Print Receipt")
                     </button>
                 </div>
@@ -131,8 +119,6 @@
     private string? error;
     private bool loading;
     private bool printing;
-    private bool savingPdf;
-    private string? savedPdfPath;
     private bool receiptSentToPrinter;
     private long loadedOrderId;
     private string? loadedInvoiceNumber;
@@ -147,7 +133,6 @@
             error = null;
             loading = false;
             receiptSentToPrinter = false;
-            savedPdfPath = null;
             return;
         }
 
@@ -155,7 +140,6 @@
         loadedOrderId = OrderId;
         receipt = null;
         receiptSentToPrinter = false;
-        savedPdfPath = null;
         await LoadReceipt();
     }
 
@@ -182,39 +166,9 @@
         finally { loading = false; }
     }
 
-    private async Task SavePdf()
-    {
-        if (savingPdf || printing || loading) return;
-        savingPdf = true;
-        error = null;
-        savedPdfPath = null;
-        try
-        {
-            if (receipt == null) await LoadReceipt();
-            if (receipt == null) return;
-            savedPdfPath = await ReceiptPrinter.SavePdfAsync(receipt);
-            OpenPdf();
-        }
-        catch (Exception ex)
-        {
-            error = $"Failed to save PDF: {ex.Message}";
-        }
-        finally { savingPdf = false; }
-    }
-
-    private void OpenPdf()
-    {
-        if (string.IsNullOrEmpty(savedPdfPath) || !File.Exists(savedPdfPath)) return;
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(savedPdfPath) { UseShellExecute = true });
-        }
-        catch { }
-    }
-
     private async Task PrintReceipt()
     {
-        if (printing || savingPdf || loading) return;
+        if (printing || loading) return;
         printing = true;
         error = null;
         receiptSentToPrinter = false;
@@ -227,6 +181,7 @@
         }
         catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"Receipt printing failed: {ex}");
             error = $"Could not print receipt: {ex.Message}";
         }
         finally { printing = false; }

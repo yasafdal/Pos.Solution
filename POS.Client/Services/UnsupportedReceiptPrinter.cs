@@ -7,7 +7,4 @@ public sealed class UnsupportedReceiptPrinter : IReceiptPrinter
 {
     public Task PrintAsync(ReceiptDto receipt) =>
         Task.FromException(new PlatformNotSupportedException("Receipt printing is currently supported on Windows only."));
-
-    public Task<string> SavePdfAsync(ReceiptDto receipt) =>
-        Task.FromException<string>(new PlatformNotSupportedException("Receipt PDF generation is currently supported on Windows only."));
 }

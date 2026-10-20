@@ -18,7 +18,7 @@ public static class ReceiptHtmlFormatter
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
             <title>Sales receipt</title>
             <style>
-            @page { margin: 0; }
+            @page { size: 80mm 200mm; margin: 0; }
             * { box-sizing: border-box; }
             html, body { margin: 0; padding: 0; background: white; color: black; }
             body { width: 100%; max-width: 80mm; margin: 0 auto; padding: 4mm; font: 12px/1.4 Consolas, monospace; overflow-wrap: anywhere; }

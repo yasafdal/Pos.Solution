@@ -1,455 +1,330 @@
-# Pos.Solution — Comprehensive Architecture, Database & Business Logic Review
+# Pos.Solution — Verified Project Context
 
-## 1. Executive Summary
+Reviewed: 2026-10-20. Scope: current working tree at `Pos.Solution`, including pre-existing uncommitted changes.
 
-**Pos.Solution** is a multi-project, multi-branch, multi-outlet Point of Sale (POS) and Back-Office Management platform built on **.NET 10.0**. It is designed for Philippine commercial retail and Food & Beverage (F&B) operations with built-in support for **Bureau of Internal Revenue (BIR)** tax and statutory discount compliance (under the National Internal Revenue Code, RA 9994 Expanded Senior Citizens Act, RA 10754 PWD Act, and RA 11976 Ease of Paying Taxes [EOPT] Act).
+## 1. Purpose, evidence and assurance
 
-### Core System Capabilities
-1. **Multi-Mode Cashiering (`POS.Client` — .NET MAUI Blazor Hybrid):**
-   - Dynamically adapts its cashier interface based on the branch's `BusinessType`:
-     - **Food & Beverage (F&B) Mode:** Category tile grid, visual product cards, required/optional product modifier groups (`ModifierGroup` / `ModifierOption`), kitchen item flags, and service modes (`Dine-In`, `Take-Out`, `Delivery`).
-     - **Retail / Supermarket Mode:** High-density tabular line-item entry, barcode/SKU/short-code scanning, and function-key shortcuts (`F2`, `F4`, `F8`, `F9`, `F12`).
-   - Supports **Offline-First Operation** backed by a local SQLite database (`LocalPosDbContext`) with background reference data synchronization (`ReferenceDataSyncService`), local cash checkout and BIR invoice issuance (`OfflineCheckoutService`), and an outbox pattern (`LocalSyncOutbox` + `OfflineTransactionSyncService`) with exponential backoff and jitter.
-2. **Centralized REST API (`POS.Api` — ASP.NET Core Web API + PostgreSQL):**
-   - Manages 38 entities in PostgreSQL (`PosDbContext`), handling order creation, split and single-tender payment processing, row-locked per-outlet sequence generation (`OrderSequences` and BIR `InvoiceSequences`), statutory and promotional discount calculations (`DiscountCalculationService`), receipt generation and controlled reprint auditing (`ReceiptService`), held/parked sales (`HeldSalesController`), returns/refunds/voids (`ReturnsController`), cash drawer shifts (`CashDrawerController`), and cashier session handoffs (`CashierSessionsController`).
-3. **Back-Office Administration Portal (`POS.Web` — Blazor Web App / Interactive Server):**
-   - AdminLTE 4 / Bootstrap 5 management interface for branches, POS registers/outlets, BIR invoice series, product catalog, recipes/Bill of Materials (BOM), modifier groups, branch inventory ledgers, discount rules, users/PINs, held sales, returns/voids audit, transaction history, and financial sales reporting.
-4. **Shared Contracts & Client SDK (`POS.Shared` — .NET 10 Class Library):**
-   - Houses 39 DTO models, 20 service interfaces, typed `HttpClient` service wrappers, deterministic product short-code generation (`ProductShortCodeGenerator`), and shared offline/online BIR tax and discount calculation logic (`LocalDiscountCalculationService`).
+Pos.Solution is a multi-branch Philippine retail and food-and-beverage Point of Sale and back-office platform. It combines a native cashier application, a central business API, a server-rendered administration website, and shared contracts/calculators. Offline operation is a substantial implemented subsystem, not merely a planned feature.
 
-### Architectural Readiness Summary
-While the functional surface area is broad and the BIR tax/statutory discount domain modeling is well-researched (`docs/BIR_RESEARCH.md`), **the system currently contains critical production blockers** across security, financial/inventory consistency, schema management, and client compilation:
-- **Compile-breaking errors** exist in `POS.Client/Components/Pages/NewSale.razor` (`isOffline`, `Cart.TotalAmount`, `OrderResponseDto.OrderDate`) and `POS.Client/Data/LocalPosModels.cs`.
-- **Online orders never deduct inventory or consume product recipes (BOM)**, and **online cash payments/refunds never update open cash drawer shifts** (only offline sync performs stock deduction and cash drawer updates).
-- **Critical security vulnerabilities** include 18+ unauthenticated API controllers, `[AllowAnonymous]` overrides on void/return endpoints coupled with a supervisor approval check that accepts a bare username without a PIN/password, plaintext PIN storage exposed via `GET api/Users`, and hardcoded database/JWT credentials in source control.
-- **Database migration fragmentation** across 4 incompatible mechanisms (EF Core Power Tools reverse-engineered `PosDbContext.cs`, hand-edited `PosDbContext.Extensions.cs`, a startup `MigrationRunner.cs` referencing deleted/missing `.sql` files, and an unused SQL Server `ApplicationDbContext` in `POS.Web`).
+This document is the primary architecture/context reference for subsequent development. Recheck cited implementation before changing it: this is a dated snapshot, not a claim that later code remains identical. `project_content.md`, `.plan/MAP.md`, and `docs/BIR_RESEARCH.md` provide historical intent, but are not proof of current behavior or legal compliance.
 
----
+### Evidence terminology
 
-## 2. Database Architecture & Data Models
+- **Implemented:** an identifiable production code path exists. This does not mean production-safe or end-to-end verified.
+- **Partial:** implementation exists but an integration, validation, recovery mechanism or supported platform is incomplete.
+- **Missing in inspected source:** no implementation was found within the reviewed application scope. This is not a claim about external infrastructure.
+- **Executed:** a command was actually run during this review, with results below.
+- **Static finding:** supported by code/operation ordering but not reproduced against a running POS deployment.
 
-### 2.1 Multi-Database Topology
+Source references use repository-relative `path:line` or `path:start-end`. No secret values are reproduced here.
 
-| Project | DbContext Class | Database Engine | Provider NuGet | Storage / Connection Details | Actual Role in System |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`POS.Api`** | `PosDbContext` | **PostgreSQL** (`pos_db`) | `Npgsql.EntityFrameworkCore.PostgreSQL` `10.0.3` | `Host=localhost;Port=5432;Database=pos_db;...` (`Npgsql.EnableLegacyTimestampBehavior = true`) | Primary authoritative relational store (38 `DbSet`s). |
-| **`POS.Client`** | `LocalPosDbContext` | **SQLite** (`local_pos.db`) | `Microsoft.EntityFrameworkCore.Sqlite` `10.0.0` | `%LocalAppData%\PosSolution\local_pos.db` (`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=OFF;`) | Offline-first terminal cache for reference catalog, local orders/payments, and sync outbox (14 `DbSet`s). |
-| **`POS.Web`** | `ApplicationDbContext` | **SQL Server LocalDB** | `Microsoft.EntityFrameworkCore.SqlServer` `10.0.8` | `Server=(localdb)\mssqllocaldb;Database=aspnet-POS_Web-...` | Unused scaffolded ASP.NET Core Identity schema (8 tables). Actual `POS.Web` login uses `CustomAuthStateProvider` against `POS.Api`. |
+### Executed verification
 
----
+SDK: .NET `10.0.401` on Windows.
 
-### 2.2 Entity-Relationship Diagram (`POS.Api` — PostgreSQL `PosDbContext`)
+| Command | Result |
+|---|---|
+| `dotnet build POS.Api/POS.Api.csproj --no-restore --nologo -v:q` | Exit 0; 0 errors, 5 warnings; builds Shared dependency. |
+| `dotnet build POS.Web/POS.Web.csproj --no-restore --nologo -v:q` | Exit 0; 0 errors, 6 warnings; builds Shared dependency. |
+| `dotnet build POS.Client/POS.Client.csproj --framework net10.0-windows10.0.19041.0 --no-restore --nologo -v:q` | Exit 0; 0 errors, 16 warnings. |
+| `dotnet run --project POS.Tests/POS.Tests.csproj --no-restore --verbosity quiet` | Exit 0; **22 passed, 0 failed**. Uses a disposable in-memory SQLite database, not the application databases. |
 
-```mermaid
-erDiagram
-    BusinessType ||--o{ Branch : "FK_Branches_BusinessType"
-    ServiceMode ||--o{ Branch : "FK_Branches_ServiceMode"
-    Branch ||--o{ Outlet : "Outlets_BranchId_fkey"
-    Branch ||--o{ BranchInventory : "BranchInventory_BranchId_fkey"
-    Branch ||--o{ StockAdjustment : "StockAdjustments_BranchId_fkey"
+Builds report vulnerable dependencies: SQLitePCLRaw 2.1.11 and System.Security.Cryptography.Pkcs/Xml 9.0.x, among the warnings captured. API also reports nullable warnings and a source-embedded connection-string warning. These are existing restore/build advisory results, not a fresh comprehensive dependency audit.
 
-    Category ||--o{ Product : "Products_CategoryId_fkey"
-    Taxis ||--o{ Product : "Products_TaxId_fkey"
-    Product ||--o{ BranchInventory : "BranchInventory_ProductId_fkey"
-    Product ||--o{ StockAdjustment : "StockAdjustments_ProductId_fkey"
-    Product ||--o{ ProductRecipe : "ProductRecipes_ProductId_fkey"
-    Product ||--o{ ProductRecipe : "ProductRecipes_RawMaterialProductId_fkey"
-    Product ||--o{ ProductModifierGroup : "FK_ProductModifierGroup_Product"
-    ModifierGroup ||--o{ ProductModifierGroup : "FK_ProductModifierGroup_ModifierGroup"
-    ModifierGroup ||--o{ ModifierOption : "FK_ModifierOption_ModifierGroup"
+No application GUI, API host, live PostgreSQL, production/local POS SQLite file, printer, installer or payment gateway was exercised. No Android/iOS/MacCatalyst build was performed. Builds generated normal bin/obj artifacts. No source, configuration, schema or migration changes were made. Existing dirty files were preserved. There was no project knowledge graph; graphify was unavailable. RTK was present and build output was compressed by the toolchain.
 
-    Outlet ||--o{ OrderSequence : "FK_OrderSequences_Outlet"
-    Outlet ||--o{ InvoiceSequence : "FK_InvoiceSequences_Outlet"
-    InvoiceSequence ||--o{ Order : "FK_Orders_InvoiceSequence"
-    DiscountType ||--o{ Order : "DiscountTypeId (convention)"
+## 2. Repository and project architecture
 
-    Order ||--o{ OrderItem : "FK_OrderItems_Orders"
-    OrderItem ||--o{ OrderItemModifier : "FK_OrderItemModifiers_OrderItems"
-    Order ||--o{ Payment : "FK_Payments_Orders"
-    Order ||--o{ ReceiptReprintLog : "FK_ReceiptReprintLogs_Orders"
-    Order ||--o{ DiscountAuditLog : "OrderId (convention)"
-
-    Order ||--o{ TransactionVoid : "OriginalOrderId (Restrict)"
-    Order ||--o{ SalesReturn : "OriginalOrderId (Restrict)"
-    SalesReturn ||--o{ SalesReturnItem : "ReturnId (Cascade)"
-    OrderItem ||--o{ SalesReturnItem : "OriginalOrderItemId (Restrict)"
-    SalesReturn ||--o{ Refund : "ReturnId (SetNull)"
-    TransactionVoid ||--o{ Refund : "VoidId (SetNull)"
-    Payment ||--o{ Refund : "OriginalPaymentId (Restrict)"
-
-    HeldSale ||--o{ HeldSaleItem : "FK_HeldSaleItems_HeldSales"
-    HeldSaleItem ||--o{ HeldSaleItemModifier : "FK_HeldSaleItemModifiers_HeldSaleItems"
-    CashDrawerShift ||--o{ CashDrawerMovement : "ShiftId (Cascade)"
-```
-
----
-
-### 2.3 Complete PostgreSQL Table, Primary Key, Foreign Key & Index Reference (`PosDbContext`)
-
-#### A. Organization, Terminal & Sequence Tables
-| Entity / Table | Primary Key | Foreign Keys & Delete Behavior | Unique Constraints & Indexes | Notes / Architectural Observations |
-| :--- | :--- | :--- | :--- | :--- |
-| **`BusinessType`** (`"BusinessType"`) | `Id` (`int`, `"id"`) | — | `UX_BusinessType_type` (Unique on `"type"`) | Classifies branch UI (`Food & Beverage`, `Retail`, etc.). |
-| **`ServiceMode`** (`"ServiceMode"`) | `ServiceModeId` (`int`, `"id"`) | — | — | `Dine-In`, `Take-Out`, `Delivery`. Column casing mismatch between `applied_service_mode.sql` (`type`) and EF (`"Type"`). |
-| **`Branch`** (`"Branches"`) | `BranchId` (`int`) | `BusinessTypeId` (`int?`) -> `BusinessType.Id` (`Restrict`)<br>`ServiceModeId` (`int?`) -> `ServiceMode.ServiceModeId` (`SetNull`) | `IX_Branches_BusinessTypeId` | Stores `TaxType` (`VAT-Registered` vs `Non-VAT`), `Tin`, and `TrackInventory`. |
-| **`Outlet`** (`"Outlets"`) | `OutletId` (`int`) | `BranchId` (`int`) -> `Branch.BranchId` (`Cascade`) | — | Represents a POS terminal/register (`DeviceIdentifier`, `TerminalName`, `MachineIdentificationNumber`, `PermitToUseNumber`, `TerminalSerialNumber`). |
-| **`OrderSequence`** (`"OrderSequences"`) | `OrderSequenceId` (`int`, `"order_sequence_id"`) | `OutletId` (`int`, `"outlet_id"`) -> `Outlet.OutletId` (`Cascade`) | `outlet_id` `UNIQUE` in SQL (missing `.IsUnique()` in EF) | Operational order counter per outlet (`{CodePrefix}-{LastIssuedNumber:D6}`). Locked with `FOR UPDATE`. |
-| **`InvoiceSequence`** (`"InvoiceSequences"`) | `InvoiceSequenceId` (`int`, `"invoice_sequence_id"`) | `OutletId` (`int`, `"outlet_id"`) -> `Outlet.OutletId` (`Cascade`) | — | Legal BIR invoice series (`SeriesCode`, `Prefix`, `StartingNumber`, `LastIssuedNumber`, `EndingNumber`, `PaddingLength`, `IsActive`). Locked with `FOR UPDATE`. |
-| **`User`** (`"Users"`) | `UserId` (`int`) | — | `Users_Username_key` (Unique on `Username`) | Stores BCrypt `PasswordHash`, `Role` (`Admin`, `Manager`, `Senior Cashier`, `Cashier`), and **plaintext `PinCode`** (`varchar(10)`). |
-
-#### B. Catalog, Modifiers, Recipes & Inventory Tables
-| Entity / Table | Primary Key | Foreign Keys & Delete Behavior | Unique Constraints & Indexes | Notes / Architectural Observations |
-| :--- | :--- | :--- | :--- | :--- |
-| **`Category`** (`"Categories"`) | `CategoryId` (`int`) | — | `CK_Categories_ColorHex` check constraint | Soft-deletable (`IsDeleted`, `IsActive`), `ColorHex` (`varchar(7)`, default `#2563EB`). |
-| **`Taxis`** (`"Taxes"`) | `TaxId` (`int`) | — | — | `Name` (`VATable`, `VAT-Exempt`, `Zero-Rated`), `Rate`. |
-| **`UnitOfMeasure`** (`"UnitOfMeasures"`) | `UomId` (`int`) | — | — | `Name`, `Symbol` (`pcs`, `kg`, `ml`). Standalone lookup; `Product.UnitOfMeasure` stores string rather than FK. |
-| **`Product`** (`"Products"`) | `ProductId` (`int`) | `CategoryId` (`int`) -> `Category.CategoryId` (`ClientSetNull`)<br>`TaxId` (`int?`) -> `Taxis.TaxId` (`SetNull`) | — | Supports `Standard`, `MadeToOrder`, `RawMaterial` (`ProductType`), `ShortCode` (`varchar(4)`), `Barcode`, `Sku`, `IsKitchenItem`, `IsDeleted`. |
-| **`ProductRecipe`** (`"ProductRecipes"`) | `RecipeId` (`int`) | `ProductId` (`int`) -> `Product.ProductId` (`Cascade`)<br>`RawMaterialProductId` (`int`) -> `Product.ProductId` (`ClientSetNull`) | `UQ_Product_Ingredient` (Unique on `ProductId, RawMaterialProductId`) | Defines BOM ingredient quantities (`QuantityRequired`, `Uom`). **Never consumed during order/payment processing.** |
-| **`ModifierGroup`** (`"ModifierGroup"`) | `ModifierGroupId` (`int`, `"modifier_group_id"`) | — | — | `IsRequired`, `MinSelections`, `MaxSelections`, `DisplayOrder`, `IsActive`. |
-| **`ModifierOption`** (`"ModifierOption"`) | `ModifierOptionId` (`int`, `"modifier_option_id"`) | `ModifierGroupId` (`int`, `"modifier_group_id"`) -> `ModifierGroup.ModifierGroupId` (`Cascade`) | — | Individual add-on/choice (`Name`, `Price`, `DisplayOrder`, `IsActive`). |
-| **`ProductModifierGroup`** (`"ProductModifierGroup"`) | `ProductModifierGroupId` (`int`, `"product_modifier_group_id"`) | `ProductId` (`int`, `"product_id"`) -> `Product.ProductId` (`Cascade`)<br>`ModifierGroupId` (`int`, `"modifier_group_id"`) -> `ModifierGroup.ModifierGroupId` (`Cascade`) | `UQ_Product_ModifierGroup` (Unique on `ProductId, ModifierGroupId`) | Links products to modifier groups with `DisplayOrder`. |
-| **`BranchInventory`** (`"BranchInventory"`) | `BranchInventoryId` (`int`) | `BranchId` (`int`) -> `Branch.BranchId` (`Cascade`)<br>`ProductId` (`int`) -> `Product.ProductId` (`Cascade`) | `UQ_Branch_Product` (Unique on `BranchId, ProductId`) | Tracks `StockQuantity` (`int`), `ReorderLevel` (`int`), `LastUpdated`. |
-| **`StockAdjustment`** (`"StockAdjustments"`) | `StockAdjustmentId` (`int`) | `BranchId` (`int`) -> `Branch.BranchId` (`ClientSetNull`)<br>`ProductId` (`int`) -> `Product.ProductId` (`ClientSetNull`) | — | Ledger of stock changes (`AdjustmentType`, `Quantity`, `PreviousQuantity`, `NewQuantity`, `Reason`, `CreatedAt`). |
-
-#### C. Sales, Payments, Discounts & Audit Tables
-| Entity / Table | Primary Key | Foreign Keys & Delete Behavior | Unique Constraints & Indexes | Notes / Architectural Observations |
-| :--- | :--- | :--- | :--- | :--- |
-| **`Order`** (`"Orders"`) | `OrderId` (`long`) | `InvoiceSequenceId` (`int?`, `"invoice_sequence_id"`) -> `InvoiceSequence.InvoiceSequenceId` (`SetNull`)<br>`DiscountTypeId` (`int?`) -> `DiscountType.DiscountTypeId` (by convention) | `Orders_OrderNumber_key` (Unique on `OrderNumber`)<br>`IX_Orders_InvoiceNumber` (Unique on `InvoiceNumber`) | **No FKs** on `BranchId`, `OutletId`, `ShiftId`, or `CashierId`. Captures BIR tax breakdown (`VatableSales`, `VatExemptSales`, `ZeroRatedSales`, `VatAmount`) and customer BIR fields. |
-| **`OrderItem`** (`"OrderItems"`) | `OrderItemId` (`long`) | `OrderId` (`long`) -> `Order.OrderId` (`Cascade`) | — | Snapshot pattern: stores `ProductId`, `ProductName`, `ProductShortCode`, `Quantity`, `BasePrice`, `ModifierTotal`, `UnitPrice`, `LineTotal`, `DiscountAmount`, `VatType`, `VatAmount` without FK to `Product`. |
-| **`OrderItemModifier`** (`"OrderItemModifiers"`) | `OrderItemModifierId` (`long`) | `OrderItemId` (`long`) -> `OrderItem.OrderItemId` (`Cascade`) | — | Snapshot pattern: stores `ModifierOptionId`, `ModifierName`, `AdditionalPrice` without FK to `ModifierOption`. |
-| **`Payment`** (`"Payments"`) | `PaymentId` (`long`) | `OrderId` (`long`) -> `Order.OrderId` (`Cascade`) | — | Supports split payments (`PaymentMethod`, `Amount`, `AmountTendered`, `ChangeAmount`, `ReferenceNumber`, `PaymentStatus`, `ProcessedBy`, `PaidAt`). |
-| **`PaymentMethod`** (`"PaymentMethods"`) | `PaymentMethodId` (`int`, `"payment_method_id"`) | — | `PaymentMethods_code_key` (Unique on `"code"`) | `CASH`, `CARD`, `GCASH`, `MAYA`, etc. (`RequiresReference`, `IsActive`, `DisplayOrder`). |
-| **`DiscountType`** (`"DiscountTypes"`) | `DiscountTypeId` (`int`) | — | `Code` `UNIQUE` in SQL (missing in EF) | **Missing from `OnModelCreatingPartial`** in `PosDbContext.Extensions.cs`; relies on DataAnnotations. |
-| **`DiscountAuditLog`** (`"DiscountAuditLogs"`) | `AuditId` (`long`) | `OrderId` (`long?`) -> `Order.OrderId` (`SetNull` in SQL, convention in EF) | — | **Missing from `OnModelCreatingPartial`** in `PosDbContext.Extensions.cs`. Logs statutory/manual discount usage (`DiscountCode`, `DiscountPercentage`, `DiscountAmount`, `CustomerName`, `CustomerIdNumber`, `ApprovedBy`, `AppliedBy`). |
-| **`ReceiptReprintLog`** (`"ReceiptReprintLogs"`) | `ReprintLogId` (`long`) | `OrderId` (`long`) -> `Order.OrderId` (`Cascade`) | `IX_ReceiptReprintLogs_OrderId`<br>`IX_ReceiptReprintLogs_ReprintedAt` | Immutable audit trail for BIR receipt reprints (`ReprintedBy`, `ReprintedAt`, `TerminalInfo`, `Reason`). |
-
-#### D. Held Sales, Returns/Voids, Cash Drawer, Shifts & Offline Sync Tables
-| Entity / Table | Primary Key | Foreign Keys & Delete Behavior | Unique Constraints & Indexes | Notes / Architectural Observations |
-| :--- | :--- | :--- | :--- | :--- |
-| **`HeldSale`** (`"HeldSales"`) | `HeldSaleId` (`long`) | — | `HeldSales_HoldReference_key` (Unique on `HoldReference`) | Parked cart header (`HELD`, `RESUMED`, `CANCELLED`, `EXPIRED`). No FKs on `BranchId`, `OutletId`, `CashierId`. |
-| **`HeldSaleItem`** (`"HeldSaleItems"`) | `HeldSaleItemId` (`long`) | `HeldSaleId` (`long`) -> `HeldSale.HeldSaleId` (`Cascade`) | — | Parked line items. |
-| **`HeldSaleItemModifier`** (`"HeldSaleItemModifiers"`) | `HeldSaleItemModifierId` (`long`) | `HeldSaleItemId` (`long`) -> `HeldSaleItem.HeldSaleItemId` (`Cascade`) | — | Parked line item modifiers. |
-| **`HeldSaleAuditLog`** (`"HeldSaleAuditLogs"`) | `AuditId` (`long`) | — | — | Logs `HELD`, `RESUMED`, `CANCELLED` actions. |
-| **`TransactionVoid`** (`"TransactionVoids"`) | `VoidId` (`long`) | `OriginalOrderId` (`long`) -> `Order.OrderId` (`Restrict`) | — | Full transaction cancellation record (`ReasonCategory`, `RequestedBy`, `ApprovedBy`, `Status`, `ReversalReference`). |
-| **`SalesReturn`** (`"SalesReturns"`) | `ReturnId` (`long`) | `OriginalOrderId` (`long`) -> `Order.OrderId` (`Restrict`) | — | Partial or full return header (`ReturnNumber`, `TotalRefundAmount`, `Reason`, `RequestedBy`, `ApprovedBy`, `Status`). |
-| **`SalesReturnItem`** (`"SalesReturnItems"`) | `ReturnItemId` (`long`) | `ReturnId` (`long`) -> `SalesReturn.ReturnId` (`Cascade`)<br>`OriginalOrderItemId` (`long`) -> `OrderItem.OrderItemId` (`Restrict`) | — | Returned item quantities, prorated tax/discount, and `RestockDisposition` (`RESTOCK`, `DEFECTIVE`, `WASTE`). |
-| **`Refund`** (`"Refunds"`) | `RefundId` (`long`) | `ReturnId` (`long?`) -> `SalesReturn.ReturnId` (`SetNull`)<br>`VoidId` (`long?`) -> `TransactionVoid.VoidId` (`SetNull`)<br>`OriginalPaymentId` (`long`) -> `Payment.PaymentId` (`Restrict`) | — | Disbursement record (`RefundMethod`, `RefundAmount`, `ReferenceNumber`, `ProcessedBy`, `RefundedAt`). |
-| **`CashierSession`** (`"CashierSessions"`) | `CashierSessionId` (`long`) | — | — | Tracks active cashier terminal ownership (`ACTIVE`, `SWITCHED_OUT`, `LOGGED_OUT`, `PreviousSessionId`). |
-| **`CashierSwitchLog`** (`"CashierSwitchLogs"`) | `SwitchLogId` (`long`) | — | — | Audit log for cashier handoffs (`PreviousCashierId`, `NewCashierId`, `ActionType`, `SwitchedAt`). |
-| **`CashDrawerShift`** (`"CashDrawerShifts"`) | `ShiftId` (`long`) | — | — | Tracks physical drawer float and reconciliation (`OpeningFloat`, `TotalCashSales`, `TotalCashRefunds`, `TotalCashIn`, `TotalCashOut`, `ExpectedBalance`, `ActualCountedBalance`, `Discrepancy`). |
-| **`CashDrawerMovement`** (`"CashDrawerMovements"`) | `MovementId` (`long`) | `ShiftId` (`long`) -> `CashDrawerShift.ShiftId` (`Cascade`) | — | Tracks `CASH_IN`, `CASH_OUT`, `CASH_SALE` drawer movements. |
-| **`OfflineSyncIdempotencyRecord`** (`"OfflineSyncIdempotency"`) | `SyncId` (`long`) | — | `UX_OfflineSync_LocalTx` (`LocalTransactionId`)<br>`UX_OfflineSync_Invoice` (`InvoiceNumber`) | Defined in `OfflineSyncModels.cs` and `PosDbContext.Extensions.cs:370-377`, **but never queried or inserted by `OfflineSyncController.cs`!** |
-
----
-
-### 2.4 Decimal Precision & Scale Audit (Currency, Tax, Discounts & Inventory)
-
-A critical requirement in POS and BIR accounting systems is deterministic decimal precision across currency (`numeric(18,2)`), tax/discount rates (`numeric(18,4)` / `numeric(5,2)`), and inventory/recipe quantities (`numeric(18,3)` / `numeric(18,4)`). Across `POS.Api`, `POS.Client`, and SQL scripts, precision configuration is inconsistent:
-
-| Entity / Table | Column / Property | C# Type | `POS.Api` EF Configuration | PostgreSQL SQL Script | `POS.Client` SQLite Model | Audit Finding / Risk |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`Taxis` (`Taxes`)** | `Rate` | `decimal?` (API) / `decimal` (Client) | **`.HasPrecision(18)` (NO SCALE)** (`PosDbContext.cs:186`) | Scaffolded | `[Column(TypeName = "decimal(18,4)")]` | **CRITICAL BUG:** `.HasPrecision(18)` with no second argument maps to `numeric(18,0)` in PostgreSQL, truncating fractional tax rates (e.g., `0.12` -> `0`) if EF creates/validates the schema! |
-| **`Order`** | `Subtotal`, `DiscountAmount`, `TotalAmount` | `decimal` | `.HasPrecision(18, 2)` | `NUMERIC(18,2)` | `[Column(TypeName = "decimal(18,2)")]` | Properly configured (`18,2`). |
-| **`Order`** | `VatableSales`, `VatExemptSales`, `ZeroRatedSales`, `VatAmount` | `decimal` | **UNCONFIGURED** in `Order.cs` & `PosDbContext.Extensions.cs` | `NUMERIC(18,2)` (`DiscountModule.sql`) | `[Column(TypeName = "decimal(18,2)")]` | **Missing EF Precision:** Relies on external SQL script; unconfigured in EF model. |
-| **`Order`** | `DiscountPercentage` | `decimal` | **UNCONFIGURED** in `Order.cs` & `PosDbContext.Extensions.cs` | `NUMERIC(5,2)` (`DiscountModule.sql`) | *(Omitted in `LocalOrder`)* | **Missing EF Precision** (`5,2`) and missing in `LocalOrder`. |
-| **`OrderItem`** | `Quantity` | `decimal` (API) / **`int`** (Client) | `.HasPrecision(18, 3)` | `NUMERIC(18,3)` | **`int`** (`LocalPosModels.cs:171`) | **Type Mismatch:** API supports fractional quantities (`18,3` for weighted items like `kg`), but `LocalOrderItem.Quantity` and `OfflineTransactionItemDto.Quantity` are `int`! |
-| **`OrderItem`** | `BasePrice`, `ModifierTotal`, `UnitPrice`, `LineTotal` | `decimal` | `.HasPrecision(18, 2)` | `NUMERIC(18,2)` | `UnitPrice`, `LineTotal`: `decimal(18,2)` | Properly configured (`18,2`), though `BasePrice` and `ModifierTotal` are missing on `LocalOrderItem`. |
-| **`OrderItem`** | `DiscountAmount`, `VatAmount` | `decimal` | **UNCONFIGURED** in `OrderItem.cs` & `PosDbContext.Extensions.cs` | `NUMERIC(18,2)` (`DiscountModule.sql`) | *(Omitted in `LocalOrderItem`)* | **Missing EF Precision** in `POS.Api` and omitted from `LocalOrderItem`. |
-| **`OrderItemModifier`** | `AdditionalPrice` | `decimal` | `.HasPrecision(18, 2)` | `NUMERIC(18,2)` | *(Table missing in Client)* | Properly configured in API; table completely absent in `LocalPosDbContext`. |
-| **`Payment`** | `Amount`, `AmountTendered`, `ChangeAmount` | `decimal` | `.HasPrecision(18, 2)` | `NUMERIC(18,2)` | `[Column(TypeName = "decimal(18,2)")]` | Properly configured (`18,2`). |
-| **`Product`** | `Price`, `CostPrice` | `decimal`, `decimal?` | `.HasPrecision(18, 2)` | `numeric(18,2)` | `decimal` (**unconfigured**, `CostPrice` non-nullable) | `LocalProduct.CostPrice` is non-nullable `decimal` while `Product.CostPrice` is `decimal?`. |
-| **`Product`** | `UnitValue` | `decimal?` | `.HasPrecision(10, 2)` | `numeric(10,2)` | `decimal?` (**unconfigured**) | Unconfigured precision in `LocalProduct`. |
-| **`ProductRecipe`** | `QuantityRequired` | `decimal` | `.HasPrecision(18, 4)` | `numeric(18,4)` | *(Not in Client)* | `18,4` precision in recipe BOM, **but see `BranchInventory` below**. |
-| **`BranchInventory`** | `StockQuantity`, `ReorderLevel` | **`int`** | Default `integer` | `integer` | *(Not in Client)* | **CRITICAL ARCHITECTURE FLAW:** Stock is stored as `int` while `ProductRecipe.QuantityRequired` is `decimal(18,4)` and `OrderItem.Quantity` is `decimal(18,3)`. Fractional recipe consumption (e.g., `0.0500 kg` of coffee beans) or weighted retail items cannot be deducted from `int` stock! |
-| **`StockAdjustment`** | `Quantity`, `PreviousQuantity`, `NewQuantity` | **`int`** | Default `integer` | `integer` | *(Not in Client)* | Same `int` limitation as `BranchInventory`. |
-| **`DiscountType`** | `DiscountValue` | `decimal` | `[Column(TypeName = "numeric(18,4)")]` (attribute only) | `NUMERIC(18,4)` | `[Column(TypeName = "decimal(18,2)")]` | Scale mismatch: `(18,4)` in API vs `(18,2)` in `LocalDiscount`. |
-| **`HeldSale` / `HeldSaleItem` / `HeldSaleItemModifier`** | Monetary & `Quantity` columns | `decimal` | `.HasColumnType("numeric(18,2)")` / `numeric(18,3)` | *(SQL script missing from disk)* | *(Not in Client)* | Configured in Fluent API (`PosDbContext.Extensions.cs:291-313`). |
-| **`SalesReturn` / `SalesReturnItem` / `Refund`** | Monetary & `Quantity` columns | `decimal` | `.HasColumnType("numeric(18,2)")` / `numeric(18,3)` | *(SQL script missing from disk)* | *(Not in Client)* | Configured in Fluent API (`PosDbContext.Extensions.cs:316-349`). |
-| **`CashDrawerShift` / `CashDrawerMovement`** | Monetary columns | `decimal` / `decimal?` | `[Column(TypeName = "numeric(18,2)")]` + `.HasColumnType("numeric(18,2)")` | *(SQL script missing from disk)* | *(Not in Client)* | Configured in both DataAnnotations and Fluent API. |
-
----
-
-## 3. Core Modules & Business Logic
-
-### 3.1 Cashiering, Cart Management & Sequence Numbering
-1. **Cart State (`POS.Client/Services/CartService.cs:1-162`):**
-   - Maintains an in-memory list of `CartItem` objects. When adding a product (`AddItem`), `CartService` checks whether an item with the same `ProductId` and identical sorted set of `ModifierOptionId`s already exists (`AreModifiersEqual`, `L116-127`); if so, it increments `Quantity`.
-   - Computes `CartItem.UnitPrice = BasePrice + SelectedModifiers.Sum(m => m.Price)` and `CartItem.LineTotal = UnitPrice * Quantity`.
-   - Holds active discount metadata (`ActiveDiscountCode`, `ActiveDiscountName`, `ActiveDiscountAmount`, `CustomerCardNumber`).
-2. **Order Creation (`POS.Api/Controllers/OrdersController.cs:16-149`):**
-   - `POST api/Orders` opens a database transaction, generates an operational `OrderNumber` via `ISequenceService.GenerateOrderNumberAsync(dto.OutletId)`, looks up the branch's `TaxType` (`VAT-Registered` by default), and invokes `IDiscountCalculationService.CalculateOrder(calcReq)`.
-   - Persists the `Order` (`OrderStatus = "PENDING"`, `PaymentStatus = "UNPAID"`), `OrderItem`s, and `OrderItemModifier`s.
-   - If `calcRes.DiscountAmount > 0`, inserts a `DiscountAuditLog` record (`L125-138`) before committing.
-3. **Dual Sequence Architecture (`POS.Api/Services/SequenceService.cs:1-118`):**
-   - **Operational Order Number (`GenerateOrderNumberAsync`, `L9-72`):** Issued at order creation (`PENDING`/`UNPAID`). Uses `SELECT * FROM "OrderSequences" WHERE "outlet_id" = {0} FOR UPDATE` to lock the outlet's row, auto-creating one with `CodePrefix = "POS{outletId:D2}"` if absent, and formats `{CodePrefix}-{LastIssuedNumber:D6}` (e.g., `POS01-000001`).
-   - **Legal BIR Invoice Number (`IssueInvoiceNumberAsync`, `L74-117`):** Issued **only upon full payment completion** (`PaymentsController.cs:125`) to prevent gaps in BIR-registered invoice sequences from abandoned or unpaid carts. Locks the active `InvoiceSequences` row via `SELECT * FROM "InvoiceSequences" WHERE "outlet_id" = {0} AND "is_active" = true FOR UPDATE`, verifies `LastIssuedNumber < EndingNumber`, increments `LastIssuedNumber`, formats `{Prefix}{LastIssuedNumber.ToString().PadLeft(PaddingLength, '0')}`, and stamps `InvoiceSequenceId`, `InvoiceNumber`, and `InvoiceIssuedAt` onto `Order`.
-4. **Held / Parked Sales (`POS.Api/Controllers/HeldSalesController.cs:14-239`):**
-   - `POST api/held-sales` parks an active cart under a generated `HoldReference` (`HOLD-yyMMddHHmmss-RRR`) with `Status = "HELD"` and writes a `HELD` entry to `HeldSaleAuditLogs`.
-   - `POST api/held-sales/{id}/resume` runs under `IsolationLevel.Serializable` (`L134`), verifies the sale is still `HELD` (`409 Conflict` if already resumed by another terminal) and matches the requesting `outletId` (`403 Forbid`), transitions `Status = "RESUMED"`, and logs `RESUMED`.
-
----
-
-### 3.2 Payment Processing (`POS.Api/Controllers/PaymentsController.cs:16-162`)
-1. **Idempotency / Double-Payment Guard:** Rejects with `409 Conflict` if `order.PaymentStatus == "PAID"` (`L26-27`).
-2. **Split Tender Mode (`L34-76`):**
-   - Accepts multiple `PaymentSplitDto` entries (e.g., partial `CASH` + partial `GCASH`).
-   - Validates that `Math.Abs(totalSplitAmount - order.TotalAmount) <= 0.01m` (`L37-41`), each split has `Amount > 0`, and `AmountTendered >= Amount`, calculating `ChangeAmount = tendered - split.Amount` per split.
-3. **Single Tender Mode (`L77-105`):**
-   - Validates `tendered >= order.TotalAmount`, computes `change = tendered - totalAmount`, and inserts a single `Payment` record with `PaymentStatus = "SUCCESS"`.
-4. **Order Completion & BIR Invoice Issuance (`L107-128`):**
-   - Updates optional customer BIR invoice fields (`CustomerName`, `CustomerAddress`, `CustomerTin`, `CustomerBusinessStyle`).
-   - Verifies total `SUCCESS` payments cover `order.TotalAmount - 0.01m`, transitions `order.PaymentStatus = "PAID"` and `order.OrderStatus = "COMPLETED"`, and calls `sequenceService.IssueInvoiceNumberAsync(order.OrderId, order.OutletId)` inside the same transaction.
-
----
-
-### 3.3 Discounts & BIR Tax / VAT Compliance (`DiscountCalculationService.cs`, `LocalDiscountCalculationService.cs`, `docs/BIR_RESEARCH.md`)
-Both `POS.Api/Services/DiscountCalculationService.cs` and `POS.Shared/Services/LocalDiscountCalculationService.cs` implement identical line-by-line BIR tax and statutory discount formulas:
-1. **Gross Line Calculation (`L25-26`):**
-   - $\text{EffectiveUnitPrice} = \text{UnitPrice} + \text{ModifierTotal}$
-   - $\text{LineGross} = \text{Round}(\text{EffectiveUnitPrice} \times \text{Quantity}, 2)$
-2. **Baseline Tax Classification (`L40-66`):**
-   - If `TaxName` contains `"EXEMPT"` -> `VatExemptSales = LineGross`, `VatType = "EXEMPT"`.
-   - If `TaxName` contains `"ZERO"` -> `ZeroRatedSales = LineGross`, `VatType = "ZERO_RATED"`.
-   - Otherwise, if branch is `"VAT-Registered"`:
-     - $\text{VatableSales} = \text{Round}(\text{LineGross} / 1.12, 2)$
-     - $\text{VatAmount} = \text{Round}(\text{LineGross} - \text{VatableSales}, 2)$
-     - `VatType = "VATABLE"`.
-   - If branch is `"Non-VAT"` -> `VatExemptSales = LineGross`, `VatType = "NON_VAT"`.
-3. **Statutory & Promotional Discount Rules (`L69-114`):**
-   - **`SC` (Senior Citizen), `PWD` (Person with Disability), `NAAC` (National Athletes & Coaches), `MOV` (Medal of Valor):**
-     - On a `VAT-Registered` branch for a `VATABLE` item (`L71-82`), removes 12% VAT first per RA 9994 / RR 7-2010 and RA 10754 / RR 5-2017:
-       $$\text{VAT-Exclusive Base (GSP)} = \text{Round}\left(\frac{\text{LineGross}}{1.12}, 2\right)$$
-       $$\text{DiscountAmount} = \text{Round}(\text{GSP} \times 0.20, 2)$$
-       $$\text{LineTotal (Net Payable)} = \text{Round}(\text{GSP} - \text{DiscountAmount}, 2)$$
-       Reclassifies the line from `VATABLE` to `EXEMPT` (`VatAmount = 0`, `VatableSales = 0`, `VatExemptSales = GSP`).
-     - On a `Non-VAT` branch or already `EXEMPT` item (`L83-88`), applies 20% directly off `LineGross`.
-   - **`SP` (Solo Parent):** Applies 10% discount off `LineGross` (`L89-94`).
-   - **`BNPC` (Basic Necessities & Prime Commodities):** Applies 5% discount off `LineGross` (`L95-100`).
-   - **`EMPLOYEE`:** Applies 10% discount off `LineGross` (`L101-105`).
-   - **`MANUAL`:** Applies `request.ManualDiscountPercentage`% off `LineGross` (`L106-110`).
-4. **Order-Level BIR Aggregation (`L131-140`):**
-   - `VatableSales`: Sum of `(LineTotal - VatAmount)` across `VATABLE` items.
-   - `VatExemptSales`: Sum of `(LineTotal + DiscountAmount)` across `EXEMPT` and `NON_VAT` items (recording the full VAT-exclusive GSP as VAT-Exempt Sales per RR 7-2010).
-   - `ZeroRatedSales`: Sum of `LineTotal` across `ZERO_RATED` items.
-   - `VatAmount`: Sum of `VatAmount` across all items.
-
----
-
-### 3.4 Inventory Deductions & Recipe BOM Consumption
-1. **Manual Inventory Management (`POS.Api/Controllers/InventoryController.cs:14-127`):**
-   - `GET api/Inventory/branch/{branchId}` lists stock per branch (and auto-seeds missing `BranchInventory` rows with `StockQuantity = 0, ReorderLevel = 5`).
-   - `POST api/Inventory/adjust` processes manual stock movements (`"add"`, `"deduct"`, `"set"`), clamping quantities at `0`, updating `BranchInventory.StockQuantity`, and recording a `StockAdjustment` audit row (`L111-123`).
-2. **Offline Sale Sync Stock Deduction (`POS.Api/Controllers/OfflineSyncController.cs:107-129`):**
-   - When an offline transaction is uploaded to `POST api/offline-sync/transactions`, the controller looks up `BranchInventory` for `(request.BranchId, itemDto.ProductId)`, subtracts `itemDto.Quantity` (`Math.Max(0, prevQty - itemDto.Quantity)`), and writes a `StockAdjustment` row with `AdjustmentType = "OFFLINE_SALE_SYNC"`.
-3. **Return Restocking (`POS.Api/Controllers/ReturnsController.cs:353-363`):**
-   - During `POST api/Returns`, if an item's `RestockDisposition` is `"RESTOCK"`, `inventory.StockQuantity += (int)Math.Round(itemReq.Quantity)` is executed (without writing a `StockAdjustment` log).
-4. **Missing Online Sale & Recipe BOM Deductions (Critical Gap):**
-   - Neither `OrdersController.CreateOrder` nor `PaymentsController.ProcessPayment` touches `BranchInventories` or `StockAdjustments`. **Online sales do not deduct inventory at all.**
-   - `ProductRecipesController.cs` provides CRUD for `ProductRecipes` (`MadeToOrder` product -> `RawMaterial` ingredients), **but `ProductRecipes` is never queried or deducted anywhere in the order, payment, or offline sync pipelines.**
-
----
-
-### 3.5 Audit Logs, Returns, Voids, Cash Drawer & Receipt Reprints
-1. **Controlled Receipt Reprints (`ReceiptsController.cs:15-56`, `TransactionsController.cs:235-278`, `ReceiptService.cs:10-89`):**
-   - `ReceiptService.GetReceiptAsync` verifies that `order.PaymentStatus == "PAID"` and `SUCCESS` payments cover `order.TotalAmount`.
-   - When `reprint=true`, the API executes a raw SQL `INSERT INTO "ReceiptReprintLogs"` recording `OrderId`, `ReprintedBy` (`User.Identity.Name`), `ReprintedAt`, `TerminalInfo`, and `Reason = "CONTROLLED_REPRINT"`.
-2. **Transaction Voids & Partial/Full Returns (`POS.Api/Controllers/ReturnsController.cs:19-418`):**
-   - Both `POST api/Returns/void` and `POST api/Returns` execute inside `IsolationLevel.Serializable` transactions (`L26`, `L255`) and require supervisor authorization (`Admin`, `Manager`, `Senior Cashier`).
-   - **Void:** Inserts `TransactionVoid`, marks `order.OrderStatus = "VOIDED"` and `order.PaymentStatus = "VOIDED"`, marks all `SUCCESS` payments `"REFUNDED"`, and creates `Refund` records.
-   - **Return:** Validates cumulative returned quantities per `OriginalOrderItemId` across all `COMPLETED` `SalesReturns` (`L310-329`) to prevent over-refunding, prorates line total/tax/discount, inserts `SalesReturn` + `SalesReturnItem`s + `Refund`, and optionally restocks `BranchInventory`.
-3. **Cash Drawer Shifts & Cashier Sessions (`CashDrawerController.cs:13-134`, `CashierSessionsController.cs:13-122`):**
-   - `CashDrawerController` manages shift opening (`OpeningFloat`), manual cash movements (`CASH_IN`, `CASH_OUT`), and shift closing (`ActualCountedBalance` vs `ExpectedBalance` -> `Discrepancy`).
-   - `CashierSessionsController` tracks active cashier terminal sessions and writes `CashierSwitchLogs` when cashiers switch or log out.
-
----
-
-## 4. Tech Stack & Project Structure
-
-### 4.1 Technology Stack Summary
-
-| Layer | Project | Target Framework | Key Frameworks & NuGet Libraries |
-| :--- | :--- | :--- | :--- |
-| **Backend API** | `POS.Api` | `net10.0` | ASP.NET Core Web API, EF Core `10.0.12`, `Npgsql.EntityFrameworkCore.PostgreSQL` `10.0.3`, `Microsoft.AspNetCore.Authentication.JwtBearer` `10.0.12`, `BCrypt.Net-Next` `4.2.0`, `Microsoft.AspNetCore.OpenApi` `10.0.12`, `Scalar.AspNetCore` `2.18.0` |
-| **POS Terminal Client** | `POS.Client` | `net10.0-windows10.0.19041.0`, `net10.0-android`, `net10.0-ios`, `net10.0-maccatalyst` | .NET MAUI Blazor Hybrid (`Microsoft.AspNetCore.Components.WebView.Maui`), `Microsoft.EntityFrameworkCore.Sqlite` `10.0.0`, `CurrieTechnologies.Razor.SweetAlert2` `5.6.0`, `Microsoft.AspNetCore.Components.QuickGrid` `10.0.12`, `System.Drawing.Printing` (Windows thermal receipt printing) |
-| **Back-Office Web Admin** | `POS.Web` | `net10.0` | Blazor Web App (Interactive Server, `prerender: false`), AdminLTE v4.10.0, Bootstrap 5, `CurrieTechnologies.Razor.SweetAlert2` `5.6.0`, `Microsoft.AspNetCore.Components.QuickGrid` `10.0.12`, `Microsoft.AspNetCore.Identity.EntityFrameworkCore` `10.0.8`, `Microsoft.EntityFrameworkCore.SqlServer` `10.0.8` |
-| **Shared Contracts & SDK** | `POS.Shared` | `net10.0` | Pure .NET 10 BCL (`System.Net.Http.Json`, `System.ComponentModel.DataAnnotations`) |
-
----
-
-### 4.2 Repository Folder Hierarchy
+The actual solution is `Pos.Solution.slnx`, not `POS.sln`. It includes four projects (`Pos.Solution.slnx:1-8`). A fifth project, `POS.Tests`, exists outside the solution.
 
 ```text
-Pos.Solution/
-├── Pos.Solution.slnx                        # .NET XML Solution file (4 projects)
-├── docs/
-│   └── BIR_RESEARCH.md                      # Philippine BIR tax, EOPT & statutory discount specification
-├── POS.Shared/                              # Shared DTOs, Interfaces, HTTP Services & Calculators
-│   ├── Helpers/
-│   │   └── CategoryColor.cs                 # Color palette validation & normalization
-│   ├── Interfaces/                          # 20 service contracts (IOrderService, IPaymentService, etc.)
-│   ├── Models/                              # 39 DTO files (Order, Payment, Receipt, Discount, OfflineSync, etc.)
-│   └── Services/                            # 18 HttpClient services + LocalDiscountCalculationService + ProductShortCodeGenerator
-├── POS.Api/                                 # ASP.NET Core 10 REST API (PostgreSQL)
-│   ├── Controllers/                         # 30 API Controllers (Orders, Payments, Discounts, Returns, OfflineSync, etc.)
-│   ├── Models/                              # PosDbContext + 28 domain model files (38 DbSets)
-│   │   ├── PosDbContext.cs                  # Core EF Core context (10 reverse-engineered entities)
-│   │   ├── PosDbContext.Extensions.cs       # Partial context extending 27 entities (Orders, Payments, Returns, etc.)
-│   │   └── PosDbContext.ServiceMode.cs      # Partial context for ServiceModes DbSet
-│   ├── Services/                            # Backend domain services
-│   │   ├── DiscountCalculationService.cs    # Server-side BIR tax & discount calculation engine
-│   │   ├── ReceiptService.cs                # Receipt payload builder & payment verification
-│   │   ├── SalesReportService.cs            # Financial aggregation & grouping engine
-│   │   └── SequenceService.cs               # Row-locked OrderNumber & BIR InvoiceNumber generator
-│   ├── MigrationRunner.cs                   # Startup raw SQL runner (references missing Database/*.sql files)
-│   ├── efpt.config.json                     # EF Core Power Tools configuration
-│   └── Program.cs                           # DI registration, JWT Bearer config, CORS, Scalar OpenAPI
-├── POS.Client/                              # .NET MAUI Blazor Hybrid Cashier Terminal App
-│   ├── Components/
-│   │   ├── Layout/                          # MainLayout.razor (connectivity/sync status), NavMenu.razor, AuthLayout.razor
-│   │   └── Pages/                           # Login, Home, NewSale, DiscountModal, HeldSales, Transactions, CashDrawer, ReceiptPreview
-│   ├── Data/
-│   │   ├── LocalPosDbContext.cs             # SQLite DbContext (WAL mode, 14 DbSets)
-│   │   └── LocalPosModels.cs                # Local SQLite entity definitions
-│   ├── Platforms/Windows/
-│   │   └── WindowsReceiptPrinter.cs         # 80mm GDI+ PrintDocument thermal printer + HTML browser fallback
-│   ├── Services/                            # CartService, PosSessionService, OfflineCheckoutService, OfflineTransactionSyncService, etc.
-│   ├── Workers/
-│   │   └── OfflineBackgroundSyncWorker.cs   # Unregistered duplicate background sync worker
-│   └── MauiProgram.cs                       # MAUI host builder & DI container registration
-└── POS.Web/                                 # Blazor Interactive Server Back-Office Admin App
-    ├── Auth/
-    │   └── CustomAuthStateProvider.cs       # ProtectedSessionStorage JWT authentication provider
-    ├── Components/
-    │   ├── Account/                         # Unused scaffolded ASP.NET Core Identity pages
-    │   ├── Layout/                          # AdminLTE MainLayout.razor, NavMenu.razor
-    │   └── Pages/                           # 16 Admin pages (ManageProducts, ManageBranches, ManageInventory, SalesReports, etc.)
-    ├── Data/                                # Unused SQL Server ApplicationDbContext & Identity migration
-    └── Program.cs                           # Blazor Server setup, HttpClient SSL bypass, dual auth registration
+POS.Client (MAUI Blazor Hybrid cashier)
+    |  HTTP JSON via Shared adapters and direct HttpClient
+    v
+POS.Api (ASP.NET Core business API) ---- EF Core/Npgsql ---- PostgreSQL
+    ^
+    |  HTTP JSON via Shared adapters and direct HttpClient
+POS.Web (Blazor Interactive Server administration)
+    |  separate scaffolded Identity subsystem
+    +---- EF Core/SQL Server ---- Identity database
+
+POS.Client ---- EF Core/SQLite ---- local reference cache + sales + outbox + cash ledger
+POS.Shared ---- contracts, interfaces, HTTP adapters, local calculations, helpers
+POS.Tests  ---- direct API controller/Shared checks with in-memory SQLite
 ```
 
----
+### Responsibilities and dependencies
 
-## 5. Identified Technical Debts, Risks & Bottlenecks
+| Project | Responsibility | Important dependencies |
+|---|---|---|
+| `POS.Api` | Authoritative orders/payments, tax calculations, numbering, catalog, inventory, returns, cash ledger, receipts, reports, offline ingestion | ASP.NET Core .NET 10; EF Core 10.0.12; Npgsql EF provider 10.0.3; JWT bearer; BCrypt 4.2.0; Shared. |
+| `POS.Client` | Native cashier UI, terminal/session, cart, online payment, offline cash checkout, SQLite cache/outbox, cash operations, Windows printing | MAUI Blazor Hybrid; EF SQLite/Design 10.0.0; QuickGrid 10.0.12; SweetAlert2 5.6.0; Shared. |
+| `POS.Web` | Browser back-office CRUD, stock adjustment, reporting, sales/returns audit and cash-movement management | Blazor Interactive Server; EF/Identity SQL Server 10.0.8; QuickGrid; SweetAlert2; AdminLTE/Bootstrap; Shared. |
+| `POS.Shared` | DTOs, 20 interfaces, thin HTTP adapters, offline financial calculator, shortcode/color helpers | .NET 10 BCL; no external PackageReference. |
+| `POS.Tests` | Console regression harness for cash controls, selected transaction scope and approval rules | API + Shared; EF/Relational 10.0.12 and SQLite 10.0.0; no standard test discovery framework. |
 
-### 5.1 Critical Build & Runtime Blockers (P0)
-1. **Compile-Breaking Errors in `POS.Client`:**
-   - [`POS.Client/Components/Pages/NewSale.razor`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Client/Components/Pages/NewSale.razor#L1226-L1237) and [`L1337`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Client/Components/Pages/NewSale.razor#L1337) reference an undeclared variable `isOffline`, a non-existent property `Cart.TotalAmount` (`CartService` only exposes `Subtotal`, `Total`, and `ActiveDiscountAmount`), and a non-existent property `OrderResponseDto.OrderDate` (`OrderResponseDto` exposes `CreatedAt`).
-   - [`POS.Client/Data/LocalPosModels.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Client/Data/LocalPosModels.cs#L1) includes `using Microsoft.Build.Tasks.Deployment.Bootstrapper;`, which fails compilation on non-Windows/MAUI targets.
-2. **Thread-Unsafe Singleton `LocalPosDbContext` in `POS.Client`:**
-   - [`POS.Client/MauiProgram.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Client/MauiProgram.cs#L39) registers `LocalPosDbContext` as a **Singleton**. It is accessed concurrently by `OfflineBackgroundSyncManager` (30s background timer), `MainLayout.razor` (15s `System.Threading.Timer` callback on thread pool), `Home.razor` (15s timer), and UI components (`NewSale.razor`, `HeldSales.razor`), causing EF Core concurrency exceptions (`A second operation was started on this context instance before a previous operation completed`).
-3. **Broken Startup Database Migration Pipeline (`MigrationRunner.cs`):**
-   - [`POS.Api/MigrationRunner.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/MigrationRunner.cs#L15-L23) attempts to read 7 SQL files from `Database/*.sql` using a relative path and a hardcoded connection string. In the working tree, `POS.Api/Database/*.sql` files are deleted/missing, causing `MigrationRunner.Run()` to throw `DirectoryNotFoundException` on every startup (silently swallowed in [`POS.Api/Program.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Program.cs#L66-L73)).
-4. **Nullable `.Value` Dereferences Causing 500 Crashes:**
-   - [`POS.Api/Controllers/ProductsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/ProductsController.cs#L42) and [`POS.Api/Controllers/OfflineReferenceDataController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/OfflineReferenceDataController.cs#L51) evaluate `CostPrice = p.CostPrice.Value` on nullable `decimal? Product.CostPrice`. Any product with `NULL` `CostPrice` crashes `GET api/Products` and `GET api/offline/reference-data`.
-   - [`POS.Api/Controllers/TaxesController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/TaxesController.cs#L19) evaluates `Rate = t.Rate.Value` on nullable `decimal? Taxis.Rate`.
-   - [`POS.Api/Controllers/TransactionsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/TransactionsController.cs#L164) calls `await receiptService.GetReceiptAsync(id, false)` inside `GetTransactionById`, which throws `InvalidOperationException` whenever a user clicks on an `UNPAID` or `VOIDED` transaction in Transaction History!
+Evidence: project `.csproj` files; `POS.Api/Program.cs:44-51`; `POS.Client/MauiProgram.cs:29-63`; `POS.Web/Program.cs:17-87`; `POS.Tests/POS.Tests.csproj:1-20`.
 
----
+All three production executables reference Shared. Neither Web nor Client accesses the central business database directly. Web's Identity database is separate from API Users, not a second business-data store.
 
-### 5.2 Critical Security Vulnerabilities (P0)
-1. **Supervisor Approval Bypass on Voids and Returns (Username-Only Check):**
-   - [`POS.Api/Controllers/ReturnsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/ReturnsController.cs#L20) (`POST api/Returns/void`), [`L249`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/ReturnsController.cs#L249) (`POST api/Returns`), and [`POS.Api/Controllers/TransactionsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/TransactionsController.cs#L281) (`POST api/Transactions/{id}/void`) are decorated with `[AllowAnonymous]`.
-   - Worse, [`ReturnsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/ReturnsController.cs#L42-L44) and [`L271-L273`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/ReturnsController.cs#L271-L273) verify supervisor approval via:
-     ```csharp
-     approver = await context.Users
-         .SingleOrDefaultAsync(u => u.PinCode == cleanPin || u.Username.ToLower() == cleanPin.ToLower(), cancellationToken);
-     ```
-     Passing `"admin"` (or any manager's username) in `ApprovedByPinOrUsername` bypasses PIN authentication completely and approves any void or refund.
-2. **Unauthenticated Endpoints Across 18+ Controllers & Full PIN Dump:**
-   - [`POS.Api/Controllers/UsersController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/UsersController.cs#L10-L34) has no `[Authorize]` attribute and returns every user's `Username`, `Role`, and plaintext `PinCode` on `GET api/Users`, and allows unauthenticated user creation/deletion.
-   - `OrdersController`, `PaymentsController`, `OfflineSyncController`, `DiscountsController`, `InventoryController`, `ProductsController`, `ProductRecipesController`, `CategoriesController`, `BranchesController`, `OutletsController` (CRUD actions), `BusinessTypesController`, `ModifierGroupsController`, `ModifierOptionsController`, `ProductModifiersController`, `PaymentMethodsController`, `ServiceModesController`, `TaxesController`, `UomsController`, and `EndpointsController` lack `[Authorize]` attributes.
-3. **Permanent Cashier-to-Supervisor Privilege Escalation on Terminal:**
-   - In [`POS.Client/Components/Pages/Transactions.razor`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Client/Components/Pages/Transactions.razor#L373-L380), when a supervisor enters their PIN to authorize a cashier's receipt reprint, line `380` overwrites `Http.DefaultRequestHeaders.Authorization` with the supervisor's Bearer token and never restores the cashier's token (`Session.Token`).
-4. **Hardcoded Credentials, Secrets & Production TLS Bypass:**
-   - PostgreSQL password (`p@$$w0rd`) and JWT secret (`BjQYAiIS5mfYIw296Obh8sTtvMtdfPl2`) are hardcoded in [`POS.Api/Models/PosDbContext.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Models/PosDbContext.cs#L40), [`POS.Api/MigrationRunner.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/MigrationRunner.cs#L11), and [`POS.Api/appsettings.json`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/appsettings.json#L10-L13).
-   - [`POS.Web/Program.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Web/Program.cs#L56) disables TLS certificate validation (`ServerCertificateCustomValidationCallback = ... => true`) unconditionally in all environments.
+### Folder map
 
----
+- `POS.Api/Controllers`: 30 route controllers for business operations and master data.
+- `POS.Api/Models`: entities and three partial PosDbContext files.
+- `POS.Api/Services`: discount, sequence, receipt and sales-report services.
+- `POS.Client/Components/Pages`: cashier workflows and some placeholder pages.
+- `POS.Client/Data`: local models, initialization and SQLite configuration.
+- `POS.Client/Services`: cart/session, cache, checkout, connectivity, uploader/coordinator and printer abstractions.
+- `POS.Client/Platforms`: native startup and platform implementations.
+- `POS.Web/Components/Pages`: application administration pages.
+- `POS.Web/Components/Account`, `Data`, `Auth`: parallel Identity scaffold and custom API-token authentication.
+- `POS.Shared/Models`, `Interfaces`, `Services`, `Helpers`: contracts, adapters and pure helpers.
+- `deployment`: Windows publish/Inno Setup scripts.
+- `docs/BIR_RESEARCH.md`: intended regulatory baseline; not independently legally verified here.
+- `.agents/skills/wayfinder/SKILL.md`: a real repository-local Wayfinder skill is present. `.plan/MAP.md` is its local planning map; linked ticket files are currently deleted in the working tree. No Wayfinder installation was performed by this review.
+- `publish`, `bin`, `obj`, `.vs`, AdminLTE distributions and vendored assets are generated/vendor material, not additional implemented POS modules. Review emphasized authored behavior, not line-by-line vendor/binary auditing.
 
-### 5.3 Core Business Logic, Financial & Inventory Bugs (P1)
-1. **Online Sales Never Deduct Inventory or Consume Recipe BOMs:**
-   - [`POS.Api/Controllers/OrdersController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/OrdersController.cs) and [`POS.Api/Controllers/PaymentsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/PaymentsController.cs) never decrement `BranchInventory` or create `StockAdjustment` entries.
-   - `ProductRecipes` (`MadeToOrder` BOM ingredients) are never consumed anywhere in online or offline sales processing.
-   - `BranchInventory.StockQuantity` and `StockAdjustment.Quantity` are `int`, making fractional recipe deductions (`decimal(18,4)`) or weighted product deductions (`decimal(18,3)`) impossible without schema alteration.
-2. **Online Cash Sales & Refunds Never Update Cash Drawer Shifts:**
-   - [`POS.Api/Controllers/PaymentsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/PaymentsController.cs) and [`POS.Api/Controllers/ReturnsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/ReturnsController.cs) never update `CashDrawerShift.TotalCashSales`, `TotalCashRefunds`, `ExpectedBalance`, or `CashDrawerMovements`. Only `OfflineSyncController.cs:150-174` updates `ExpectedBalance` (while forgetting to increment `TotalCashSales`).
-3. **Over-Refunding Undiscounted Gross Price on Discounted Orders:**
-   - [`POS.Api/Controllers/OrdersController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/OrdersController.cs#L95-L109) stores the **undiscounted** gross amount (`unitPrice * itemDto.Quantity`) in `OrderItem.LineTotal`.
-   - [`POS.Api/Controllers/ReturnsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/ReturnsController.cs#L332-L333) calculates `unitRefundPrice = orderItem.LineTotal / orderItem.Quantity`, causing returns on discounted orders (e.g., 20% SC/PWD + 12% VAT exempt) to refund the full undiscounted price, exceeding what the customer actually paid!
-4. **Duplicate `ProductId` Line-Item Corruption in Order & Offline Checkout:**
-   - Both [`POS.Api/Controllers/OrdersController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/OrdersController.cs#L98) and [`POS.Client/Services/OfflineCheckoutService.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Client/Services/OfflineCheckoutService.cs#L139) match calculated item results via `calcRes.CalculatedItems.FirstOrDefault(ci => ci.ProductId == itemDto.ProductId)`. When a cart has two lines with the same `ProductId` (e.g., same drink with different modifiers), both lines receive the first line's tax/discount/total values.
-5. **Client-Trusted Pricing & Hardcoded Statutory Discount Eligibility:**
-   - `OrdersController.CreateOrder` (`L39-42`) trusts `BasePrice`, `AdditionalPrice`, and `TaxName` sent by the client instead of querying authoritative values from `Products` and `ModifierOptions`, and hardcodes `IsEligibleForStatutoryDiscount = true` for all items.
-   - `DiscountCalculationService` and `LocalDiscountCalculationService` hardcode discount codes (`SC`, `PWD`, `NAAC`, `MOV`, `SP`, `BNPC`, `EMPLOYEE`, `MANUAL`) and ignore custom discount rules created in `DiscountTypes` via `ManageDiscounts.razor`.
-6. **Broken Offline Checkout Sequence & Missing Offline Modifiers:**
-   - [`POS.Client/Services/ReferenceDataSyncService.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Client/Services/ReferenceDataSyncService.cs) and [`POS.Api/Controllers/OfflineReferenceDataController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/OfflineReferenceDataController.cs) never sync `InvoiceSequences` to `LocalPosDbContext.InvoiceSequences`, causing `OfflineCheckoutService` (`L42-45, 65-71`) to always fail with `"Offline invoice sequence exhausted"`.
-   - When offline orders sync to `OfflineSyncController.cs`, the server does not advance `InvoiceSequences.LastIssuedNumber` and ignores `OfflineSyncIdempotencyRecord`, risking invoice number collisions with online sales.
-   - `LocalOrderItem` has no modifier storage, silently dropping all item modifiers on offline orders.
-   - `OfflineTransactionSyncService.cs:29, 111-112` queries `SyncOutboxes.AsNoTracking()` and then mutates `outboxItem.Status = "UPLOADING"`, which EF Core ignores on `SaveChangesAsync()`.
-7. **Sales Reporting & Transaction Summary Bugs:**
-   - [`POS.Shared/Services/TransactionServices.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Shared/Services/TransactionServices.cs#L88-L96) (`SalesReportApiService.GenerateReportAsync`) forgets to pass `request.DateFrom` in the query string.
-   - [`POS.Api/Controllers/TransactionsController.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Controllers/TransactionsController.cs#L318-L338) (`GetTransactionSummary`) accepts `dateFrom` but never applies it to the LINQ query.
-   - [`POS.Api/Services/SalesReportService.cs`](file:///c:/Users/yaser/source/repos/Pos.Solution/POS.Api/Services/SalesReportService.cs#L18-L55) does not deduct `SalesReturns` from `GrossSales`/`NetSales`/`OutputVat` and misattributes split payments when filtering by `PaymentMethod`.
+## 3. Database architecture and relationships
 
----
+### 3.1 Central PostgreSQL business database
 
-### 5.4 Concurrency, Data Integrity & Performance Bottlenecks (P2)
-1. **Race Conditions on Payments, Inventory & Cash Drawer:**
-   - `PaymentsController.ProcessPayment` (`L19-30`) reads `order.PaymentStatus` outside the database transaction without `FOR UPDATE`, allowing concurrent double-payment requests to succeed.
-   - `InventoryController.AdjustStock`, `OfflineSyncController.SyncTransaction`, `ReturnsController.ProcessReturn`, and `CashDrawerController.RecordMovement` read-modify-write balances without row-level locking (`FOR UPDATE`) or concurrency tokens.
-2. **Database Schema & Precision Drift:**
-   - `Taxis.Rate` has `.HasPrecision(18)` (scale `0`) in `PosDbContext.cs:186`.
-   - `Order` VAT columns (`VatableSales`, `VatExemptSales`, `ZeroRatedSales`, `VatAmount`, `DiscountPercentage`) and `OrderItem` (`DiscountAmount`, `VatAmount`) have no precision configured in EF Core.
-   - `DiscountType` and `DiscountAuditLog` are omitted from `PosDbContext.Extensions.cs`.
-3. **Silent Error Swallowing & Corrupt Fallback in Web Admin (`POS.Web`):**
-   - `ProductService.cs:26-41` and `CategoryService.cs:26-42` do not call `EnsureSuccessStatusCode()` on `PUT`/`DELETE`.
-   - `ManageProducts.razor:901-914` falls back to picking `allProds.MaxBy(p => p.ProductId)` when product creation fails (`ProductId == 0`), overwriting modifier groups on an existing product!
-   - `ManageBranches.razor:237, 578, 666` binds the "Track Inventory" toggle to an unused `isTrackInventoryEnabled` field that never updates `currentBranch.TrackInventory`.
-4. **Full-Table Memory Materialization & Duplicate Queries:**
-   - `SalesReportService.cs:38`, `ManageProducts.razor:749`, `ManageInventory.razor:309`, and `POS.Web/Components/Pages/Home.razor:177-180` pull entire unpaginated tables into memory before filtering/aggregating.
-   - `ManageProducts.razor:724, 742` triggers `LoadProducts()` twice on initial render (`OnInitializedAsync` and `OnParametersSetAsync`).
-   - `CategoriesController.cs:34` executes a correlated N+1 `Count()` subquery per category that includes soft-deleted products (`!p.IsDeleted` missing).
-   - `InventoryController.cs:20-46` mutates database state (`SaveChangesAsync` seeding `BranchInventory` rows) inside an HTTP `GET` endpoint.
-   - Three duplicate background sync workers exist in `POS.Client` (`OfflineBackgroundSyncManager.cs`, `OfflineBackgroundSyncWorker.cs`, `OfflineSyncWorker.cs`), and `OfflineBackgroundSyncManager` never acquires the `IOfflineSyncCoordinator` lease during sync cycles.
+`PosDbContext` has **39 DbSets**, counted across `Models/PosDbContext.cs`, `.Extensions.cs`, and `.ServiceMode.cs`. Startup registers a scoped Npgsql context (`POS.Api/Program.cs:44-46`). Legacy Npgsql timestamp behavior is enabled (`:53-54`).
 
----
+| Domain | Entities / tables represented |
+|---|---|
+| Organization and classification | Branch, Outlet, BusinessType, ServiceMode, User |
+| Catalog and stock | Category, Product, Taxis/Taxes, UnitOfMeasure, ProductRecipe, BranchInventory, StockAdjustment |
+| Customization | ModifierGroup, ModifierOption, ProductModifierGroup |
+| Sales and numbering | Order, OrderItem, OrderItemModifier, Payment, PaymentMethod, OrderSequence, InvoiceSequence |
+| Discounts and receipt audit | DiscountType, DiscountAuditLog, ReceiptReprintLog |
+| Parked sales | HeldSale, HeldSaleItem, HeldSaleItemModifier, HeldSaleAuditLog |
+| Reversals | TransactionVoid, SalesReturn, SalesReturnItem, Refund |
+| Cashier and drawer | CashierSession, CashierSwitchLog, CashDrawerShift, CashDrawerMovement, CashMovementCategory |
+| Synchronization | OfflineSyncIdempotencyRecord |
 
-## 6. Petty Cash & Cash Movement Management Module
+Major relationships:
 
-### 6.1 Database Schema (PostgreSQL & SQLite)
-Rather than creating a duplicate cash movement ledger, the existing `CashDrawerShifts` and `CashDrawerMovements` tables are extended and paired with `CashMovementCategories`:
-- **`CashMovementCategories`** (`POS.Api/Models/CashDrawerModels.cs`, `LocalCashMovementCategories` in SQLite):
-  - `CategoryId` (PK), `Name` (unique per `MovementType`), `Description`, `MovementType` (`PETTY_CASH`, `CASH_OUT`, `CASH_IN`, `CASH_DROP`), `RequiresApproval` (`bool`), `ApprovalThreshold` (`numeric(18,2)`), `IsActive`, `CreatedAt`.
-  - Seeded defaults: *Store Supplies / Petty Cash*, *Emergency Ingredient Purchase*, *Delivery / Rider Fee*, *Utility / Maintenance Expense*, *Additional Change Float (Paid-In)*, *Safe Cash Drop / Skim*, *Miscellaneous Paid-Out*.
-- **`CashDrawerShifts`** (`LocalCashDrawerShifts` in SQLite):
-  - Added `TotalCashDrops` (`numeric(18,2)`) alongside `OpeningFloat`, `TotalCashSales`, `TotalCashRefunds`, `TotalCashIn`, `TotalCashOut`, `ExpectedBalance`, `ActualCountedBalance`, and `Discrepancy`.
-- **`CashDrawerMovements`** (`LocalCashDrawerMovements` in SQLite):
-  - Extended with `BranchId`, `OutletId`, `CategoryId` (FK), `CategoryName`, `ReferenceNumber` (`PCV-`, `CIN-`, `COU-`, `CDP-`, `REV-`), `ClientMovementId` (unique idempotency key), `Status` (`PENDING_APPROVAL`, `POSTED`, `REJECTED`, `REVERSED`), `CreatedBy`, `ApprovedBy`, `ApprovedAt`, `PostedAt`, `RejectionReason`, `ReversedBy`, `ReversedAt`, `ReversalReason`, `OriginalMovementId`.
+- BusinessType/ServiceMode classify Branch; Branch owns Outlets and branch stock.
+- Category and optional Tax classify Product. UnitOfMeasure is a standalone lookup; Product keeps a UOM string rather than a relational UOM foreign key.
+- BranchInventory joins Branch/Product with a unique composite index (`PosDbContext.cs:63-82`). StockAdjustment records integer before/after movements.
+- ProductRecipe links finished Product to ingredient Product with decimal required quantity and unique product/ingredient pair (`:146-162`).
+- ProductModifierGroup links products/groups; groups own options (`PosDbContext.Extensions.cs:90-143`).
+- Order owns items and payments; items own modifier snapshots (`:146-240`). Product IDs/names/prices on order lines are historical snapshots, not enforced product relationships.
+- Order can reference InvoiceSequence and DiscountType. OrderNumber and InvoiceNumber have unique indexes (`:172-179`).
+- Returns reference original order/items; refunds reference original payment and optional return/void. Delete behavior generally restricts original records, cascades return items, and sets nullable refund parent links null (`:382-476`).
+- HeldSale owns held items/modifiers; separate audit records retain operations (`:306-380`).
+- DrawerShift owns movements; movement category is optional (`:510-586`). ReferenceNumber and ClientMovementId have unique indexes.
+- OfflineSyncIdempotency has unique local transaction and invoice identifiers (`:589-601`). PayloadHash exists, but replay comparison is not enforced in the sync controller.
 
-### 6.2 Shift Reconciliation Formula & BIR Isolation
-- **Expected Cash Drawer Balance:**
-  $$\text{ExpectedBalance} = \text{OpeningFloat} + \text{TotalCashSales} - \text{TotalCashRefunds} + \text{TotalCashIn} - \text{TotalCashOut} - \text{TotalCashDrops}$$
-- **Strict Status Filtering:** Only movements with `Status == "POSTED"` affect `TotalCashIn`, `TotalCashOut`, `TotalCashDrops`, or `ExpectedBalance`. `PENDING_APPROVAL` and `REJECTED` movements never alter drawer balances.
-- **Online Sales & Refunds Integration:** `PaymentsController.ProcessPayment` increments `TotalCashSales` and `ExpectedBalance` on active shifts for `CASH` payments; `ReturnsController` (`VoidOrder` and `ProcessReturn`) increments `TotalCashRefunds` and decrements `ExpectedBalance` for `CASH` refunds.
-- **BIR & Revenue Isolation:** Petty cash and cash drawer movements never create `Orders`, never consume `InvoiceSequences`, and never alter `GrossSales`, `VatableSales`, `VatExemptSales`, `ZeroRatedSales`, `OutputVat`, or `NetSales` in `SalesReportService`. Vouchers are explicitly labeled as internal non-fiscal Cash Movement Vouchers.
+Not all apparent business links are foreign keys: Order's BranchId, OutletId, CashierId and ShiftId are scalar fields without modeled navigation/FK enforcement in this mapping. Similar loose identity/location fields exist in held sales, shifts and cashier sessions. Application validation therefore carries substantial integrity responsibility.
 
-### 6.3 Backend API Endpoints (`POS.Api/Controllers/CashDrawerController.cs`)
-- `GET / POST / PUT / DELETE api/cash-drawer/categories`: Manage cash movement categories.
-- `POST api/cash-drawer/open-shift`, `GET api/cash-drawer/current`, `GET api/cash-drawer/shifts`, `GET api/cash-drawer/shifts/{shiftId}/totals`, `POST api/cash-drawer/close-shift`: Shift lifecycle and reconciliation summary (blocks shift close if `PENDING_APPROVAL` movements remain).
-- `POST api/cash-drawer/paid-in`, `POST api/cash-drawer/paid-out`, `POST api/cash-drawer/movement`: Atomic (`IsolationLevel.Serializable`), idempotent (`ClientMovementId`) movement creation with active-shift, ownership, `Amount > 0`, and available drawer cash (`Amount <= shift.ExpectedBalance`) guards.
-- `POST api/cash-drawer/movements/{movementId}/approve`, `POST .../reject`, `POST .../reverse`: Supervisor PIN (`u.PinCode == cleanPin` only—never username) or role-based approval, rejection, and immutable reversal (`REVERSAL` entry linked via `OriginalMovementId`).
-- `GET api/cash-drawer/movements`, `GET api/cash-drawer/movements/{movementId}`, `GET api/cash-drawer/reports/summary`: Filtered movement history, details, and category breakdown report.
+### 3.2 Local SQLite terminal database
 
-### 6.4 POS.Client & Offline Mode (`POS.Client/Components/Pages/CashDrawer.razor`)
-- Full cashier UI supporting Petty Cash, Cash Paid-Out, Cash Paid-In, Safe Cash Drop, confirmation modal, duplicate submission lock, supervisor PIN entry, and printable 58mm/80mm Cash Movement Voucher.
-- **Offline Persistence & Sync:**
-  - `ReferenceDataSyncService` syncs `LocalCashMovementCategories` and `LocalCashDrawerShifts`.
-  - When offline, `CashDrawer.razor` verifies supervisor PINs against cached SHA-256 `LocalCashiers.PinHash` (`Admin`, `Manager`, `Supervisor`, `Senior Cashier`). Unverified approval-required requests are stored as `PENDING_APPROVAL` without reducing local drawer balance.
-  - Queued in `LocalSyncOutbox` (`EntityType = "CASH_MOVEMENT"`) and synchronized by `OfflineTransactionSyncService` to `POST api/offline-sync/cash-movements` (`OfflineSyncController.SyncCashMovement`) with server-side idempotency, `SupervisorPinHash` re-verification, `409 Conflict` detection (`FAILED_CONFLICT`), and bounded exponential backoff (`OfflineRetryPolicy`).
+`LocalPosDbContext` exposes **19 DbSets** (`POS.Client/Data/LocalPosDbContext.cs:9-27`):
 
-### 6.5 POS.Web Admin (`POS.Web/Components/Pages/CashMovementsManagement.razor`)
-- Route `/cash-movements` providing Category CRUD, Movement History with Branch/Outlet/Cashier/Type/Status/Category/Date filters, Pending Approval queue, Reversal & Audit Trail, Voucher viewer, and Summary Reports.
+- Products, categories, modifier groups/options/product-group links, taxes, discounts.
+- Outlet configuration and invoice sequences.
+- Orders, order items and payments.
+- Sync outbox and sync audit log.
+- Held sales, cached cashiers.
+- Cash-movement categories, drawer shifts and drawer movements.
 
-### 6.6 Security Controls & Known Limitations
-- **Security Controls:** Strict PIN-only supervisor verification (`u.PinCode == cleanPin`), SHA-256 `PinHash` offline verification, server-side shift ownership and drawer balance enforcement, immutable posted records with reversal audit trails.
-- **Known Limitations:** Offline shifts opened while completely disconnected (`ShiftId < 0`) require shift synchronization or an active server shift on the outlet before offline cash movements can attach to a server `ShiftId`.
+Storage: a single `PosSolution/local_pos.db` beneath the OS user's LocalApplicationData (`:34-44`). There is no configured encryption or per-terminal file partitioning. Multiple terminal configurations share this file if run under the same OS user.
+
+Initialization uses EnsureCreated plus hand-written ALTER/CREATE statements, not versioned migrations (`:85-199`). Foreign keys are disabled. WAL, NORMAL synchronization and busy timeout are configured (`:201-205`). Initialization is process-static; connection-scoped PRAGMAs should not be assumed applied to every future connection. ALTER failures are swallowed as presumed existing columns, potentially masking other failures.
+
+Transient contexts and fresh contexts in checkout/upload/status paths replace the old singleton-context pattern. A process-wide WriteLock coordinates cooperating writers (`:29-32`); it is not a cross-process lock.
+
+Local entities retain order/payment/tax snapshots. Modifier and customer detail survives in the outbox's original order JSON, but the reduced local order-item model does not retain all of it for later history/reprint reconstruction (`LocalPosModels.cs:141-219`; `OfflineCheckoutService.cs:236-246`; `OfflineTransactionSyncService.cs:83-134`). There is no local stock ledger or local return/void queue.
+
+### 3.3 Web SQL Server Identity
+
+`POS.Web/Data/ApplicationDbContext.cs:6` inherits IdentityDbContext. Identity schema migration/snapshot files are present under `POS.Web/Data/Migrations`. Startup registers stores, cookies, sign-in and token services (`POS.Web/Program.cs:29-48`). These are active registrations, not proof of successful database initialization or integration with API Users.
+
+The main POS Web login uses API JWT and ProtectedSessionStorage instead. Account scaffold offers cookie/passkey workflows but does not establish the API bearer token required by business screens. Email delivery is a no-op. Do not describe this scaffold as completed POS MFA, unified user management or working password-reset delivery.
+
+### 3.4 Schema and precision risks
+
+- No PostgreSQL `.sql` files were found in the authored inventory. MigrationRunner references seven optional files, skips absent files, and then executes inline cash-movement schema SQL (`POS.Api/MigrationRunner.cs:15-36,38-139`). It is not a complete fresh-install baseline for all 39 entities.
+- API startup runs that runner and logs errors but continues (`Program.cs:65-73`). API launch would change a reachable database; it was intentionally not used as a smoke test.
+- Scaffolding, partial Fluent mappings, attributes, raw startup SQL, SQLite EnsureCreated/ad hoc patches and Web Identity migrations coexist. No single versioned business-schema migration authority is evidenced.
+- Tax Rate has `.HasPrecision(18)` without explicit scale (`PosDbContext.cs:186-191`). Actual deployed PostgreSQL type was not queried; fractional-rate behavior requires provider/schema validation rather than assuming the deployed column truncates.
+- Several order/item tax and discount fields lack explicit Fluent precision despite other money fields using `(18,2)` (`Models/Order.cs:43-54`; `OrderItem.cs:31-34`; Extensions mappings).
+- Inventory/stock adjustment quantities are integers while API order quantities and BOM quantities are decimal. Client cart/offline quantities are also integers. Fractional ingredients/weighted sales cannot flow consistently without a deliberate quantity/UOM design.
+- OrderSequences has no modeled unique OutletId constraint; concurrent initial sequence creation remains a risk. Global unique InvoiceNumber also requires outlet prefixes/series to be globally distinct.
+
+## 4. Complete cashier workflows
+
+### 4.1 Authentication and terminal assignment
+
+1. Client accepts a four-digit PIN and posts `api/Auth/pin-login` (`Components/Pages/Login.razor:39-85,323-379`; Shared `UserService.cs:19-29`).
+2. API performs a PIN lookup and issues an eight-hour JWT. Password login separately uses BCrypt (`AuthController.cs:25-115`).
+3. Client resolves a terminal via an authenticated outlet request using a detected address; API returns outlet/branch data and terminal-scoped token claims (`Login.razor:545-565`; API `OutletsController.cs:28-102`). IP lookup is not device authentication.
+4. Client stores in-memory session and shared bearer header; cashier session activation and reference sync are best-effort (`Login.razor:567-585`).
+5. Offline login compares cached SHA-256 PIN hashes and selects cached outlet configuration (`:382-517`). No local throttling, expiry or revocation mechanism is implemented.
+
+Important gap: the offline fallback also occurs after a non-success online login, not only a network outage. A rejected credential still cached locally can therefore authenticate offline (`Login.razor:590-613`). Session expiry/refresh and reconnect reauthentication are not implemented in PosSessionService (`:7-30`). Lock/switch clears session/cart and header but does not submit server session logout (`MainLayout.razor:192-217`; CartService `:10-16,164-168`).
+
+### 4.2 Catalog, cart and discounts
+
+NewSale supports exact business classifications RETAIL and FNB, not arbitrary labels (`NewSale.razor:642-670`). Retail provides barcode/SKU/name search, whole-number quantity and keyboard handling. FNB provides category/product cards and required/min/max modifier selection (`:769-1061`). Modifier-load errors can fall back to adding a bare product, bypassing required choices.
+
+Cart merges identical product/modifier combinations, preserves different modifier sets, and calculates modifier-inclusive gross totals (`CartService.cs:50-161`). Stored discount amount is not recomputed automatically after quantity changes.
+
+Discount modal tries API then local calculation. It uses hardcoded VAT-registered/VATable assumptions and a built-in fallback discount list rather than the cached discount catalog (`DiscountModal.razor:89-161`). Final checkout may recalculate using different context. Manual percentage preview is not fully forwarded through the normal order-create contract.
+
+### 4.3 Online sale, settlement and invoice
+
+1. ProceedToPayment creates an unpaid server order before collecting tender (`NewSale.razor:1223-1268`).
+2. OrdersController opens a transaction, issues operational order number, calculates totals, stores items/modifiers and discount audit, then commits (`OrdersController.cs:16-142`).
+3. Client validates tender/splits/references and posts payment (`NewSale.razor:1353-1497`).
+4. PaymentsController validates order/payment amounts, persists successful payment rows, marks PAID/COMPLETED, issues legal invoice and updates cash drawer totals for CASH (`PaymentsController.cs:16-162`).
+5. Successful payment clears cart and opens receipt. Printing is separate and does not repeat payment.
+
+Order sequence and active invoice series use PostgreSQL `FOR UPDATE` inside caller transactions. Invoice issuance returns the existing number if already assigned and enforces configured end number (`SequenceService.cs:9-115`).
+
+Partial behavior: pricing/identity/tax/eligibility comes from request rather than authoritative catalog/claims. Payment has no robust idempotency key or external processor confirmation. A timed-out order creation can leave an ambiguous committed unpaid server order before local fallback. A timed-out payment does not silently generate a second offline sale, but explicit reconciliation/recovery is absent.
+
+### 4.4 Offline sale and upload
+
+1. Offline reads local references. Readiness checks integrity and any active product, not complete outlet/cashier/sequence/shift readiness (`OfflineCheckoutService.cs:37-44`).
+2. Checkout takes WriteLock, uses a fresh context and SQLite transaction, recalculates totals, validates cash, issues local number, persists order/items/payment and optional drawer cash effect, writes outbox and commits (`:59-250`). Offline settlement is cash-only; split UI is not offline multi-tender support.
+3. Original request JSON preserves modifiers/customer metadata for upload. Normal offline calculation mapping uses item index rather than ProductId.
+4. Active sync manager is registered with health checks, per-cycle semaphore and coordinator leases (`MauiProgram.cs:45-46`; `OfflineBackgroundSyncManager.cs:28-89`). Registration was verified; hosted-service lifecycle execution in MAUI was not dynamically proven.
+5. Uploader reconstructs snapshots and JSON modifiers, sends local transaction ID/hash/version metadata, then records ACK/retry/attention state (`OfflineTransactionSyncService.cs:54-239`).
+6. API ingestion validates some outlet relationships, checks transaction/invoice idempotency, persists sale/payment, deducts stock, updates drawer, stores idempotency record and commits (`OfflineSyncController.cs:22-242`). It does not recalculate/validate the financial snapshot or require authentication.
+
+Retry policy uses bounded delays/jitter and attempt cap. Cash-movement conflicts become local CONFLICT and outbox NEEDS_ATTENTION. Stale lease recovery runs once at startup; UPLOADING items not expired then can remain excluded from future selection. There is no attention-resolution/requeue UI (`OfflineSyncCoordinator.cs:25-93`; `OfflineTransactionSyncService.cs:28-37,176-196,319-330`). Two legacy upload workers remain unregistered; their presence does not mean concurrent active workers.
+
+Offline invoice numbers are **not exclusively server-reserved**. Client can synthesize/extend ranges and merge local/server counters (`OfflineCheckoutService.cs:106-135`; `ReferenceDataSyncService.cs:274-322`). Concurrent online/offline issuers can collide; uniqueness/idempotency cannot substitute for fiscal range ownership.
+
+### 4.5 Reference-cache refresh defect
+
+Static finding with direct operation-order evidence: ReferenceDataSyncService deletes reference tables and tracks replacement entities. When cash categories are nonempty, it calls `db.ChangeTracker.Clear()` after those Add calls but before the only SaveChanges. Pending outlet/cashier/product/category/tax/discount/modifier inserts detach, while raw DELETEs remain (`ReferenceDataSyncService.cs:64-216,324-345`). Categories/shift/sequence added afterward may save, leaving an incomplete cache. This was not reproduced against the user's SQLite file.
+
+Reference refresh is global replacement, not a multi-outlet merge. Missing active server shift does not reliably invalidate old local open shifts. Cached server balances can overwrite pending local effects. No active periodic full-reference refresh was found; login is the explicit refresh trigger.
+
+## 5. Business modules and current status
+
+| Module | Implemented behavior | Incomplete/missing behavior |
+|---|---|---|
+| Branches/outlets | Classification, outlet/device address, tax flags, invoice-series management | Weak server scope/authorization; no robust authenticated device identity. |
+| Product/catalog | Categories, products, images, SKU/barcode/shortcode, UOM/tax, modifier definitions/links | Client-controlled sale prices; inconsistent failure handling; inactive/raw-material filtering differs offline. |
+| Recipes/inventory | Recipe CRUD, per-branch stock, manual adjustment/audit, offline upload stock decrement, return restock | **No online-sale stock deduction or recipe/BOM consumption**; integer stock; weak concurrent stock policy; return restock lacks equivalent stock audit. |
+| Discounts/taxes | VAT/non-VAT/exempt/zero-rated; SC/PWD/NAAC/MOV, SP, BNPC, employee/manual branches; audit | Hardcoded rates/rules, duplicated calculators, caller-controlled eligibility, incomplete configured/PROMO/manual wiring; no established compliance sign-off. |
+| Online orders/payments | Unpaid order, split/single tender, change, paid state, numbering, cash drawer integration | Public write endpoints; weak payment retry/concurrency controls; no live GCash/Maya/card processor integration. |
+| Held sales | API parked sale CRUD/resume concurrency checks; local JSON-backed hold/resume/cancel | Local holds are not synchronized or cross-terminal transferable; positive server holds are not generally available offline. |
+| Cashier sessions | API activation/handoff logs and client switch/lock | Client logout/switch not fully journaled server-side; offline session lifecycle incomplete. |
+| Cash drawer/petty cash | Open/close, paid-in/out, petty cash/drop, approvals/reject/reverse, categories, vouchers, reconciliation | Offline-opened shifts have no upload lifecycle; final close requires online; local/server pending balances can drift. |
+| Returns/voids | Authenticated API, supervisor PIN, serializable transactions, prior-return checks, refunds and optional restock, online client dialogs | Over-refund and duplicate request-line risks; scope inconsistencies; offline returns absent; standalone Returns page placeholder. |
+| Transactions | Claim-scoped cashier history/detail, Philippine 04:00 business-day behavior, local history fallback | Local history only offline-created sales, not online cache; first-100 record limits; reconnect does not merge pending local rows. |
+| Receipts/reprints | Paid gating, snapshots, ownership checks, best-effort audit, Windows HTML print/PDF | Supervisor header substitution; offline reprint lacks equivalent approval/audit; physical print unverified; non-Windows unsupported. |
+| Sales reporting | Role-gated date/location/cashier/payment/grouped totals | DateFrom adapter omission; return/refund deduction missing; split-method attribution wrong; different business-day/date semantics. |
+| Web administration | Master-data CRUD, stock adjustment, sales/report/audit screens, cash-movement/category management | Weak route-role consistency; parallel auth stacks; fake export acknowledgement; Web reprint audit without actual print. |
+| Deployment | Windows Client publish and Inno Setup packaging scripts/output | Endpoint parameter unused; backend deployment absent; unchecked native exits; signing/prerequisite/upgrade validation absent. |
+
+### Returns and financial consistency details
+
+OrdersController stores gross `unitPrice * quantity` as item LineTotal but discounted calculation as order TotalAmount (`OrdersController.cs:94-120`). ReturnsController refunds `LineTotal / Quantity` and records allocated discount separately without subtracting it (`ReturnsController.cs:348-365`). Discounted online sales can consequently be refunded above net paid. Additionally, previously returned quantities are computed once and not increased for repeated same-item lines within one request (`:326-392`). Both are static, high-priority financial correctness findings.
+
+OrdersController matches calculated items by first matching ProductId (`:98`), so duplicate product lines with different modifiers can receive incorrect line tax/discount snapshots. Offline's index-based mapping does not fix this online path.
+
+### Cash reconciliation
+
+The implemented drawer model separates operating cash movements from sales/VAT/invoice counters. Opening float plus cash sales/refunds and posted cash in/out/drop determines expected cash, with counted closing cash and discrepancy. Approval-required movements can remain PENDING_APPROVAL; close checks pending approvals. Online payment/refund integration exists now and contradicts the old architecture review.
+
+Offline local shifts use positive Unix-seconds identifiers, not negative IDs (`CashDrawer.razor:994-1019`). Only order and cash-movement upload types are handled; no shift-create/close synchronization is implemented. Do not assume server mapping of a local-only shift exists.
+
+### Printing and fiscal output
+
+Current Windows printing is isolated WebView2 HTML, not GDI+/System.Drawing or a hardcoded thermal printer (`Platforms/Windows/WindowsReceiptPrinter.cs:18-147`). It tries the OS default queue then opens a dialog fallback. Dialog closure is not proof paper printed, and cancellation may still appear successful. PDF export uses WebView2 and a sanitized filename in Documents/POS_Receipts. Other platforms use UnsupportedReceiptPrinter.
+
+HTML encoding/CSP/navigation restrictions are present (`ReceiptHtmlFormatter.cs:14-24,134-146`; `ReceiptNavigationPolicy.cs:5-10`). The formatter explicitly says **NOT A BIR TAX INVOICE** (`ReceiptHtmlFormatter.cs:130`). A pure zero-rated sale can omit the tax section due to its outer condition (`:102-107`). Consequently invoice numbering and tax fields must not be presented as evidence of BIR-accredited fiscal output.
+
+## 6. Web and Shared integration details
+
+Web's main custom login calls API password login and stores JWT in ProtectedSessionStorage. Restore decodes token/dates, builds UI claims and sets outbound bearer header; it does not cryptographically validate the token locally. API validates bearer tokens. UI visibility is not API authorization (`POS.Web/Auth/CustomAuthStateProvider.cs:20-69`).
+
+Business pages use stateful Razor code, QuickGrid, modal forms and SweetAlert confirmations. MainLayout hides body for anonymous users; only selected pages have explicit Authorize/role attributes. Most menu links are visible to any signed-in user. `/users` is Admin/Manager restricted in Web, but the API endpoint itself is public.
+
+Coverage navigation: product/category/modifier CRUD, branches/outlets/series, stock adjustment, business/service/UOM lookups, discounts, user list/create/delete, read-only held sales, sales history/reports, return/void audit, and cash-movement administration. `/manage-discounts` lacks corresponding navigation. Web `/returns-management` export only displays success text; `/sales-history` reprint requests audit but does not print. The history pager operates locally on the first 100 records (`SalesHistory.razor:412-486`; `ReturnsManagement.razor:224-227`).
+
+Shared combines interfaces/contracts with concrete HTTP SDK wrappers, not a pure domain layer. Adapters vary: Product/Category ignore update/delete HTTP status; Order/Payment/HeldSale can return null; Discount/Receipt enforce failure more explicitly. This produces inconsistent UI success/fallback semantics (`POS.Shared/Services/ProductService.cs:23-40`; `CategoryService.cs:23-41`; `OrderService.cs:10-14`).
+
+SalesReportApiService omits DateFrom although model and Web bind it (`POS.Shared/Services/TransactionServices.cs:87-97`). Payment-method reports select orders using Any then sum all successful tenders; refunds are not deducted (`POS.Api/Services/SalesReportService.cs:16-52`).
+
+Calculators are duplicated in API and Shared. They round per line, hardcode VAT/rates and largely ignore configured TaxRate/PROMO inputs. Ordinary percentage discounts do not recalculate baseline VAT. Manual discount bounds/negative inputs are not comprehensively guarded. These are implementation observations, not legal advice; establish accountant-approved expected cases before changing formulas.
+
+## 7. Security and reliability risk register
+
+Priority below reflects potential impact, not live exploitation testing.
+
+| Priority | Confirmed source finding | Evidence |
+|---|---|---|
+| Critical | Public Users list/create/delete; plaintext PIN response; client-selected role creation | `POS.Api/Controllers/UsersController.cs:8-81`; no global fallback in `Program.cs`. |
+| Critical | Orders/payments/inventory and many master-data controllers lack authorization | Controller declarations; `POS.Api/Program.cs:75-89`. |
+| Critical | Anonymous offline ingestion trusts financial snapshots and identities; hashes are stored but not compared on replay | `OfflineSyncController.cs:12-23,90-188,219-242`. |
+| Critical | Anonymous reference data exposes PIN-derived hashes; offline movement approval accepts same hash as proof | `OfflineReferenceDataController.cs:152-165`; `OfflineSyncController.cs:377-402`. |
+| High | Reference refresh detaches unsaved replacement entities after deletes | `ReferenceDataSyncService.cs:64-216,330`. |
+| High | Gross discounted-sale refunds and repeated return lines can over-refund/restock | `OrdersController.cs:94-120`; `ReturnsController.cs:326-392`. |
+| High | No online stock/BOM consumption, unlike offline sync | Orders/Payments paths; `OfflineSyncController.cs:149-170`. |
+| High | Credentials/signing configuration embedded in tracked source/settings | `PosDbContext.cs:38-44`; `MigrationRunner.cs:9-13`; API appsettings configuration structure. Values intentionally omitted. |
+| High | Web disables outbound certificate verification unconditionally | `POS.Web/Program.cs:50-64`. |
+| High | Reprint replaces shared bearer header with supervisor token without restoration | `POS.Client/Components/Pages/Transactions.razor:592-625`. |
+| High | Rejected online PIN can fall back to cached offline credential; short unsalted PIN hashes | `Login.razor:382-517,590-613`. |
+| High | Hardcoded unencrypted localhost API conflicts with Release terminal-address resolution and remote/mobile use | `MauiProgram.cs:30-33,64-75`; `TerminalAddressProvider.cs:31-54`. |
+| High | Offline invoice ranges not exclusively reserved; local shifts lack server lifecycle | `OfflineCheckoutService.cs:106-135`; `CashDrawer.razor:994-1019`. |
+| High | Dependency vulnerability advisories emitted by successful builds | Executed checks in section 1. |
+| Medium | One-time stale lease recovery can leave UPLOADING excluded indefinitely | `OfflineSyncCoordinator.cs:84-93`; manager startup; uploader pending selector. |
+| Medium | Incomplete schema baseline, weak upgrade visibility, precision/UOM mismatch | Section 3; MigrationRunner and local initialization. |
+| Medium | Reports/history/export may mislead; reprint audit is best-effort | Reporting/adapters/pages; ReceiptsController `:35-48`. |
+| Medium | Role spellings vary (`SeniorCashier` vs `Senior Cashier`); dates mix UTC/local/04:00 business day | Role helpers; TransactionsController `:27-34`; report date filtering. |
+
+CORS currently permits any origin/method/header. OpenAPI/Scalar mapping is commented out despite packages being present (`POS.Api/Program.cs:56-61,82-87`). No global rate limiting or PIN lockout was evidenced. Do not expose the API publicly in its current authorization state.
+
+## 8. Tests, packaging and remaining assurance
+
+POS.Tests is a console executable with 22 explicit scenarios, not xUnit/NUnit/MSTest; its banner still says 18 (`POS.Tests/Program.cs:49-75`). It directly instantiates controllers with claims and uses in-memory relational SQLite after removing PostgreSQL cast defaults. It does not host HTTP and cannot validate middleware, authorization attributes, JWT handling, routing or serialization.
+
+The executed 22/22 result is useful regression evidence for cash movements, approvals, balances, reversal, selected sync rules and transaction scope. It is not full system certification. Named coverage exceeds some implementation: concurrency is sequential; retry/history checks partly reimplement simplified logic; printing checks prefixes rather than real printer output. Tests reference API/Shared, not MAUI or Web, and are outside the solution. PostgreSQL FOR UPDATE behavior is not established by SQLite tests.
+
+Deployment scripts publish only Windows Client and optionally invoke Inno Setup. ApiUrl parameter is unused, native exit codes are unchecked and stale publish output can be packaged (`deployment/build-installer.ps1:1-25`). Installer metadata/prerequisite/signing/upgrade validation is incomplete (`installer.iss:3-41`). Existing EXE output is not proof that installation or launch currently works. API/Web/database hosting is not covered by these scripts.
+
+### Unverified or missing assurance
+
+- Fresh PostgreSQL deployment/upgrade and actual schema alignment.
+- Hosted negative authorization tests, brute-force controls and role/location matrix.
+- Real end-to-end online sale/payment/refund and ambiguous timeout recovery.
+- Reference refresh with populated cash categories, restart durability and multi-process contention.
+- Simultaneous online/offline invoice issue and conflict recovery.
+- Offline shift open/reconnect/reconciliation, denied cached PIN and expiring token behavior.
+- Production calculator parity and accountant-approved tax/discount/rounding cases.
+- Printer output/dialog cancellation, pure zero-rated output, receipt audit guarantees.
+- Release terminal discovery, clean-machine installation and mobile support.
+- Export/download and complete historical pagination.
+- Fiscal accreditation, Z-reading counters, CWT/withholding workflows and production BIR sign-off. Repository research describes intent; this review did not verify current legislation.
+
+## 9. Corrections to prior project documentation
+
+The previous `project_content.md` should not be copied as current truth:
+
+- Windows client currently builds; old undeclared isOffline/Cart.TotalAmount/OrderDate compilation claims do not describe this checkout.
+- Local context is transient/fresh-context based, not a shared singleton.
+- PostgreSQL DbSets are 39; local DbSets are 19, not the older counts.
+- Online cash payments and cash refunds now update drawers.
+- Returns controller is authenticated and PIN-only approval has replaced the old username-as-PIN bypass. Other serious authorization/PIN disclosure weaknesses remain.
+- Offline sequences, lease acquisition, tracked upload status, local holds and cached cashier login exist.
+- Offline modifiers survive in outbox/upload but not every history/reprint representation.
+- Missing optional SQL files are skipped; MigrationRunner also contains inline schema changes. It is still not a complete migration strategy.
+- Printing is WebView2/default-printer/dialog/PDF, not the old GDI+ implementation.
+- Offline local shift IDs are positive Unix seconds; conflict status is local CONFLICT/outbox NEEDS_ATTENTION.
+- Web Login has duplicate injection names in source (`Login.razor:6,9`), but the executed Web build succeeds. It is not recorded as a current compile blocker.
+- `.plan/MAP.md` includes outdated frontier/status statements and links to deleted tickets. Historical completion claims are not independent verification.
+
+## 10. Conventions and future-development reference
+
+The application uses controller-centric EF business logic, a few focused backend services, partial scaffolded database mappings, thin Shared HTTP wrappers, and substantial component-local Razor state/logic. Financial snapshots and string status codes are pervasive. Preserve snapshot/audit semantics when changing money flows. Do not treat every status string or role spelling as interchangeable.
+
+For a subsequent task, start here, then re-read the relevant cited files and trace callers. Prefer existing Shared contracts and native patterns. Verify server authorization independently from UI restrictions. Treat PostgreSQL business schema, SQLite cache schema and offline contract changes as one integration concern. Money/discount/stock changes require explicit online/offline/refund tests rather than build-only validation.
+
+No remediation was implemented during this review. The platform has broad implemented functionality and successful Windows builds, but the identified trust boundaries, financial inconsistencies and offline recovery defects prevent a defensible production-readiness claim.
