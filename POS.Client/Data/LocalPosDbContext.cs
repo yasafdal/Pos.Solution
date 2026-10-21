@@ -13,7 +13,7 @@ public class LocalPosDbContext : DbContext
     public DbSet<LocalProductModifierGroup> ProductModifierGroups => Set<LocalProductModifierGroup>();
     public DbSet<LocalTax> Taxes => Set<LocalTax>();
     public DbSet<LocalDiscount> Discounts => Set<LocalDiscount>();
-    public DbSet<LocalOutletConfig> OutletConfigs => Set<LocalOutletConfig>();
+    public DbSet<LocalTerminalConfig> TerminalConfigs => Set<LocalTerminalConfig>();
     public DbSet<LocalInvoiceSequence> InvoiceSequences => Set<LocalInvoiceSequence>();
     public DbSet<LocalOrder> Orders => Set<LocalOrder>();
     public DbSet<LocalOrderItem> OrderItems => Set<LocalOrderItem>();
@@ -68,7 +68,7 @@ public class LocalPosDbContext : DbContext
         modelBuilder.Entity<LocalProductModifierGroup>().ToTable("LocalProductModifierGroups");
         modelBuilder.Entity<LocalTax>().ToTable("LocalTaxes");
         modelBuilder.Entity<LocalDiscount>().ToTable("LocalDiscounts");
-        modelBuilder.Entity<LocalOutletConfig>().ToTable("LocalOutletConfigs");
+        modelBuilder.Entity<LocalTerminalConfig>().ToTable("LocalTerminalConfigs");
         modelBuilder.Entity<LocalInvoiceSequence>().ToTable("LocalInvoiceSequences");
         modelBuilder.Entity<LocalOrder>().ToTable("LocalOrders");
         modelBuilder.Entity<LocalOrderItem>().ToTable("LocalOrderItems");
@@ -90,12 +90,18 @@ public class LocalPosDbContext : DbContext
             if (_isInitialized) return;
             try
             {
+                LocalHierarchyUpgrade.Apply(Database.GetDbConnection());
                 Database.EnsureCreated();
 
                 // Ensure newly added columns and tables exist on existing SQLite files
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OutletId INTEGER NOT NULL DEFAULT 0;"); }
+                catch { /* Column already exists */ }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OrderType TEXT NOT NULL DEFAULT 'DINING';"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN TableNumber TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN HeadCount INTEGER NULL;"); } catch { }
                 foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT" })
                 {
-                    try { Database.ExecuteSqlRaw($"ALTER TABLE LocalOutletConfigs ADD COLUMN {col};"); }
+                    try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
                 }
 
@@ -103,7 +109,7 @@ public class LocalPosDbContext : DbContext
                     CREATE TABLE IF NOT EXISTS LocalHeldSales (
                         HeldSaleId INTEGER PRIMARY KEY,
                         BranchId INTEGER NOT NULL,
-                        OutletId INTEGER NOT NULL,
+                        TerminalId INTEGER NOT NULL,
                         CashierId TEXT NOT NULL,
                         HoldReference TEXT NOT NULL,
                         Status TEXT NOT NULL,
@@ -135,7 +141,7 @@ public class LocalPosDbContext : DbContext
                     CREATE TABLE IF NOT EXISTS LocalCashDrawerShifts (
                         ShiftId INTEGER PRIMARY KEY,
                         BranchId INTEGER NOT NULL,
-                        OutletId INTEGER NOT NULL,
+                        TerminalId INTEGER NOT NULL,
                         CashierId TEXT NOT NULL,
                         OpeningFloat TEXT NOT NULL DEFAULT '0.00',
                         TotalCashSales TEXT NOT NULL DEFAULT '0.00',
@@ -158,7 +164,7 @@ public class LocalPosDbContext : DbContext
                         ClientMovementId TEXT NOT NULL UNIQUE,
                         ShiftId INTEGER NOT NULL,
                         BranchId INTEGER NOT NULL,
-                        OutletId INTEGER NOT NULL,
+                        TerminalId INTEGER NOT NULL,
                         MovementType TEXT NOT NULL,
                         CategoryId INTEGER NULL,
                         CategoryName TEXT NULL,

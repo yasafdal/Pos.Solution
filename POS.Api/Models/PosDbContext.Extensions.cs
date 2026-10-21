@@ -151,7 +151,7 @@ public partial class PosDbContext
             entity.Property(e => e.OrderId).HasColumnName("OrderId");
             entity.Property(e => e.OrderNumber).HasColumnName("OrderNumber").HasMaxLength(30).IsRequired();
             entity.Property(e => e.BranchId).HasColumnName("BranchId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.ShiftId).HasColumnName("ShiftId");
             entity.Property(e => e.OrderType).HasColumnName("OrderType").HasMaxLength(20).IsRequired();
@@ -245,15 +245,15 @@ public partial class PosDbContext
             entity.ToTable("OrderSequences");
             entity.HasKey(e => e.OrderSequenceId);
             entity.Property(e => e.OrderSequenceId).HasColumnName("order_sequence_id");
-            entity.Property(e => e.OutletId).HasColumnName("outlet_id");
+            entity.Property(e => e.TerminalId).HasColumnName("terminal_id");
             entity.Property(e => e.LastIssuedNumber).HasColumnName("last_issued_number");
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp without time zone");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasColumnType("timestamp without time zone");
 
-            entity.HasOne(d => d.Outlet)
+            entity.HasOne(d => d.Terminal)
                 .WithMany()
-                .HasForeignKey(d => d.OutletId)
-                .HasConstraintName("FK_OrderSequences_Outlet")
+                .HasForeignKey(d => d.TerminalId)
+                .HasConstraintName("FK_OrderSequences_Terminal")
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -262,7 +262,7 @@ public partial class PosDbContext
             entity.ToTable("InvoiceSequences");
             entity.HasKey(e => e.InvoiceSequenceId);
             entity.Property(e => e.InvoiceSequenceId).HasColumnName("invoice_sequence_id");
-            entity.Property(e => e.OutletId).HasColumnName("outlet_id");
+            entity.Property(e => e.TerminalId).HasColumnName("terminal_id");
             entity.Property(e => e.SeriesCode).HasColumnName("series_code").HasMaxLength(50).IsRequired();
             entity.Property(e => e.Prefix).HasColumnName("prefix").HasMaxLength(20);
             entity.Property(e => e.StartingNumber).HasColumnName("starting_number");
@@ -273,10 +273,10 @@ public partial class PosDbContext
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp without time zone");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasColumnType("timestamp without time zone");
 
-            entity.HasOne(d => d.Outlet)
+            entity.HasOne(d => d.Terminal)
                 .WithMany()
-                .HasForeignKey(d => d.OutletId)
-                .HasConstraintName("FK_InvoiceSequences_Outlet")
+                .HasForeignKey(d => d.TerminalId)
+                .HasConstraintName("FK_InvoiceSequences_Terminal")
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -288,7 +288,7 @@ public partial class PosDbContext
             entity.Property(e => e.OrderId).HasColumnName("OrderId");
             entity.Property(e => e.InvoiceNumber).HasColumnName("InvoiceNumber").HasMaxLength(50);
             entity.Property(e => e.BranchId).HasColumnName("BranchId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.ReprintReason).HasColumnName("ReprintReason").HasMaxLength(255).IsRequired();
             entity.Property(e => e.ReprintedAt).HasColumnName("ReprintedAt").IsRequired();
@@ -309,7 +309,7 @@ public partial class PosDbContext
             entity.HasKey(e => e.HeldSaleId);
             entity.Property(e => e.HeldSaleId).HasColumnName("HeldSaleId");
             entity.Property(e => e.BranchId).HasColumnName("BranchId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.HoldReference).HasColumnName("HoldReference").HasMaxLength(50).IsRequired();
             entity.Property(e => e.CustomerName).HasColumnName("CustomerName").HasMaxLength(200);
@@ -373,7 +373,7 @@ public partial class PosDbContext
             entity.Property(e => e.HoldReference).HasColumnName("HoldReference").HasMaxLength(50).IsRequired();
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.BranchId).HasColumnName("BranchId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.Action).HasColumnName("Action").HasMaxLength(30).IsRequired();
             entity.Property(e => e.Details).HasColumnName("Details").HasMaxLength(255);
             entity.Property(e => e.CreatedAt).HasColumnName("CreatedAt");
@@ -406,7 +406,7 @@ public partial class PosDbContext
             entity.HasKey(e => e.ReturnId);
             entity.Property(e => e.OriginalOrderId).HasColumnName("OriginalOrderId");
             entity.Property(e => e.BranchId).HasColumnName("BranchId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.ReturnReference).HasColumnName("ReturnReference").HasMaxLength(50).IsRequired();
             entity.Property(e => e.ReturnReason).HasColumnName("ReturnReason").HasMaxLength(255).IsRequired();
             entity.Property(e => e.Status).HasColumnName("Status").HasMaxLength(30).IsRequired();
@@ -483,7 +483,7 @@ public partial class PosDbContext
             entity.Property(e => e.CashierSessionId).HasColumnName("CashierSessionId");
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.BranchId).HasColumnName("BranchId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.DeviceIdentifier).HasColumnName("DeviceIdentifier").HasMaxLength(100);
             entity.Property(e => e.LoginAt).HasColumnName("LoginAt");
             entity.Property(e => e.LogoutAt).HasColumnName("LogoutAt");
@@ -497,7 +497,7 @@ public partial class PosDbContext
             entity.ToTable("CashierSwitchLogs");
             entity.HasKey(e => e.SwitchLogId);
             entity.Property(e => e.SwitchLogId).HasColumnName("SwitchLogId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.DeviceIdentifier).HasColumnName("DeviceIdentifier").HasMaxLength(100);
             entity.Property(e => e.PreviousCashierId).HasColumnName("PreviousCashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.NewCashierId).HasColumnName("NewCashierId").HasMaxLength(450).IsRequired();
@@ -527,7 +527,7 @@ public partial class PosDbContext
             entity.HasKey(e => e.ShiftId);
             entity.Property(e => e.ShiftId).HasColumnName("ShiftId");
             entity.Property(e => e.BranchId).HasColumnName("BranchId");
-            entity.Property(e => e.OutletId).HasColumnName("OutletId");
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.OpeningFloat).HasColumnName("OpeningFloat").HasColumnType("numeric(18,2)");
             entity.Property(e => e.TotalCashSales).HasColumnName("TotalCashSales").HasColumnType("numeric(18,2)");
@@ -551,7 +551,7 @@ public partial class PosDbContext
             entity.Property(e => e.MovementId).HasColumnName("MovementId");
             entity.Property(e => e.ShiftId).HasColumnName("ShiftId");
             entity.Property(e => e.BranchId).HasColumnName("BranchId").HasDefaultValue(1);
-            entity.Property(e => e.OutletId).HasColumnName("OutletId").HasDefaultValue(1);
+            entity.Property(e => e.TerminalId).HasColumnName("TerminalId").HasDefaultValue(1);
             entity.Property(e => e.MovementType).HasColumnName("MovementType").HasMaxLength(30).IsRequired();
             entity.Property(e => e.CategoryId).HasColumnName("CategoryId");
             entity.Property(e => e.CategoryName).HasColumnName("CategoryName").HasMaxLength(100);

@@ -17,7 +17,7 @@
                 <button type="button" class="hamburger-btn d-flex align-items-center justify-content-center" @onclick="ToggleNavMenu" aria-label="Toggle navigation" title="Toggle Menu">
                     <i class="bi bi-list fs-4"></i>
                 </button>
-                <span class="terminal-identity">@Session.Outlet!.BranchCode • @Session.Outlet.OutletName</span>
+                <span class="terminal-identity">@Session.Terminal!.BranchCode • @Session.Terminal.TerminalName</span>
             </div>
             <div class="d-flex align-items-center gap-2">
                 <button type="button" class="btn btn-outline-warning btn-sm rounded-pill px-3 fw-medium text-dark" @onclick="SwitchCashier">Switch Cashier</button>
@@ -143,7 +143,7 @@
         catch { }
     }
 
-    private async Task CacheCurrentOutletAsync(POS.Shared.Models.TerminalOutletDto? outlet)
+    private async Task CacheCurrentOutletAsync(POS.Shared.Models.TerminalConfigDto? outlet)
     {
         if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy)
         {
@@ -157,12 +157,14 @@
             {
                 using var db = new POS.Client.Data.LocalPosDbContext();
                 db.InitializeDatabase();
-                var existing = db.OutletConfigs.FirstOrDefault(o => o.OutletId == outlet.OutletId);
+                var existing = db.TerminalConfigs.FirstOrDefault(o => o.TerminalId == outlet.TerminalId);
                 if (existing == null)
                 {
-                    db.OutletConfigs.Add(new POS.Client.Data.LocalOutletConfig
+                    db.TerminalConfigs.Add(new POS.Client.Data.LocalTerminalConfig
                     {
-                        OutletId = outlet.OutletId,
+                        TerminalId = outlet.TerminalId,
+                        OutletId = outlet.OutletId, OutletName = outlet.OutletName, TerminalCode = outlet.TerminalCode,
+                        IpAddress = outlet.IpAddress, PTUNumber = outlet.PTUNumber, MINNumber = outlet.MINNumber, SerialNumber = outlet.SerialNumber,
                         BranchId = outlet.BranchId,
                         BusinessTypeId = outlet.BusinessTypeId ?? 1,
                         BusinessType = outlet.BusinessType ?? "FNB",
@@ -170,9 +172,9 @@
                         BranchCode = outlet.BranchCode,
                         BranchAddress = outlet.BranchAddress,
                         BranchPhone = outlet.BranchPhone,
-                        OutletName = outlet.OutletName,
+                        TerminalName = outlet.TerminalName,
                         BranchTaxType = "VAT-Registered",
-                        TerminalIdentifier = outlet.OutletName
+                        TerminalIdentifier = outlet.TerminalName
                     });
                     await db.SaveChangesAsync();
                 }
@@ -187,7 +189,7 @@
 
     private async Task LockTerminal()
     {
-        await CacheCurrentOutletAsync(Session.Outlet);
+        await CacheCurrentOutletAsync(Session.Terminal);
         Session.ClearSession();
         Http.DefaultRequestHeaders.Authorization = null;
         Navigation.NavigateTo("/login");
@@ -198,13 +200,13 @@
         bool confirmed = await Js.InvokeAsync<bool>("confirm", "Switch cashier? The current user will be signed out of this terminal.");
         if (!confirmed) return;
 
-        var currentOutlet = Session.Outlet;
+        var currentOutlet = Session.Terminal;
         await CacheCurrentOutletAsync(currentOutlet);
         Session.ClearSession();
         Http.DefaultRequestHeaders.Authorization = null;
         if (currentOutlet != null)
         {
-            Navigation.NavigateTo($"/login?outletId={currentOutlet.OutletId}");
+            Navigation.NavigateTo($"/login?terminalId={currentOutlet.TerminalId}");
         }
         else
         {

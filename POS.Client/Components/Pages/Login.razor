@@ -2,7 +2,7 @@
 @page "/login"
 @layout Layout.AuthLayout
 @inject IUserService UserService
-@inject IOutletService OutletService
+@inject ITerminalService TerminalService
 @inject ITerminalAddressProvider TerminalAddress
 @inject PosSessionService Session
 @inject NavigationManager Navigation
@@ -370,7 +370,7 @@
     private static string ComputePinHash(string rawPin) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawPin.Trim())));
 
-    private async Task CacheOnlineLoginAsync(string rawPin, string username, string role, TerminalOutletDto outlet, string address)
+    private async Task CacheOnlineLoginAsync(string rawPin, string username, string role, TerminalConfigDto outlet, string address)
     {
         List<UserDto>? allUsers = null;
         try
@@ -429,9 +429,12 @@
                 }
 
                 var existingOutlet = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
-                    db.OutletConfigs, o => o.OutletId == outlet.OutletId);
+                    db.TerminalConfigs, o => o.TerminalId == outlet.TerminalId);
                 if (existingOutlet != null)
                 {
+                    existingOutlet.OutletId = outlet.OutletId; existingOutlet.OutletName = outlet.OutletName;
+                    existingOutlet.TerminalCode = outlet.TerminalCode; existingOutlet.IpAddress = outlet.IpAddress;
+                    existingOutlet.PTUNumber = outlet.PTUNumber; existingOutlet.MINNumber = outlet.MINNumber; existingOutlet.SerialNumber = outlet.SerialNumber;
                     existingOutlet.BranchId = outlet.BranchId;
                     existingOutlet.BusinessTypeId = outlet.BusinessTypeId ?? 1;
                     existingOutlet.BusinessType = outlet.BusinessType ?? "FNB";
@@ -439,14 +442,16 @@
                     existingOutlet.BranchCode = outlet.BranchCode;
                     existingOutlet.BranchAddress = outlet.BranchAddress;
                     existingOutlet.BranchPhone = outlet.BranchPhone;
-                    existingOutlet.OutletName = outlet.OutletName;
+                    existingOutlet.TerminalName = outlet.TerminalName;
                     existingOutlet.TerminalIdentifier = address;
                 }
                 else
                 {
-                    db.OutletConfigs.Add(new POS.Client.Data.LocalOutletConfig
+                    db.TerminalConfigs.Add(new POS.Client.Data.LocalTerminalConfig
                     {
-                        OutletId = outlet.OutletId,
+                        TerminalId = outlet.TerminalId,
+                        OutletId = outlet.OutletId, OutletName = outlet.OutletName, TerminalCode = outlet.TerminalCode,
+                        IpAddress = outlet.IpAddress, PTUNumber = outlet.PTUNumber, MINNumber = outlet.MINNumber, SerialNumber = outlet.SerialNumber,
                         BranchId = outlet.BranchId,
                         BusinessTypeId = outlet.BusinessTypeId ?? 1,
                         BusinessType = outlet.BusinessType ?? "FNB",
@@ -454,7 +459,7 @@
                         BranchCode = outlet.BranchCode,
                         BranchAddress = outlet.BranchAddress,
                         BranchPhone = outlet.BranchPhone,
-                        OutletName = outlet.OutletName,
+                        TerminalName = outlet.TerminalName,
                         BranchTaxType = "VAT-Registered",
                         TerminalIdentifier = address
                     });
@@ -483,20 +488,22 @@
             if (localCashier == null) return false;
 
             var localOutlet = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
-                Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.OutletConfigs));
-            if (localOutlet == null) return false;
+                Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.TerminalConfigs));
+            if (localOutlet == null || localOutlet.OutletId <= 0) return false; // Refresh legacy ownership online before a new offline session.
 
-            var outletDto = new TerminalOutletDto
+            var outletDto = new TerminalConfigDto
             {
-                OutletId = localOutlet.OutletId,
+                TerminalId = localOutlet.TerminalId,
+                OutletId = localOutlet.OutletId, OutletName = localOutlet.OutletName, TerminalCode = localOutlet.TerminalCode,
+                IpAddress = localOutlet.IpAddress, PTUNumber = localOutlet.PTUNumber, MINNumber = localOutlet.MINNumber, SerialNumber = localOutlet.SerialNumber,
                 BranchId = localOutlet.BranchId,
                 BusinessTypeId = localOutlet.BusinessTypeId ?? 1,
                 BusinessType = localOutlet.BusinessType ?? "FNB",
-                BranchName = localOutlet.BranchName ?? localOutlet.OutletName,
+                BranchName = localOutlet.BranchName ?? localOutlet.TerminalName,
                 BranchCode = localOutlet.BranchCode ?? $"BR-{localOutlet.BranchId:D2}",
                 BranchAddress = localOutlet.BranchAddress,
                 BranchPhone = localOutlet.BranchPhone,
-                OutletName = localOutlet.OutletName
+                TerminalName = localOutlet.TerminalName
             };
 
             Session.SetSession("OFFLINE-SESSION-TOKEN", localCashier.Username, localCashier.Role, outletDto);
@@ -535,7 +542,7 @@
                 var (token, username, role) = authResult.Value;
 
                 var address = await TerminalAddress.GetAddressAsync();
-                var outlet = await OutletService.ResolveTerminalAsync(address, token);
+                var outlet = await TerminalService.ResolveTerminalAsync(address, token);
                 if (outlet == null)
                 {
                     errorMessage = "This IP address is not listed";
@@ -558,14 +565,14 @@
                     await Http.PostAsJsonAsync("api/cashier-sessions/activate", new CashierSessionActivateDto
                     {
                         BranchId = outlet.BranchId,
-                        OutletId = outlet.OutletId,
+                        TerminalId = outlet.TerminalId,
                         DeviceIdentifier = address
                     });
 
                     // Ensure token is attached for reference data sync call
                     Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                    var syncResult = await ReferenceDataSync.SyncReferenceDataAsync(outlet.OutletId, Http);
-                    Console.WriteLine($"[Login] ReferenceDataSync result: {syncResult} for OutletId: {outlet.OutletId}");
+                    var syncResult = await ReferenceDataSync.SyncReferenceDataAsync(outlet.TerminalId, Http);
+                    Console.WriteLine($"[Login] ReferenceDataSync result: {syncResult} for TerminalId: {outlet.TerminalId}");
                 }
                 catch (Exception ex)
                 {

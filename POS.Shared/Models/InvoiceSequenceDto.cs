@@ -5,7 +5,7 @@ namespace POS.Shared.Models;
 public class InvoiceSequenceDto
 {
     public int InvoiceSequenceId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string SeriesCode { get; set; } = null!;
     public string? Prefix { get; set; }
     public long StartingNumber { get; set; } = 1;

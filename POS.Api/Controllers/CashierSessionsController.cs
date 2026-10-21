@@ -28,9 +28,14 @@ namespace POS.Api.Controllers
                 return Unauthorized("Invalid user identity.");
             }
 
+            var terminal = await _context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
+                .SingleOrDefaultAsync(t => t.TerminalId == request.TerminalId);
+            if (terminal == null || terminal.BranchId != request.BranchId || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive)
+                return BadRequest("Invalid or inactive terminal ownership.");
+            if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
             // Close any existing active sessions for this outlet/device
             var activeSessions = await _context.CashierSessions
-                .Where(s => s.OutletId == request.OutletId && s.Status == "ACTIVE")
+                .Where(s => s.TerminalId == request.TerminalId && s.Status == "ACTIVE")
                 .ToListAsync();
 
             foreach (var sess in activeSessions)
@@ -44,7 +49,7 @@ namespace POS.Api.Controllers
             {
                 CashierId = cashierId,
                 BranchId = request.BranchId,
-                OutletId = request.OutletId,
+                TerminalId = request.TerminalId,
                 DeviceIdentifier = request.DeviceIdentifier,
                 LoginAt = DateTime.UtcNow,
                 Status = "ACTIVE",
@@ -59,7 +64,7 @@ namespace POS.Api.Controllers
                 {
                     _context.CashierSwitchLogs.Add(new CashierSwitchLog
                     {
-                        OutletId = request.OutletId,
+                        TerminalId = request.TerminalId,
                         DeviceIdentifier = request.DeviceIdentifier,
                         PreviousCashierId = prev.CashierId,
                         NewCashierId = cashierId,
@@ -76,11 +81,11 @@ namespace POS.Api.Controllers
         }
 
         [HttpGet("current")]
-        public async Task<ActionResult<CashierSessionDto>> GetCurrentSession([FromQuery] int outletId)
+        public async Task<ActionResult<CashierSessionDto>> GetCurrentSession([FromQuery] int terminalId)
         {
             var session = await _context.CashierSessions
                 .AsNoTracking()
-                .Where(s => s.OutletId == outletId && s.Status == "ACTIVE")
+                .Where(s => s.TerminalId == terminalId && s.Status == "ACTIVE")
                 .OrderByDescending(s => s.LoginAt)
                 .FirstOrDefaultAsync();
 
@@ -94,7 +99,7 @@ namespace POS.Api.Controllers
                 CashierSessionId = session.CashierSessionId,
                 CashierId = session.CashierId,
                 BranchId = session.BranchId,
-                OutletId = session.OutletId,
+                TerminalId = session.TerminalId,
                 LoginAt = session.LoginAt,
                 Status = session.Status
             });

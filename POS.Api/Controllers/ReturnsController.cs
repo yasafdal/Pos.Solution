@@ -102,7 +102,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             if (cashRefundTotal > 0m)
             {
                 var openShift = await context.CashDrawerShifts
-                    .Where(s => s.OutletId == order.OutletId && s.Status == "OPEN")
+                    .Where(s => s.TerminalId == order.TerminalId && s.Status == "OPEN")
                     .OrderByDescending(s => s.OpenedAt)
                     .FirstOrDefaultAsync(cancellationToken);
 
@@ -139,7 +139,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
     [HttpGet("voids")]
     public async Task<ActionResult<IEnumerable<VoidResponseDto>>> GetVoids(
         [FromQuery] int? branchId,
-        [FromQuery] int? outletId,
+        [FromQuery] int? terminalId,
         CancellationToken cancellationToken = default)
     {
         var query = context.TransactionVoids
@@ -150,8 +150,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
         if (branchId.HasValue)
             query = query.Where(v => v.OriginalOrder != null && v.OriginalOrder.BranchId == branchId.Value);
 
-        if (outletId.HasValue)
-            query = query.Where(v => v.OriginalOrder != null && v.OriginalOrder.OutletId == outletId.Value);
+        if (terminalId.HasValue)
+            query = query.Where(v => v.OriginalOrder != null && v.OriginalOrder.TerminalId == terminalId.Value);
 
         var voids = await query
             .OrderByDescending(v => v.VoidedAt)
@@ -175,7 +175,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ReturnResponseDto>>> GetReturns(
         [FromQuery] int? branchId,
-        [FromQuery] int? outletId,
+        [FromQuery] int? terminalId,
         CancellationToken cancellationToken = default)
     {
         var query = context.SalesReturns
@@ -187,8 +187,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
         if (branchId.HasValue)
             query = query.Where(r => r.BranchId == branchId.Value);
 
-        if (outletId.HasValue)
-            query = query.Where(r => r.OutletId == outletId.Value);
+        if (terminalId.HasValue)
+            query = query.Where(r => r.TerminalId == terminalId.Value);
 
         var returns = await query
             .OrderByDescending(r => r.CreatedAt)
@@ -199,7 +199,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             ReturnId = r.ReturnId,
             OriginalOrderId = r.OriginalOrderId,
             BranchId = r.BranchId,
-            OutletId = r.OutletId,
+            TerminalId = r.TerminalId,
             OriginalInvoiceNumber = r.OriginalOrder?.InvoiceNumber,
             ReturnReference = r.ReturnReference,
             ReturnReason = r.ReturnReason,
@@ -307,8 +307,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             var returnRecord = new SalesReturn
             {
                 OriginalOrderId = order.OrderId,
-                BranchId = dto.BranchId,
-                OutletId = dto.OutletId,
+                BranchId = order.BranchId,
+                TerminalId = order.TerminalId,
                 ReturnReference = "RET-" + Guid.NewGuid().ToString().Substring(0, 8).ToUpper(),
                 ReturnReason = dto.ReturnReason.Trim(),
                 Status = "COMPLETED",
@@ -413,7 +413,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             if (totalRefund > 0m && string.Equals(dto.RefundMethod, "CASH", StringComparison.OrdinalIgnoreCase))
             {
                 var openShift = await context.CashDrawerShifts
-                    .Where(s => s.OutletId == order.OutletId && s.Status == "OPEN")
+                    .Where(s => s.TerminalId == order.TerminalId && s.Status == "OPEN")
                     .OrderByDescending(s => s.OpenedAt)
                     .FirstOrDefaultAsync(cancellationToken);
 

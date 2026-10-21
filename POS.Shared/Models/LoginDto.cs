@@ -14,6 +14,6 @@ namespace POS.Shared.Models
         public string Password { get; set; } = string.Empty;
 
         public int? BranchId { get; set; }
-        public int? OutletId { get; set; }
+        public int? TerminalId { get; set; }
     }
 }

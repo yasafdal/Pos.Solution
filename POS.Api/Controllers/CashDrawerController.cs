@@ -234,19 +234,22 @@ public class CashDrawerController : ControllerBase
         if (request.OpeningFloat < 0)
             return BadRequest("Opening float cannot be negative.");
 
-        var outlet = await _context.Outlets.AsNoTracking()
-            .FirstOrDefaultAsync(o => o.OutletId == request.OutletId, cancellationToken);
+        if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
+        var outlet = await _context.Terminals.AsNoTracking()
+            .FirstOrDefaultAsync(o => o.TerminalId == request.TerminalId, cancellationToken);
+        if (outlet == null || !outlet.IsActive || !await _context.Outlets.AnyAsync(o => o.OutletId == outlet.OutletId && o.IsActive && o.Branch.IsActive, cancellationToken))
+            return BadRequest("Select a valid active terminal and outlet.");
         if (outlet != null && request.BranchId <= 0)
         {
             request.BranchId = outlet.BranchId;
         }
         else if (outlet != null && outlet.BranchId != request.BranchId)
         {
-            return BadRequest("Outlet does not belong to the specified branch.");
+            return BadRequest("Terminal does not belong to the specified branch.");
         }
 
         var existingOpen = await _context.CashDrawerShifts
-            .FirstOrDefaultAsync(s => s.OutletId == request.OutletId && s.Status == "OPEN", cancellationToken);
+            .FirstOrDefaultAsync(s => s.TerminalId == request.TerminalId && s.Status == "OPEN", cancellationToken);
 
         if (existingOpen != null)
         {
@@ -257,7 +260,7 @@ public class CashDrawerController : ControllerBase
         var shift = new CashDrawerShift
         {
             BranchId = request.BranchId > 0 ? request.BranchId : (outlet?.BranchId ?? 1),
-            OutletId = request.OutletId,
+            TerminalId = request.TerminalId,
             CashierId = cashierId,
             OpeningFloat = openingFloat,
             ExpectedBalance = openingFloat,
@@ -273,12 +276,12 @@ public class CashDrawerController : ControllerBase
     }
 
     [HttpGet("current")]
-    public async Task<ActionResult<CashDrawerShiftDto>> GetCurrentShift([FromQuery] int outletId, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<CashDrawerShiftDto>> GetCurrentShift([FromQuery] int terminalId, CancellationToken cancellationToken = default)
     {
         var shift = await _context.CashDrawerShifts
             .AsNoTracking()
             .Include(s => s.Movements)
-            .Where(s => s.OutletId == outletId && s.Status == "OPEN")
+            .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -290,7 +293,7 @@ public class CashDrawerController : ControllerBase
     [HttpGet("shifts")]
     public async Task<ActionResult<List<CashDrawerShiftDto>>> GetShifts(
         [FromQuery] int? branchId = null,
-        [FromQuery] int? outletId = null,
+        [FromQuery] int? terminalId = null,
         [FromQuery] string? cashierId = null,
         [FromQuery] string? status = null,
         [FromQuery] DateTime? dateFrom = null,
@@ -303,7 +306,7 @@ public class CashDrawerController : ControllerBase
             .AsQueryable();
 
         if (branchId.HasValue) query = query.Where(s => s.BranchId == branchId.Value);
-        if (outletId.HasValue) query = query.Where(s => s.OutletId == outletId.Value);
+        if (terminalId.HasValue) query = query.Where(s => s.TerminalId == terminalId.Value);
         if (!string.IsNullOrWhiteSpace(cashierId)) query = query.Where(s => s.CashierId == cashierId);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(s => s.Status == status);
         if (dateFrom.HasValue) query = query.Where(s => s.OpenedAt >= dateFrom.Value);
@@ -334,7 +337,7 @@ public class CashDrawerController : ControllerBase
         {
             ShiftId = shift.ShiftId,
             BranchId = shift.BranchId,
-            OutletId = shift.OutletId,
+            TerminalId = shift.TerminalId,
             CashierId = shift.CashierId,
             OpeningCash = shift.OpeningFloat,
             CashSales = shift.TotalCashSales,
@@ -413,10 +416,10 @@ public class CashDrawerController : ControllerBase
                 shift = await _context.CashDrawerShifts
                     .FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId, cancellationToken);
             }
-            else if (request.OutletId > 0)
+            else if (request.TerminalId > 0)
             {
                 shift = await _context.CashDrawerShifts
-                    .Where(s => s.OutletId == request.OutletId && s.Status == "OPEN")
+                    .Where(s => s.TerminalId == request.TerminalId && s.Status == "OPEN")
                     .OrderByDescending(s => s.OpenedAt)
                     .FirstOrDefaultAsync(cancellationToken);
             }
@@ -427,8 +430,9 @@ public class CashDrawerController : ControllerBase
                 return BadRequest("Cash movements require an active open cashier shift.");
             }
 
+            if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString()) return Forbid();
             // Validate branch & outlet ownership
-            if (request.OutletId > 0 && shift.OutletId != request.OutletId)
+            if (request.TerminalId > 0 && shift.TerminalId != request.TerminalId)
             {
                 await tx.RollbackAsync(cancellationToken);
                 return BadRequest("Shift does not belong to the specified outlet.");
@@ -445,7 +449,7 @@ public class CashDrawerController : ControllerBase
                 // Also check if cashier is the currently active session on this outlet
                 var activeSession = await _context.CashierSessions
                     .AsNoTracking()
-                    .Where(s => s.OutletId == shift.OutletId && s.Status == "ACTIVE")
+                    .Where(s => s.TerminalId == shift.TerminalId && s.Status == "ACTIVE")
                     .OrderByDescending(s => s.LoginAt)
                     .FirstOrDefaultAsync(cancellationToken);
 
@@ -526,7 +530,7 @@ public class CashDrawerController : ControllerBase
             {
                 ShiftId = shift.ShiftId,
                 BranchId = shift.BranchId,
-                OutletId = shift.OutletId,
+                TerminalId = shift.TerminalId,
                 MovementType = movementType,
                 CategoryId = category?.CategoryId ?? request.CategoryId,
                 CategoryName = category?.Name ?? request.CategoryName,
@@ -601,7 +605,7 @@ public class CashDrawerController : ControllerBase
     public async Task<ActionResult<List<CashMovementResponseDto>>> GetMovements(
         [FromQuery] long? shiftId = null,
         [FromQuery] int? branchId = null,
-        [FromQuery] int? outletId = null,
+        [FromQuery] int? terminalId = null,
         [FromQuery] string? cashierId = null,
         [FromQuery] string? movementType = null,
         [FromQuery] string? status = null,
@@ -617,7 +621,7 @@ public class CashDrawerController : ControllerBase
 
         if (shiftId.HasValue) query = query.Where(m => m.ShiftId == shiftId.Value);
         if (branchId.HasValue) query = query.Where(m => m.BranchId == branchId.Value);
-        if (outletId.HasValue) query = query.Where(m => m.OutletId == outletId.Value);
+        if (terminalId.HasValue) query = query.Where(m => m.TerminalId == terminalId.Value);
         if (!string.IsNullOrWhiteSpace(cashierId))
             query = query.Where(m => m.CreatedBy == cashierId || m.AuthorizedBy == cashierId);
         if (!string.IsNullOrWhiteSpace(movementType))
@@ -851,7 +855,7 @@ public class CashDrawerController : ControllerBase
             {
                 ShiftId = shift.ShiftId,
                 BranchId = shift.BranchId,
-                OutletId = shift.OutletId,
+                TerminalId = shift.TerminalId,
                 MovementType = "REVERSAL",
                 CategoryId = movement.CategoryId,
                 CategoryName = movement.CategoryName,
@@ -888,7 +892,7 @@ public class CashDrawerController : ControllerBase
     [HttpGet("reports/summary")]
     public async Task<ActionResult<CashMovementSummaryReportDto>> GetMovementSummaryReport(
         [FromQuery] int? branchId = null,
-        [FromQuery] int? outletId = null,
+        [FromQuery] int? terminalId = null,
         [FromQuery] string? cashierId = null,
         [FromQuery] DateTime? dateFrom = null,
         [FromQuery] DateTime? dateTo = null,
@@ -900,7 +904,7 @@ public class CashDrawerController : ControllerBase
             .AsQueryable();
 
         if (branchId.HasValue) query = query.Where(m => m.BranchId == branchId.Value);
-        if (outletId.HasValue) query = query.Where(m => m.OutletId == outletId.Value);
+        if (terminalId.HasValue) query = query.Where(m => m.TerminalId == terminalId.Value);
         if (!string.IsNullOrWhiteSpace(cashierId))
             query = query.Where(m => m.CreatedBy == cashierId || m.AuthorizedBy == cashierId);
         if (dateFrom.HasValue) query = query.Where(m => m.CreatedAt >= dateFrom.Value);
@@ -1011,7 +1015,7 @@ public class CashDrawerController : ControllerBase
         {
             ShiftId = shift.ShiftId,
             BranchId = shift.BranchId,
-            OutletId = shift.OutletId,
+            TerminalId = shift.TerminalId,
             CashierId = shift.CashierId,
             OpeningFloat = shift.OpeningFloat,
             TotalCashSales = shift.TotalCashSales,
@@ -1038,7 +1042,7 @@ public class CashDrawerController : ControllerBase
             MovementId = m.MovementId,
             ShiftId = m.ShiftId,
             BranchId = m.BranchId,
-            OutletId = m.OutletId,
+            TerminalId = m.TerminalId,
             MovementType = m.MovementType,
             CategoryId = m.CategoryId,
             CategoryName = m.CategoryName,

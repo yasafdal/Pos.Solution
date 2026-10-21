@@ -4,6 +4,6 @@ namespace POS.Shared.Interfaces;
 
 public interface ISequenceService
 {
-    Task<string> GenerateOrderNumberAsync(int outletId);
-    Task<string> IssueInvoiceNumberAsync(long orderId, int outletId);
+    Task<string> GenerateOrderNumberAsync(int terminalId);
+    Task<string> IssueInvoiceNumberAsync(long orderId, int terminalId);
 }

@@ -21,6 +21,7 @@ public partial class PosDbContext : DbContext
 
     public virtual DbSet<Category> Categories { get; set; }
 
+    public virtual DbSet<Terminal> Terminals { get; set; }
     public virtual DbSet<Outlet> Outlets { get; set; }
 
     public virtual DbSet<Product> Products { get; set; }
@@ -91,9 +92,9 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.Name).HasMaxLength(50);
         });
 
-        modelBuilder.Entity<Outlet>(entity =>
+        modelBuilder.Entity<Terminal>(entity =>
         {
-            entity.HasKey(e => e.OutletId).HasName("Outlets_pkey");
+            entity.HasKey(e => e.TerminalId).HasName("Terminals_pkey");
 
             entity.Property(e => e.DeviceIdentifier).HasMaxLength(100);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
@@ -106,9 +107,9 @@ public partial class PosDbContext : DbContext
                 .HasColumnName("PTUNumber");
             entity.Property(e => e.SerialNumber).HasMaxLength(50);
 
-            entity.HasOne(d => d.Branch).WithMany(p => p.Outlets)
+            entity.HasOne(d => d.Branch).WithMany(p => p.Terminals)
                 .HasForeignKey(d => d.BranchId)
-                .HasConstraintName("Outlets_BranchId_fkey");
+                .HasConstraintName("Terminals_BranchId_fkey");
         });
 
         modelBuilder.Entity<Product>(entity =>
@@ -188,7 +189,7 @@ public partial class PosDbContext : DbContext
             entity.HasKey(e => e.TaxId).HasName("Taxes_pkey");
 
             entity.Property(e => e.Name).HasMaxLength(50);
-            entity.Property(e => e.Rate).HasPrecision(18);
+            entity.Property(e => e.Rate).HasPrecision(18, 0);
         });
 
         modelBuilder.Entity<UnitOfMeasure>(entity =>
@@ -213,6 +214,7 @@ public partial class PosDbContext : DbContext
         });
 
         OnModelCreatingPartial(modelBuilder);
+        ConfigureHierarchy(modelBuilder);
     }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder);

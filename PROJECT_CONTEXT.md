@@ -1,4 +1,6 @@
-# Pos.Solution — Verified Project Context
+# Pos.Solution — Historical Project Context
+
+> Superseded for hierarchy and current workflow details by `project_content.md`. The following review describes the pre-refactor baseline; do not use its old machine-as-Outlet contracts for new development.
 
 Reviewed: 2026-10-20. Scope: current working tree at `Pos.Solution`, including pre-existing uncommitted changes.
 

@@ -31,5 +31,7 @@ public partial class Branch
 
     public virtual ICollection<Outlet> Outlets { get; set; } = new List<Outlet>();
 
+    public virtual ICollection<Terminal> Terminals { get; set; } = new List<Terminal>();
+
     public virtual ICollection<StockAdjustment> StockAdjustments { get; set; } = new List<StockAdjustment>();
 }

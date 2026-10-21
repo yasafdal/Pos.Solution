@@ -20,6 +20,7 @@ public class TransactionService(HttpClient http) : ITransactionService
         if (filter.DateFrom.HasValue) url += $"dateFrom={Uri.EscapeDataString(filter.DateFrom.Value.ToString("o"))}&";
         if (filter.DateTo.HasValue) url += $"dateTo={Uri.EscapeDataString(filter.DateTo.Value.ToString("o"))}&";
         if (filter.BranchId.HasValue) url += $"branchId={filter.BranchId}&";
+        if (filter.TerminalId.HasValue) url += $"terminalId={filter.TerminalId}&";
         if (filter.OutletId.HasValue) url += $"outletId={filter.OutletId}&";
         if (!string.IsNullOrWhiteSpace(filter.CashierId)) url += $"cashierId={Uri.EscapeDataString(filter.CashierId)}&";
         if (!string.IsNullOrWhiteSpace(filter.OrderNumber)) url += $"orderNumber={Uri.EscapeDataString(filter.OrderNumber)}&";
@@ -62,11 +63,11 @@ public class TransactionService(HttpClient http) : ITransactionService
         return await response.Content.ReadFromJsonAsync<ReturnResponseDto>();
     }
 
-    public async Task<List<ReturnResponseDto>> GetReturnsAsync(int? branchId = null, int? outletId = null)
+    public async Task<List<ReturnResponseDto>> GetReturnsAsync(int? branchId = null, int? terminalId = null)
     {
         var url = "api/returns?";
         if (branchId.HasValue) url += $"branchId={branchId.Value}&";
-        if (outletId.HasValue) url += $"outletId={outletId.Value}&";
+        if (terminalId.HasValue) url += $"terminalId={terminalId.Value}&";
         return await http.GetFromJsonAsync<List<ReturnResponseDto>>(url) ?? new();
     }
 
@@ -76,6 +77,7 @@ public class TransactionService(HttpClient http) : ITransactionService
         if (filter.DateFrom.HasValue) url += $"dateFrom={Uri.EscapeDataString(filter.DateFrom.Value.ToString("o"))}&";
         if (filter.DateTo.HasValue) url += $"dateTo={Uri.EscapeDataString(filter.DateTo.Value.ToString("o"))}&";
         if (filter.BranchId.HasValue) url += $"branchId={filter.BranchId}&";
+        if (filter.TerminalId.HasValue) url += $"terminalId={filter.TerminalId}&";
         if (filter.OutletId.HasValue) url += $"outletId={filter.OutletId}&";
         if (!string.IsNullOrWhiteSpace(filter.CashierId)) url += $"cashierId={Uri.EscapeDataString(filter.CashierId)}&";
 
@@ -89,6 +91,7 @@ public class SalesReportApiService(HttpClient http) : ISalesReportService
         var url = "api/sales-reports?";
         if (request.DateTo.HasValue) url += $"dateTo={Uri.EscapeDataString(request.DateTo.Value.ToString("o"))}&";
         if (request.BranchId.HasValue) url += $"branchId={request.BranchId}&";
+        if (request.TerminalId.HasValue) url += $"terminalId={request.TerminalId}&";
         if (request.OutletId.HasValue) url += $"outletId={request.OutletId}&";
         if (!string.IsNullOrWhiteSpace(request.CashierId)) url += $"cashierId={Uri.EscapeDataString(request.CashierId)}&";
         if (!string.IsNullOrWhiteSpace(request.PaymentMethod)) url += $"paymentMethod={Uri.EscapeDataString(request.PaymentMethod)}&";

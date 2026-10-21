@@ -81,8 +81,8 @@
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <label class="form-label small fw-bold text-secondary mb-1">Outlet #</label>
-                    <input type="number" class="form-control form-control-sm" placeholder="All Outlets" @bind="filterOutletId" />
+                    <label class="form-label small fw-bold text-secondary mb-1">Terminal #</label>
+                    <input type="number" class="form-control form-control-sm" placeholder="All Terminals" @bind="filterTerminalId" />
                 </div>
                 <div class="col-md-2">
                     <label class="form-label small fw-bold text-secondary mb-1">Cashier</label>
@@ -209,7 +209,7 @@
                         <tr>
                             <th class="py-3 px-3">Voucher Ref</th>
                             <th class="py-3">Created At</th>
-                            <th class="py-3">Branch / Outlet</th>
+                            <th class="py-3">Branch / Terminal</th>
                             <th class="py-3">Shift #</th>
                             <th class="py-3">Type / Category</th>
                             <th class="py-3">Reason</th>
@@ -232,7 +232,7 @@
                                 <td class="px-3 fw-bold font-monospace text-primary">@m.ReferenceNumber</td>
                                 <td class="small text-secondary">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                                 <td>
-                                    <span class="badge bg-light text-dark border">B#@m.BranchId / O#@m.OutletId</span>
+                                    <span class="badge bg-light text-dark border">B#@m.BranchId / O#@m.TerminalId</span>
                                 </td>
                                 <td class="font-monospace">#@m.ShiftId</td>
                                 <td>
@@ -307,7 +307,7 @@
                         <tr>
                             <th class="py-3 px-4">Voucher Ref</th>
                             <th class="py-3">Requested At</th>
-                            <th class="py-3">Branch / Outlet / Shift</th>
+                            <th class="py-3">Branch / Terminal / Shift</th>
                             <th class="py-3">Type / Category</th>
                             <th class="py-3">Reason</th>
                             <th class="py-3">Requested By</th>
@@ -327,7 +327,7 @@
                             <tr>
                                 <td class="px-4 fw-bold font-monospace">@m.ReferenceNumber</td>
                                 <td class="small text-secondary">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                                <td>B#@m.BranchId / O#@m.OutletId / Shift #@m.ShiftId</td>
+                                <td>B#@m.BranchId / O#@m.TerminalId / Shift #@m.ShiftId</td>
                                 <td>
                                     <span class="badge @GetTypeBadgeClass(m.MovementType)">@m.MovementType</span>
                                     <span class="small text-secondary ms-1">@m.CategoryName</span>
@@ -638,7 +638,7 @@
                         <hr class="my-2" />
                         <div><strong>Voucher Ref:</strong> @selectedMovement.ReferenceNumber</div>
                         <div><strong>Movement ID:</strong> #@selectedMovement.MovementId</div>
-                        <div><strong>Branch / Outlet:</strong> Branch #@selectedMovement.BranchId / Outlet #@selectedMovement.OutletId</div>
+                        <div><strong>Branch / Terminal:</strong> Branch #@selectedMovement.BranchId / Terminal #@selectedMovement.TerminalId</div>
                         <div><strong>Shift ID:</strong> #@selectedMovement.ShiftId</div>
                         <div><strong>Type:</strong> @selectedMovement.MovementType</div>
                         <div><strong>Category:</strong> @(selectedMovement.CategoryName ?? "Uncategorized")</div>
@@ -678,7 +678,7 @@
 
     // Filters
     private int? filterBranchId;
-    private int? filterOutletId;
+    private int? filterTerminalId;
     private string? filterCashierId;
     private string? filterMovementType;
     private string? filterStatus;
@@ -737,7 +737,7 @@
         {
             var query = new List<string>();
             if (filterBranchId.HasValue) query.Add($"branchId={filterBranchId.Value}");
-            if (filterOutletId.HasValue) query.Add($"outletId={filterOutletId.Value}");
+            if (filterTerminalId.HasValue) query.Add($"terminalId={filterTerminalId.Value}");
             if (!string.IsNullOrWhiteSpace(filterCashierId)) query.Add($"cashierId={Uri.EscapeDataString(filterCashierId)}");
             if (!string.IsNullOrWhiteSpace(filterMovementType)) query.Add($"movementType={Uri.EscapeDataString(filterMovementType)}");
             if (!string.IsNullOrWhiteSpace(filterStatus)) query.Add($"status={Uri.EscapeDataString(filterStatus)}");
@@ -762,7 +762,7 @@
     private async Task ClearFiltersAsync()
     {
         filterBranchId = null;
-        filterOutletId = null;
+        filterTerminalId = null;
         filterCashierId = null;
         filterMovementType = null;
         filterStatus = null;

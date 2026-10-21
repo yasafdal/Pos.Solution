@@ -12,7 +12,7 @@ public partial class HeldSale
 
     public int BranchId { get; set; }
 
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
 
     [Required]
     [MaxLength(450)]

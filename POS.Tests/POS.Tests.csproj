@@ -17,6 +17,8 @@
   <ItemGroup>
     <ProjectReference Include="..\POS.Api\POS.Api.csproj" />
     <ProjectReference Include="..\POS.Shared\POS.Shared.csproj" />
+    <Compile Include="../POS.Client/Data/LocalHierarchyUpgrade.cs" Link="LocalHierarchyUpgrade.cs" />
+    <Compile Include="../POS.Client/Services/ReceiptHtmlFormatter.cs" Link="ReceiptHtmlFormatter.cs" />
   </ItemGroup>
 
 </Project>

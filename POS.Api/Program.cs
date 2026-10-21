@@ -62,14 +62,10 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Run manual DB migrations for reprint logs and held sales
-try
+// Legacy schema changes must be explicitly requested; never migrate production on startup.
+if (builder.Configuration.GetValue<bool>("Database:RunLegacyMigrations"))
 {
     POS.Api.MigrationRunner.Run(builder.Configuration.GetConnectionString("DefaultConnection"));
-}
-catch (Exception ex)
-{
-    Console.WriteLine("Migration Runner Error: " + ex.Message);
 }
 
 // app.UseRouting();

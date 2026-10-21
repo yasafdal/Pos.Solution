@@ -9,11 +9,11 @@ namespace POS.Shared.Services;
 
 public class HeldSaleService(HttpClient http) : IHeldSaleService
 {
-    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? outletId = null)
+    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null)
     {
         var url = "api/held-sales?";
         if (branchId.HasValue) url += $"branchId={branchId}&";
-        if (outletId.HasValue) url += $"outletId={outletId}&";
+        if (terminalId.HasValue) url += $"terminalId={terminalId}&";
 
         return await http.GetFromJsonAsync<List<HeldSaleDto>>(url) ?? new();
     }
@@ -30,10 +30,10 @@ public class HeldSaleService(HttpClient http) : IHeldSaleService
         return await response.Content.ReadFromJsonAsync<HeldSaleDto>();
     }
 
-    public async Task<HeldSaleDto?> ResumeHeldSaleAsync(long id, int? outletId = null)
+    public async Task<HeldSaleDto?> ResumeHeldSaleAsync(long id, int? terminalId = null)
     {
         var url = $"api/held-sales/{id}/resume";
-        if (outletId.HasValue) url += $"?outletId={outletId.Value}";
+        if (terminalId.HasValue) url += $"?terminalId={terminalId.Value}";
         using var response = await http.PostAsync(url, null);
         if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<HeldSaleDto>();

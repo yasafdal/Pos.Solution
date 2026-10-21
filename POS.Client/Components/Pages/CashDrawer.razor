@@ -30,7 +30,7 @@
                 }
             </div>
             <span class="text-secondary" style="font-size: 0.92rem;">
-                Outlet #@(Session.Outlet?.OutletId ?? 1) (@(Session.Outlet?.OutletName ?? "Terminal")) • Cashier: @(Session.Username ?? "Unknown") (@(Session.Role ?? "Cashier"))
+                Terminal #@(Session.Terminal?.TerminalId ?? 1) (@(Session.Terminal?.TerminalName ?? "Terminal")) • Cashier: @(Session.Username ?? "Unknown") (@(Session.Role ?? "Cashier"))
             </span>
         </div>
         <div class="d-flex gap-2">
@@ -540,12 +540,12 @@
                 <div class="modal-body">
                     <div id="printable-cash-voucher" class="p-3 border rounded-3 bg-white font-monospace" style="font-size: 0.84rem; line-height: 1.45;">
                         <div class="text-center border-bottom pb-2 mb-2">
-                            <div class="fw-bold fs-6">@(Session.Outlet?.BranchName ?? "POS F&B QUICK SERVICE")</div>
-                            @if (!string.IsNullOrWhiteSpace(Session.Outlet?.BranchAddress))
+                            <div class="fw-bold fs-6">@(Session.Terminal?.BranchName ?? "POS F&B QUICK SERVICE")</div>
+                            @if (!string.IsNullOrWhiteSpace(Session.Terminal?.BranchAddress))
                             {
-                                <div class="small">@Session.Outlet.BranchAddress</div>
+                                <div class="small">@Session.Terminal.BranchAddress</div>
                             }
-                            <div class="small">Terminal: @(Session.Outlet?.OutletName ?? $"Outlet #{selectedVoucher.OutletId}")</div>
+                            <div class="small">Terminal: @(Session.Terminal?.TerminalName ?? $"Terminal #{selectedVoucher.TerminalId}")</div>
                             <div class="fw-bold mt-1 text-uppercase border-top pt-1">
                                 @FormatMovementTypeLabel(selectedVoucher.MovementType) VOUCHER
                             </div>
@@ -729,7 +729,7 @@
         isLoading = true;
         try
         {
-            var outletId = Session.Outlet?.OutletId ?? 1;
+            var terminalId = Session.Terminal?.TerminalId ?? 1;
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
 
@@ -748,7 +748,7 @@
 
                 try
                 {
-                    var shiftResp = await Http.GetAsync($"api/cash-drawer/current?outletId={outletId}");
+                    var shiftResp = await Http.GetAsync($"api/cash-drawer/current?terminalId={terminalId}");
                     if (shiftResp.IsSuccessStatusCode)
                     {
                         currentShift = await shiftResp.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
@@ -771,7 +771,7 @@
 
             if (isOffline || categories.Count == 0)
             {
-                await LoadOfflineShiftAndCategoriesAsync(outletId);
+                await LoadOfflineShiftAndCategoriesAsync(terminalId);
             }
 
             if (selectedCategoryId == 0 && FilteredCategories.Any())
@@ -830,7 +830,7 @@
                 {
                     ShiftId = shiftDto.ShiftId,
                     BranchId = shiftDto.BranchId,
-                    OutletId = shiftDto.OutletId,
+                    TerminalId = shiftDto.TerminalId,
                     CashierId = shiftDto.CashierId,
                     OpeningFloat = shiftDto.OpeningFloat,
                     TotalCashSales = shiftDto.TotalCashSales,
@@ -863,7 +863,7 @@
         }
     }
 
-    private async Task LoadOfflineShiftAndCategoriesAsync(int outletId)
+    private async Task LoadOfflineShiftAndCategoriesAsync(int terminalId)
     {
         using var db = new LocalPosDbContext();
         db.InitializeDatabase();
@@ -887,7 +887,7 @@
 
         var localShift = await db.CashDrawerShifts
             .AsNoTracking()
-            .Where(s => s.OutletId == outletId && s.Status == "OPEN")
+            .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();
 
@@ -911,7 +911,7 @@
         {
             ShiftId = localShift.ShiftId,
             BranchId = localShift.BranchId,
-            OutletId = localShift.OutletId,
+            TerminalId = localShift.TerminalId,
             CashierId = localShift.CashierId,
             OpeningFloat = localShift.OpeningFloat,
             TotalCashSales = localShift.TotalCashSales,
@@ -929,7 +929,7 @@
                 MovementId = m.MovementId,
                 ShiftId = m.ShiftId,
                 BranchId = m.BranchId,
-                OutletId = m.OutletId,
+                TerminalId = m.TerminalId,
                 MovementType = m.MovementType,
                 CategoryId = m.CategoryId,
                 CategoryName = m.CategoryName,
@@ -962,8 +962,8 @@
         isSubmittingShift = true;
         try
         {
-            var branchId = Session.Outlet?.BranchId ?? 1;
-            var outletId = Session.Outlet?.OutletId ?? 1;
+            var branchId = Session.Terminal?.BranchId ?? 1;
+            var terminalId = Session.Terminal?.TerminalId ?? 1;
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
 
@@ -972,7 +972,7 @@
                 var dto = new OpenShiftDto
                 {
                     BranchId = branchId,
-                    OutletId = outletId,
+                    TerminalId = terminalId,
                     OpeningFloat = openingFloat,
                     Notes = shiftNotes
                 };
@@ -996,7 +996,7 @@
                 {
                     using var db = new LocalPosDbContext();
                     db.InitializeDatabase();
-                    var existing = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.OutletId == outletId && s.Status == "OPEN");
+                    var existing = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.Status == "OPEN");
                     if (existing != null)
                     {
                         ShowAlert("An open shift already exists locally for this outlet.", isError: true);
@@ -1008,7 +1008,7 @@
                     {
                         ShiftId = localShiftId,
                         BranchId = branchId,
-                        OutletId = outletId,
+                        TerminalId = terminalId,
                         CashierId = Session.Username ?? "offline_cashier",
                         OpeningFloat = Math.Round(openingFloat, 2),
                         ExpectedBalance = Math.Round(openingFloat, 2),
@@ -1078,7 +1078,7 @@
                 {
                     ShiftId = currentShift.ShiftId,
                     BranchId = currentShift.BranchId,
-                    OutletId = currentShift.OutletId,
+                    TerminalId = currentShift.TerminalId,
                     MovementType = movementType,
                     CategoryId = selectedCategoryId > 0 ? selectedCategoryId : null,
                     CategoryName = SelectedCategory?.Name,
@@ -1209,7 +1209,7 @@
                 ClientMovementId = pendingClientMovementId,
                 ShiftId = localShift.ShiftId,
                 BranchId = localShift.BranchId,
-                OutletId = localShift.OutletId,
+                TerminalId = localShift.TerminalId,
                 MovementType = movementType,
                 CategoryId = selectedCategoryId > 0 ? selectedCategoryId : null,
                 CategoryName = SelectedCategory?.Name,

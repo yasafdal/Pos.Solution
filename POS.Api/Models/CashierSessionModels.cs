@@ -11,7 +11,7 @@ public partial class CashierSession
     [MaxLength(450)]
     public string CashierId { get; set; } = null!;
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     [MaxLength(100)]
     public string? DeviceIdentifier { get; set; }
     public DateTime LoginAt { get; set; } = DateTime.UtcNow;
@@ -28,7 +28,7 @@ public partial class CashierSwitchLog
 {
     [Key]
     public long SwitchLogId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     [MaxLength(100)]
     public string? DeviceIdentifier { get; set; }
     [Required]

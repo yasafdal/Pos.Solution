@@ -74,6 +74,8 @@ builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<IBranchService, BranchService>();
+builder.Services.AddScoped<IOutletService, OutletService>();
+builder.Services.AddScoped<ITerminalService, TerminalService>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<IUomService, UomService>();
 builder.Services.AddScoped<IServiceModeService, ServiceModeService>();

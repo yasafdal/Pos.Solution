@@ -28,13 +28,13 @@ else if (!IsSupported)
 {
     <div class="sale-unavailable alert alert-warning" role="alert">
         <h4>New Sale unavailable</h4>
-        @if (Session.Outlet?.BusinessTypeId == null || string.IsNullOrWhiteSpace(Session.Outlet.BusinessType))
+        @if (Session.Terminal?.BusinessTypeId == null || string.IsNullOrWhiteSpace(Session.Terminal.BusinessType))
         {
             <p>The branch business type is not configured. Contact an administrator.</p>
         }
         else
         {
-            <p>Business type @Session.Outlet.BusinessType is not supported for New Sale. Contact an administrator.</p>
+            <p>Business type @Session.Terminal.BusinessType is not supported for New Sale. Contact an administrator.</p>
         }
     </div>
 }
@@ -180,6 +180,42 @@ else
         <!-- Right: Current Order Cart -->
         <div class="order-section">
             <div class="order-card shadow-sm">
+                <!-- Service Mode & Table / Pax Bar (for F&B) -->
+                @if (!IsRetail)
+                {
+                    <div class="p-2 bg-light border-bottom">
+                        <div class="d-flex gap-1 mb-2">
+                            <button type="button" class="btn btn-sm flex-fill @(selectedServiceMode == "DINING" ? "btn-primary fw-bold" : "btn-outline-secondary")" @onclick='() => SetServiceMode("DINING")'>
+                                <i class="bi bi-cup-hot me-1"></i> Dine-In
+                            </button>
+                            <button type="button" class="btn btn-sm flex-fill @(selectedServiceMode == "TAKEOUT" ? "btn-primary fw-bold" : "btn-outline-secondary")" @onclick='() => SetServiceMode("TAKEOUT")'>
+                                <i class="bi bi-bag me-1"></i> Takeout
+                            </button>
+                            <button type="button" class="btn btn-sm flex-fill @(selectedServiceMode == "DELIVERY" ? "btn-primary fw-bold" : "btn-outline-secondary")" @onclick='() => SetServiceMode("DELIVERY")'>
+                                <i class="bi bi-truck me-1"></i> Delivery
+                            </button>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <div class="flex-fill">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text bg-white"><i class="bi bi-grid-3x3-gap"></i></span>
+                                    <input type="text" class="form-control" placeholder="Table #" @bind="tableNumber" />
+                                </div>
+                            </div>
+                            @if (selectedServiceMode == "DINING")
+                            {
+                                <div style="width: 110px;">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-white" title="Guests / Pax"><i class="bi bi-people"></i></span>
+                                        <input type="number" class="form-control" min="1" max="99" placeholder="Pax" @bind="headCount" />
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
                 <!-- Order Header -->
                 <div class="order-header d-flex justify-content-between align-items-center">
                     <div class="d-flex align-items-center gap-2">
@@ -768,6 +804,11 @@ else
 
 
 @code {
+    private string selectedServiceMode = "DINING";
+    private string tableNumber = string.Empty;
+    private int headCount = 1;
+    private void SetServiceMode(string mode) => selectedServiceMode = mode;
+
     private long? paidReceiptOrderId;
     private ReceiptDto? paidOfflineReceipt;
     private void CloseReceiptPreview()
@@ -784,8 +825,8 @@ else
     private string searchQuery = string.Empty;
     private bool isLoading = true;
     private bool isOffline = false;
-    private bool IsRetail => Session.Outlet?.BusinessTypeId != null && Session.Outlet.BusinessType == "RETAIL";
-    private bool IsSupported => IsRetail || (Session.Outlet?.BusinessTypeId != null && Session.Outlet.BusinessType == "FNB");
+    private bool IsRetail => Session.Terminal?.BusinessTypeId != null && Session.Terminal.BusinessType == "RETAIL";
+    private bool IsSupported => IsRetail || (Session.Terminal?.BusinessTypeId != null && Session.Terminal.BusinessType == "FNB");
     private ElementReference searchInput;
     private bool restoreSearchFocus;
     private bool quantityDialogOpen;
@@ -1311,6 +1352,9 @@ else
         {
             Cart.Clear();
             selectedCartItems.Clear();
+            tableNumber = string.Empty;
+            headCount = 1;
+            selectedServiceMode = "DINING";
         }
     }
 
@@ -1433,10 +1477,13 @@ else
         {
             var createDto = new OrderCreateDto
             {
-                BranchId = Session.Outlet?.BranchId ?? 1,
-                OutletId = Session.Outlet?.OutletId ?? 1,
+                BranchId = Session.Terminal?.BranchId ?? 1,
+                OutletId = Session.Terminal?.OutletId ?? 1,
+                TerminalId = Session.Terminal?.TerminalId ?? 1,
                 CashierId = Session.Username ?? "cashier",
-                OrderType = IsRetail ? "RETAIL" : "DINING",
+                OrderType = IsRetail ? "RETAIL" : selectedServiceMode,
+                TableNumber = string.IsNullOrWhiteSpace(tableNumber) ? null : tableNumber.Trim(),
+                HeadCount = headCount > 0 ? headCount : (int?)null,
                 DiscountAmount = Cart.ActiveDiscountAmount,
                 DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
                 CustomerCardNumber = Cart.CustomerCardNumber,
@@ -1503,7 +1550,7 @@ else
                     OrderId = DateTime.UtcNow.Ticks,
                     OrderNumber = "OFFLINE-PENDING",
                     BranchId = createDto.BranchId,
-                    OutletId = createDto.OutletId,
+                    TerminalId = createDto.TerminalId,
                     CashierId = createDto.CashierId,
                     OrderType = createDto.OrderType,
                     OrderStatus = "PENDING",
@@ -1631,10 +1678,13 @@ else
 
                 var offlineCreateDto = new OrderCreateDto
                 {
-                    BranchId = Session.Outlet?.BranchId ?? 1,
-                    OutletId = Session.Outlet?.OutletId ?? 1,
+                    BranchId = Session.Terminal?.BranchId ?? 1,
+                    OutletId = Session.Terminal?.OutletId ?? 1,
+                    TerminalId = Session.Terminal?.TerminalId ?? 1,
                     CashierId = Session.Username ?? "cashier",
-                    OrderType = IsRetail ? "RETAIL" : "DINING",
+                    OrderType = IsRetail ? "RETAIL" : selectedServiceMode,
+                    TableNumber = string.IsNullOrWhiteSpace(tableNumber) ? null : tableNumber.Trim(),
+                    HeadCount = headCount > 0 ? headCount : (int?)null,
                     DiscountAmount = Cart.ActiveDiscountAmount,
                     DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
                     CustomerCardNumber = Cart.CustomerCardNumber,
@@ -1676,6 +1726,9 @@ else
                 isSplitPaymentMode = false;
                 paymentSplits.Clear();
                 Cart.Clear();
+                tableNumber = string.Empty;
+                headCount = 1;
+                selectedServiceMode = "DINING";
                 customerName = customerAddress = customerTin = customerBusinessStyle = string.Empty;
                 paidOfflineReceipt = offlineResult.Receipt;
                 return;
@@ -1694,6 +1747,9 @@ else
             isSplitPaymentMode = false;
             paymentSplits.Clear();
             Cart.Clear();
+            tableNumber = string.Empty;
+            headCount = 1;
+            selectedServiceMode = "DINING";
             paidReceiptOrderId = paidOrderId;
         }
         catch (Exception ex)
@@ -1752,8 +1808,8 @@ else
         {
             var createDto = new HeldSaleCreateDto
             {
-                BranchId = Session.Outlet?.BranchId ?? 1,
-                OutletId = Session.Outlet?.OutletId ?? 1,
+                BranchId = Session.Terminal?.BranchId ?? 1,
+                TerminalId = Session.Terminal?.TerminalId ?? 1,
                 CashierId = Session.Username ?? "cashier",
                 CustomerName = string.IsNullOrWhiteSpace(noteResult.Value) ? "Walk-in" : noteResult.Value.Trim(),
                 Notes = "Suspended at " + DateTime.Now.ToString("HH:mm"),

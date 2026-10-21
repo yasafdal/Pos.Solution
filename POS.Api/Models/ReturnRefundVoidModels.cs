@@ -39,7 +39,7 @@ public partial class SalesReturn
     public long ReturnId { get; set; }
     public long OriginalOrderId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     [Required]
     [MaxLength(50)]
     public string ReturnReference { get; set; } = null!;

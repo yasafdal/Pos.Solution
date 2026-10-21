@@ -13,8 +13,8 @@ namespace POS.Shared.Interfaces
         Task<bool> UpdateBranchAsync(int id, BranchDto branch);
         Task<bool> DeleteBranchAsync(int id);
 
-        Task<bool> CreateOutletAsync(OutletDto outlet);
-        Task<bool> UpdateOutletAsync(int id, OutletDto outlet);
-        Task<bool> DeleteOutletAsync(int id);
+        Task<bool> CreateTerminalAsync(TerminalDto outlet);
+        Task<bool> UpdateTerminalAsync(int id, TerminalDto outlet);
+        Task<bool> DeleteTerminalAsync(int id);
     }
 }

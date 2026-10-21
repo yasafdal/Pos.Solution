@@ -108,10 +108,17 @@ public class LocalDiscount
     public bool RequiresIdentification { get; set; }
 }
 
-public class LocalOutletConfig
+public class LocalTerminalConfig
 {
     [Key]
+    public int TerminalId { get; set; }
     public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
+    public string TerminalCode { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+    public string? PTUNumber { get; set; }
+    public string? MINNumber { get; set; }
+    public string? SerialNumber { get; set; }
     public int BranchId { get; set; }
     public int? BusinessTypeId { get; set; }
     public string? BusinessType { get; set; }
@@ -119,7 +126,7 @@ public class LocalOutletConfig
     public string? BranchCode { get; set; }
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
-    public string OutletName { get; set; } = null!;
+    public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = "VAT-Registered";
     public string TerminalIdentifier { get; set; } = null!;
 }
@@ -128,7 +135,7 @@ public class LocalInvoiceSequence
 {
     [Key]
     public int SequenceId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string SeriesCode { get; set; } = null!;
     public string Prefix { get; set; } = null!;
     public long StartingNumber { get; set; }
@@ -145,6 +152,10 @@ public class LocalOrder
     public string InvoiceNumber { get; set; } = null!;
     public int BranchId { get; set; }
     public int OutletId { get; set; }
+    public int TerminalId { get; set; }
+    public string OrderType { get; set; } = "DINING";
+    public string? TableNumber { get; set; }
+    public int? HeadCount { get; set; }
     public string CashierId { get; set; } = null!;
     [Column(TypeName = "decimal(18,2)")]
     public decimal Subtotal { get; set; }
@@ -224,7 +235,7 @@ public class LocalHeldSale
     [Key]
     public long HeldSaleId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string CashierId { get; set; } = string.Empty;
     public string HoldReference { get; set; } = string.Empty;
     public string Status { get; set; } = "HELD";
@@ -260,7 +271,7 @@ public class LocalCashDrawerShift
     [Key]
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string CashierId { get; set; } = string.Empty;
     [Column(TypeName = "decimal(18,2)")]
     public decimal OpeningFloat { get; set; }
@@ -293,7 +304,7 @@ public class LocalCashDrawerMovement
     public string ClientMovementId { get; set; } = Guid.NewGuid().ToString("N");
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string MovementType { get; set; } = "PETTY_CASH";
     public int? CategoryId { get; set; }
     public string? CategoryName { get; set; }

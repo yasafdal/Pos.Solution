@@ -38,7 +38,7 @@ public class OfflineSyncWorker : IOfflineSyncWorker
         {
             try
             {
-                var orderCreateDto = System.Text.Json.JsonSerializer.Deserialize<OrderCreateDto>(item.PayloadJson);
+                var orderCreateDto = POS.Shared.Services.LegacyTerminalPayload.Deserialize<OrderCreateDto>(item.PayloadJson);
                 if (orderCreateDto == null)
                 {
                     item.Status = "FAILED";
@@ -52,9 +52,9 @@ public class OfflineSyncWorker : IOfflineSyncWorker
                 var syncReq = new OfflineTransactionSyncRequest
                 {
                     LocalTransactionId = item.EntityId,
-                    TerminalId = "TERM-01",
+                    DeviceIdentifier = "TERM-01",
                     BranchId = orderCreateDto.BranchId,
-                    OutletId = orderCreateDto.OutletId,
+                    TerminalId = orderCreateDto.TerminalId,
                     CashierId = orderCreateDto.CashierId,
                     InvoiceNumber = orderCreateDto.OfflineInvoiceNumber ?? $"OFF-{item.EntityId[..8]}",
                     TransactionDate = item.CreatedAt,

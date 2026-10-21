@@ -29,7 +29,7 @@ public partial class CashDrawerShift
     [Key]
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     [Required]
     [MaxLength(450)]
     public string CashierId { get; set; } = null!;
@@ -68,7 +68,7 @@ public partial class CashDrawerMovement
     public long MovementId { get; set; }
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     [Required]
     [MaxLength(30)]
     public string MovementType { get; set; } = null!; // CASH_IN, CASH_OUT, PETTY_CASH, CASH_DROP, CASH_SALE, CASH_REFUND, REVERSAL

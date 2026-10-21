@@ -39,7 +39,7 @@ public sealed class TestPosDbContext(DbContextOptions<PosDbContext> options) : P
     }
 }
 
-public static class Program
+public static partial class Program
 {
     private static int _passed;
     private static int _failed;
@@ -66,13 +66,47 @@ public static class Program
         await RunTestAsync("16. Voucher Printing / Reference Formatting generates PCV/CIN/COU/CDP/REV vouchers with full audit fields", Test16_VoucherFormatting);
         await RunTestAsync("17. Reversal Processing marks original REVERSED, creates linked REVERSAL entry, restores balance, and blocks double-reversal", Test17_ReversalProcessing);
         await RunTestAsync("18. BIR Sales & VAT Isolation ensures Petty Cash / Paid-In / Paid-Out never alter GrossSales, VAT, or InvoiceSequences", Test18_BirSalesAndVatIsolation);
-        await RunTestAsync("19. Cashier Transactions strictly scoped to Token Claims (branch_id, outlet_id) and forbid cross-terminal access", Test19_TransactionsTokenClaimsScoping);
+        await RunTestAsync("19. Cashier Transactions strictly scoped to Token Claims (branch_id, terminal_id) and forbid cross-terminal access", Test19_TransactionsTokenClaimsScoping);
         await RunTestAsync("20. Cashier Transactions enforce 4:00 AM Business Day Cutoff (no sales prior to 4am)", Test20_Transactions4AmCutoff);
         await RunTestAsync("21. Voids and Returns require strict PIN authorization (rejecting username-as-PIN bypass)", Test21_VoidAndReturnStrictPinEnforcement);
         await RunTestAsync("22. Offline Transaction History logic verifies local terminal & 4 AM scoping", Test22_OfflineTransactionHistoryLogic);
 
+        await RunTestAsync("23. Physical outlet and terminal ownership model", Test23_HierarchyModel);
+        await RunTestAsync("24. Outlet and terminal CRUD validation and deletion guards", Test24_HierarchyCrud);
+        await RunTestAsync("25. SQLite legacy upgrade preserves records and payload hashes", Test25_LocalHierarchyUpgrade);
+        await RunTestAsync("26. Legacy cached payload still resolves the original terminal", Test26_LegacyPayload);
+        await RunTestAsync("27. Terminal resolution, sale, payment, invoice and receipt", Test27_SaleReceipt);
+        await RunTestAsync("28. Offline upload replays safely and rejects invoice collision", Test28_OfflineReplay);
+        await RunTestAsync("29. Online and offline invoice allocations do not overlap", Test29_InvoiceReservations);
+        await RunTestAsync("30. Registration rejects cross-field IP collisions", Test30_RegistrationAddressCollision);
+        await RunTestAsync("31. Unscoped cashier cannot write offline history", Test31_UnscopedOfflineWriteIsForbidden);
+        await RunTestAsync("32. Supervisor recovers inactive terminal history with audit", Test32_InactiveHistoryRecovery);
+        await RunTestAsync("33. Status acknowledgement requires matching terminal and payload", Test33_ExactAcknowledgement);
+        await RunTestAsync("34. Cash movement status scoping", Test34_CashMovementStatusScoping);
+        await RunTestAsync("35. Idempotent replay rejects cross-correlated order payload", Test35_IdempotentReplayCorrelation);
+        await RunTestAsync("36. Supervisor historical recovery succeeds across terminals", Test36_SupervisorRecoveryAcrossTerminals);
+        await RunTestAsync("37. Deactivation cutoff date preserved against subsequent edits", Test37_DeactivationCutoffPreserved);
+        await RunTestAsync("38. Receipt layout, item totals, and syntax integrity", Test38_ReceiptFormattingOutput);
+
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
+    }
+
+    private static Task Test23_HierarchyModel()
+    {
+        using var db = new PosDbContext(new DbContextOptionsBuilder<PosDbContext>()
+            .UseSqlite("Data Source=:memory:").Options);
+        var terminal = db.Model.GetEntityTypes().SingleOrDefault(e => e.ClrType.Name == "Terminal");
+        Assert(terminal != null, "Existing machine records must map to Terminal, not physical Outlet.");
+        Assert(terminal!.GetTableName() == "Terminals", "Terminal table must be named Terminals.");
+        Assert(terminal!.FindPrimaryKey()!.Properties.Single().Name == "TerminalId", "Terminal primary key must retain the old machine identity.");
+        var outlet = db.Model.GetEntityTypes().Single(e => e.ClrType.Name == "Outlet");
+        Assert(outlet.FindProperty("OutletCode") != null, "Physical outlet must have a scoped code.");
+        Assert(terminal!.GetForeignKeys().Any(f => f.PrincipalEntityType == outlet), "Terminal must reference a physical outlet.");
+        var order = db.Model.GetEntityTypes().Single(e => e.ClrType.Name == "Order");
+        Assert(order.FindProperty("OutletId") != null, "Order must have an explicit OutletId.");
+        Assert(order.GetForeignKeys().Any(f => f.PrincipalEntityType == outlet), "Order must reference physical Outlet.");
+        return Task.CompletedTask;
     }
 
     private static async Task RunTestAsync(string name, Func<Task> test)
@@ -109,7 +143,8 @@ public static class Program
         await db.Database.EnsureCreatedAsync();
 
         var branch = new Branch { BranchId = 1, Name = "Main Branch", TaxType = "VAT-Registered", IsActive = true };
-        var outlet = new Outlet { OutletId = 1, BranchId = 1, Name = "Counter 1", IsActive = true };
+        var outlet = new Terminal { TerminalId = 1, BranchId = 1, OutletId = 1, TerminalCode = "POS-1", Name = "Counter 1", IsActive = true };
+        db.Outlets.Add(new Outlet { OutletId = 1, BranchId = 1, OutletCode = "MAIN", Name = "Main", IsActive = true });
         var cashier = new User { UserId = 1, Username = "cashier1", Role = "Cashier", PinCode = "1111", PasswordHash = "x" };
         var otherCashier = new User { UserId = 2, Username = "cashier2", Role = "Cashier", PinCode = "2222", PasswordHash = "x" };
         var manager = new User { UserId = 3, Username = "manager1", Role = "Manager", PinCode = "9999", PasswordHash = "x" };
@@ -123,7 +158,7 @@ public static class Program
         {
             ShiftId = 1,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             CashierId = "cashier1",
             OpeningFloat = 2000.00m,
             ExpectedBalance = 2000.00m,
@@ -132,7 +167,7 @@ public static class Program
         };
 
         db.Branches.Add(branch);
-        db.Outlets.Add(outlet);
+        db.Terminals.Add(outlet);
         db.Users.AddRange(cashier, otherCashier, manager);
         db.CashMovementCategories.AddRange(catPaidIn, catPettyCash, catMinorOut, catDrop);
         db.CashDrawerShifts.Add(shift);
@@ -147,7 +182,8 @@ public static class Program
         var identity = new ClaimsIdentity(
         [
             new Claim(ClaimTypes.Name, username),
-            new Claim(ClaimTypes.Role, role)
+            new Claim(ClaimTypes.Role, role),
+            new Claim("terminal_id", "1")
         ], "TestAuth");
         controller.ControllerContext = new ControllerContext
         {
@@ -166,7 +202,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             CategoryId = 1,
             Amount = 500.00m,
             Reason = "Added coin change float"
@@ -193,7 +229,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 350.00m,
@@ -222,7 +258,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 2500.00m, // > 2000 OpeningFloat
@@ -245,7 +281,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             Amount = 0m,
             Reason = "Zero amount"
         });
@@ -253,7 +289,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             Amount = -50m,
             Reason = "Negative amount"
         });
@@ -274,7 +310,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             Amount = 100m,
             Reason = "Attempt on closed shift"
         });
@@ -292,7 +328,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             Amount = 100m,
             Reason = "Unauthorized cashier attempt"
         });
@@ -312,7 +348,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 400.00m,
@@ -355,7 +391,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 300.00m,
@@ -387,7 +423,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 250.00m,
@@ -418,7 +454,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 600.00m,
@@ -431,7 +467,7 @@ public static class Program
         {
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 600.00m,
@@ -449,6 +485,7 @@ public static class Program
         var (conn, db, shift) = await CreateTestEnvAsync();
         await using var _ = conn;
         var syncController = new OfflineSyncController(db);
+        Authenticate(syncController);
 
         // Offline movement with unverified / missing supervisor PinHash must remain PENDING_APPROVAL on server
         var unverifiedReq = new OfflineCashMovementSyncRequest
@@ -456,7 +493,7 @@ public static class Program
             ClientMovementId = "OFFLINE-UNVERIFIED-001",
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             CategoryName = "Ice & Store Supplies",
@@ -482,6 +519,7 @@ public static class Program
         var (conn, db, shift) = await CreateTestEnvAsync();
         await using var _ = conn;
         var syncController = new OfflineSyncController(db);
+        Authenticate(syncController);
         string validPinHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("9999")));
 
         var syncReq = new OfflineCashMovementSyncRequest
@@ -489,7 +527,7 @@ public static class Program
             ClientMovementId = "OFFLINE-CM-001",
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             CategoryName = "Ice & Store Supplies",
@@ -536,6 +574,7 @@ public static class Program
         var (conn, db, shift) = await CreateTestEnvAsync();
         await using var _ = conn;
         var syncController = new OfflineSyncController(db);
+        Authenticate(syncController);
         string validPinHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("9999")));
 
         var conflictReq = new OfflineCashMovementSyncRequest
@@ -543,7 +582,7 @@ public static class Program
             ClientMovementId = "OFFLINE-CM-CONFLICT",
             ShiftId = shift.ShiftId,
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             MovementType = "PETTY_CASH",
             CategoryId = 2,
             Amount = 5000.00m, // Exceeds 2000 server shift balance
@@ -581,25 +620,25 @@ public static class Program
         // Paid-In +300 -> 3700
         await controller.CreatePaidIn(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, CategoryId = 1, Amount = 300.00m, Reason = "Float top-up"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, CategoryId = 1, Amount = 300.00m, Reason = "Float top-up"
         });
 
         // Petty Cash -200 -> 3500
         await controller.CreatePaidOut(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 200.00m, Reason = "Supplies", SupervisorPin = "9999"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 200.00m, Reason = "Supplies", SupervisorPin = "9999"
         });
 
         // Safe Cash Drop -1000 -> 2500
         await controller.RecordMovement(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "CASH_DROP", CategoryId = 4, Amount = 1000.00m, Reason = "Midday safe skim", SupervisorPin = "9999"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "CASH_DROP", CategoryId = 4, Amount = 1000.00m, Reason = "Midday safe skim", SupervisorPin = "9999"
         });
 
         // Create a PENDING_APPROVAL movement -> must block shift close!
         var pendingRes = await controller.CreatePaidOut(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 100.00m, Reason = "Pending request"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 100.00m, Reason = "Pending request"
         });
         var pendingDto = (CashMovementResponseDto)((OkObjectResult)pendingRes.Result!).Value!;
 
@@ -640,15 +679,15 @@ public static class Program
 
         var cin = (CashMovementResponseDto)((OkObjectResult)(await controller.CreatePaidIn(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, Amount = 100m, Reason = "Paid in"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, Amount = 100m, Reason = "Paid in"
         })).Result!).Value!;
         var pcv = (CashMovementResponseDto)((OkObjectResult)(await controller.CreatePaidOut(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 50m, Reason = "Petty cash", SupervisorPin = "9999"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 50m, Reason = "Petty cash", SupervisorPin = "9999"
         })).Result!).Value!;
         var cdp = (CashMovementResponseDto)((OkObjectResult)(await controller.RecordMovement(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "CASH_DROP", CategoryId = 4, Amount = 100m, Reason = "Safe drop", SupervisorPin = "9999"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "CASH_DROP", CategoryId = 4, Amount = 100m, Reason = "Safe drop", SupervisorPin = "9999"
         })).Result!).Value!;
 
         Assert(cin.ReferenceNumber.StartsWith("CIN-", StringComparison.Ordinal), $"Expected CIN- prefix, got {cin.ReferenceNumber}");
@@ -664,7 +703,7 @@ public static class Program
 
         var pcv = (CashMovementResponseDto)((OkObjectResult)(await controller.CreatePaidOut(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 300m, Reason = "Erroneous petty cash entry", SupervisorPin = "9999"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 300m, Reason = "Erroneous petty cash entry", SupervisorPin = "9999"
         })).Result!).Value!;
 
         var shiftAfterOut = await db.CashDrawerShifts.FindAsync(shift.ShiftId);
@@ -705,7 +744,7 @@ public static class Program
         db.InvoiceSequences.Add(new InvoiceSequence
         {
             InvoiceSequenceId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             SeriesCode = "2026",
             Prefix = "INV-",
             LastIssuedNumber = 105
@@ -715,6 +754,7 @@ public static class Program
             OrderId = 1,
             BranchId = 1,
             OutletId = 1,
+            TerminalId = 1,
             OrderNumber = "ORD-0001",
             OrderType = "DINE_IN",
             InvoiceNumber = "INV-0000105",
@@ -748,19 +788,19 @@ public static class Program
         var controller = CreateController(db, "cashier1", "Cashier");
         await controller.CreatePaidIn(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, CategoryId = 1, Amount = 500.00m, Reason = "Paid-In float"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, CategoryId = 1, Amount = 500.00m, Reason = "Paid-In float"
         });
         await controller.CreatePaidOut(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 250.00m, Reason = "Petty cash supplies", SupervisorPin = "9999"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "PETTY_CASH", CategoryId = 2, Amount = 250.00m, Reason = "Petty cash supplies", SupervisorPin = "9999"
         });
         await controller.RecordMovement(new CashDrawerMovementDto
         {
-            ShiftId = shift.ShiftId, BranchId = 1, OutletId = 1, MovementType = "CASH_DROP", CategoryId = 4, Amount = 400.00m, Reason = "Safe drop", SupervisorPin = "9999"
+            ShiftId = shift.ShiftId, BranchId = 1, TerminalId = 1, MovementType = "CASH_DROP", CategoryId = 4, Amount = 400.00m, Reason = "Safe drop", SupervisorPin = "9999"
         });
 
         var afterReport = await reportService.GenerateReportAsync(new SalesReportRequestDto { BranchId = 1 });
-        var seqAfter = await db.InvoiceSequences.FirstAsync(s => s.OutletId == 1);
+        var seqAfter = await db.InvoiceSequences.FirstAsync(s => s.TerminalId == 1);
 
         Assert(afterReport.GrossSales == beforeReport.GrossSales && afterReport.GrossSales == 1120.00m, "Petty cash must never alter GrossSales");
         Assert(afterReport.OutputVat == beforeReport.OutputVat && afterReport.OutputVat == 120.00m, "Petty cash must never alter Output VAT");
@@ -769,7 +809,7 @@ public static class Program
         Assert(seqAfter.LastIssuedNumber == 105, "Cash movements must never consume BIR InvoiceSequences");
     }
 
-    private static TransactionsController CreateTransactionsController(PosDbContext db, string username = "cashier1", string role = "Cashier", int? branchId = null, int? outletId = null)
+    private static TransactionsController CreateTransactionsController(PosDbContext db, string username = "cashier1", string role = "Cashier", int? branchId = null, int? terminalId = null)
     {
         var receiptService = new ReceiptService(db);
         var controller = new TransactionsController(db, receiptService);
@@ -780,8 +820,8 @@ public static class Program
         };
         if (branchId.HasValue)
             claims.Add(new Claim("branch_id", branchId.Value.ToString()));
-        if (outletId.HasValue)
-            claims.Add(new Claim("outlet_id", outletId.Value.ToString()));
+        if (terminalId.HasValue)
+            claims.Add(new Claim("terminal_id", terminalId.Value.ToString()));
 
         var identity = new ClaimsIdentity(claims, "TestAuth");
         controller.ControllerContext = new ControllerContext
@@ -797,7 +837,8 @@ public static class Program
         var identity = new ClaimsIdentity(
         [
             new Claim(ClaimTypes.Name, username),
-            new Claim(ClaimTypes.Role, role)
+            new Claim(ClaimTypes.Role, role),
+            new Claim("terminal_id", "1")
         ], "TestAuth");
         controller.ControllerContext = new ControllerContext
         {
@@ -811,31 +852,31 @@ public static class Program
         var (conn, db, shift) = await CreateTestEnvAsync();
         await using var _ = conn;
 
-        var outlet2 = new Outlet { OutletId = 2, BranchId = 1, Name = "Counter 2", IsActive = true };
-        db.Outlets.Add(outlet2);
+        var outlet2 = new Terminal { TerminalId = 2, BranchId = 1, OutletId = 1, TerminalCode = "POS-2", Name = "Counter 2", IsActive = true };
+        db.Terminals.Add(outlet2);
 
         // Order 1 at outlet 1 (cashier1)
         db.Orders.Add(new Order
         {
-            OrderId = 101, BranchId = 1, OutletId = 1, OrderNumber = "ORD-101", OrderType = "DINE_IN", CashierId = "cashier1",
+            OrderId = 101, BranchId = 1, OutletId = 1, TerminalId = 1, OrderNumber = "ORD-101", OrderType = "DINE_IN", CashierId = "cashier1",
             OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 100m, TotalAmount = 100m, CreatedAt = DateTime.UtcNow
         });
         // Order 2 at outlet 2 (cashier1)
         db.Orders.Add(new Order
         {
-            OrderId = 102, BranchId = 1, OutletId = 2, OrderNumber = "ORD-102", OrderType = "DINE_IN", CashierId = "cashier1",
+            OrderId = 102, BranchId = 1, OutletId = 1, TerminalId = 2, OrderNumber = "ORD-102", OrderType = "DINE_IN", CashierId = "cashier1",
             OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 200m, TotalAmount = 200m, CreatedAt = DateTime.UtcNow
         });
         // Order 3 at outlet 1 (cashier2)
         db.Orders.Add(new Order
         {
-            OrderId = 103, BranchId = 1, OutletId = 1, OrderNumber = "ORD-103", OrderType = "DINE_IN", CashierId = "cashier2",
+            OrderId = 103, BranchId = 1, OutletId = 1, TerminalId = 1, OrderNumber = "ORD-103", OrderType = "DINE_IN", CashierId = "cashier2",
             OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 300m, TotalAmount = 300m, CreatedAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
 
-        // Cashier 1 token scoped to Branch 1, Outlet 1
-        var controller = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, outletId: 1);
+        // Cashier 1 token scoped to Branch 1, Terminal 1
+        var controller = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, terminalId: 1);
 
         // Standard fetch
         var res = await controller.GetTransactions(null, null, null, null, null, null, null, null, null, null, null);
@@ -844,7 +885,7 @@ public static class Program
         Assert(ok[0].OrderId == 101, $"Expected OrderId 101, got {ok[0].OrderId}");
 
         // Attempting to filter by a different outlet must be forbidden (403)
-        var crossOutletRes = await controller.GetTransactions(null, null, null, outletId: 2, null, null, null, null, null, null, null);
+        var crossOutletRes = await controller.GetTransactions(null, null, null, terminalId: 2, null, null, null, null, null, null, null);
         Assert(crossOutletRes.Result is ForbidResult, "Querying a different outlet than token claim must return ForbidResult");
 
         // Attempting to filter by a different branch must be forbidden (403)
@@ -885,20 +926,20 @@ public static class Program
         // Old order (2 days ago)
         db.Orders.Add(new Order
         {
-            OrderId = 201, BranchId = 1, OutletId = 1, OrderNumber = "ORD-OLD", OrderType = "DINE_IN", CashierId = "cashier1",
+            OrderId = 201, BranchId = 1, OutletId = 1, TerminalId = 1, OrderNumber = "ORD-OLD", OrderType = "DINE_IN", CashierId = "cashier1",
             OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 50m, TotalAmount = 50m,
             CreatedAt = DateTime.UtcNow.AddDays(-2)
         });
         // Today's order (recent)
         db.Orders.Add(new Order
         {
-            OrderId = 202, BranchId = 1, OutletId = 1, OrderNumber = "ORD-TODAY", OrderType = "DINE_IN", CashierId = "cashier1",
+            OrderId = 202, BranchId = 1, OutletId = 1, TerminalId = 1, OrderNumber = "ORD-TODAY", OrderType = "DINE_IN", CashierId = "cashier1",
             OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 80m, TotalAmount = 80m,
             CreatedAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
 
-        var controller = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, outletId: 1);
+        var controller = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, terminalId: 1);
 
         // Fetch without dateFrom: server must apply 4 AM floor and not return the old order
         var res = await controller.GetTransactions(null, null, null, null, null, null, null, null, null, null, null);
@@ -914,7 +955,7 @@ public static class Program
         // Order to void
         var order = new Order
         {
-            OrderId = 301, BranchId = 1, OutletId = 1, OrderNumber = "ORD-301", OrderType = "DINE_IN", InvoiceNumber = "INV-301",
+            OrderId = 301, BranchId = 1, OutletId = 1, TerminalId = 1, OrderNumber = "ORD-301", OrderType = "DINE_IN", InvoiceNumber = "INV-301",
             CashierId = "cashier1", OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 500m, TotalAmount = 500m,
             CreatedAt = DateTime.UtcNow
         };
@@ -966,7 +1007,7 @@ public static class Program
             OrderId = Guid.NewGuid().ToString(),
             InvoiceNumber = "INV-OFFLINE-001",
             BranchId = 1,
-            OutletId = 1,
+            TerminalId = 1,
             CashierId = "cashier1",
             Subtotal = 250m,
             TotalAmount = 250m,
@@ -976,7 +1017,7 @@ public static class Program
         };
 
         Assert(localOrderMock.CreatedAt >= cutoffUtc, "Recent order must fall within active business day");
-        Assert(localOrderMock.OutletId == 1 && localOrderMock.CashierId == "cashier1", "Order scoped to active terminal and cashier");
+        Assert(localOrderMock.TerminalId == 1 && localOrderMock.CashierId == "cashier1", "Order scoped to active terminal and cashier");
         return Task.CompletedTask;
     }
 }

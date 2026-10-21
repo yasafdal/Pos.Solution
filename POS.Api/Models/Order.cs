@@ -16,6 +16,13 @@ public partial class Order
 
     public int OutletId { get; set; }
 
+    public int TerminalId { get; set; }
+
+    [MaxLength(20)]
+    public string? TableNumber { get; set; }
+
+    public int? HeadCount { get; set; }
+
     [Required]
     [MaxLength(450)]
     public string CashierId { get; set; } = null!;
@@ -79,6 +86,8 @@ public partial class Order
     public virtual ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
 
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
+
+    public virtual Outlet Outlet { get; set; } = null!;
 
     public virtual InvoiceSequence? InvoiceSequence { get; set; }
 }

@@ -6,7 +6,7 @@ namespace POS.Shared.Models;
 public class HeldSaleCreateDto
 {
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string CashierId { get; set; } = null!;
     public string? CustomerName { get; set; }
     public string? Notes { get; set; }
@@ -22,7 +22,7 @@ public class HeldSaleDto
 {
     public long HeldSaleId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string CashierId { get; set; } = null!;
     public string HoldReference { get; set; } = null!;
     public string? CustomerName { get; set; }

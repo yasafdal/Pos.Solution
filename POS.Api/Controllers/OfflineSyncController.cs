@@ -11,8 +11,10 @@ namespace POS.Api.Controllers;
 
 [Route("api/offline-sync")]
 [ApiController]
+[Authorize]
 public class OfflineSyncController(PosDbContext context) : ControllerBase
 {
+    [AllowAnonymous]
     [HttpGet("health")]
     public IActionResult GetSyncHealth()
     {
@@ -20,24 +22,40 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
     }
 
     [HttpPost("transactions")]
-    public async Task<ActionResult<OfflineTransactionSyncResponse>> SyncTransaction([FromBody] OfflineTransactionSyncRequest request)
+    public async Task<ActionResult<OfflineTransactionSyncResponse>> SyncTransaction([FromBody] OfflineTransactionSyncRequest request, [FromHeader(Name = "X-Terminal-Recovery-Reason")] string? recoveryReason = null)
     {
         if (request == null || string.IsNullOrWhiteSpace(request.LocalTransactionId))
         {
             return BadRequest("Invalid transaction synchronization request.");
         }
 
+        if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
         // Check if transaction was already synchronized (Idempotency check via OfflineSyncIdempotencyRecords or Orders)
-        var existingIdempotency = await context.OfflineSyncIdempotencyRecords
+        var idempotencyByLocalId = await context.OfflineSyncIdempotencyRecords
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.LocalTransactionId == request.LocalTransactionId || x.InvoiceNumber == request.InvoiceNumber);
+            .FirstOrDefaultAsync(x => x.LocalTransactionId == request.LocalTransactionId);
+
+        var idempotencyByInvoice = await context.OfflineSyncIdempotencyRecords
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.InvoiceNumber == request.InvoiceNumber);
 
         var existingOrder = await context.Orders
             .AsNoTracking()
             .FirstOrDefaultAsync(o => o.InvoiceNumber == request.InvoiceNumber);
 
-        if (existingOrder != null)
+        if (idempotencyByLocalId != null || idempotencyByInvoice != null || existingOrder != null)
         {
+            if (idempotencyByLocalId == null || existingOrder == null
+                || idempotencyByLocalId.ServerOrderId != existingOrder.OrderId
+                || idempotencyByLocalId.InvoiceNumber != request.InvoiceNumber
+                || existingOrder.InvoiceNumber != request.InvoiceNumber
+                || existingOrder.TerminalId != request.TerminalId
+                || idempotencyByLocalId.PayloadHash != request.PayloadHash
+                || (idempotencyByInvoice != null && idempotencyByInvoice.LocalTransactionId != request.LocalTransactionId))
+            {
+                return Conflict("Invoice or transaction identifier belongs to another payload. No history was overwritten.");
+            }
+
             return Ok(new OfflineTransactionSyncResponse
             {
                 Success = true,
@@ -45,7 +63,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 LocalTransactionId = request.LocalTransactionId,
                 InvoiceNumber = existingOrder.InvoiceNumber ?? request.InvoiceNumber,
                 ServerOrderId = existingOrder.OrderId,
-                AcknowledgedAt = existingIdempotency?.ProcessedAt ?? DateTime.UtcNow
+                AcknowledgedAt = idempotencyByLocalId.ProcessedAt
             });
         }
 
@@ -53,10 +71,10 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
         try
         {
             // Verify outlet and branch authorization
-            var outlet = await context.Outlets
+            var outlet = await context.Terminals
                 .Include(o => o.Branch)
                 .AsNoTracking()
-                .SingleOrDefaultAsync(o => o.OutletId == request.OutletId);
+                .SingleOrDefaultAsync(o => o.TerminalId == request.TerminalId);
 
             if (outlet == null || outlet.BranchId != request.BranchId)
             {
@@ -64,36 +82,39 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 return BadRequest("Invalid branch or outlet authorization for this terminal.");
             }
 
+            var recoveryError = await ValidateHistoricalRecovery(outlet, request.TransactionDate, request.LocalTransactionId, "SALE", recoveryReason);
+            if (recoveryError != null) return Conflict(recoveryError);
             // Generate collision-safe sequential/unique offline order number
             string txSuffix = request.LocalTransactionId.Replace("-", "").ToUpperInvariant();
             if (txSuffix.Length > 6) txSuffix = txSuffix[..6];
             string orderNumber = $"OFF-{DateTime.UtcNow:yyMMddHHmmss}-{txSuffix}";
 
-            // Advance active server InvoiceSequence if the offline invoice number is ahead
-            int? matchedSequenceId = null;
-            var activeSeq = await context.InvoiceSequences
-                .FirstOrDefaultAsync(s => s.OutletId == request.OutletId && s.IsActive);
-            if (activeSeq != null)
-            {
-                matchedSequenceId = activeSeq.InvoiceSequenceId;
-                string prefix = activeSeq.Prefix ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(request.InvoiceNumber) &&
-                    request.InvoiceNumber.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-                    long.TryParse(request.InvoiceNumber[prefix.Length..], out long issuedNum) &&
-                    issuedNum > activeSeq.LastIssuedNumber)
-                {
-                    activeSeq.LastIssuedNumber = issuedNum;
-                    activeSeq.UpdatedAt = DateTime.UtcNow;
-                }
-            }
+            // Lock the terminal's numbering state; never renumber an offline invoice during upload.
+            var sequences = context.Database.IsNpgsql()
+                ? await context.InvoiceSequences.FromSqlInterpolated($"SELECT * FROM \"InvoiceSequences\" WHERE \"terminal_id\" = {request.TerminalId} FOR UPDATE").ToListAsync()
+                : await context.InvoiceSequences.Where(s => s.TerminalId == request.TerminalId).ToListAsync();
+            var matches = sequences.Select(s => new { Sequence = s, Prefix = s.Prefix ?? string.Empty })
+                .Where(x => request.InvoiceNumber.StartsWith(x.Prefix, StringComparison.Ordinal)
+                    && long.TryParse(request.InvoiceNumber[x.Prefix.Length..], out var number)
+                    && number >= x.Sequence.StartingNumber && (!x.Sequence.EndingNumber.HasValue || number <= x.Sequence.EndingNumber))
+                .ToList();
+            if (matches.Count != 1) return Conflict("Offline invoice does not uniquely match a configured terminal invoice series. No number was regenerated.");
+            var activeSeq = matches[0].Sequence;
+            int? matchedSequenceId = activeSeq.InvoiceSequenceId;
+            var issuedNum = long.Parse(request.InvoiceNumber[matches[0].Prefix.Length..], System.Globalization.CultureInfo.InvariantCulture);
+            activeSeq.LastIssuedNumber = Math.Max(activeSeq.LastIssuedNumber, issuedNum);
+            activeSeq.UpdatedAt = DateTime.UtcNow;
 
             var order = new Order
             {
                 OrderNumber = orderNumber,
                 BranchId = request.BranchId,
-                OutletId = request.OutletId,
+                OutletId = outlet.OutletId,
+                TerminalId = request.TerminalId,
                 CashierId = request.CashierId,
-                OrderType = "DINING",
+                OrderType = string.IsNullOrWhiteSpace(request.OrderType) ? "DINING" : request.OrderType,
+                TableNumber = request.TableNumber,
+                HeadCount = request.HeadCount,
                 OrderStatus = "COMPLETED",
                 PaymentStatus = "PAID",
                 InvoiceSequenceId = matchedSequenceId,
@@ -190,7 +211,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
 
             // Accumulate cash payment into active drawer shift if available
             var openShift = await context.CashDrawerShifts
-                .FirstOrDefaultAsync(s => s.OutletId == request.OutletId && s.Status == "OPEN");
+                .FirstOrDefaultAsync(s => s.TerminalId == request.TerminalId && s.Status == "OPEN");
 
             if (openShift != null)
             {
@@ -206,6 +227,8 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     var movement = new CashDrawerMovement
                     {
                         ShiftId = openShift.ShiftId,
+                        BranchId = request.BranchId,
+                        TerminalId = request.TerminalId,
                         MovementType = "CASH_SALE",
                         Amount = cashPaymentTotal,
                         Reason = $"Offline Sale Synced [{request.InvoiceNumber}]",
@@ -216,17 +239,14 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 }
             }
 
-            if (existingIdempotency == null)
+            context.OfflineSyncIdempotencyRecords.Add(new OfflineSyncIdempotencyRecord
             {
-                context.OfflineSyncIdempotencyRecords.Add(new OfflineSyncIdempotencyRecord
-                {
-                    LocalTransactionId = request.LocalTransactionId,
-                    InvoiceNumber = request.InvoiceNumber,
-                    PayloadHash = request.PayloadHash ?? string.Empty,
-                    ServerOrderId = order.OrderId,
-                    ProcessedAt = DateTime.UtcNow
-                });
-            }
+                LocalTransactionId = request.LocalTransactionId,
+                InvoiceNumber = request.InvoiceNumber,
+                PayloadHash = request.PayloadHash ?? string.Empty,
+                ServerOrderId = order.OrderId,
+                ProcessedAt = DateTime.UtcNow
+            });
 
             await context.SaveChangesAsync();
             await transaction.CommitAsync();
@@ -257,33 +277,22 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
     [HttpGet("transactions/{localTransactionId}/status")]
     public async Task<IActionResult> GetTransactionStatus(string localTransactionId)
     {
-        var idempotency = await context.OfflineSyncIdempotencyRecords
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.LocalTransactionId == localTransactionId || x.InvoiceNumber == localTransactionId);
-
-        var order = await context.Orders
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o =>
-                o.InvoiceNumber == (idempotency != null ? idempotency.InvoiceNumber : localTransactionId) ||
-                o.OrderNumber == localTransactionId);
-
-        if (order == null && idempotency == null)
+        var idempotency = await context.OfflineSyncIdempotencyRecords.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.LocalTransactionId == localTransactionId);
+        if (idempotency == null) return NotFound();
+        var order = await context.Orders.AsNoTracking().SingleOrDefaultAsync(o => o.OrderId == idempotency.ServerOrderId);
+        if (order == null) return NotFound();
+        if (User.FindFirst("terminal_id")?.Value != order.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
+        return Ok(new OfflineTransactionStatusDto
         {
-            return NotFound(new { Status = "PENDING_OR_NOT_FOUND", LocalTransactionId = localTransactionId });
-        }
-
-        return Ok(new
-        {
-            Status = "SYNCED",
-            LocalTransactionId = localTransactionId,
-            ServerOrderId = order?.OrderId ?? idempotency?.ServerOrderId ?? 0L,
-            InvoiceNumber = order?.InvoiceNumber ?? idempotency?.InvoiceNumber,
-            CommittedAt = order?.CreatedAt ?? idempotency?.ProcessedAt
+            Status = "SYNCED", LocalTransactionId = idempotency.LocalTransactionId,
+            ServerOrderId = order.OrderId, InvoiceNumber = order.InvoiceNumber ?? string.Empty,
+            TerminalId = order.TerminalId, PayloadHash = idempotency.PayloadHash
         });
     }
 
     [HttpPost("cash-movements")]
-    public async Task<ActionResult<OfflineCashMovementSyncResponse>> SyncCashMovement([FromBody] OfflineCashMovementSyncRequest request)
+    public async Task<ActionResult<OfflineCashMovementSyncResponse>> SyncCashMovement([FromBody] OfflineCashMovementSyncRequest request, [FromHeader(Name = "X-Terminal-Recovery-Reason")] string? recoveryReason = null)
     {
         if (request == null || string.IsNullOrWhiteSpace(request.ClientMovementId) || request.Amount <= 0 || string.IsNullOrWhiteSpace(request.Reason))
         {
@@ -295,6 +304,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             });
         }
 
+        if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
         string clientId = request.ClientMovementId.Trim();
 
         // 1. Server-side idempotency check
@@ -304,6 +314,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
 
         if (existingMovement != null)
         {
+            if (existingMovement.TerminalId != request.TerminalId || existingMovement.Amount != request.Amount
+                || existingMovement.BranchId != request.BranchId)
+                return Conflict("Cash movement identifier is already associated with different terminal data.");
             return Ok(new OfflineCashMovementSyncResponse
             {
                 Success = true,
@@ -319,9 +332,10 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
         using var tx = await context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
         try
         {
-            var outlet = await context.Outlets
+            var outlet = await context.Terminals
+                .Include(t => t.Branch)
                 .AsNoTracking()
-                .FirstOrDefaultAsync(o => o.OutletId == request.OutletId);
+                .FirstOrDefaultAsync(o => o.TerminalId == request.TerminalId);
 
             if (outlet == null || outlet.BranchId != request.BranchId)
             {
@@ -334,16 +348,18 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 });
             }
 
+            var recoveryError = await ValidateHistoricalRecovery(outlet, request.CreatedAt, request.ClientMovementId, "CASH_MOVEMENT", recoveryReason);
+            if (recoveryError != null) return Conflict(recoveryError);
             // Locate shift by ShiftId (if server shift ID was known) or active open shift for outlet
             CashDrawerShift? shift = null;
             if (request.ShiftId > 0)
             {
-                shift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId && s.OutletId == request.OutletId);
+                shift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId && s.TerminalId == request.TerminalId);
             }
             if (shift == null)
             {
                 shift = await context.CashDrawerShifts
-                    .Where(s => s.OutletId == request.OutletId && s.Status == "OPEN")
+                    .Where(s => s.TerminalId == request.TerminalId && s.Status == "OPEN")
                     .OrderByDescending(s => s.OpenedAt)
                     .FirstOrDefaultAsync();
             }
@@ -440,7 +456,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             {
                 ShiftId = shift.ShiftId,
                 BranchId = shift.BranchId,
-                OutletId = shift.OutletId,
+                TerminalId = shift.TerminalId,
                 MovementType = movementType,
                 CategoryId = category?.CategoryId,
                 CategoryName = category?.Name ?? request.CategoryName,
@@ -517,14 +533,33 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             return NotFound(new { Status = "PENDING_OR_NOT_FOUND", ClientMovementId = clientMovementId });
         }
 
+        if (User.FindFirst("terminal_id")?.Value != movement.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager"))
+            return Forbid();
+
         return Ok(new
         {
             Status = "SYNCED",
             ClientMovementId = clientMovementId,
+            TerminalId = movement.TerminalId,
             ServerMovementId = movement.MovementId,
             ServerStatus = movement.Status,
             ReferenceNumber = movement.ReferenceNumber,
             CommittedAt = movement.PostedAt ?? movement.CreatedAt
         });
     }
+    private async Task<string?> ValidateHistoricalRecovery(Terminal terminal, DateTime occurredAt, string identifier, string kind, string? reason)
+    {
+        var outlet = await context.Outlets.AsNoTracking().SingleAsync(o => o.OutletId == terminal.OutletId);
+        if (terminal.IsActive && outlet.IsActive && terminal.Branch.IsActive) return null;
+        if ((!User.IsInRole("Admin") && !User.IsInRole("Manager")) || string.IsNullOrWhiteSpace(reason) || reason.Length > 255)
+            return "Inactive terminal history requires supervisor reconciliation with X-Terminal-Recovery-Reason. Original work remains pending.";
+        var terminalCutoff = !terminal.IsActive ? (terminal.DeactivatedAt ?? terminal.UpdatedAt) : DateTime.MaxValue;
+        var outletCutoff = !outlet.IsActive ? (outlet.DeactivatedAt ?? outlet.UpdatedAt) : DateTime.MaxValue;
+        if (occurredAt > DateTime.UtcNow || occurredAt > terminalCutoff || occurredAt > outletCutoff)
+            return "Recovery accepts only historical work completed before deactivation, not new sales.";
+        context.TerminalRecoveryLogs.Add(new TerminalRecoveryLog { TerminalId = terminal.TerminalId, EntityIdentifier = identifier,
+            EntityType = kind, RecoveredBy = User.Identity?.Name ?? "unknown", Reason = reason.Trim(), RecoveredAt = DateTime.UtcNow });
+        return null;
+    }
+
 }

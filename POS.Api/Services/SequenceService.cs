@@ -6,13 +6,13 @@ namespace POS.Api.Services;
 
 public class SequenceService(PosDbContext context) : ISequenceService
 {
-    public async Task<string> GenerateOrderNumberAsync(int outletId)
+    public async Task<string> GenerateOrderNumberAsync(int terminalId)
     {
         OrderSequence? sequence;
-        if (context.Database.IsRelational())
+        if (context.Database.IsNpgsql())
         {
             sequence = await context.OrderSequences
-                .FromSqlInterpolated($"SELECT * FROM \"OrderSequences\" WHERE \"outlet_id\" = {outletId} FOR UPDATE")
+                .FromSqlInterpolated($"SELECT * FROM \"OrderSequences\" WHERE \"terminal_id\" = {terminalId} FOR UPDATE")
                 .SingleOrDefaultAsync();
 
             if (sequence == null)
@@ -21,7 +21,7 @@ public class SequenceService(PosDbContext context) : ISequenceService
                 {
                     sequence = new OrderSequence
                     {
-                        OutletId = outletId,
+                        TerminalId = terminalId,
                         LastIssuedNumber = 0,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -35,21 +35,21 @@ public class SequenceService(PosDbContext context) : ISequenceService
                 }
 
                 sequence = await context.OrderSequences
-                    .FromSqlInterpolated($"SELECT * FROM \"OrderSequences\" WHERE \"outlet_id\" = {outletId} FOR UPDATE")
+                    .FromSqlInterpolated($"SELECT * FROM \"OrderSequences\" WHERE \"terminal_id\" = {terminalId} FOR UPDATE")
                     .SingleOrDefaultAsync()
-                    ?? throw new InvalidOperationException($"Unable to initialize order sequence for outlet {outletId}.");
+                    ?? throw new InvalidOperationException($"Unable to initialize order sequence for outlet {terminalId}.");
             }
         }
         else
         {
             sequence = await context.OrderSequences
-                .SingleOrDefaultAsync(s => s.OutletId == outletId);
+                .SingleOrDefaultAsync(s => s.TerminalId == terminalId);
 
             if (sequence == null)
             {
                 sequence = new OrderSequence
                 {
-                    OutletId = outletId,
+                    TerminalId = terminalId,
                     LastIssuedNumber = 0,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
@@ -63,15 +63,15 @@ public class SequenceService(PosDbContext context) : ISequenceService
         sequence.UpdatedAt = DateTime.UtcNow;
         await context.SaveChangesAsync();
 
-        var outlet = await context.Outlets.AsNoTracking().SingleOrDefaultAsync(o => o.OutletId == outletId);
-        string codePrefix = outlet?.Name != null ? outlet.Name.Replace(" ", "").ToUpper() : $"POS{outletId}";
+        var outlet = await context.Terminals.AsNoTracking().SingleOrDefaultAsync(o => o.TerminalId == terminalId);
+        string codePrefix = outlet?.Name != null ? outlet.Name.Replace(" ", "").ToUpper() : $"POS{terminalId}";
         if (codePrefix.StartsWith("POS") && codePrefix.Length == 4 && char.IsDigit(codePrefix[3]))
             codePrefix = "POS0" + codePrefix[3];
 
         return $"{codePrefix}-{sequence.LastIssuedNumber:D6}";
     }
 
-    public async Task<string> IssueInvoiceNumberAsync(long orderId, int outletId)
+    public async Task<string> IssueInvoiceNumberAsync(long orderId, int terminalId)
     {
         var order = await context.Orders
             .Include(o => o.Payments)
@@ -84,20 +84,20 @@ public class SequenceService(PosDbContext context) : ISequenceService
             return order.InvoiceNumber; // Payment retry does not generate a second invoice
 
         InvoiceSequence? seq;
-        if (context.Database.IsRelational())
+        if (context.Database.IsNpgsql())
         {
             seq = await context.InvoiceSequences
-                .FromSqlInterpolated($"SELECT * FROM \"InvoiceSequences\" WHERE \"outlet_id\" = {outletId} AND \"is_active\" = true FOR UPDATE")
+                .FromSqlInterpolated($"SELECT * FROM \"InvoiceSequences\" WHERE \"terminal_id\" = {terminalId} AND \"is_active\" = true FOR UPDATE")
                 .SingleOrDefaultAsync();
         }
         else
         {
             seq = await context.InvoiceSequences
-                .SingleOrDefaultAsync(s => s.OutletId == outletId && s.IsActive);
+                .SingleOrDefaultAsync(s => s.TerminalId == terminalId && s.IsActive);
         }
 
         if (seq == null)
-            throw new InvalidOperationException($"No active invoice sequence configured for outlet {outletId}.");
+            throw new InvalidOperationException($"No active invoice sequence configured for outlet {terminalId}.");
 
         if (seq.EndingNumber.HasValue && seq.LastIssuedNumber >= seq.EndingNumber.Value)
             throw new InvalidOperationException($"Invoice sequence {seq.SeriesCode} has reached its configured ending number ({seq.EndingNumber.Value}).");

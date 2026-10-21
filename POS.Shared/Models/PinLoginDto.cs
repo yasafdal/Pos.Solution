@@ -8,6 +8,6 @@ namespace POS.Shared.Models
     {
         public string PinCode { get; set; } = string.Empty;
         public int? BranchId { get; set; }
-        public int? OutletId { get; set; }
+        public int? TerminalId { get; set; }
     }
 }
