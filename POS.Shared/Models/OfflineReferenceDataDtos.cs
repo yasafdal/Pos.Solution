@@ -8,7 +8,7 @@ public class OfflineReferenceDataResponseDto
 {
     public string Version { get; set; } = null!;
     public DateTime ServerTimestamp { get; set; }
-    public OfflineOutletConfigDto Outlet { get; set; } = null!;
+    public OfflineTerminalConfigDto Terminal { get; set; } = null!;
     public List<OfflineProductDto> Products { get; set; } = new();
     public List<OfflineCategoryDto> Categories { get; set; } = new();
     public List<OfflineModifierGroupDto> ModifierGroups { get; set; } = new();
@@ -32,7 +32,7 @@ public class OfflineCashierDto
 public class OfflineInvoiceSequenceDto
 {
     public int SequenceId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string SeriesCode { get; set; } = string.Empty;
     public string Prefix { get; set; } = string.Empty;
     public long StartingNumber { get; set; }
@@ -50,9 +50,16 @@ public class OfflineProductModifierMappingDto
     public int DisplayOrder { get; set; }
 }
 
-public class OfflineOutletConfigDto
+public class OfflineTerminalConfigDto
 {
+    public int TerminalId { get; set; }
     public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
+    public string TerminalCode { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+    public string? PTUNumber { get; set; }
+    public string? MINNumber { get; set; }
+    public string? SerialNumber { get; set; }
     public int BranchId { get; set; }
     public int? BusinessTypeId { get; set; }
     public string? BusinessType { get; set; }
@@ -60,7 +67,7 @@ public class OfflineOutletConfigDto
     public string? BranchCode { get; set; }
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
-    public string OutletName { get; set; } = null!;
+    public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = null!;
     public string DeviceIdentifier { get; set; } = null!;
 }

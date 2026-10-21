@@ -31,8 +31,8 @@
                 <input type="number" class="form-control form-control-sm rounded-3" placeholder="All Branches" @bind="filterBranchId" />
             </div>
             <div class="col-md-2">
-                <label class="form-label text-dark fw-semibold small mb-1">Outlet ID</label>
-                <input type="number" class="form-control form-control-sm rounded-3" placeholder="All Outlets" @bind="filterOutletId" />
+                <label class="form-label text-dark fw-semibold small mb-1">Terminal ID</label>
+                <input type="number" class="form-control form-control-sm rounded-3" placeholder="All Terminals" @bind="filterTerminalId" />
             </div>
             <div class="col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Status</label>
@@ -164,7 +164,7 @@
     private List<VoidResponseDto>? voidsList;
     private string searchTerm = string.Empty;
     private int? filterBranchId = null;
-    private int? filterOutletId = null;
+    private int? filterTerminalId = null;
     private string filterStatus = string.Empty;
 
     private IEnumerable<ReturnResponseDto> FilteredReturns =>
@@ -178,7 +178,7 @@
              (r.OriginalInvoiceNumber?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
              r.OriginalOrderId.ToString().Contains(searchTerm)) &&
             (!filterBranchId.HasValue || r.BranchId == filterBranchId.Value) &&
-            (!filterOutletId.HasValue || r.OutletId == filterOutletId.Value) &&
+            (!filterTerminalId.HasValue || r.TerminalId == filterTerminalId.Value) &&
             (string.IsNullOrWhiteSpace(filterStatus) || r.Status.Equals(filterStatus, StringComparison.OrdinalIgnoreCase)));
 
     private IEnumerable<VoidResponseDto> FilteredVoids =>
@@ -201,10 +201,10 @@
         {
             var url = "api/returns?";
             if (filterBranchId.HasValue) url += $"branchId={filterBranchId.Value}&";
-            if (filterOutletId.HasValue) url += $"outletId={filterOutletId.Value}&";
+            if (filterTerminalId.HasValue) url += $"terminalId={filterTerminalId.Value}&";
 
             returnsList = await Http.GetFromJsonAsync<List<ReturnResponseDto>>(url);
-            voidsList = await Http.GetFromJsonAsync<List<VoidResponseDto>>("api/returns/voids" + (filterBranchId.HasValue || filterOutletId.HasValue ? $"?branchId={filterBranchId}&outletId={filterOutletId}" : ""));
+            voidsList = await Http.GetFromJsonAsync<List<VoidResponseDto>>("api/returns/voids" + (filterBranchId.HasValue || filterTerminalId.HasValue ? $"?branchId={filterBranchId}&terminalId={filterTerminalId}" : ""));
         }
         catch (Exception ex)
         {
@@ -216,7 +216,7 @@
     {
         searchTerm = string.Empty;
         filterBranchId = null;
-        filterOutletId = null;
+        filterTerminalId = null;
         filterStatus = string.Empty;
         _ = LoadData();
     }

@@ -41,21 +41,21 @@ namespace POS.Shared.Services
             return response.IsSuccessStatusCode;
         }
 
-        public async Task<bool> CreateOutletAsync(OutletDto outlet)
+        public async Task<bool> CreateTerminalAsync(TerminalDto outlet)
         {
-            var response = await _http.PostAsJsonAsync("api/Outlets", outlet);
+            var response = await _http.PostAsJsonAsync("api/Terminals", outlet);
             return response.IsSuccessStatusCode;
         }
 
-        public async Task<bool> UpdateOutletAsync(int id, OutletDto outlet)
+        public async Task<bool> UpdateTerminalAsync(int id, TerminalDto outlet)
         {
-            var response = await _http.PutAsJsonAsync($"api/Outlets/{id}", outlet);
+            var response = await _http.PutAsJsonAsync($"api/Terminals/{id}", outlet);
             return response.IsSuccessStatusCode;
         }
 
-        public async Task<bool> DeleteOutletAsync(int id)
+        public async Task<bool> DeleteTerminalAsync(int id)
         {
-            var response = await _http.DeleteAsync($"api/Outlets/{id}");
+            var response = await _http.DeleteAsync($"api/Terminals/{id}");
             return response.IsSuccessStatusCode;
         }
     }

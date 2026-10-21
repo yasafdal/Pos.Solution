@@ -75,6 +75,9 @@ namespace POS.Client.Workers
                 var syncService = scope.ServiceProvider.GetRequiredService<IOfflineTransactionSyncService>();
                 var coordinator = scope.ServiceProvider.GetRequiredService<IOfflineSyncCoordinator>();
                 var httpClient = scope.ServiceProvider.GetRequiredService<HttpClient>();
+                var session = scope.ServiceProvider.GetRequiredService<PosSessionService>();
+                if (string.IsNullOrWhiteSpace(session.Token) || session.Token == "OFFLINE-SESSION-TOKEN") return;
+                httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session.Token);
 
                 var pendingItems = await syncService.GetPendingOutboxItemsAsync();
                 foreach (var item in pendingItems)

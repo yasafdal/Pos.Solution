@@ -9,9 +9,17 @@ public class ReceiptDto
     public string? BranchCode { get; set; }
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
+    public int TerminalId { get; set; }
     public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
+    public string? PTUNumber { get; set; }
+    public string? MINNumber { get; set; }
+    public string? SerialNumber { get; set; }
     public string TerminalName { get; set; } = string.Empty;
     public string CashierId { get; set; } = string.Empty;
+    public string? OrderType { get; set; }
+    public string? TableNumber { get; set; }
+    public int? HeadCount { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime PaidAt { get; set; }
     public decimal Subtotal { get; set; }

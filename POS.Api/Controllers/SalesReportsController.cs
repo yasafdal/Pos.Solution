@@ -17,18 +17,19 @@ public class SalesReportsController(ISalesReportService salesReportService) : Co
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] int? branchId,
-        [FromQuery] int? outletId,
+        [FromQuery] int? terminalId,
         [FromQuery] string? cashierId,
         [FromQuery] string? paymentMethod,
         [FromQuery] string? grouping = "DAILY",
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
         var request = new SalesReportRequestDto
         {
             DateFrom = dateFrom,
             DateTo = dateTo,
             BranchId = branchId,
-            OutletId = outletId,
+            TerminalId = terminalId, OutletId = outletId,
             CashierId = cashierId,
             PaymentMethod = paymentMethod,
             Grouping = grouping

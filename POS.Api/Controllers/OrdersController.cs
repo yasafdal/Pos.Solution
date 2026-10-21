@@ -11,6 +11,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
+[Authorize]
 public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISequenceService sequenceService, POS.Api.Services.IDiscountCalculationService discountCalculator) : ControllerBase
 {
     [HttpPost]
@@ -19,10 +20,15 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         if (dto.Items == null || dto.Items.Count == 0)
             return BadRequest("Order must contain at least one item.");
 
+        var terminal = await context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
+            .SingleOrDefaultAsync(t => t.TerminalId == dto.TerminalId);
+        if (terminal == null || terminal.BranchId != dto.BranchId || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive)
+            return BadRequest("Invalid or inactive Branch / Outlet / Terminal ownership.");
+        if (User.FindFirst("terminal_id")?.Value != dto.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
         using var transaction = await context.Database.BeginTransactionAsync();
         try
         {
-            var orderNumber = await sequenceService.GenerateOrderNumberAsync(dto.OutletId);
+            var orderNumber = await sequenceService.GenerateOrderNumberAsync(dto.TerminalId);
 
             var branch = await context.Branches.AsNoTracking().SingleOrDefaultAsync(b => b.BranchId == dto.BranchId);
             var branchTaxType = branch?.TaxType ?? "VAT-Registered";
@@ -49,7 +55,10 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             {
                 OrderNumber = orderNumber,
                 BranchId = dto.BranchId,
-                OutletId = dto.OutletId,
+                OutletId = terminal.OutletId,
+                TerminalId = dto.TerminalId,
+                TableNumber = dto.TableNumber,
+                HeadCount = dto.HeadCount,
                 CashierId = dto.CashierId ?? "system",
                 ShiftId = dto.ShiftId,
                 OrderType = string.IsNullOrWhiteSpace(dto.OrderType) ? "DINING" : dto.OrderType,
@@ -169,6 +178,9 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             OrderNumber = order.OrderNumber,
             BranchId = order.BranchId,
             OutletId = order.OutletId,
+            TerminalId = order.TerminalId,
+            TableNumber = order.TableNumber,
+            HeadCount = order.HeadCount,
             CashierId = order.CashierId,
             ShiftId = order.ShiftId,
             OrderType = order.OrderType,

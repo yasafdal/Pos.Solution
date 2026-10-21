@@ -46,7 +46,7 @@ namespace POS.Client
             builder.Services.AddHostedService(sp => (OfflineBackgroundSyncManager)sp.GetRequiredService<IOfflineBackgroundSyncService>());
             builder.Services.AddScoped<CartService>();
             builder.Services.AddScoped<IUserService, UserService>();
-            builder.Services.AddScoped<IOutletService, OutletService>();
+            builder.Services.AddScoped<ITerminalService, TerminalService>();
             builder.Services.AddScoped<ICategoryService, CategoryService>();
             builder.Services.AddScoped<IProductService, ProductService>();
             builder.Services.AddScoped<IModifierService, ModifierService>();
@@ -62,9 +62,9 @@ namespace POS.Client
             builder.Services.AddSingleton<IReceiptPrinter, UnsupportedReceiptPrinter>();
 #endif
 #if DEBUG
-            // Development only: match Outlets.DeviceIdentifier while the API stays on localhost.
+            // Development only: match Terminals.DeviceIdentifier while the API stays on localhost.
             // Set to null to restore OS route detection. Never included in Release builds.
-            const string? developmentTerminalIp = "192.168.30.127";
+            const string? developmentTerminalIp = "192.168.1.6";
             builder.Services.AddScoped<ITerminalAddressProvider>(sp =>
                 new TerminalAddressProvider(sp.GetRequiredService<HttpClient>())
                 {

@@ -8,6 +8,7 @@ public class TransactionFilterDto
     public DateTime? DateFrom { get; set; }
     public DateTime? DateTo { get; set; }
     public int? BranchId { get; set; }
+    public int? TerminalId { get; set; }
     public int? OutletId { get; set; }
     public string? CashierId { get; set; }
     public string? OrderNumber { get; set; }

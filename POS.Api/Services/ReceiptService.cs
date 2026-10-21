@@ -21,7 +21,7 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             throw new InvalidOperationException("A receipt is only available for a fully paid order with successful payments.");
         // Branch/outlet labels are current metadata; monetary and item data are sale snapshots.
         var branch = await context.Branches.AsNoTracking().SingleOrDefaultAsync(b => b.BranchId == order.BranchId);
-        var outlet = await context.Outlets.AsNoTracking().SingleOrDefaultAsync(o => o.OutletId == order.OutletId);
+        var outlet = await context.Terminals.AsNoTracking().Include(t => t.Outlet).SingleOrDefaultAsync(o => o.TerminalId == order.TerminalId);
 
         return new ReceiptDto
         {
@@ -32,9 +32,14 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             BranchCode = branch?.Code,
             BranchAddress = branch?.Address,
             BranchPhone = branch?.Phone,
-            OutletId = order.OutletId,
+            TerminalId = order.TerminalId,
+            OutletId = outlet?.OutletId ?? 0, OutletName = outlet?.Outlet.Name ?? string.Empty,
+            PTUNumber = outlet?.Ptunumber, MINNumber = outlet?.Minnumber, SerialNumber = outlet?.SerialNumber,
             TerminalName = outlet?.Name ?? string.Empty,
             CashierId = order.CashierId,
+            OrderType = order.OrderType,
+            TableNumber = order.TableNumber,
+            HeadCount = order.HeadCount,
             CreatedAt = order.CreatedAt,
             PaidAt = payments.Max(p => p.PaidAt),
             Subtotal = order.Subtotal,

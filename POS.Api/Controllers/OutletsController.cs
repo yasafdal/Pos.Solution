@@ -1,156 +1,99 @@
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Net;
 using POS.Api.Models;
 using POS.Shared.Models;
 
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
+namespace POS.Api.Controllers;
 
-namespace POS.Api.Controllers
+[Route("api/outlets")]
+[ApiController]
+[Authorize(Roles = "Admin,Manager")]
+public class OutletsController(PosDbContext context) : ControllerBase
 {
-    [Route("api/[controller]")]
-    [ApiController]
-    public class OutletsController : ControllerBase
+    [HttpGet]
+    public async Task<ActionResult<List<OutletDto>>> GetOutlets([FromQuery] int? branchId)
     {
-        private readonly PosDbContext _context;
-        private readonly IConfiguration _configuration;
+        var query = context.Outlets.AsNoTracking().Include(o => o.Terminals).AsQueryable();
+        if (branchId.HasValue) query = query.Where(o => o.BranchId == branchId);
+        return Ok((await query.OrderBy(o => o.OutletCode).ToListAsync()).Select(HierarchyMapping.ToDto).ToList());
+    }
 
-        public OutletsController(PosDbContext context, IConfiguration configuration)
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<OutletDto>> GetOutlet(int id)
+    {
+        var outlet = await context.Outlets.AsNoTracking().Include(o => o.Terminals).SingleOrDefaultAsync(o => o.OutletId == id);
+        return outlet == null ? NotFound() : Ok(HierarchyMapping.ToDto(outlet));
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<OutletDto>> CreateOutlet(OutletDto dto)
+    {
+        var error = await Validate(dto, 0);
+        if (error != null) return BadRequest(error);
+        var outlet = new Outlet { BranchId = dto.BranchId, CreatedAt = DateTime.UtcNow };
+        Apply(outlet, dto);
+        context.Outlets.Add(outlet);
+        try { await context.SaveChangesAsync(); }
+        catch (DbUpdateException) { return Conflict("The outlet code already exists or branch ownership changed. Refresh and retry."); }
+        return CreatedAtAction(nameof(GetOutlet), new { id = outlet.OutletId }, HierarchyMapping.ToDto(outlet));
+    }
+
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> UpdateOutlet(int id, OutletDto dto)
+    {
+        var outlet = await context.Outlets.FindAsync(id);
+        if (outlet == null) return NotFound();
+        if (dto.BranchId != outlet.BranchId) return BadRequest("An outlet cannot be moved to another branch.");
+        var error = await Validate(dto, id);
+        if (error != null) return BadRequest(error);
+        if (!dto.IsActive && await context.Terminals.AnyAsync(t => t.OutletId == id && t.IsActive))
+            return Conflict("Deactivate assigned terminals before deactivating the outlet.");
+        Apply(outlet, dto);
+        try { await context.SaveChangesAsync(); }
+        catch (DbUpdateException) { return Conflict("The outlet code is already in use. Refresh and retry."); }
+        return NoContent();
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteOutlet(int id)
+    {
+        var outlet = await context.Outlets.FindAsync(id);
+        if (outlet == null) return NotFound();
+        if (await context.Terminals.AnyAsync(t => t.OutletId == id))
+            return Conflict("This outlet has terminals. Deactivate it instead of deleting history.");
+        context.Outlets.Remove(outlet);
+        try { await context.SaveChangesAsync(); }
+        catch (DbUpdateException) { return Conflict("The outlet has related records and cannot be deleted."); }
+        return NoContent();
+    }
+
+    private async Task<string?> Validate(OutletDto dto, int id)
+    {
+        dto.OutletCode = dto.OutletCode.Trim().ToUpperInvariant();
+        dto.Name = dto.Name.Trim();
+        if (dto.OutletCode.Length is < 1 or > 30 || dto.Name.Length is < 1 or > 100)
+            return "Outlet code and name are required and must fit their maximum lengths.";
+        if (!new[] { "Main", "Booth", "Kiosk", "Counter", "Mobile" }.Contains(dto.OutletType)) return "Invalid outlet type.";
+        var branch = await context.Branches.AsNoTracking().SingleOrDefaultAsync(b => b.BranchId == dto.BranchId);
+        if (branch == null || (dto.IsActive && !branch.IsActive)) return "Select an existing active branch.";
+        if (await context.Outlets.AnyAsync(o => o.BranchId == dto.BranchId && o.OutletId != id && o.OutletCode.ToUpper() == dto.OutletCode))
+            return "Outlet code must be unique within its branch.";
+        return null;
+    }
+
+    private static void Apply(Outlet o, OutletDto dto)
+    {
+        o.OutletCode = dto.OutletCode; o.Name = dto.Name; o.Description = dto.Description;
+        o.LocationDescription = dto.LocationDescription; o.OutletType = dto.OutletType;
+        if (o.IsActive && !dto.IsActive)
         {
-            _context = context;
-            _configuration = configuration;
+            o.DeactivatedAt ??= DateTime.UtcNow;
         }
-
-        // The JWT authenticates the cashier. The supplied device IP only identifies
-        // the terminal; it is not an authentication or authorization credential.
-        [Authorize]
-        [HttpGet("resolve-terminal")]
-        public async Task<IActionResult> ResolveTerminal([FromQuery] string ipAddress)
+        else if (!o.IsActive && dto.IsActive)
         {
-            if (!IPAddress.TryParse(ipAddress, out var address) || IPAddress.IsLoopback(address)
-                || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
-                return BadRequest("A valid non-loopback terminal IP address is required.");
-
-            if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-            if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any)
-                || address.Equals(IPAddress.Broadcast) || address.IsIPv6Multicast
-                || (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
-                    && address.GetAddressBytes()[0] >= 224))
-                return BadRequest("A unicast terminal IP address is required.");
-            // Parse both sides so equivalent IPv6 spellings cannot hide duplicates.
-            // This is a read-only lookup; no schema or stored identifier is changed.
-            var outlets = await _context.Outlets.AsNoTracking()
-                .Where(o => o.DeviceIdentifier != null)
-                .Select(o => new { o.OutletId, o.BranchId, o.Name, o.DeviceIdentifier,
-                    o.IsActive, BranchActive = o.Branch.IsActive,
-                    BranchName = o.Branch.Name, o.Branch.Code,
-                    BranchAddress = o.Branch.Address, BranchPhone = o.Branch.Phone,
-                    o.Branch.BusinessTypeId,
-                    BusinessType = o.Branch.BusinessType == null ? null : o.Branch.BusinessType.Type })
-                .ToListAsync();
-            var matches = outlets.Where(o => IPAddress.TryParse(o.DeviceIdentifier?.Trim(), out var stored)
-                && (stored.IsIPv4MappedToIPv6 ? stored.MapToIPv4() : stored).Equals(address)).ToList();
-            if (matches.Count == 0) return NotFound("This IP address is not listed");
-            if (matches.Count != 1) return Conflict("This IP address is assigned to multiple outlets. Contact an administrator.");
-            var outlet = matches[0];
-            if (!outlet.IsActive || !outlet.BranchActive)
-                return Conflict("This outlet or branch is inactive. Contact an administrator.");
-            if (string.IsNullOrWhiteSpace(outlet.Code))
-                return Conflict("The outlet's branch code is not configured. Contact an administrator.");
-            string? token = null;
-            var jwtKey = _configuration["Jwt:Key"];
-            if (!string.IsNullOrEmpty(jwtKey) && User.Identity?.IsAuthenticated == true)
-            {
-                var claims = new List<Claim>
-                {
-                    new Claim(ClaimTypes.NameIdentifier, User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0"),
-                    new Claim(ClaimTypes.Name, User.Identity.Name ?? ""),
-                    new Claim(ClaimTypes.Role, User.FindFirst(ClaimTypes.Role)?.Value ?? "Cashier"),
-                    new Claim("branch_id", outlet.BranchId.ToString()),
-                    new Claim("outlet_id", outlet.OutletId.ToString())
-                };
-
-                var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
-                var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-                var jwt = new JwtSecurityToken(
-                    issuer: _configuration["Jwt:Issuer"],
-                    audience: _configuration["Jwt:Audience"],
-                    claims: claims,
-                    expires: DateTime.Now.AddHours(8),
-                    signingCredentials: creds
-                );
-
-                token = new JwtSecurityTokenHandler().WriteToken(jwt);
-            }
-
-            return Ok(new TerminalOutletDto
-            {
-                OutletId = outlet.OutletId,
-                BranchId = outlet.BranchId,
-                BranchName = outlet.BranchName,
-                BranchCode = outlet.Code,
-                BranchAddress = outlet.BranchAddress,
-                BranchPhone = outlet.BranchPhone,
-                OutletName = outlet.Name,
-                BusinessTypeId = outlet.BusinessTypeId,
-                BusinessType = outlet.BusinessType,
-                Token = token
-            });
+            o.DeactivatedAt = null;
         }
-
-        [HttpPost]
-        public async Task<ActionResult<OutletDto>> CreateOutlet(OutletDto dto)
-        {
-            var outlet = new Outlet
-            {
-                BranchId = dto.BranchId,
-                Name = dto.Name,
-                DeviceIdentifier = dto.DeviceIdentifier,
-                Ptunumber = dto.PTUNumber,
-                Minnumber = dto.MINNumber,
-                SerialNumber = dto.SerialNumber,
-                IsActive = dto.IsActive
-            };
-
-            _context.Outlets.Add(outlet);
-            await _context.SaveChangesAsync();
-
-            dto.OutletId = outlet.OutletId;
-            return Ok(dto);
-        }
-
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateOutlet(int id, OutletDto dto)
-        {
-            var outlet = await _context.Outlets.FindAsync(id);
-            if (outlet == null) return NotFound();
-
-            outlet.Name = dto.Name;
-            outlet.DeviceIdentifier = dto.DeviceIdentifier;
-            outlet.Ptunumber = dto.PTUNumber;
-            outlet.Minnumber = dto.MINNumber;
-            outlet.SerialNumber = dto.SerialNumber;
-            outlet.IsActive = dto.IsActive;
-
-            await _context.SaveChangesAsync();
-            return NoContent();
-        }
-
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteOutlet(int id)
-        {
-            var outlet = await _context.Outlets.FindAsync(id);
-            if (outlet == null) return NotFound();
-
-            _context.Outlets.Remove(outlet);
-            await _context.SaveChangesAsync();
-            return NoContent();
-        }
-
+        o.IsActive = dto.IsActive; o.UpdatedAt = DateTime.UtcNow;
     }
 }

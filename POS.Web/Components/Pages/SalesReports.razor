@@ -43,6 +43,9 @@
                 </select>
             </div>
             <div class="col-md-3">
+                <label for="report-branch" class="form-label">Branch ID</label><input id="report-branch" type="number" min="1" class="form-control form-control-sm mb-2" @bind="request.BranchId" />
+                <label for="report-outlet" class="form-label">Outlet ID</label><input id="report-outlet" type="number" min="1" class="form-control form-control-sm mb-2" @bind="request.OutletId" />
+                <label for="report-terminal" class="form-label">Terminal ID</label><input id="report-terminal" type="number" min="1" class="form-control form-control-sm mb-2" @bind="request.TerminalId" />
                 <button class="btn btn-dark btn-sm rounded-3 px-3 fw-bold shadow-sm w-100" @onclick="LoadReport">
                     <i class="bi bi-filter me-1"></i> Generate Report
                 </button>

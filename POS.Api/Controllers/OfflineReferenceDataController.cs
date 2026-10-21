@@ -8,19 +8,22 @@ namespace POS.Api.Controllers;
 
 [Route("api/offline")]
 [ApiController]
-[AllowAnonymous]
+[Authorize]
 public class OfflineReferenceDataController(PosDbContext context) : ControllerBase
 {
-    [HttpGet("reference-data")]
-    public async Task<ActionResult<OfflineReferenceDataResponseDto>> GetReferenceData([FromQuery] int outletId)
+    [HttpPost("reference-data")]
+    public async Task<ActionResult<OfflineReferenceDataResponseDto>> GetReferenceData([FromQuery] int terminalId)
     {
-        var outlet = await context.Outlets
+        var outlet = await context.Terminals
             .Include(o => o.Branch)
                 .ThenInclude(b => b.BusinessType)
             .AsNoTracking()
-            .SingleOrDefaultAsync(o => o.OutletId == outletId);
+            .SingleOrDefaultAsync(o => o.TerminalId == terminalId);
 
-        if (outlet == null) return NotFound("Outlet not found.");
+        if (outlet == null) return NotFound("Terminal not found.");
+        var physicalOutlet = await context.Outlets.AsNoTracking().SingleAsync(o => o.OutletId == outlet.OutletId);
+        if (!outlet.IsActive || !physicalOutlet.IsActive || !outlet.Branch.IsActive) return Conflict("Terminal, outlet or branch is inactive.");
+        if (User.FindFirst("terminal_id")?.Value != terminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
 
         var categories = await context.Categories
         .AsNoTracking()
@@ -119,35 +122,32 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             })
             .ToListAsync();
 
-        var activeSeq = await context.InvoiceSequences
-            .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.OutletId == outletId && s.IsActive);
-
-        var invoiceSequenceDto = activeSeq != null
-            ? new OfflineInvoiceSequenceDto
+        // Reserve a distinct offline block under the same row lock used by online invoicing.
+        // shortcut: 1000 numbers per refresh, tune allocation size when operational usage is measured.
+        using var allocation = await context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        var activeSeq = context.Database.IsNpgsql()
+            ? await context.InvoiceSequences.FromSqlInterpolated($"SELECT * FROM \"InvoiceSequences\" WHERE \"terminal_id\" = {terminalId} AND \"is_active\" = true FOR UPDATE").SingleOrDefaultAsync()
+            : await context.InvoiceSequences.SingleOrDefaultAsync(s => s.TerminalId == terminalId && s.IsActive);
+        OfflineInvoiceSequenceDto? invoiceSequenceDto = null;
+        if (activeSeq != null)
+        {
+            var next = Math.Max(activeSeq.StartingNumber, checked(activeSeq.LastIssuedNumber + 1));
+            var end = Math.Min(activeSeq.EndingNumber ?? long.MaxValue, checked(next + 999));
+            if (next <= end)
             {
-                SequenceId = activeSeq.InvoiceSequenceId,
-                OutletId = activeSeq.OutletId,
-                SeriesCode = activeSeq.SeriesCode ?? $"SER-{outletId:D2}",
-                Prefix = activeSeq.Prefix ?? $"INV{outletId:D2}-",
-                StartingNumber = activeSeq.StartingNumber,
-                EndingNumber = activeSeq.EndingNumber ?? 9999999L,
-                LastIssuedNumber = activeSeq.LastIssuedNumber,
-                PaddingLength = activeSeq.PaddingLength > 0 ? activeSeq.PaddingLength : 7,
-                IsActive = activeSeq.IsActive
+                invoiceSequenceDto = new OfflineInvoiceSequenceDto
+                {
+                    SequenceId = activeSeq.InvoiceSequenceId, TerminalId = terminalId,
+                    SeriesCode = activeSeq.SeriesCode, Prefix = activeSeq.Prefix ?? string.Empty,
+                    StartingNumber = next, EndingNumber = end, LastIssuedNumber = next - 1,
+                    PaddingLength = activeSeq.PaddingLength, IsActive = true
+                };
+                activeSeq.LastIssuedNumber = end;
+                activeSeq.UpdatedAt = DateTime.UtcNow;
+                await context.SaveChangesAsync();
             }
-            : new OfflineInvoiceSequenceDto
-            {
-                SequenceId = outletId,
-                OutletId = outletId,
-                SeriesCode = $"OFF-SER-{outletId:D2}",
-                Prefix = $"INV{outletId:D2}-",
-                StartingNumber = 1L,
-                EndingNumber = 9999999L,
-                LastIssuedNumber = 0L,
-                PaddingLength = 7,
-                IsActive = true
-            };
+        }
+        await allocation.CommitAsync();
 
         var usersWithPins = await context.Users
             .AsNoTracking()
@@ -184,7 +184,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         var openShiftEntity = await context.CashDrawerShifts
             .AsNoTracking()
             .Include(s => s.Movements)
-            .Where(s => s.OutletId == outletId && s.Status == "OPEN")
+            .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();
 
@@ -192,9 +192,11 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         {
             Version = DateTime.UtcNow.Ticks.ToString(),
             ServerTimestamp = DateTime.UtcNow,
-            Outlet = new OfflineOutletConfigDto
+            Terminal = new OfflineTerminalConfigDto
             {
-                OutletId = outlet.OutletId,
+                TerminalId = outlet.TerminalId,
+                OutletId = outlet.OutletId, OutletName = physicalOutlet.Name, TerminalCode = outlet.TerminalCode,
+                IpAddress = outlet.IpAddress, PTUNumber = outlet.Ptunumber, MINNumber = outlet.Minnumber, SerialNumber = outlet.SerialNumber,
                 BranchId = outlet.BranchId,
                 BusinessTypeId = outlet.Branch?.BusinessTypeId ?? 1,
                 BusinessType = outlet.Branch?.BusinessType?.Type ?? "FNB",
@@ -202,7 +204,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                 BranchCode = outlet.Branch?.Code,
                 BranchAddress = outlet.Branch?.Address,
                 BranchPhone = outlet.Branch?.Phone,
-                OutletName = outlet.Name,
+                TerminalName = outlet.Name,
                 BranchTaxType = outlet.Branch?.TaxType ?? "VAT-Registered",
                 DeviceIdentifier = outlet.DeviceIdentifier ?? string.Empty
             },

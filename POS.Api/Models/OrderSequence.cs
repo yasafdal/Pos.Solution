@@ -6,7 +6,7 @@ public partial class OrderSequence
 {
     public int OrderSequenceId { get; set; }
 
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
 
     public long LastIssuedNumber { get; set; }
 
@@ -14,5 +14,5 @@ public partial class OrderSequence
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    public virtual Outlet Outlet { get; set; } = null!;
+    public virtual Terminal Terminal { get; set; } = null!;
 }

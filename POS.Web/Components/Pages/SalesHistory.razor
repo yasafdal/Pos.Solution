@@ -86,6 +86,9 @@
                 <label class="form-label text-dark fw-semibold small mb-1">Cashier ID</label>
                 <input type="text" class="form-control form-control-sm rounded bg-white shadow-none border" placeholder="Cashier ID" @bind="filter.CashierId" />
             </div>
+            <div class="col-md-2"><label for="history-branch" class="form-label">Branch ID</label><input id="history-branch" type="number" min="1" class="form-control form-control-sm" @bind="filter.BranchId" /></div>
+            <div class="col-md-2"><label for="history-outlet" class="form-label">Outlet ID</label><input id="history-outlet" type="number" min="1" class="form-control form-control-sm" @bind="filter.OutletId" /></div>
+            <div class="col-md-2"><label for="history-terminal" class="form-label">Terminal ID</label><input id="history-terminal" type="number" min="1" class="form-control form-control-sm" @bind="filter.TerminalId" /></div>
             <div class="col-12 col-md-3 d-flex gap-2">
                 <button class="btn btn-primary btn-sm rounded px-3 fw-bold shadow-sm w-100" @onclick="LoadTransactions">
                     <i class="bi bi-search me-1"></i> Filter
@@ -247,9 +250,9 @@
                     <div class="row g-3 mb-4">
                         <div class="col-sm-4">
                             <div class="p-3 bg-light rounded-3 border h-100">
-                                <span class="text-muted small d-block mb-1">Cashier & Outlet</span>
+                                <span class="text-muted small d-block mb-1">Cashier & Terminal</span>
                                 <strong class="text-dark d-block">@selectedOrder.CashierId</strong>
-                                <span class="text-secondary small">Outlet #@selectedOrder.OutletId &bull; Branch #@selectedOrder.BranchId</span>
+                                <span class="text-secondary small">Terminal #@selectedOrder.TerminalId &bull; Branch #@selectedOrder.BranchId</span>
                             </div>
                         </div>
                         <div class="col-sm-4">

@@ -18,7 +18,7 @@ else
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
                 <h3 class="fw-bold text-dark mb-1">Held Sales (Suspended Transactions)</h3>
-                <p class="text-secondary small mb-0">Parked customer tickets for Outlet #@(Session.Outlet?.OutletId ?? 1)</p>
+                <p class="text-secondary small mb-0">Parked customer tickets for Terminal #@(Session.Terminal?.TerminalId ?? 1)</p>
             </div>
             <div>
                 <button class="btn btn-outline-primary btn-sm px-3 fw-medium rounded-3" @onclick="LoadHeldSales">
@@ -103,7 +103,7 @@ else
     {
         try
         {
-            heldSales = await HeldSaleService.GetHeldSalesAsync(null, Session.Outlet?.OutletId);
+            heldSales = await HeldSaleService.GetHeldSalesAsync(null, Session.Terminal?.TerminalId);
         }
         catch (Exception ex)
         {
@@ -129,7 +129,7 @@ else
 
         try
         {
-            var resumed = await HeldSaleService.ResumeHeldSaleAsync(held.HeldSaleId, Session.Outlet?.OutletId);
+            var resumed = await HeldSaleService.ResumeHeldSaleAsync(held.HeldSaleId, Session.Terminal?.TerminalId);
             if (resumed != null)
             {
                 Cart.Clear();

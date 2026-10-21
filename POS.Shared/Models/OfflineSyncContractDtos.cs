@@ -6,11 +6,14 @@ namespace POS.Shared.Models;
 public class OfflineTransactionSyncRequest
 {
     public string LocalTransactionId { get; set; } = null!;
-    public string TerminalId { get; set; } = null!;
+    public string DeviceIdentifier { get; set; } = null!;
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string CashierId { get; set; } = null!;
     public string InvoiceNumber { get; set; } = null!;
+    public string? OrderType { get; set; }
+    public string? TableNumber { get; set; }
+    public int? HeadCount { get; set; }
     public DateTime TransactionDate { get; set; }
     public string SchemaVersion { get; set; } = "1.0";
     public string FinancialCalculationVersion { get; set; } = "1.0";
@@ -69,12 +72,22 @@ public class OfflineTransactionSyncResponse
     public DateTime AcknowledgedAt { get; set; }
 }
 
+public class OfflineTransactionStatusDto
+{
+    public string Status { get; set; } = string.Empty;
+    public string LocalTransactionId { get; set; } = string.Empty;
+    public string InvoiceNumber { get; set; } = string.Empty;
+    public int TerminalId { get; set; }
+    public string PayloadHash { get; set; } = string.Empty;
+    public long ServerOrderId { get; set; }
+}
+
 public class OfflineCashMovementSyncRequest
 {
     public string ClientMovementId { get; set; } = string.Empty;
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string MovementType { get; set; } = "PETTY_CASH";
     public int? CategoryId { get; set; }
     public string? CategoryName { get; set; }

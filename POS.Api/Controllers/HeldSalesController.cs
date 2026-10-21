@@ -19,7 +19,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<HeldSaleDto>>> GetHeldSales(
         [FromQuery] int? branchId,
-        [FromQuery] int? outletId,
+        [FromQuery] int? terminalId,
         CancellationToken cancellationToken = default)
     {
         var query = context.HeldSales.AsNoTracking()
@@ -30,8 +30,8 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
         if (branchId.HasValue)
             query = query.Where(h => h.BranchId == branchId.Value);
 
-        if (outletId.HasValue)
-            query = query.Where(h => h.OutletId == outletId.Value);
+        if (terminalId.HasValue)
+            query = query.Where(h => h.TerminalId == terminalId.Value);
 
         var heldSales = await query
             .OrderByDescending(h => h.CreatedAt)
@@ -58,12 +58,17 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
         if (dto.Items == null || dto.Items.Count == 0)
             return BadRequest("Cannot hold an empty cart.");
 
+        var terminal = await context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
+            .SingleOrDefaultAsync(t => t.TerminalId == dto.TerminalId, cancellationToken);
+        if (terminal == null || terminal.BranchId != dto.BranchId || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive)
+            return BadRequest("Invalid or inactive terminal ownership.");
+        if (User.FindFirst("terminal_id")?.Value != dto.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
         string holdRef = "HOLD-" + DateTime.UtcNow.ToString("yyMMddHHmmss") + "-" + Random.Shared.Next(100, 999);
 
         var heldSale = new HeldSale
         {
             BranchId = dto.BranchId,
-            OutletId = dto.OutletId,
+            TerminalId = dto.TerminalId,
             CashierId = dto.CashierId,
             HoldReference = holdRef,
             CustomerName = string.IsNullOrWhiteSpace(dto.CustomerName) ? null : dto.CustomerName.Trim(),
@@ -115,7 +120,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             HoldReference = heldSale.HoldReference,
             CashierId = heldSale.CashierId,
             BranchId = heldSale.BranchId,
-            OutletId = heldSale.OutletId,
+            TerminalId = heldSale.TerminalId,
             Action = "HELD",
             Details = "Transaction parked successfully."
         });
@@ -129,7 +134,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
     }
 
     [HttpPost("{id:long}/resume")]
-    public async Task<ActionResult<HeldSaleDto>> ResumeHeldSale(long id, [FromQuery] int? outletId, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<HeldSaleDto>> ResumeHeldSale(long id, [FromQuery] int? terminalId, CancellationToken cancellationToken = default)
     {
         using var transaction = await context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
         try
@@ -145,7 +150,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
                 return Conflict("This held sale has already been resumed, cancelled, or processed by another terminal.");
 
             // Enforce outlet isolation if requested by terminal
-            if (outletId.HasValue && heldSale.OutletId != outletId.Value)
+            if (terminalId.HasValue && heldSale.TerminalId != terminalId.Value)
                 return Forbid("Terminal outlet is unauthorized to resume this held sale.");
 
             heldSale.Status = "RESUMED";
@@ -158,7 +163,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
                 HoldReference = heldSale.HoldReference,
                 CashierId = heldSale.CashierId,
                 BranchId = heldSale.BranchId,
-                OutletId = heldSale.OutletId,
+                TerminalId = heldSale.TerminalId,
                 Action = "RESUMED",
                 Details = "Transaction resumed to active cart."
             });
@@ -190,7 +195,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             HoldReference = heldSale.HoldReference,
             CashierId = heldSale.CashierId,
             BranchId = heldSale.BranchId,
-            OutletId = heldSale.OutletId,
+            TerminalId = heldSale.TerminalId,
             Action = "CANCELLED",
             Details = "Transaction cancelled and removed."
         });
@@ -203,7 +208,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
     {
         HeldSaleId = h.HeldSaleId,
         BranchId = h.BranchId,
-        OutletId = h.OutletId,
+        TerminalId = h.TerminalId,
         CashierId = h.CashierId,
         HoldReference = h.HoldReference,
         CustomerName = h.CustomerName,

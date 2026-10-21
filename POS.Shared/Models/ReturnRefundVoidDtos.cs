@@ -32,7 +32,7 @@ public class ReturnRequestDto
 {
     public long OriginalOrderId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     [Required]
     [MaxLength(255)]
     public string ReturnReason { get; set; } = null!;
@@ -68,7 +68,7 @@ public class ReturnResponseDto
     public decimal TotalRefundAmount { get; set; }
     public DateTime CreatedAt { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string? OriginalInvoiceNumber { get; set; }
     public List<ReturnItemResponseDto> ReturnItems { get; set; } = new();
 }

@@ -12,6 +12,6 @@ public interface ITransactionService
     Task<ReceiptDto?> GetTransactionReceiptAsync(long id, bool reprint = false);
     Task<VoidResponseDto?> VoidTransactionAsync(long orderId, string reason, string approverPin);
     Task<ReturnResponseDto?> ProcessReturnAsync(ReturnRequestDto request);
-    Task<List<ReturnResponseDto>> GetReturnsAsync(int? branchId = null, int? outletId = null);
+    Task<List<ReturnResponseDto>> GetReturnsAsync(int? branchId = null, int? terminalId = null);
     Task<TransactionSummaryDto> GetTransactionSummaryAsync(TransactionFilterDto filter);
 }

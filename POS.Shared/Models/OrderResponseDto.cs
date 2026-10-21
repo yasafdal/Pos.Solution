@@ -9,6 +9,9 @@ public class OrderResponseDto
     public string OrderNumber { get; set; } = null!;
     public int BranchId { get; set; }
     public int OutletId { get; set; }
+    public int TerminalId { get; set; }
+    public string? TableNumber { get; set; }
+    public int? HeadCount { get; set; }
     public string CashierId { get; set; } = null!;
     public long? ShiftId { get; set; }
     public string OrderType { get; set; } = null!;

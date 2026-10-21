@@ -11,6 +11,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
+[Authorize]
 public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISequenceService sequenceService) : ControllerBase
 {
     [HttpPost]
@@ -23,6 +24,7 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
         if (order == null)
             return NotFound("Order not found.");
 
+        if (User.FindFirst("terminal_id")?.Value != order.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
         if (order.PaymentStatus == "PAID")
             return Conflict("Order is already paid. Duplicate payment prevented.");
 
@@ -122,7 +124,7 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
             // Issue BIR invoice number upon successful payment if paid
             if (order.PaymentStatus == "PAID")
             {
-                await sequenceService.IssueInvoiceNumberAsync(order.OrderId, order.OutletId);
+                await sequenceService.IssueInvoiceNumberAsync(order.OrderId, order.TerminalId);
 
                 // Accumulate online CASH payments into active CashDrawerShift for accurate shift reconciliation
                 decimal cashPaid = order.Payments
@@ -132,7 +134,7 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
                 if (cashPaid > 0m)
                 {
                     var openShift = await context.CashDrawerShifts
-                        .Where(s => s.OutletId == order.OutletId && s.Status == "OPEN")
+                        .Where(s => s.TerminalId == order.TerminalId && s.Status == "OPEN")
                         .OrderByDescending(s => s.OpenedAt)
                         .FirstOrDefaultAsync();
 

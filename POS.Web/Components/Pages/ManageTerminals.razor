@@ -1,0 +1,967 @@
+@page "/terminals"
+@page "/manage-terminals"
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject ITerminalService TerminalService
+@inject IOutletService OutletService
+@inject IBranchService BranchService
+@inject SweetAlertService Swal
+@inject NavigationManager Navigation
+@inject HttpClient Http
+
+<PageTitle>Terminal Management - POS</PageTitle>
+
+<div class="w-100 py-2">
+    <!-- Header Toolbar -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Terminal Management</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Configure POS cashier registers, device identifiers, hardware serials, and invoice series</span>
+        </div>
+        
+        <div>
+            <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenNewTerminalModal">
+                <i class="bi bi-plus-lg me-1"></i> Add New Terminal
+            </button>
+        </div>
+    </div>
+
+    <!-- Filter and Search Row -->
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-start align-items-lg-center gap-3 mb-3">
+        <!-- Cascading Filter: Branch & Outlet -->
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <label class="form-label mb-0 text-secondary small fw-semibold text-nowrap">Filter:</label>
+            <select class="form-select form-select-sm rounded bg-white shadow-none border" style="min-width: 180px;" value="@selectedBranchFilter" @onchange="OnBranchFilterChanged">
+                <option value="0">All Branches</option>
+                @if (branches != null)
+                {
+                    @foreach (var b in branches)
+                    {
+                        <option value="@b.BranchId">@b.Name (@b.Code)</option>
+                    }
+                }
+            </select>
+
+            <select class="form-select form-select-sm rounded bg-white shadow-none border" style="min-width: 180px;" value="@selectedOutletFilter" @onchange="OnOutletFilterChanged">
+                <option value="0">All Outlets</option>
+                @if (filterOutlets != null)
+                {
+                    @foreach (var o in filterOutlets)
+                    {
+                        <option value="@o.OutletId">@o.Name (@o.OutletCode)</option>
+                    }
+                }
+            </select>
+        </div>
+
+        <!-- Search Box -->
+        <div class="position-relative" style="width: 280px;">
+            <i class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
+            <input type="search" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border"
+                   placeholder="Search code, name, IP..."
+                   @bind="searchTerm"
+                   @bind:event="oninput" />
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="w-100">
+        @if (isLoading)
+        {
+            <div class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                Loading terminals...
+            </div>
+        }
+        else if (terminals == null || !terminals.Any())
+        {
+            <div class="text-center py-5 border rounded bg-white">
+                <i class="bi bi-display text-muted display-4 mb-2 d-block"></i>
+                <h5 class="fw-bold text-dark">No Terminals Found</h5>
+                <p class="text-secondary small mb-3">Add a POS machine register assigned to an outlet location.</p>
+                <button class="btn btn-sm btn-primary rounded px-3" @onclick="OpenNewTerminalModal">
+                    Add New Terminal
+                </button>
+            </div>
+        }
+        else
+        {
+            <div class="commercial-grid table-responsive w-100">
+                <QuickGrid Items="@FilteredTerminals" Pagination="@pagination" Theme="commercial">
+                    <PropertyColumn Property="@(t => t.TerminalCode)" Title="Code" Sortable="true" Align="Align.Left" />
+                    <PropertyColumn Property="@(t => t.Name)" Title="Terminal Name" Sortable="true" Align="Align.Left" />
+                    <TemplateColumn Title="Location" Context="t" Align="Align.Left">
+                        <div>
+                            <span class="fw-medium text-dark">@t.OutletName</span>
+                            <br />
+                            <small class="text-muted">@t.BranchName</small>
+                        </div>
+                    </TemplateColumn>
+                    <TemplateColumn Title="Network & Device" Context="t" Align="Align.Left">
+                        <div>
+                            @if (!string.IsNullOrEmpty(t.IpAddress))
+                            {
+                                <span class="badge bg-light text-dark border font-monospace me-1">IP: @t.IpAddress</span>
+                            }
+                            @if (!string.IsNullOrEmpty(t.DeviceIdentifier))
+                            {
+                                <span class="text-secondary small font-monospace d-block">ID: @t.DeviceIdentifier</span>
+                            }
+                            @if (string.IsNullOrEmpty(t.IpAddress) && string.IsNullOrEmpty(t.DeviceIdentifier))
+                            {
+                                <span class="text-muted small">Not registered</span>
+                            }
+                        </div>
+                    </TemplateColumn>
+                    <TemplateColumn Title="BIR Configuration" Context="t" Align="Align.Left">
+                        <small class="text-secondary d-block">PTU: @(t.PTUNumber ?? "—")</small>
+                        <small class="text-secondary d-block">MIN: @(t.MINNumber ?? "—")</small>
+                    </TemplateColumn>
+                    <TemplateColumn Title="Status" Context="t" Align="Align.Center">
+                        @if (t.IsActive)
+                        {
+                            <span class="status-badge active">Active</span>
+                        }
+                        else
+                        {
+                            <span class="status-badge inactive">Inactive</span>
+                        }
+                    </TemplateColumn>
+                    <TemplateColumn Title="Actions" Context="t" Align="Align.Right">
+                        <HeaderTemplate>
+                            <div class="actions-header-wrap">
+                                <span class="actions-header-text">Actions</span>
+                            </div>
+                        </HeaderTemplate>
+                        <ChildContent>
+                            <div class="actions-cell-wrap d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-sm btn-primary text-white" @onclick="() => OpenInvoiceSequencesModal(t)" title="Invoice Sequences" aria-label="Invoice Sequences">
+                                    <i class="bi bi-receipt"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-warning text-dark" @onclick="() => OpenEditTerminalModal(t)" title="Edit Terminal" aria-label="Edit Terminal">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm @(t.IsActive ? "btn-outline-secondary" : "btn-outline-success")" @onclick="() => ToggleTerminalActive(t)" title="@(t.IsActive ? "Deactivate Terminal" : "Activate Terminal")" aria-label="Toggle Status">
+                                    <i class="bi @(t.IsActive ? "bi-pause-circle" : "bi-play-circle")"></i>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-danger text-white" @onclick="() => DeleteTerminal(t)" title="Delete Terminal" aria-label="Delete Terminal">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </ChildContent>
+                    </TemplateColumn>
+                </QuickGrid>
+            </div>
+
+            <!-- Pagination Bar -->
+            <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center pt-3 mt-1 border-top gap-3">
+                <div class="text-secondary small fw-medium">
+                    @GetShowingRangeText()
+                </div>
+
+                <nav aria-label="Terminals table pagination">
+                    <ul class="pagination mb-0">
+                        <li class="page-item @(pagination.CurrentPageIndex == 0 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex - 1)" disabled="@(pagination.CurrentPageIndex == 0)" aria-label="Previous">
+                                Previous
+                            </button>
+                        </li>
+                        @for (int i = 0; i < TotalPages; i++)
+                        {
+                            var pageIndex = i;
+                            <li class="page-item @(pagination.CurrentPageIndex == pageIndex ? "active" : "")">
+                                <button type="button" class="page-link" @onclick="() => GoToPage(pageIndex)">
+                                    @(pageIndex + 1)
+                                </button>
+                            </li>
+                        }
+                        <li class="page-item @(pagination.CurrentPageIndex >= TotalPages - 1 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex + 1)" disabled="@(pagination.CurrentPageIndex >= TotalPages - 1)" aria-label="Next">
+                                Next
+                            </button>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Create / Edit Terminal Modal -->
+@if (isTerminalModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">@(isEditingTerminal ? "Edit Terminal" : "Register New Terminal")</h5>
+                        <small class="text-secondary" style="font-size: 0.85rem;">Configure POS register details and device identification</small>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseTerminalModal" aria-label="Close"></button>
+                </div>
+
+                <EditForm Model="@currentTerminal" OnValidSubmit="SaveTerminal">
+                    <DataAnnotationsValidator />
+                    <div class="modal-body px-4 py-3">
+                        @if (!string.IsNullOrEmpty(modalError))
+                        {
+                            <div class="alert alert-danger py-2 small" role="alert">@modalError</div>
+                        }
+
+                        <div class="row g-3">
+                            <!-- Step 1: Branch Selection -->
+                            <div class="col-12 col-md-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">1. Select Branch *</label>
+                                <select class="form-select rounded" value="@modalSelectedBranchId" @onchange="OnModalBranchChanged" disabled="@isEditingTerminal">
+                                    <option value="0">-- Select Branch --</option>
+                                    @if (branches != null)
+                                    {
+                                        @foreach (var b in branches)
+                                        {
+                                            <option value="@b.BranchId">@b.Name (@b.Code)</option>
+                                        }
+                                    }
+                                </select>
+                            </div>
+
+                            <!-- Step 2 & 3: Outlet Selection -->
+                            <div class="col-12 col-md-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">2. Select Outlet *</label>
+                                <InputSelect @bind-Value="currentTerminal.OutletId" class="form-select rounded" disabled="@(modalOutlets == null || !modalOutlets.Any() || isEditingTerminal)">
+                                    <option value="0">-- Select Outlet --</option>
+                                    @if (modalOutlets != null)
+                                    {
+                                        @foreach (var o in modalOutlets)
+                                        {
+                                            <option value="@o.OutletId">@o.Name (@o.OutletCode)</option>
+                                        }
+                                    }
+                                </InputSelect>
+                                <ValidationMessage For="@(() => currentTerminal.OutletId)" class="text-danger small" />
+                            </div>
+
+                            <div class="col-12 col-md-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">Terminal Code *</label>
+                                <InputText @bind-Value="currentTerminal.TerminalCode" class="form-control rounded text-uppercase" placeholder="e.g. POS-01" />
+                                <ValidationMessage For="@(() => currentTerminal.TerminalCode)" class="text-danger small" />
+                            </div>
+
+                            <div class="col-12 col-md-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">Terminal Name *</label>
+                                <InputText @bind-Value="currentTerminal.Name" class="form-control rounded" placeholder="e.g. Cashier Station 1" />
+                                <ValidationMessage For="@(() => currentTerminal.Name)" class="text-danger small" />
+                            </div>
+
+                            <div class="col-12 col-md-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">Device Identifier</label>
+                                <InputText @bind-Value="currentTerminal.DeviceIdentifier" class="form-control rounded" placeholder="Unique machine ID or MAC" />
+                            </div>
+
+                            <div class="col-12 col-md-6">
+                                <label class="form-label text-dark fw-semibold small mb-1">IP Address</label>
+                                <InputText @bind-Value="currentTerminal.IpAddress" class="form-control rounded font-monospace" placeholder="e.g. 192.168.1.100" />
+                            </div>
+
+                            <!-- BIR Fields Section -->
+                            <div class="col-12">
+                                <div class="p-3 bg-light rounded border">
+                                    <span class="fw-bold text-dark small d-block mb-2">BIR Machine Registration Details</span>
+                                    <div class="row g-2">
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label text-muted small mb-1">PTU Number</label>
+                                            <InputText @bind-Value="currentTerminal.PTUNumber" class="form-control form-control-sm rounded" placeholder="Permit to Use #" />
+                                        </div>
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label text-muted small mb-1">MIN Number</label>
+                                            <InputText @bind-Value="currentTerminal.MINNumber" class="form-control form-control-sm rounded" placeholder="Machine ID #" />
+                                        </div>
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label text-muted small mb-1">Serial Number</label>
+                                            <InputText @bind-Value="currentTerminal.SerialNumber" class="form-control form-control-sm rounded" placeholder="Hardware Serial #" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="form-check form-switch p-3 bg-light rounded border d-flex align-items-center">
+                                    <InputCheckbox class="form-check-input ms-0 me-3" id="terminalActive" @bind-Value="currentTerminal.IsActive" />
+                                    <label class="form-check-label fw-semibold text-dark mb-0" for="terminalActive">Active Terminal</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-light border px-4 py-2 fw-semibold text-secondary" @onclick="CloseTerminalModal">Cancel</button>
+                        <button type="submit" class="btn btn-primary px-4 py-2 fw-bold shadow-sm" disabled="@isSaving">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                <span>Saving...</span>
+                            }
+                            else
+                            {
+                                <span>@(isEditingTerminal ? "Save Changes" : "Register Terminal")</span>
+                            }
+                        </button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Invoice Sequences Management Modal -->
+@if (isInvoiceSequencesModalOpen && activeSequenceTerminal != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Invoice Series: @activeSequenceTerminal.Name (@activeSequenceTerminal.TerminalCode)</h5>
+                        <small class="text-secondary" style="font-size: 0.85rem;">Manage official invoice numbering sequences for this register</small>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseInvoiceSequencesModal" aria-label="Close"></button>
+                </div>
+
+                <div class="modal-body px-4 py-3">
+                    <!-- New Sequence Form Container -->
+                    <div class="card border rounded-3 mb-4 shadow-none">
+                        <div class="card-header bg-light py-2 px-3 border-bottom">
+                            <span class="fw-bold small text-dark">Add New Invoice Series</span>
+                        </div>
+                        <div class="card-body p-3">
+                            <EditForm Model="@newInvoiceSequence" OnValidSubmit="SaveInvoiceSequence">
+                                <DataAnnotationsValidator />
+                                <div class="row g-2">
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Series Code *</label>
+                                        <InputText @bind-Value="newInvoiceSequence.SeriesCode" class="form-control rounded" placeholder="e.g. 2026-SERIES-A" />
+                                        <ValidationMessage For="@(() => newInvoiceSequence.SeriesCode)" class="text-danger small" />
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Prefix</label>
+                                        <InputText @bind-Value="newInvoiceSequence.Prefix" class="form-control rounded" placeholder="e.g. INV-" />
+                                    </div>
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Starting Number *</label>
+                                        <InputNumber @bind-Value="newInvoiceSequence.StartingNumber" class="form-control rounded" />
+                                    </div>
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Ending Number (Optional)</label>
+                                        <InputNumber @bind-Value="newInvoiceSequence.EndingNumber" class="form-control rounded" placeholder="e.g. 100000" />
+                                    </div>
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label text-dark fw-semibold small mb-1">Padding Length</label>
+                                        <InputNumber @bind-Value="newInvoiceSequence.PaddingLength" class="form-control rounded" />
+                                    </div>
+                                    <div class="col-12 d-flex justify-content-end mt-3">
+                                        <button type="submit" class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm" disabled="@isSavingInvoiceSequence">
+                                            @if (isSavingInvoiceSequence)
+                                            {
+                                                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                                <span>Saving...</span>
+                                            }
+                                            else
+                                            {
+                                                <span>Save & Activate Series</span>
+                                            }
+                                        </button>
+                                    </div>
+                                </div>
+                            </EditForm>
+                        </div>
+                    </div>
+
+                    <!-- Historical Sequences Table -->
+                    <h6 class="fw-bold text-dark mb-2">Invoice Series History</h6>
+                    <div class="table-responsive border rounded bg-white">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Series Code</th>
+                                    <th>Prefix</th>
+                                    <th>Range</th>
+                                    <th>Last Issued</th>
+                                    <th>Padding</th>
+                                    <th class="text-center">Status</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (invoiceSequences.Any())
+                                {
+                                    @foreach (var seq in invoiceSequences)
+                                    {
+                                        <tr>
+                                            <td class="fw-semibold text-dark">@seq.SeriesCode</td>
+                                            <td class="text-secondary small">@(string.IsNullOrWhiteSpace(seq.Prefix) ? "—" : seq.Prefix)</td>
+                                            <td class="text-secondary small">@seq.StartingNumber — @(seq.EndingNumber.HasValue ? seq.EndingNumber.Value.ToString() : "Unlimited")</td>
+                                            <td class="text-secondary small">@seq.LastIssuedNumber</td>
+                                            <td class="text-secondary small">@seq.PaddingLength</td>
+                                            <td class="text-center">
+                                                @if (seq.IsActive)
+                                                {
+                                                    <span class="status-badge active">Active</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="status-badge inactive">Inactive</span>
+                                                }
+                                            </td>
+                                            <td class="text-end">
+                                                @if (!seq.IsActive)
+                                                {
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ActivateInvoiceSequence(seq.InvoiceSequenceId)">
+                                                        Activate
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-success small fw-semibold"><i class="bi bi-check-circle-fill me-1"></i>Current</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                                else
+                                {
+                                    <tr>
+                                        <td colspan="7" class="text-center text-muted py-3">No invoice sequences configured for this terminal.</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end">
+                    <button type="button" class="btn btn-light border px-4 py-2 fw-semibold text-secondary" @onclick="CloseInvoiceSequencesModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery]
+    public int? BranchId { get; set; }
+
+    [SupplyParameterFromQuery]
+    public int? OutletId { get; set; }
+
+    private List<TerminalDto>? terminals;
+    private List<BranchDto>? branches;
+    private List<OutletDto>? filterOutlets;
+    private List<OutletDto>? modalOutlets;
+
+    private int selectedBranchFilter = 0;
+    private int selectedOutletFilter = 0;
+    private int modalSelectedBranchId = 0;
+
+    private string searchTerm = string.Empty;
+    private PaginationState pagination = new PaginationState { ItemsPerPage = 10 };
+    private bool isLoading = true;
+
+    private bool isTerminalModalOpen = false;
+    private bool isEditingTerminal = false;
+    private bool isSaving = false;
+    private string? modalError;
+    private TerminalDto currentTerminal = new();
+
+    private bool isInvoiceSequencesModalOpen = false;
+    private TerminalDto? activeSequenceTerminal;
+    private List<InvoiceSequenceDto> invoiceSequences = new();
+    private InvoiceSequenceDto newInvoiceSequence = new() { StartingNumber = 1, PaddingLength = 7 };
+    private bool isSavingInvoiceSequence = false;
+
+    private IQueryable<TerminalDto>? FilteredTerminals
+    {
+        get
+        {
+            if (terminals == null) return null;
+            var query = terminals.AsQueryable();
+            if (selectedBranchFilter > 0)
+            {
+                query = query.Where(t => t.BranchId == selectedBranchFilter);
+            }
+            if (selectedOutletFilter > 0)
+            {
+                query = query.Where(t => t.OutletId == selectedOutletFilter);
+            }
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(t =>
+                    (t.TerminalCode != null && t.TerminalCode.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                    (t.Name != null && t.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                    (t.OutletName != null && t.OutletName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                    (t.BranchName != null && t.BranchName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                    (t.IpAddress != null && t.IpAddress.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
+                    (t.DeviceIdentifier != null && t.DeviceIdentifier.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+                );
+            }
+            return query;
+        }
+    }
+
+    private int TotalPages
+    {
+        get
+        {
+            var count = FilteredTerminals?.Count() ?? 0;
+            return Math.Max(1, (int)Math.Ceiling((double)count / pagination.ItemsPerPage));
+        }
+    }
+
+    private string GetShowingRangeText()
+    {
+        var total = FilteredTerminals?.Count() ?? 0;
+        if (total == 0) return "Showing 0 items";
+        int start = (pagination.CurrentPageIndex * pagination.ItemsPerPage) + 1;
+        int end = Math.Min(start + pagination.ItemsPerPage - 1, total);
+        return $"Showing {start}–{end} of {total} terminals";
+    }
+
+    private async Task GoToPage(int pageIndex)
+    {
+        if (pageIndex >= 0 && pageIndex < TotalPages)
+        {
+            await pagination.SetCurrentPageIndexAsync(pageIndex);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (BranchId.HasValue && BranchId.Value > 0)
+        {
+            selectedBranchFilter = BranchId.Value;
+        }
+        if (OutletId.HasValue && OutletId.Value > 0)
+        {
+            selectedOutletFilter = OutletId.Value;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            branches = await BranchService.GetBranchesAsync();
+            if (selectedBranchFilter > 0)
+            {
+                filterOutlets = await OutletService.GetOutletsAsync(selectedBranchFilter);
+            }
+            else
+            {
+                filterOutlets = await OutletService.GetOutletsAsync();
+            }
+
+            terminals = await TerminalService.GetTerminalsAsync(
+                selectedOutletFilter > 0 ? selectedOutletFilter : null,
+                selectedBranchFilter > 0 ? selectedBranchFilter : null);
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to load terminals: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnBranchFilterChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var bId))
+        {
+            selectedBranchFilter = bId;
+            selectedOutletFilter = 0; // Reset child outlet filter
+            if (bId > 0)
+            {
+                filterOutlets = await OutletService.GetOutletsAsync(bId);
+            }
+            else
+            {
+                filterOutlets = await OutletService.GetOutletsAsync();
+            }
+            await pagination.SetCurrentPageIndexAsync(0);
+            await LoadData();
+        }
+    }
+
+    private async Task OnOutletFilterChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var oId))
+        {
+            selectedOutletFilter = oId;
+            await pagination.SetCurrentPageIndexAsync(0);
+            await LoadData();
+        }
+    }
+
+    private async Task OnModalBranchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var bId))
+        {
+            modalSelectedBranchId = bId;
+            currentTerminal.BranchId = bId;
+            currentTerminal.OutletId = 0;
+            if (bId > 0)
+            {
+                modalOutlets = await OutletService.GetOutletsAsync(bId);
+            }
+            else
+            {
+                modalOutlets = new();
+            }
+        }
+    }
+
+    private async Task OpenNewTerminalModal()
+    {
+        modalError = null;
+        modalSelectedBranchId = selectedBranchFilter > 0 ? selectedBranchFilter : (branches?.FirstOrDefault()?.BranchId ?? 0);
+        
+        currentTerminal = new TerminalDto
+        {
+            BranchId = modalSelectedBranchId,
+            OutletId = selectedOutletFilter > 0 ? selectedOutletFilter : 0,
+            IsActive = true
+        };
+
+        if (modalSelectedBranchId > 0)
+        {
+            modalOutlets = await OutletService.GetOutletsAsync(modalSelectedBranchId);
+        }
+        else
+        {
+            modalOutlets = new();
+        }
+
+        isEditingTerminal = false;
+        isTerminalModalOpen = true;
+    }
+
+    private async Task OpenEditTerminalModal(TerminalDto terminal)
+    {
+        modalError = null;
+        modalSelectedBranchId = terminal.BranchId;
+        modalOutlets = await OutletService.GetOutletsAsync(terminal.BranchId);
+
+        currentTerminal = new TerminalDto
+        {
+            TerminalId = terminal.TerminalId,
+            BranchId = terminal.BranchId,
+            OutletId = terminal.OutletId,
+            TerminalCode = terminal.TerminalCode,
+            Name = terminal.Name,
+            DeviceIdentifier = terminal.DeviceIdentifier,
+            IpAddress = terminal.IpAddress,
+            PTUNumber = terminal.PTUNumber,
+            MINNumber = terminal.MINNumber,
+            SerialNumber = terminal.SerialNumber,
+            IsActive = terminal.IsActive
+        };
+        isEditingTerminal = true;
+        isTerminalModalOpen = true;
+    }
+
+    private void CloseTerminalModal() => isTerminalModalOpen = false;
+
+    private async Task SaveTerminal()
+    {
+        if (modalSelectedBranchId <= 0)
+        {
+            modalError = "Please select a branch.";
+            return;
+        }
+        if (currentTerminal.OutletId <= 0)
+        {
+            modalError = "Please select an outlet location.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(currentTerminal.TerminalCode))
+        {
+            modalError = "Terminal code is required.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(currentTerminal.Name))
+        {
+            modalError = "Terminal name is required.";
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+            modalError = null;
+            currentTerminal.BranchId = modalSelectedBranchId;
+            currentTerminal.TerminalCode = currentTerminal.TerminalCode.Trim().ToUpperInvariant();
+            currentTerminal.Name = currentTerminal.Name.Trim();
+
+            bool success;
+            if (isEditingTerminal)
+            {
+                success = await TerminalService.UpdateTerminalAsync(currentTerminal.TerminalId, currentTerminal);
+            }
+            else
+            {
+                success = await TerminalService.CreateTerminalAsync(currentTerminal);
+            }
+
+            if (success)
+            {
+                isTerminalModalOpen = false;
+                await LoadData();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = isEditingTerminal ? "Terminal Updated!" : "Terminal Registered!",
+                    Text = isEditingTerminal ? "Terminal register updated successfully." : "Terminal registered successfully.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                modalError = "Failed to save terminal. Ensure terminal code, device identifier and IP are unique.";
+            }
+        }
+        catch (Exception ex)
+        {
+            modalError = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ToggleTerminalActive(TerminalDto terminal)
+    {
+        var action = terminal.IsActive ? "deactivate" : "activate";
+        var result = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = $"{(terminal.IsActive ? "Deactivate" : "Activate")} Terminal?",
+            Text = terminal.IsActive
+                ? "Deactivating this terminal prevents cashiers from logging into this POS register."
+                : "Reactivate this terminal register for cashier transactions?",
+            Icon = SweetAlertIcon.Question,
+            ShowCancelButton = true,
+            ConfirmButtonText = $"Yes, {action}",
+            ConfirmButtonColor = terminal.IsActive ? "#ef4444" : "#22c55e",
+            CancelButtonText = "Cancel"
+        });
+
+        if (!result.IsConfirmed) return;
+
+        try
+        {
+            var updateDto = new TerminalDto
+            {
+                TerminalId = terminal.TerminalId,
+                BranchId = terminal.BranchId,
+                OutletId = terminal.OutletId,
+                TerminalCode = terminal.TerminalCode,
+                Name = terminal.Name,
+                DeviceIdentifier = terminal.DeviceIdentifier,
+                IpAddress = terminal.IpAddress,
+                PTUNumber = terminal.PTUNumber,
+                MINNumber = terminal.MINNumber,
+                SerialNumber = terminal.SerialNumber,
+                IsActive = !terminal.IsActive
+            };
+
+            var success = await TerminalService.UpdateTerminalAsync(terminal.TerminalId, updateDto);
+            if (success)
+            {
+                await LoadData();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Updated!",
+                    Text = $"Terminal {action}d successfully.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Action Failed",
+                    Text = "Could not update terminal status.",
+                    Icon = SweetAlertIcon.Error,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+    }
+
+    private async Task DeleteTerminal(TerminalDto terminal)
+    {
+        var result = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Delete Terminal?",
+            Text = $"Are you sure you want to delete terminal '{terminal.Name}'? Terminals with transactional history cannot be deleted and must be deactivated instead.",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonText = "Yes, delete",
+            ConfirmButtonColor = "#ef4444",
+            CancelButtonText = "Cancel"
+        });
+
+        if (!result.IsConfirmed) return;
+
+        try
+        {
+            var success = await TerminalService.DeleteTerminalAsync(terminal.TerminalId);
+            if (success)
+            {
+                await LoadData();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Deleted!",
+                    Text = "Terminal deleted successfully.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Cannot Delete",
+                    Text = "This terminal has historical transactions or invoice series. Please deactivate it instead.",
+                    Icon = SweetAlertIcon.Warning,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+    }
+
+    private async Task OpenInvoiceSequencesModal(TerminalDto terminal)
+    {
+        activeSequenceTerminal = terminal;
+        newInvoiceSequence = new InvoiceSequenceDto
+        {
+            TerminalId = terminal.TerminalId,
+            StartingNumber = 1,
+            PaddingLength = 7,
+            IsActive = true
+        };
+        await LoadInvoiceSequences(terminal.TerminalId);
+        isInvoiceSequencesModalOpen = true;
+    }
+
+    private void CloseInvoiceSequencesModal()
+    {
+        isInvoiceSequencesModalOpen = false;
+        activeSequenceTerminal = null;
+    }
+
+    private async Task LoadInvoiceSequences(int terminalId)
+    {
+        try
+        {
+            invoiceSequences = await TerminalService.GetInvoiceSequencesAsync(terminalId);
+        }
+        catch
+        {
+            invoiceSequences = new();
+        }
+    }
+
+    private async Task SaveInvoiceSequence()
+    {
+        if (activeSequenceTerminal == null || isSavingInvoiceSequence) return;
+        if (string.IsNullOrWhiteSpace(newInvoiceSequence.SeriesCode))
+        {
+            await Swal.FireAsync(new SweetAlertOptions { Title = "Required", Text = "Series code is required.", Icon = SweetAlertIcon.Warning });
+            return;
+        }
+
+        try
+        {
+            isSavingInvoiceSequence = true;
+            newInvoiceSequence.TerminalId = activeSequenceTerminal.TerminalId;
+            var success = await TerminalService.CreateInvoiceSequenceAsync(activeSequenceTerminal.TerminalId, newInvoiceSequence);
+            if (success)
+            {
+                await LoadInvoiceSequences(activeSequenceTerminal.TerminalId);
+                newInvoiceSequence = new InvoiceSequenceDto { TerminalId = activeSequenceTerminal.TerminalId, StartingNumber = 1, PaddingLength = 7 };
+                await Swal.FireAsync(new SweetAlertOptions { Title = "Saved!", Text = "Invoice sequence created.", Icon = SweetAlertIcon.Success });
+            }
+            else
+            {
+                await Swal.FireAsync(new SweetAlertOptions { Title = "Failed", Text = "Could not create sequence. Ensure series code is unique.", Icon = SweetAlertIcon.Error });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions { Title = "Error", Text = ex.Message, Icon = SweetAlertIcon.Error });
+        }
+        finally
+        {
+            isSavingInvoiceSequence = false;
+        }
+    }
+
+    private async Task ActivateInvoiceSequence(int sequenceId)
+    {
+        if (activeSequenceTerminal == null) return;
+        try
+        {
+            var success = await TerminalService.ActivateInvoiceSequenceAsync(activeSequenceTerminal.TerminalId, sequenceId);
+            if (success)
+            {
+                await LoadInvoiceSequences(activeSequenceTerminal.TerminalId);
+                await Swal.FireAsync(new SweetAlertOptions { Title = "Activated!", Text = "Invoice series activated.", Icon = SweetAlertIcon.Success });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions { Title = "Error", Text = ex.Message, Icon = SweetAlertIcon.Error });
+        }
+    }
+}

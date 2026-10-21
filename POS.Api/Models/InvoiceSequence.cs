@@ -6,7 +6,7 @@ public partial class InvoiceSequence
 {
     public int InvoiceSequenceId { get; set; }
 
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
 
     public string SeriesCode { get; set; } = null!;
 
@@ -26,5 +26,5 @@ public partial class InvoiceSequence
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    public virtual Outlet Outlet { get; set; } = null!;
+    public virtual Terminal Terminal { get; set; } = null!;
 }

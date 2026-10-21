@@ -51,7 +51,7 @@ public class MigrationRunner
             CREATE TABLE IF NOT EXISTS ""CashDrawerShifts"" (
                 ""ShiftId"" BIGSERIAL PRIMARY KEY,
                 ""BranchId"" INTEGER NOT NULL,
-                ""OutletId"" INTEGER NOT NULL,
+                ""TerminalId"" INTEGER NOT NULL,
                 ""CashierId"" VARCHAR(450) NOT NULL,
                 ""OpeningFloat"" NUMERIC(18,2) NOT NULL DEFAULT 0.00,
                 ""TotalCashSales"" NUMERIC(18,2) NOT NULL DEFAULT 0.00,
@@ -74,7 +74,7 @@ public class MigrationRunner
                 ""MovementId"" BIGSERIAL PRIMARY KEY,
                 ""ShiftId"" BIGINT NOT NULL REFERENCES ""CashDrawerShifts""(""ShiftId"") ON DELETE CASCADE,
                 ""BranchId"" INTEGER NOT NULL DEFAULT 1,
-                ""OutletId"" INTEGER NOT NULL DEFAULT 1,
+                ""TerminalId"" INTEGER NOT NULL DEFAULT 1,
                 ""MovementType"" VARCHAR(30) NOT NULL,
                 ""CategoryId"" INTEGER NULL REFERENCES ""CashMovementCategories""(""CategoryId"") ON DELETE SET NULL,
                 ""CategoryName"" VARCHAR(100) NULL,
@@ -97,7 +97,7 @@ public class MigrationRunner
             );
 
             ALTER TABLE ""CashDrawerMovements"" ADD COLUMN IF NOT EXISTS ""BranchId"" INTEGER NOT NULL DEFAULT 1;
-            ALTER TABLE ""CashDrawerMovements"" ADD COLUMN IF NOT EXISTS ""OutletId"" INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE ""CashDrawerMovements"" ADD COLUMN IF NOT EXISTS ""TerminalId"" INTEGER NOT NULL DEFAULT 1;
             ALTER TABLE ""CashDrawerMovements"" ADD COLUMN IF NOT EXISTS ""CategoryId"" INTEGER NULL REFERENCES ""CashMovementCategories""(""CategoryId"") ON DELETE SET NULL;
             ALTER TABLE ""CashDrawerMovements"" ADD COLUMN IF NOT EXISTS ""CategoryName"" VARCHAR(100) NULL;
             ALTER TABLE ""CashDrawerMovements"" ADD COLUMN IF NOT EXISTS ""ReferenceNumber"" VARCHAR(50) NULL;
@@ -116,7 +116,7 @@ public class MigrationRunner
             CREATE UNIQUE INDEX IF NOT EXISTS ""UX_CashDrawerMovements_ReferenceNumber"" ON ""CashDrawerMovements"" (""ReferenceNumber"") WHERE ""ReferenceNumber"" IS NOT NULL;
             CREATE UNIQUE INDEX IF NOT EXISTS ""UX_CashDrawerMovements_ClientMovementId"" ON ""CashDrawerMovements"" (""ClientMovementId"") WHERE ""ClientMovementId"" IS NOT NULL;
             CREATE INDEX IF NOT EXISTS ""IX_CashDrawerMovements_ShiftId_Status"" ON ""CashDrawerMovements"" (""ShiftId"", ""Status"");
-            CREATE INDEX IF NOT EXISTS ""IX_CashDrawerMovements_Branch_Outlet_CreatedAt"" ON ""CashDrawerMovements"" (""BranchId"", ""OutletId"", ""CreatedAt"");
+            CREATE INDEX IF NOT EXISTS ""IX_CashDrawerMovements_Branch_Outlet_CreatedAt"" ON ""CashDrawerMovements"" (""BranchId"", ""TerminalId"", ""CreatedAt"");
 
             INSERT INTO ""CashMovementCategories"" (""Name"", ""Description"", ""MovementType"", ""RequiresApproval"", ""ApprovalThreshold"", ""IsActive"")
             SELECT * FROM (VALUES

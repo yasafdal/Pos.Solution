@@ -8,7 +8,7 @@ namespace POS.Client.Services;
 
 public interface IOfflineCheckoutService
 {
-    Task<bool> IsReadyForOfflineCheckoutAsync(int outletId);
+    Task<bool> IsReadyForOfflineCheckoutAsync(int terminalId);
     Task<OfflineCheckoutResultDto> ProcessOfflineCashSaleAsync(OrderCreateDto createDto, decimal cashTendered, string cashierId);
     Task<List<LocalOrder>> GetPendingSyncOrdersAsync();
 }
@@ -34,14 +34,15 @@ public class OfflineCheckoutService : IOfflineCheckoutService
         _session = session;
     }
 
-    public async Task<bool> IsReadyForOfflineCheckoutAsync(int outletId)
+    public async Task<bool> IsReadyForOfflineCheckoutAsync(int terminalId)
     {
         using var db = new LocalPosDbContext();
         db.InitializeDatabase();
         if (!db.VerifyIntegrity()) return false;
 
         var hasProducts = await db.Products.AnyAsync(p => p.IsActive);
-        return hasProducts;
+        return hasProducts && await db.TerminalConfigs.AnyAsync(t => t.TerminalId == terminalId && t.OutletId > 0)
+            && await db.InvoiceSequences.AnyAsync(s => s.TerminalId == terminalId && s.IsActive && s.LastIssuedNumber < s.EndingNumber);
     }
 
     public async Task<OfflineCheckoutResultDto> ProcessOfflineCashSaleAsync(OrderCreateDto createDto, decimal cashTendered, string cashierId)
@@ -67,10 +68,12 @@ public class OfflineCheckoutService : IOfflineCheckoutService
             try
             {
                 // 1. Fetch outlet config for tax type
-                var outletConfig = await db.OutletConfigs
+                var outletConfig = await db.TerminalConfigs
                     .AsNoTracking()
-                    .FirstOrDefaultAsync(o => o.OutletId == createDto.OutletId);
-                string branchTaxType = outletConfig?.BranchTaxType ?? "VAT-Registered";
+                    .FirstOrDefaultAsync(o => o.TerminalId == createDto.TerminalId);
+                if (outletConfig == null || outletConfig.OutletId <= 0 || outletConfig.BranchId != createDto.BranchId)
+                    throw new InvalidOperationException("Terminal ownership must be refreshed online before offline checkout.");
+                string branchTaxType = outletConfig.BranchTaxType;
 
                 // 2. Calculate taxes and discounts first (before incrementing sequence) using decimal precision
                 var calcReq = new OrderCalculationRequestDto
@@ -105,33 +108,15 @@ public class OfflineCheckoutService : IOfflineCheckoutService
 
                 // 3. Acquire and increment invoice sequence atomically inside the SQLite transaction
                 var sequence = await db.InvoiceSequences
-                    .FirstOrDefaultAsync(s => s.OutletId == createDto.OutletId && s.IsActive);
+                    .FirstOrDefaultAsync(s => s.TerminalId == createDto.TerminalId && s.IsActive);
 
-                if (sequence == null)
-                {
-                    sequence = new LocalInvoiceSequence
-                    {
-                        OutletId = createDto.OutletId,
-                        SeriesCode = $"OFF-SER-{createDto.OutletId:D2}",
-                        Prefix = $"INV{createDto.OutletId:D2}-",
-                        StartingNumber = 1L,
-                        EndingNumber = 9999999L,
-                        LastIssuedNumber = 0L,
-                        PaddingLength = 7,
-                        IsActive = true
-                    };
-                    db.InvoiceSequences.Add(sequence);
-                }
-                else if (sequence.LastIssuedNumber >= sequence.EndingNumber)
-                {
-                    // Cleanly refill local sequence block so active offline checkouts never abort
-                    sequence.EndingNumber = sequence.LastIssuedNumber + 100000L;
-                }
+                if (sequence == null || sequence.LastIssuedNumber >= sequence.EndingNumber)
+                    throw new InvalidOperationException("No remaining configured invoice range. Reconnect and configure invoice allocation; no sale was saved.");
 
                 sequence.LastIssuedNumber++;
                 long nextNum = sequence.LastIssuedNumber;
                 int padLen = sequence.PaddingLength > 0 ? sequence.PaddingLength : 7;
-                string prefix = string.IsNullOrWhiteSpace(sequence.Prefix) ? $"INV{createDto.OutletId:D2}-" : sequence.Prefix;
+                string prefix = string.IsNullOrWhiteSpace(sequence.Prefix) ? $"INV{createDto.TerminalId:D2}-" : sequence.Prefix;
                 string invoiceNumber = $"{prefix}{nextNum.ToString().PadLeft(padLen, '0')}";
 
                 // 4. Persist Local Order
@@ -141,7 +126,11 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     OrderId = localTransactionId,
                     InvoiceNumber = invoiceNumber,
                     BranchId = createDto.BranchId,
-                    OutletId = createDto.OutletId,
+                    OutletId = createDto.OutletId > 0 ? createDto.OutletId : outletConfig.OutletId,
+                    TerminalId = createDto.TerminalId,
+                    OrderType = createDto.OrderType ?? "DINING",
+                    TableNumber = createDto.TableNumber,
+                    HeadCount = createDto.HeadCount,
                     CashierId = cashierId,
                     Subtotal = subtotal,
                     DiscountAmount = calcRes.DiscountAmount,
@@ -219,7 +208,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
 
                 // 6b. Update active LocalCashDrawerShift so offline ExpectedBalance reflects offline cash sales immediately
                 var localOpenShift = await db.CashDrawerShifts
-                    .Where(s => s.OutletId == createDto.OutletId && s.Status == "OPEN")
+                    .Where(s => s.TerminalId == createDto.TerminalId && s.Status == "OPEN")
                     .OrderByDescending(s => s.OpenedAt)
                     .FirstOrDefaultAsync();
                 if (localOpenShift != null)
@@ -249,10 +238,10 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 await db.SaveChangesAsync();
                 await transaction.CommitAsync();
 
-                var sessionOutlet = _session.Outlet;
+                var sessionOutlet = _session.Terminal;
                 string branchName = !string.IsNullOrWhiteSpace(outletConfig?.BranchName)
                     ? outletConfig.BranchName!
-                    : (!string.IsNullOrWhiteSpace(sessionOutlet?.BranchName) ? sessionOutlet.BranchName : (outletConfig?.OutletName ?? sessionOutlet?.OutletName ?? string.Empty));
+                    : (!string.IsNullOrWhiteSpace(sessionOutlet?.BranchName) ? sessionOutlet.BranchName : (outletConfig?.TerminalName ?? sessionOutlet?.TerminalName ?? string.Empty));
                 string? branchCode = !string.IsNullOrWhiteSpace(outletConfig?.BranchCode)
                     ? outletConfig.BranchCode
                     : sessionOutlet?.BranchCode;
@@ -262,9 +251,9 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 string? branchPhone = !string.IsNullOrWhiteSpace(outletConfig?.BranchPhone)
                     ? outletConfig.BranchPhone
                     : sessionOutlet?.BranchPhone;
-                string terminalName = !string.IsNullOrWhiteSpace(outletConfig?.OutletName)
-                    ? outletConfig.OutletName
-                    : (sessionOutlet?.OutletName ?? string.Empty);
+                string terminalName = !string.IsNullOrWhiteSpace(outletConfig?.TerminalName)
+                    ? outletConfig.TerminalName
+                    : (sessionOutlet?.TerminalName ?? string.Empty);
 
                 var offlineReceipt = new ReceiptDto
                 {
@@ -275,9 +264,14 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     BranchCode = branchCode,
                     BranchAddress = branchAddress,
                     BranchPhone = branchPhone,
-                    OutletId = createDto.OutletId,
+                    TerminalId = createDto.TerminalId,
+                    OutletId = outletConfig.OutletId, OutletName = outletConfig.OutletName,
+                    PTUNumber = outletConfig.PTUNumber, MINNumber = outletConfig.MINNumber, SerialNumber = outletConfig.SerialNumber,
                     TerminalName = terminalName,
                     CashierId = cashierId,
+                    OrderType = createDto.OrderType ?? "DINING",
+                    TableNumber = createDto.TableNumber,
+                    HeadCount = createDto.HeadCount,
                     CreatedAt = localOrder.CreatedAt,
                     PaidAt = paidAt,
                     Subtotal = subtotal,

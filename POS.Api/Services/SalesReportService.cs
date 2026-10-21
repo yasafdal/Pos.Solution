@@ -28,6 +28,8 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
 
         if (request.OutletId.HasValue)
             query = query.Where(o => o.OutletId == request.OutletId.Value);
+        if (request.TerminalId.HasValue)
+            query = query.Where(o => o.TerminalId == request.TerminalId.Value);
 
         if (!string.IsNullOrWhiteSpace(request.CashierId))
             query = query.Where(o => o.CashierId == request.CashierId);

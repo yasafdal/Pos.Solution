@@ -7,7 +7,7 @@ namespace POS.Shared.Models;
 public class OpenShiftDto
 {
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public decimal OpeningFloat { get; set; }
     public string? Notes { get; set; }
 }
@@ -30,7 +30,7 @@ public class CashDrawerMovementDto
 {
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string MovementType { get; set; } = "PETTY_CASH"; // CASH_IN, CASH_OUT, PETTY_CASH, CASH_DROP
     public int? CategoryId { get; set; }
     public string? CategoryName { get; set; }
@@ -61,7 +61,7 @@ public class CashMovementResponseDto
     public long MovementId { get; set; }
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string MovementType { get; set; } = string.Empty;
     public int? CategoryId { get; set; }
     public string? CategoryName { get; set; }
@@ -95,7 +95,7 @@ public class CashDrawerShiftDto
 {
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string CashierId { get; set; } = null!;
     public decimal OpeningFloat { get; set; }
     public decimal TotalCashSales { get; set; }
@@ -119,7 +119,7 @@ public class ShiftCashMovementSummaryDto
 {
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
-    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
     public string CashierId { get; set; } = string.Empty;
     public decimal OpeningCash { get; set; }
     public decimal CashSales { get; set; }

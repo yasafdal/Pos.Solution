@@ -23,7 +23,7 @@ else
             <div>
                 <h3 class="fw-bold text-dark mb-1">Transaction History</h3>
                 <p class="text-secondary small mb-0">
-                    Sales since @currentBusinessDayStartLocal.ToString("MMM dd, yyyy 04:00 tt") for Outlet #@(Session.Outlet?.OutletId.ToString() ?? "—") (@(Session.Outlet?.OutletName ?? "Terminal"))
+                    Sales since @currentBusinessDayStartLocal.ToString("MMM dd, yyyy 04:00 tt") for Terminal #@(Session.Terminal?.TerminalId.ToString() ?? "—") (@(Session.Terminal?.TerminalName ?? "Terminal"))
                     @if (isOfflineMode)
                     {
                         <span class="badge bg-warning text-dark px-2 py-1 ms-2"><i class="bi bi-wifi-off me-1"></i> Offline Mode (Local)</span>
@@ -160,7 +160,7 @@ else
                     <div class="modal-body px-4 py-3 bg-light">
                         <div class="card border-0 shadow-sm rounded-4 p-4 bg-white">
                             <div class="text-center mb-3">
-                                <h5 class="fw-bold mb-1">Terminal Outlet #@selectedOrder.OutletId</h5>
+                                <h5 class="fw-bold mb-1">Terminal Terminal #@selectedOrder.TerminalId</h5>
                                 <small class="text-muted">Cashier: @selectedOrder.CashierId</small>
                             </div>
                             <hr />
@@ -344,8 +344,8 @@ else
     private void ApplyTerminalScope()
     {
         currentBusinessDayStartLocal = GetBusinessDayStart(DateTime.Now);
-        filter.BranchId = Session.Outlet?.BranchId;
-        filter.OutletId = Session.Outlet?.OutletId;
+        filter.BranchId = Session.Terminal?.BranchId;
+        filter.TerminalId = Session.Terminal?.TerminalId;
         filter.DateFrom = currentBusinessDayStartLocal.ToUniversalTime();
         filter.DateTo = null;
         filter.Page = 1;
@@ -356,7 +356,7 @@ else
     {
         loadError = null;
         isOfflineMode = false;
-        if (Session.Outlet == null)
+        if (Session.Terminal == null)
         {
             // Without an outlet the query would be unscoped and return every terminal's sales.
             transactions = new();
@@ -402,12 +402,12 @@ else
             db.InitializeDatabase();
 
             var startUtc = currentBusinessDayStartLocal.ToUniversalTime();
-            var targetOutletId = Session.Outlet!.OutletId;
+            var targetTerminalId = Session.Terminal!.TerminalId;
             var targetCashier = Session.Username;
             bool isSupervisor = Session.Role == "Admin" || Session.Role == "Manager" || Session.Role == "SeniorCashier";
 
             var query = db.Orders.AsNoTracking()
-                .Where(o => o.OutletId == targetOutletId && o.CreatedAt >= startUtc);
+                .Where(o => o.TerminalId == targetTerminalId && o.CreatedAt >= startUtc);
 
             if (!isSupervisor && !string.IsNullOrWhiteSpace(targetCashier))
             {
@@ -447,7 +447,7 @@ else
                     OrderNumber = lo.InvoiceNumber,
                     InvoiceNumber = lo.InvoiceNumber,
                     BranchId = lo.BranchId,
-                    OutletId = lo.OutletId,
+                    TerminalId = lo.TerminalId,
                     CashierId = lo.CashierId,
                     OrderStatus = lo.OrderStatus,
                     PaymentStatus = lo.PaymentStatus,
@@ -545,13 +545,16 @@ else
                     InvoiceNumber = target.InvoiceNumber,
                     InvoiceIssuedAt = target.CreatedAt,
                     BranchId = target.BranchId,
-                    BranchName = Session.Outlet?.BranchName ?? "Store",
-                    BranchCode = Session.Outlet?.BranchCode ?? string.Empty,
-                    BranchAddress = Session.Outlet?.BranchAddress ?? string.Empty,
-                    BranchPhone = Session.Outlet?.BranchPhone ?? string.Empty,
-                    OutletId = target.OutletId,
-                    TerminalName = Session.Outlet?.OutletName ?? "Terminal",
+                    BranchName = Session.Terminal?.BranchName ?? "Store",
+                    BranchCode = Session.Terminal?.BranchCode ?? string.Empty,
+                    BranchAddress = Session.Terminal?.BranchAddress ?? string.Empty,
+                    BranchPhone = Session.Terminal?.BranchPhone ?? string.Empty,
+                    TerminalId = target.TerminalId,
+                    TerminalName = Session.Terminal?.TerminalName ?? "Terminal",
                     CashierId = target.CashierId,
+                    OrderType = target.OrderType,
+                    TableNumber = target.TableNumber,
+                    HeadCount = target.HeadCount,
                     CreatedAt = target.CreatedAt,
                     PaidAt = target.CreatedAt,
                     Subtotal = target.Subtotal,
@@ -734,7 +737,7 @@ else
             {
                 OriginalOrderId = selectedOrder.OrderId,
                 BranchId = selectedOrder.BranchId,
-                OutletId = selectedOrder.OutletId,
+                TerminalId = selectedOrder.TerminalId,
                 ReturnReason = returnReason,
                 ApprovedByPinOrUsername = returnApproverPin,
                 RefundMethod = "CASH",

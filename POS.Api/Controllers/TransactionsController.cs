@@ -38,7 +38,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] int? branchId,
-        [FromQuery] int? outletId,
+        [FromQuery] int? terminalId,
         [FromQuery] string? cashierId,
         [FromQuery] string? orderNumber,
         [FromQuery] string? invoiceNumber,
@@ -48,7 +48,8 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         [FromQuery] string? discountCode,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
@@ -73,7 +74,8 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
 
             // Enforce branch and outlet scoping from token claims if present
             var branchClaim = User.FindFirst("branch_id")?.Value;
-            var outletClaim = User.FindFirst("outlet_id")?.Value;
+            var outletClaim = User.FindFirst("terminal_id")?.Value;
+            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
 
             if (int.TryParse(branchClaim, out var bClaimId))
             {
@@ -87,12 +89,12 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
 
             if (int.TryParse(outletClaim, out var oClaimId))
             {
-                if (outletId.HasValue && outletId.Value != oClaimId) return Forbid();
-                query = query.Where(o => o.OutletId == oClaimId);
+                if (terminalId.HasValue && terminalId.Value != oClaimId) return Forbid();
+                query = query.Where(o => o.TerminalId == oClaimId);
             }
-            else if (outletId.HasValue)
+            else if (terminalId.HasValue)
             {
-                query = query.Where(o => o.OutletId == outletId.Value);
+                query = query.Where(o => o.TerminalId == terminalId.Value);
             }
 
             // Safety net: 4:00 AM cutoff of current business day (sales reset at 4am)
@@ -105,13 +107,15 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             if (branchId.HasValue)
                 query = query.Where(o => o.BranchId == branchId.Value);
 
-            if (outletId.HasValue)
-                query = query.Where(o => o.OutletId == outletId.Value);
+            if (terminalId.HasValue)
+                query = query.Where(o => o.TerminalId == terminalId.Value);
 
             if (!string.IsNullOrWhiteSpace(cashierId))
                 query = query.Where(o => o.CashierId == cashierId);
         }
 
+        if (outletId.HasValue)
+            query = query.Where(o => context.Terminals.Any(t => t.TerminalId == o.TerminalId && t.OutletId == outletId));
         if (dateFrom.HasValue)
         {
             var from = ToUtcUnspecified(dateFrom.Value);
@@ -154,7 +158,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             OrderId = o.OrderId,
             OrderNumber = o.OrderNumber,
             BranchId = o.BranchId,
-            OutletId = o.OutletId,
+            TerminalId = o.TerminalId,
             CashierId = o.CashierId,
             ShiftId = o.ShiftId,
             OrderType = o.OrderType,
@@ -234,8 +238,9 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             if (int.TryParse(branchClaim, out var bClaimId) && order.BranchId != bClaimId)
                 return Forbid();
 
-            var outletClaim = User.FindFirst("outlet_id")?.Value;
-            if (int.TryParse(outletClaim, out var oClaimId) && order.OutletId != oClaimId)
+            var outletClaim = User.FindFirst("terminal_id")?.Value;
+            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
+            if (int.TryParse(outletClaim, out var oClaimId) && order.TerminalId != oClaimId)
                 return Forbid();
 
             var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
@@ -248,7 +253,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             OrderId = order.OrderId,
             OrderNumber = order.OrderNumber,
             BranchId = order.BranchId,
-            OutletId = order.OutletId,
+            TerminalId = order.TerminalId,
             CashierId = order.CashierId,
             ShiftId = order.ShiftId,
             OrderType = order.OrderType,
@@ -314,7 +319,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         }
 
         var owner = await context.Orders.AsNoTracking()
-            .Where(o => o.OrderId == id).Select(o => new { o.CashierId, o.BranchId, o.OutletId }).SingleOrDefaultAsync(cancellationToken);
+            .Where(o => o.OrderId == id).Select(o => new { o.CashierId, o.BranchId, o.TerminalId }).SingleOrDefaultAsync(cancellationToken);
         if (owner == null) return NotFound();
 
         if (!IsSupervisor())
@@ -327,8 +332,9 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             if (int.TryParse(branchClaim, out var bClaimId) && owner.BranchId != bClaimId)
                 return Forbid();
 
-            var outletClaim = User.FindFirst("outlet_id")?.Value;
-            if (int.TryParse(outletClaim, out var oClaimId) && owner.OutletId != oClaimId)
+            var outletClaim = User.FindFirst("terminal_id")?.Value;
+            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
+            if (int.TryParse(outletClaim, out var oClaimId) && owner.TerminalId != oClaimId)
                 return Forbid();
         }
 
@@ -344,8 +350,8 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
                 {
                     // Use a new context instance or direct raw insert to avoid tracking conflicts on audit logging
                     await context.Database.ExecuteSqlRawAsync(
-                        "INSERT INTO \"ReceiptReprintLogs\" (\"OrderId\", \"InvoiceNumber\", \"BranchId\", \"OutletId\", \"CashierId\", \"ReprintReason\", \"ReprintedAt\", \"PrinterName\", \"PrintStatus\") VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8})",
-                        [order.OrderId, (object?)order.InvoiceNumber ?? DBNull.Value, order.BranchId, order.OutletId, order.CashierId, "CONTROLLED_REPRINT", DateTime.UtcNow, "SYSTEM_DEFAULT_PRINTER", "SUCCESS"],
+                        "INSERT INTO \"ReceiptReprintLogs\" (\"OrderId\", \"InvoiceNumber\", \"BranchId\", \"TerminalId\", \"CashierId\", \"ReprintReason\", \"ReprintedAt\", \"PrinterName\", \"PrintStatus\") VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8})",
+                        [order.OrderId, (object?)order.InvoiceNumber ?? DBNull.Value, order.BranchId, order.TerminalId, order.CashierId, "CONTROLLED_REPRINT", DateTime.UtcNow, "SYSTEM_DEFAULT_PRINTER", "SUCCESS"],
                         cancellationToken);
                 }
             }
@@ -399,11 +405,14 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
         [FromQuery] int? branchId,
-        [FromQuery] int? outletId,
+        [FromQuery] int? terminalId,
         [FromQuery] string? cashierId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
         var query = context.Orders.AsNoTracking().Where(o => o.PaymentStatus == "PAID");
+        if (outletId.HasValue)
+            query = query.Where(o => context.Terminals.Any(t => t.TerminalId == o.TerminalId && t.OutletId == outletId));
 
         if (!IsSupervisor())
         {
@@ -418,7 +427,8 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             }
 
             var branchClaim = User.FindFirst("branch_id")?.Value;
-            var outletClaim = User.FindFirst("outlet_id")?.Value;
+            var outletClaim = User.FindFirst("terminal_id")?.Value;
+            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
 
             if (int.TryParse(branchClaim, out var bClaimId))
             {
@@ -432,12 +442,12 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
 
             if (int.TryParse(outletClaim, out var oClaimId))
             {
-                if (outletId.HasValue && outletId.Value != oClaimId) return Forbid();
-                query = query.Where(o => o.OutletId == oClaimId);
+                if (terminalId.HasValue && terminalId.Value != oClaimId) return Forbid();
+                query = query.Where(o => o.TerminalId == oClaimId);
             }
-            else if (outletId.HasValue)
+            else if (terminalId.HasValue)
             {
-                query = query.Where(o => o.OutletId == outletId.Value);
+                query = query.Where(o => o.TerminalId == terminalId.Value);
             }
 
             var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
@@ -449,8 +459,8 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             if (branchId.HasValue)
                 query = query.Where(o => o.BranchId == branchId.Value);
 
-            if (outletId.HasValue)
-                query = query.Where(o => o.OutletId == outletId.Value);
+            if (terminalId.HasValue)
+                query = query.Where(o => o.TerminalId == terminalId.Value);
 
             if (!string.IsNullOrWhiteSpace(cashierId))
                 query = query.Where(o => o.CashierId == cashierId);

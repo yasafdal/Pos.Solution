@@ -48,10 +48,17 @@ namespace POS.Api.Controllers
                 new Claim(ClaimTypes.Role, user.Role)
             };
 
-            if (request.BranchId.HasValue)
-                claims.Add(new Claim("branch_id", request.BranchId.Value.ToString()));
-            if (request.OutletId.HasValue)
-                claims.Add(new Claim("outlet_id", request.OutletId.Value.ToString()));
+            if (request.TerminalId.HasValue)
+            {
+                var terminal = await _context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
+                    .SingleOrDefaultAsync(t => t.TerminalId == request.TerminalId);
+                if (terminal == null || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive
+                    || (request.BranchId.HasValue && request.BranchId != terminal.BranchId))
+                    return BadRequest("Invalid or inactive terminal ownership.");
+                claims.Add(new Claim("branch_id", terminal.BranchId.ToString()));
+                claims.Add(new Claim("outlet_id", terminal.OutletId.ToString()));
+                claims.Add(new Claim("terminal_id", terminal.TerminalId.ToString()));
+            }
 
             // Generate Token
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
@@ -93,10 +100,17 @@ namespace POS.Api.Controllers
                 new Claim(ClaimTypes.Role, user.Role)
             };
 
-            if (request.BranchId.HasValue)
-                claims.Add(new Claim("branch_id", request.BranchId.Value.ToString()));
-            if (request.OutletId.HasValue)
-                claims.Add(new Claim("outlet_id", request.OutletId.Value.ToString()));
+            if (request.TerminalId.HasValue)
+            {
+                var terminal = await _context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
+                    .SingleOrDefaultAsync(t => t.TerminalId == request.TerminalId);
+                if (terminal == null || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive
+                    || (request.BranchId.HasValue && request.BranchId != terminal.BranchId))
+                    return BadRequest("Invalid or inactive terminal ownership.");
+                claims.Add(new Claim("branch_id", terminal.BranchId.ToString()));
+                claims.Add(new Claim("outlet_id", terminal.OutletId.ToString()));
+                claims.Add(new Claim("terminal_id", terminal.TerminalId.ToString()));
+            }
 
             // Generate Token
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));

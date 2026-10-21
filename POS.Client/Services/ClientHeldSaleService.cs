@@ -14,7 +14,7 @@ namespace POS.Client.Services;
 
 public class ClientHeldSaleService(HttpClient http, IPosConnectivityService connectivity) : IHeldSaleService
 {
-    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? outletId = null)
+    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null)
     {
         var results = new List<HeldSaleDto>();
 
@@ -25,12 +25,12 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             db.InitializeDatabase();
             var query = db.HeldSales.AsNoTracking().Where(h => h.Status == "HELD");
             if (branchId.HasValue) query = query.Where(h => h.BranchId == branchId.Value);
-            if (outletId.HasValue) query = query.Where(h => h.OutletId == outletId.Value);
+            if (terminalId.HasValue) query = query.Where(h => h.TerminalId == terminalId.Value);
 
             var localEntities = await query.OrderByDescending(h => h.CreatedAt).ToListAsync();
             foreach (var entity in localEntities)
             {
-                var dto = JsonSerializer.Deserialize<HeldSaleDto>(entity.PayloadJson);
+                var dto = POS.Shared.Services.LegacyTerminalPayload.Deserialize<HeldSaleDto>(entity.PayloadJson);
                 if (dto != null)
                 {
                     dto.HeldSaleId = entity.HeldSaleId;
@@ -52,7 +52,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             {
                 var url = "api/held-sales?";
                 if (branchId.HasValue) url += $"branchId={branchId}&";
-                if (outletId.HasValue) url += $"outletId={outletId}&";
+                if (terminalId.HasValue) url += $"terminalId={terminalId}&";
 
                 var serverSales = await http.GetFromJsonAsync<List<HeldSaleDto>>(url);
                 if (serverSales != null)
@@ -76,7 +76,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             using var db = new LocalPosDbContext();
             db.InitializeDatabase();
             var local = await db.HeldSales.AsNoTracking().FirstOrDefaultAsync(h => h.HeldSaleId == id);
-            return local != null ? JsonSerializer.Deserialize<HeldSaleDto>(local.PayloadJson) : null;
+            return local != null ? POS.Shared.Services.LegacyTerminalPayload.Deserialize<HeldSaleDto>(local.PayloadJson) : null;
         }
 
         try
@@ -88,7 +88,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             using var db = new LocalPosDbContext();
             db.InitializeDatabase();
             var local = await db.HeldSales.AsNoTracking().FirstOrDefaultAsync(h => h.HeldSaleId == id);
-            return local != null ? JsonSerializer.Deserialize<HeldSaleDto>(local.PayloadJson) : null;
+            return local != null ? POS.Shared.Services.LegacyTerminalPayload.Deserialize<HeldSaleDto>(local.PayloadJson) : null;
         }
     }
 
@@ -126,7 +126,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             {
                 HeldSaleId = localId,
                 BranchId = dto.BranchId,
-                OutletId = dto.OutletId,
+                TerminalId = dto.TerminalId,
                 CashierId = dto.CashierId,
                 HoldReference = holdRef,
                 CustomerName = string.IsNullOrWhiteSpace(dto.CustomerName) ? null : dto.CustomerName.Trim(),
@@ -145,7 +145,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             {
                 HeldSaleId = localId,
                 BranchId = dto.BranchId,
-                OutletId = dto.OutletId,
+                TerminalId = dto.TerminalId,
                 CashierId = dto.CashierId,
                 HoldReference = holdRef,
                 Status = "HELD",
@@ -162,11 +162,11 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
         }
     }
 
-    public async Task<HeldSaleDto?> ResumeHeldSaleAsync(long id, int? outletId = null)
+    public async Task<HeldSaleDto?> ResumeHeldSaleAsync(long id, int? terminalId = null)
     {
         if (id < 0)
         {
-            return await ResumeLocalHeldSaleAsync(id, outletId);
+            return await ResumeLocalHeldSaleAsync(id, terminalId);
         }
 
         var state = await connectivity.CheckConnectivityAsync();
@@ -175,7 +175,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             try
             {
                 var url = $"api/held-sales/{id}/resume";
-                if (outletId.HasValue) url += $"?outletId={outletId.Value}";
+                if (terminalId.HasValue) url += $"?terminalId={terminalId.Value}";
                 using var response = await http.PostAsync(url, null);
                 if (response.IsSuccessStatusCode)
                 {
@@ -188,7 +188,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             }
         }
 
-        return await ResumeLocalHeldSaleAsync(id, outletId);
+        return await ResumeLocalHeldSaleAsync(id, terminalId);
     }
 
     public async Task<bool> CancelHeldSaleAsync(long id)
@@ -215,7 +215,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
         return await CancelLocalHeldSaleAsync(id);
     }
 
-    private static async Task<HeldSaleDto?> ResumeLocalHeldSaleAsync(long id, int? outletId)
+    private static async Task<HeldSaleDto?> ResumeLocalHeldSaleAsync(long id, int? terminalId)
     {
         await LocalPosDbContext.WriteLock.WaitAsync();
         try
@@ -224,11 +224,11 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             db.InitializeDatabase();
             var local = await db.HeldSales.FirstOrDefaultAsync(h => h.HeldSaleId == id && h.Status == "HELD");
             if (local == null) return null;
-            if (outletId.HasValue && local.OutletId != outletId.Value) return null;
+            if (terminalId.HasValue && local.TerminalId != terminalId.Value) return null;
 
             local.Status = "RESUMED";
             local.ResumedAt = DateTime.UtcNow;
-            var dto = JsonSerializer.Deserialize<HeldSaleDto>(local.PayloadJson);
+            var dto = POS.Shared.Services.LegacyTerminalPayload.Deserialize<HeldSaleDto>(local.PayloadJson);
             if (dto != null)
             {
                 dto.Status = "RESUMED";

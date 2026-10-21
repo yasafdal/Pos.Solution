@@ -13,7 +13,7 @@ public interface IOfflineTransactionSyncService
 {
     Task<List<LocalSyncOutbox>> GetPendingOutboxItemsAsync();
     Task<bool> UploadTransactionAsync(LocalSyncOutbox outboxItem, HttpClient httpClient);
-    Task<string> CheckServerStatusAsync(string localTransactionId, HttpClient httpClient);
+    Task<string> CheckServerStatusAsync(OfflineTransactionSyncRequest expected, HttpClient httpClient);
 }
 
 public class OfflineTransactionSyncService : IOfflineTransactionSyncService
@@ -49,7 +49,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             LocalOrder? localOrder;
             List<LocalOrderItem> localItems;
             List<LocalPayment> localPayments;
-            string terminalId;
+            string deviceIdentifier;
 
             using (var readDb = new LocalPosDbContext())
             {
@@ -74,16 +74,16 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     .Where(p => p.OrderId == localOrder.OrderId)
                     .ToListAsync();
 
-                var outletConfig = await readDb.OutletConfigs
+                var outletConfig = await readDb.TerminalConfigs
                     .AsNoTracking()
-                    .FirstOrDefaultAsync(o => o.OutletId == localOrder.OutletId);
-                terminalId = outletConfig?.TerminalIdentifier ?? "TERM-01";
+                    .FirstOrDefaultAsync(o => o.TerminalId == localOrder.TerminalId);
+                deviceIdentifier = outletConfig?.TerminalIdentifier ?? "TERM-01";
             }
 
             OrderCreateDto? payloadOrder = null;
             try
             {
-                payloadOrder = System.Text.Json.JsonSerializer.Deserialize<OrderCreateDto>(outboxItem.PayloadJson);
+                payloadOrder = POS.Shared.Services.LegacyTerminalPayload.Deserialize<OrderCreateDto>(outboxItem.PayloadJson);
             }
             catch
             {
@@ -94,11 +94,14 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             var requestDto = new OfflineTransactionSyncRequest
             {
                 LocalTransactionId = localOrder.OrderId,
-                TerminalId = terminalId,
+                DeviceIdentifier = deviceIdentifier,
                 BranchId = localOrder.BranchId,
-                OutletId = localOrder.OutletId,
+                TerminalId = localOrder.TerminalId,
                 CashierId = localOrder.CashierId,
                 InvoiceNumber = localOrder.InvoiceNumber,
+                OrderType = localOrder.OrderType,
+                TableNumber = localOrder.TableNumber,
+                HeadCount = localOrder.HeadCount,
                 TransactionDate = localOrder.CreatedAt,
                 SchemaVersion = "1.0",
                 FinancialCalculationVersion = "1.0",
@@ -152,7 +155,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<OfflineTransactionSyncResponse>();
-                if (result != null && result.Success)
+                if (POS.Shared.Services.OfflineSyncAcknowledgement.Matches(requestDto, result))
                 {
                     await UpdateOutboxStatusAsync(
                         outboxItem.OutboxId,
@@ -163,10 +166,30 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                         auditMessage: $"Successfully uploaded and acknowledged offline transaction {localOrder.OrderId} (Invoice: {localOrder.InvoiceNumber})");
                     return true;
                 }
+                else
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "NEEDS_ATTENTION",
+                        "Server response did not match expected transaction identity or invoice number.",
+                        incrementRetry: false,
+                        nextRetryAt: null);
+                    return false;
+                }
             }
 
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", await response.Content.ReadAsStringAsync(), incrementRetry: false, nextRetryAt: null);
+                return false;
+            }
             // Handle timeout or unknown state via status check endpoint
-            string serverStatus = await CheckServerStatusAsync(localOrder.OrderId, httpClient);
+            string serverStatus = await CheckServerStatusAsync(requestDto, httpClient);
+            if (serverStatus == "CONFLICT")
+            {
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", "Server acknowledgement does not match this terminal/invoice/payload.", incrementRetry: false, nextRetryAt: null);
+                return false;
+            }
             if (serverStatus == "SYNCED")
             {
                 await UpdateOutboxStatusAsync(outboxItem.OutboxId, "SYNCED", null, incrementRetry: false, nextRetryAt: null);
@@ -240,14 +263,15 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
         }
     }
 
-    public async Task<string> CheckServerStatusAsync(string localTransactionId, HttpClient httpClient)
+    public async Task<string> CheckServerStatusAsync(OfflineTransactionSyncRequest expected, HttpClient httpClient)
     {
         try
         {
-            var res = await httpClient.GetAsync($"api/offline-sync/transactions/{localTransactionId}/status");
+            var res = await httpClient.GetAsync($"api/offline-sync/transactions/{Uri.EscapeDataString(expected.LocalTransactionId)}/status");
             if (res.IsSuccessStatusCode)
             {
-                return "SYNCED";
+                var status = await res.Content.ReadFromJsonAsync<OfflineTransactionStatusDto>();
+                return POS.Shared.Services.OfflineSyncAcknowledgement.Matches(expected, status) ? "SYNCED" : "CONFLICT";
             }
             return "UNKNOWN";
         }
@@ -281,7 +305,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                 ClientMovementId = localMovement.ClientMovementId,
                 ShiftId = localMovement.ShiftId,
                 BranchId = localMovement.BranchId,
-                OutletId = localMovement.OutletId,
+                TerminalId = localMovement.TerminalId,
                 MovementType = localMovement.MovementType,
                 CategoryId = localMovement.CategoryId,
                 CategoryName = localMovement.CategoryName,
@@ -318,8 +342,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             }
             else if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
             {
-                var conflictRes = await response.Content.ReadFromJsonAsync<OfflineCashMovementSyncResponse>();
-                string conflictMsg = conflictRes?.Message ?? "Server conflict during cash movement sync.";
+                string conflictMsg = await response.Content.ReadAsStringAsync();
                 await UpdateCashMovementSyncStateAsync(localMovement.ClientMovementId, "CONFLICT", localMovement.Status, null, conflictMsg);
                 await UpdateOutboxStatusAsync(
                     outboxItem.OutboxId,

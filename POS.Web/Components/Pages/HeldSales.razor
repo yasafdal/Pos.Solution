@@ -47,7 +47,7 @@
                         <thead class="table-light text-uppercase fs-7 text-secondary">
                             <tr>
                                 <th class="py-3 px-4">Hold Reference</th>
-                                <th class="py-3">Outlet #</th>
+                                <th class="py-3">Terminal #</th>
                                 <th class="py-3">Customer / Notes</th>
                                 <th class="py-3">Cashier</th>
                                 <th class="py-3">Time Held</th>
@@ -60,7 +60,7 @@
                             {
                                 <tr>
                                     <td class="px-4 fw-bold font-monospace text-primary">@h.HoldReference</td>
-                                    <td>Outlet #@h.OutletId</td>
+                                    <td>Terminal #@h.TerminalId</td>
                                     <td>
                                         <strong>@(string.IsNullOrWhiteSpace(h.CustomerName) ? "Walk-in" : h.CustomerName)</strong>
                                         @if (!string.IsNullOrWhiteSpace(h.Notes))

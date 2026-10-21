@@ -9,7 +9,7 @@ namespace POS.Client.Services;
 
 public interface IReferenceDataSyncService
 {
-    Task<bool> SyncReferenceDataAsync(int outletId, HttpClient httpClient);
+    Task<bool> SyncReferenceDataAsync(int terminalId, HttpClient httpClient);
     Task<DateTime?> GetLastSuccessfulSyncAsync();
     Task<bool> ValidateCacheAsync();
 }
@@ -24,15 +24,15 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
         _localDb = localDb;
     }
 
-    public async Task<bool> SyncReferenceDataAsync(int outletId, HttpClient httpClient)
+    public async Task<bool> SyncReferenceDataAsync(int terminalId, HttpClient httpClient)
     {
         try
         {
-            var response = await httpClient.GetAsync($"api/offline/reference-data?outletId={outletId}");
+            var response = await httpClient.PostAsync($"api/offline/reference-data?terminalId={terminalId}", null);
             if (!response.IsSuccessStatusCode) return false;
 
             var data = await response.Content.ReadFromJsonAsync<OfflineReferenceDataResponseDto>();
-            if (data == null) return false;
+            if (data == null || data.Terminal.TerminalId != terminalId || data.Terminal.OutletId <= 0) return false;
 
             // Fallback: if server did not include Cashiers in reference-data, fetch from api/Users
             if (data.Cashiers == null || data.Cashiers.Count == 0)
@@ -77,7 +77,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCategories;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTaxes;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalDiscounts;");
-                    await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalOutletConfigs;");
+                    await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTerminalConfigs;");
                     if (data.Cashiers != null && data.Cashiers.Count > 0)
                     {
                         await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
@@ -85,19 +85,21 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     db.ChangeTracker.Clear();
 
                     // Insert new reference data
-                    db.OutletConfigs.Add(new LocalOutletConfig
+                    db.TerminalConfigs.Add(new LocalTerminalConfig
                     {
-                        OutletId = data.Outlet.OutletId,
-                        BranchId = data.Outlet.BranchId,
-                        BusinessTypeId = data.Outlet.BusinessTypeId ?? 1,
-                        BusinessType = data.Outlet.BusinessType ?? "FNB",
-                        BranchName = data.Outlet.BranchName,
-                        BranchCode = data.Outlet.BranchCode,
-                        BranchAddress = data.Outlet.BranchAddress,
-                        BranchPhone = data.Outlet.BranchPhone,
-                        OutletName = data.Outlet.OutletName,
-                        BranchTaxType = data.Outlet.BranchTaxType,
-                        TerminalIdentifier = data.Outlet.DeviceIdentifier
+                        TerminalId = data.Terminal.TerminalId,
+                        OutletId = data.Terminal.OutletId, OutletName = data.Terminal.OutletName, TerminalCode = data.Terminal.TerminalCode,
+                        IpAddress = data.Terminal.IpAddress, PTUNumber = data.Terminal.PTUNumber, MINNumber = data.Terminal.MINNumber, SerialNumber = data.Terminal.SerialNumber,
+                        BranchId = data.Terminal.BranchId,
+                        BusinessTypeId = data.Terminal.BusinessTypeId ?? 1,
+                        BusinessType = data.Terminal.BusinessType ?? "FNB",
+                        BranchName = data.Terminal.BranchName,
+                        BranchCode = data.Terminal.BranchCode,
+                        BranchAddress = data.Terminal.BranchAddress,
+                        BranchPhone = data.Terminal.BranchPhone,
+                        TerminalName = data.Terminal.TerminalName,
+                        BranchTaxType = data.Terminal.BranchTaxType,
+                        TerminalIdentifier = data.Terminal.DeviceIdentifier
                     });
 
                     if (data.Cashiers != null)
@@ -240,7 +242,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                             {
                                 ShiftId = data.ActiveShift.ShiftId,
                                 BranchId = data.ActiveShift.BranchId,
-                                OutletId = data.ActiveShift.OutletId,
+                                TerminalId = data.ActiveShift.TerminalId,
                                 CashierId = data.ActiveShift.CashierId,
                                 OpeningFloat = data.ActiveShift.OpeningFloat,
                                 TotalCashSales = data.ActiveShift.TotalCashSales,
@@ -272,53 +274,34 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     }
 
                     // Upsert active InvoiceSequence for offline checkout while preserving any higher local counter
-                    var seqDto = data.InvoiceSequence ?? new OfflineInvoiceSequenceDto
+                    var seqDto = data.InvoiceSequence;
+                    var existingSeq = await db.InvoiceSequences.FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.IsActive);
+                    if (seqDto != null)
                     {
-                        SequenceId = outletId,
-                        OutletId = outletId,
-                        SeriesCode = $"OFF-SER-{outletId:D2}",
-                        Prefix = $"INV{outletId:D2}-",
-                        StartingNumber = 1L,
-                        EndingNumber = 9999999L,
-                        LastIssuedNumber = 0L,
-                        PaddingLength = 7,
-                        IsActive = true
-                    };
-
-                    var existingSeq = await db.InvoiceSequences
-                        .FirstOrDefaultAsync(s => s.OutletId == outletId && s.IsActive);
-
-                    long safeLastIssued = Math.Max(
-                        existingSeq?.LastIssuedNumber ?? 0L,
-                        Math.Max(seqDto.StartingNumber - 1L, seqDto.LastIssuedNumber));
-                    long safeEnding = seqDto.EndingNumber > safeLastIssued
-                        ? seqDto.EndingNumber
-                        : safeLastIssued + 100000L;
-
-                    if (existingSeq != null)
-                    {
-                        existingSeq.SeriesCode = seqDto.SeriesCode;
-                        existingSeq.Prefix = seqDto.Prefix;
-                        existingSeq.StartingNumber = seqDto.StartingNumber;
-                        existingSeq.LastIssuedNumber = safeLastIssued;
-                        existingSeq.EndingNumber = safeEnding;
-                        existingSeq.PaddingLength = seqDto.PaddingLength > 0 ? seqDto.PaddingLength : 7;
-                        existingSeq.IsActive = true;
-                    }
-                    else
-                    {
-                        db.InvoiceSequences.Add(new LocalInvoiceSequence
+                        if (existingSeq != null && existingSeq.SequenceId != seqDto.SequenceId)
                         {
-                            SequenceId = seqDto.SequenceId > 0 ? seqDto.SequenceId : outletId,
-                            OutletId = outletId,
-                            SeriesCode = seqDto.SeriesCode,
-                            Prefix = seqDto.Prefix,
-                            StartingNumber = seqDto.StartingNumber,
-                            LastIssuedNumber = safeLastIssued,
-                            EndingNumber = safeEnding,
-                            PaddingLength = seqDto.PaddingLength > 0 ? seqDto.PaddingLength : 7,
-                            IsActive = true
-                        });
+                            if (await db.SyncOutboxes.AnyAsync(o => o.Status != "SYNCED"))
+                                throw new InvalidOperationException("Synchronize pending sales before switching invoice series.");
+                            existingSeq.IsActive = false;
+                            existingSeq = null;
+                        }
+                        var localSeq = existingSeq ?? await db.InvoiceSequences.FindAsync(seqDto.SequenceId);
+                        if (localSeq == null)
+                        {
+                            localSeq = new LocalInvoiceSequence { SequenceId = seqDto.SequenceId, TerminalId = terminalId };
+                            db.InvoiceSequences.Add(localSeq);
+                        }
+                        localSeq.SeriesCode = seqDto.SeriesCode;
+                        localSeq.Prefix = seqDto.Prefix;
+                        localSeq.StartingNumber = seqDto.StartingNumber;
+                        localSeq.LastIssuedNumber = Math.Max(localSeq.LastIssuedNumber, Math.Max(seqDto.StartingNumber - 1, seqDto.LastIssuedNumber));
+                        localSeq.EndingNumber = seqDto.EndingNumber;
+                        localSeq.PaddingLength = seqDto.PaddingLength;
+                        localSeq.IsActive = seqDto.IsActive;
+                    }
+                    else if (existingSeq != null)
+                    {
+                        existingSeq.IsActive = false;
                     }
 
                     db.SyncAuditLogs.Add(new LocalSyncAuditLog
@@ -362,7 +345,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
         db.InitializeDatabase();
         if (!db.VerifyIntegrity()) return false;
 
-        var hasOutlet = await db.OutletConfigs.AnyAsync();
+        var hasOutlet = await db.TerminalConfigs.AnyAsync();
         var hasProducts = await db.Products.AnyAsync();
         var hasTaxes = await db.Taxes.AnyAsync();
 
