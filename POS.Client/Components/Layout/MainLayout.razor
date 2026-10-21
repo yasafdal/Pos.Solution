@@ -15,11 +15,7 @@
         <header class="app-header-bar d-flex justify-content-between align-items-center px-4">
             <div class="d-flex align-items-center gap-3">
                 <button type="button" class="hamburger-btn d-flex align-items-center justify-content-center" @onclick="ToggleNavMenu" aria-label="Toggle navigation" title="Toggle Menu">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="3" y1="12" x2="21" y2="12"></line>
-                        <line x1="3" y1="6" x2="21" y2="6"></line>
-                        <line x1="3" y1="18" x2="21" y2="18"></line>
-                    </svg>
+                    <i class="bi bi-list fs-4"></i>
                 </button>
                 <span class="terminal-identity">@Session.Outlet!.BranchCode • @Session.Outlet.OutletName</span>
             </div>

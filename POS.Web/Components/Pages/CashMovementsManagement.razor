@@ -34,12 +34,13 @@
     <!-- Navigation Tabs -->
     <ul class="nav nav-tabs mb-3 fw-semibold">
         <li class="nav-item">
-            <button class="nav-link @(activeTab == "HISTORY" ? "active fw-bold" : "")" @onclick='() => activeTab = "HISTORY"'>
+            <button class="nav-link @(activeTab == "HISTORY" ? "active fw-bold text-dark" : "text-secondary")" 
+                    @onclick='() => activeTab = "HISTORY"'>
                 <i class="bi bi-journal-text me-1"></i> Movement History (@movements.Count)
             </button>
         </li>
         <li class="nav-item">
-            <button class="nav-link @(activeTab == "PENDING" ? "active fw-bold" : "")" @onclick='() => activeTab = "PENDING"'>
+            <button class="nav-link @(activeTab == "PENDING" ? "active fw-bold text-dark" : "text-secondary")" @onclick='() => activeTab = "PENDING"'>
                 <i class="bi bi-shield-exclamation me-1 text-warning"></i> Pending Approvals
                 @if (PendingMovements.Any())
                 {
@@ -48,17 +49,17 @@
             </button>
         </li>
         <li class="nav-item">
-            <button class="nav-link @(activeTab == "REVERSALS" ? "active fw-bold" : "")" @onclick='() => activeTab = "REVERSALS"'>
+            <button class="nav-link @(activeTab == "REVERSALS" ? "active fw-bold text-dark" : "text-secondary")" @onclick='() => activeTab = "REVERSALS"'>
                 <i class="bi bi-arrow-counterclockwise me-1 text-danger"></i> Reversal & Audit Trail (@ReversedOrReversalMovements.Count())
             </button>
         </li>
         <li class="nav-item">
-            <button class="nav-link @(activeTab == "SUMMARY" ? "active fw-bold" : "")" @onclick='() => activeTab = "SUMMARY"'>
+            <button class="nav-link @(activeTab == "SUMMARY" ? "active fw-bold text-dark" : "text-secondary")" @onclick='() => activeTab = "SUMMARY"'>
                 <i class="bi bi-bar-chart-line me-1 text-success"></i> Summary Reports
             </button>
         </li>
         <li class="nav-item">
-            <button class="nav-link @(activeTab == "CATEGORIES" ? "active fw-bold" : "")" @onclick='() => activeTab = "CATEGORIES"'>
+            <button class="nav-link @(activeTab == "CATEGORIES" ? "active fw-bold text-dark" : "text-secondary")" @onclick='() => activeTab = "CATEGORIES"'>
                 <i class="bi bi-tags me-1"></i> Movement Categories (@categories.Count)
             </button>
         </li>

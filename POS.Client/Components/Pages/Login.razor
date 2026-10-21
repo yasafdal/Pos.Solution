@@ -13,11 +13,7 @@
     <!-- POS Terminal Branding -->
     <div class="pos-header">
         <div class="pos-logo-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                <line x1="8" y1="21" x2="16" y2="21"></line>
-                <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
+            <i class="bi bi-display fs-2"></i>
         </div>
         <h2 class="pos-title">POS Terminal</h2>
         <p class="pos-subtitle">Enter your 4-digit PIN to begin</p>
@@ -27,11 +23,7 @@
     @if (!string.IsNullOrEmpty(errorMessage))
     {
         <div class="pos-error-badge">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
+            <i class="bi bi-exclamation-circle-fill me-1"></i>
             <span>@errorMessage</span>
         </div>
     }
@@ -77,11 +69,7 @@
         </button>
         <button type="button" class="numpad-btn" @onclick="() => AppendDigit('0')" disabled="@isLoading">0</button>
         <button type="button" class="numpad-btn action-btn backspace-btn" @onclick="Backspace" disabled="@isLoading">
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path>
-                <line x1="18" y1="9" x2="12" y2="15"></line>
-                <line x1="12" y1="9" x2="18" y2="15"></line>
-            </svg>
+            <i class="bi bi-backspace-fill fs-5"></i>
         </button>
     </div>
 

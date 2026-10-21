@@ -62,27 +62,55 @@
         <!-- KPI Metrics Grid -->
         <div class="row g-3 mb-4">
             <div class="col-xl-3 col-sm-6">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-primary border-4">
-                    <span class="text-muted small fw-semibold text-uppercase">Gross Sales</span>
-                    <h3 class="fw-bold text-dark mb-0 mt-1">₱@report.GrossSales.ToString("N2")</h3>
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Gross Sales</span>
+                            <h4 class="fw-bold text-dark mb-0">₱@report.GrossSales.ToString("N2")</h4>
+                        </div>
+                        <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 44px; height: 44px;">
+                            <i class="bi bi-wallet2 fs-4"></i>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="col-xl-3 col-sm-6">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-success border-4">
-                    <span class="text-muted small fw-semibold text-uppercase">Net Sales</span>
-                    <h3 class="fw-bold text-success mb-0 mt-1">₱@report.NetSales.ToString("N2")</h3>
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Net Sales</span>
+                            <h4 class="fw-bold text-success mb-0">₱@report.NetSales.ToString("N2")</h4>
+                        </div>
+                        <div class="d-flex align-items-center justify-content-center bg-success bg-opacity-10 text-success rounded-3" style="width: 44px; height: 44px;">
+                            <i class="bi bi-graph-up-arrow fs-4"></i>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="col-xl-3 col-sm-6">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-warning border-4">
-                    <span class="text-muted small fw-semibold text-uppercase">Total Discounts</span>
-                    <h3 class="fw-bold text-dark mb-0 mt-1">₱@report.TotalDiscounts.ToString("N2")</h3>
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Total Discounts</span>
+                            <h4 class="fw-bold text-dark mb-0">₱@report.TotalDiscounts.ToString("N2")</h4>
+                        </div>
+                        <div class="d-flex align-items-center justify-content-center bg-warning bg-opacity-10 text-warning rounded-3" style="width: 44px; height: 44px;">
+                            <i class="bi bi-tag-fill fs-4"></i>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="col-xl-3 col-sm-6">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-info border-4">
-                    <span class="text-muted small fw-semibold text-uppercase">Output VAT (12%)</span>
-                    <h3 class="fw-bold text-dark mb-0 mt-1">₱@report.OutputVat.ToString("N2")</h3>
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Output VAT (12%)</span>
+                            <h4 class="fw-bold text-dark mb-0">₱@report.OutputVat.ToString("N2")</h4>
+                        </div>
+                        <div class="d-flex align-items-center justify-content-center bg-info bg-opacity-10 text-info rounded-3" style="width: 44px; height: 44px;">
+                            <i class="bi bi-receipt fs-4"></i>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -90,20 +118,20 @@
         <!-- Secondary Summary Stats -->
         <div class="row g-3 mb-4">
             <div class="col-md-4">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-light">
-                    <span class="text-muted small">Completed Transactions</span>
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <span class="text-secondary small fw-semibold d-block mb-1">Completed Transactions</span>
                     <h4 class="fw-bold text-dark mb-0">@report.CompletedTransactionsCount</h4>
                 </div>
             </div>
             <div class="col-md-4">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-light">
-                    <span class="text-muted small">Average Transaction Value</span>
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <span class="text-secondary small fw-semibold d-block mb-1">Average Transaction Value</span>
                     <h4 class="fw-bold text-dark mb-0">₱@report.AverageTransactionValue.ToString("N2")</h4>
                 </div>
             </div>
             <div class="col-md-4">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-light">
-                    <span class="text-muted small">Total Payments Collected</span>
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <span class="text-secondary small fw-semibold d-block mb-1">Total Payments Collected</span>
                     <h4 class="fw-bold text-dark mb-0">₱@report.TotalPaymentsCollected.ToString("N2")</h4>
                 </div>
             </div>

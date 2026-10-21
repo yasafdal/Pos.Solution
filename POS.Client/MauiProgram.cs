@@ -64,7 +64,7 @@ namespace POS.Client
 #if DEBUG
             // Development only: match Outlets.DeviceIdentifier while the API stays on localhost.
             // Set to null to restore OS route detection. Never included in Release builds.
-            const string? developmentTerminalIp = "192.168.1.6";
+            const string? developmentTerminalIp = "192.168.30.127";
             builder.Services.AddScoped<ITerminalAddressProvider>(sp =>
                 new TerminalAddressProvider(sp.GetRequiredService<HttpClient>())
                 {
