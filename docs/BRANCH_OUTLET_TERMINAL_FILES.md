@@ -2,7 +2,7 @@
 
 Compared with the pre-task working tree, not only Git HEAD. The developer IP override is preserved.
 
-## created (36)
+## created (38)
 
 - `POS.Api/Controllers/TerminalsController.cs`
 - `POS.Api/Migrations/20261021141713_BranchOutletTerminal.Designer.cs`
@@ -24,6 +24,8 @@ Compared with the pre-task working tree, not only Git HEAD. The developer IP ove
 - `POS.Api/Models/PosDbContextFactory.cs`
 - `POS.Api/Models/Terminal.cs`
 - `POS.Api/Models/TerminalRecoveryLog.cs`
+- `POS.Api/wwwroot/uploads/products/0ebafeaf-d4da-4071-9e1a-e2931dd024c5.jpg`
+- `POS.Client/Components/Pages/DiscountModal.razor.css`
 - `POS.Client/Data/LocalHierarchyUpgrade.cs`
 - `POS.Shared/Interfaces/ITerminalService.cs`
 - `POS.Shared/Models/TerminalConfigDto.cs`
@@ -41,7 +43,7 @@ Compared with the pre-task working tree, not only Git HEAD. The developer IP ove
 - `docs/BRANCH_OUTLET_TERMINAL_PLAN.md`
 - `project_content.md`
 
-## modified (88)
+## modified (90)
 
 - `POS.Api/Controllers/AuthController.cs`
 - `POS.Api/Controllers/BranchesController.cs`
@@ -79,10 +81,12 @@ Compared with the pre-task working tree, not only Git HEAD. The developer IP ove
 - `POS.Api/Services/SequenceService.cs`
 - `POS.Client/Components/Layout/MainLayout.razor`
 - `POS.Client/Components/Pages/CashDrawer.razor`
+- `POS.Client/Components/Pages/DiscountModal.razor`
 - `POS.Client/Components/Pages/HeldSales.razor`
 - `POS.Client/Components/Pages/Login.razor`
 - `POS.Client/Components/Pages/MyShift.razor`
 - `POS.Client/Components/Pages/NewSale.razor`
+- `POS.Client/Components/Pages/NewSale.razor.css`
 - `POS.Client/Components/Pages/Transactions.razor`
 - `POS.Client/Data/LocalPosDbContext.cs`
 - `POS.Client/Data/LocalPosModels.cs`

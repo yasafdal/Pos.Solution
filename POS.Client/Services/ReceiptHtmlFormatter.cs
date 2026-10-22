@@ -117,23 +117,11 @@ public static class ReceiptHtmlFormatter
         Line(html, "Terminal: " + receipt.TerminalName);
         Line(html, "Cashier: " + receipt.CashierId);
         Line(html, "Date: " + Timestamp(receipt.CreatedAt));
-        if (receipt.PaidAt != receipt.CreatedAt && receipt.PaidAt > DateTime.MinValue)
-        {
-            Line(html, "Paid: " + Timestamp(receipt.PaidAt));
-        }
+        //if (receipt.PaidAt != receipt.CreatedAt && receipt.PaidAt > DateTime.MinValue)
+        //{
+        //    Line(html, "Paid: " + Timestamp(receipt.PaidAt));
+        //}
         html.Append("</div>");
-
-        // Customer Information (if present)
-        if (!string.IsNullOrWhiteSpace(receipt.CustomerName) || !string.IsNullOrWhiteSpace(receipt.CustomerTin))
-        {
-            html.Append("<hr class=\"dash\"><div class=\"cust-box\">");
-            html.Append("<div style=\"font-weight: bold; text-align: center; margin-bottom: 0.5mm;\">[CUSTOMER INFORMATION]</div>");
-            OptionalLine(html, receipt.CustomerName is null ? null : "Customer: " + receipt.CustomerName);
-            OptionalLine(html, receipt.CustomerAddress is null ? null : "Address: " + receipt.CustomerAddress);
-            OptionalLine(html, receipt.CustomerTin is null ? null : "TIN: " + receipt.CustomerTin);
-            OptionalLine(html, receipt.CustomerBusinessStyle is null ? null : "Bus. Style: " + receipt.CustomerBusinessStyle);
-            html.Append("</div>");
-        }
 
         // Items Section
         html.Append("<hr class=\"dash\"><div class=\"items-section\" aria-label=\"Items\">");
@@ -163,7 +151,6 @@ public static class ReceiptHtmlFormatter
         // Totals Section
         html.Append("<div class=\"totals-section\">");
         decimal totalItems = receipt.Items.Sum(i => i.Quantity);
-        Row(html, "Total Items", totalItems.ToString("0.###", CultureInfo.InvariantCulture));
         Row(html, "Subtotal", Money(receipt.Subtotal));
 
         if (receipt.VatableSales > 0 || receipt.VatExemptSales > 0 || receipt.VatAmount > 0)
@@ -196,13 +183,24 @@ public static class ReceiptHtmlFormatter
             foreach (var payment in receipt.Payments)
             {
                 Row(html, "Payment: " + payment.PaymentMethod, Money(payment.Amount));
-                Row(html, "Tendered", Money(payment.AmountTendered));
+                //Row(html, "Tendered", Money(payment.AmountTendered));
                 Row(html, "Change", Money(payment.ChangeAmount));
                 OptionalLine(html, payment.ReferenceNumber is null ? null : "Reference: " + payment.ReferenceNumber);
             }
             html.Append("</div>");
             html.Append("<hr class=\"dash\">");
         }
+
+        Row(html, "Total Items", totalItems.ToString("0.###", CultureInfo.InvariantCulture));
+
+        // Customer Information (always displayed; shows info if present, otherwise write-in underlines)
+        html.Append("<hr class=\"dash\"><div class=\"cust-box\">");
+        html.Append("<div style=\"font-weight: bold; text-align: center; margin-bottom: 0.5mm;\">[CUSTOMER INFORMATION]</div>");
+        Line(html, "Customer: " + (string.IsNullOrWhiteSpace(receipt.CustomerName) ? "____________________" : receipt.CustomerName));
+        Line(html, "Address: " + (string.IsNullOrWhiteSpace(receipt.CustomerAddress) ? "____________________" : receipt.CustomerAddress));
+        Line(html, "TIN: " + (string.IsNullOrWhiteSpace(receipt.CustomerTin) ? "____________________" : receipt.CustomerTin));
+        Line(html, "Bus. Style: " + (string.IsNullOrWhiteSpace(receipt.CustomerBusinessStyle) ? "____________________" : receipt.CustomerBusinessStyle));
+        html.Append("</div>");
 
         // Footer
         html.Append("<div class=\"footer\">");
