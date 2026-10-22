@@ -6,68 +6,104 @@
 @if (isDiscountModalOpen)
 {
     <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable discount-modal-dialog">
             <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
-                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                <!-- Header -->
+                <div class="modal-header border-bottom px-3 py-2.5 bg-white d-flex justify-content-between align-items-center">
                     <div>
-                        <h5 class="fw-bold text-dark mb-0">Apply Transaction Discount</h5>
-                        <small class="text-secondary">Select statutory or corporate discount per BIR regulations</small>
+                        <h5 class="fw-bold text-dark mb-0">Apply Discount</h5>
+                        <small class="text-muted">Select statutory or store discount</small>
                     </div>
-                    <button type="button" class="btn-close" @onclick="CloseDiscountModal" aria-label="Close"></button>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseDiscountModal" aria-label="Close"></button>
                 </div>
-                <div class="modal-body px-4 py-3">
+
+                <!-- Body (Single Vertical Scroll Container) -->
+                <div class="modal-body p-3">
                     @if (!string.IsNullOrEmpty(discountError))
                     {
-                        <div class="alert alert-danger py-2 mb-3" role="alert">@discountError</div>
+                        <div class="alert alert-danger py-2 mb-2 rounded-3 small" role="alert">
+                            @discountError
+                        </div>
                     }
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold text-dark">Select Discount Type</label>
-                        <div class="row g-2">
-                            @if (availableDiscounts != null)
+                    <!-- 5-Column Grid of Discounts -->
+                    @if (availableDiscounts != null)
+                    {
+                        <div class="discount-grid">
+                            @foreach (var dt in SortedDiscounts)
                             {
-                                @foreach (var dt in availableDiscounts)
-                                {
-                                    var isSelected = selectedDiscountCode == dt.Code;
-                                    <div class="col-6 col-md-4">
-                                        <button type="button" aria-pressed="@(isSelected ? "true" : "false")"
-                                                class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") w-100 py-3 fw-bold d-flex flex-column align-items-center justify-content-center"
-                                                @onclick="() => SelectDiscountType(dt)">
-                                            <span>@dt.Name</span>
-                                            <small class="d-block fw-normal mt-1" style="font-size: 0.75rem;">
-                                                @(dt.DiscountMethod == "PERCENTAGE" ? $"{dt.DiscountValue:0.##}%" : $"₱{dt.DiscountValue:N2}")
-                                            </small>
-                                        </button>
+                                var isSelected = selectedDiscountCode == dt.Code;
+                                <button type="button"
+                                        class="discount-item-btn @(isSelected ? "selected" : "")"
+                                        @onclick="() => SelectDiscountType(dt)"
+                                        aria-pressed="@(isSelected ? "true" : "false")">
+                                    @if (isSelected)
+                                    {
+                                        <i class="bi bi-check-circle-fill discount-check-icon"></i>
+                                    }
+                                    <div class="discount-icon-wrap">
+                                        <i class="bi @GetDiscountIcon(dt) discount-icon"></i>
                                     </div>
-                                }
+                                    <span class="discount-item-name" title="@dt.Name">@FormatDiscountName(dt.Name)</span>
+                                    <span class="discount-item-badge @GetBadgeColorClass(dt)">@GetBadgeText(dt)</span>
+                                </button>
                             }
                         </div>
-                    </div>
+                    }
 
+                    <!-- Beneficiary ID Input (Only when required) -->
                     @if (selectedDiscountType != null && selectedDiscountType.RequiresIdentification)
                     {
-                        <div class="mb-3 p-3 bg-light rounded-3 border">
-                            <label class="form-label fw-semibold text-dark">Beneficiary ID / Card Number <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control form-control-sm fw-bold" @bind="cardOrIdNumber" placeholder="Enter Senior Citizen / PWD ID number..." />
-                            <small class="text-muted mt-1 d-block">Required for BIR audit trail and compliance verification.</small>
+                        <div class="discount-input-box mt-3">
+                            <label class="form-label fw-semibold small text-dark mb-1">
+                                Beneficiary ID / Card Number <span class="text-danger">*</span>
+                            </label>
+                            <input type="text"
+                                   class="form-control"
+                                   @bind="cardOrIdNumber"
+                                   @bind:event="oninput"
+                                   placeholder="Enter ID number..." />
                         </div>
                     }
 
+                    <!-- Manual Discount Percentage (Only when Manual is selected) -->
                     @if (selectedDiscountType != null && selectedDiscountType.Code == "MANUAL")
                     {
-                        <div class="mb-3 p-3 bg-light rounded-3 border">
-                            <label class="form-label fw-semibold text-dark">Manual Discount Percentage (%) <span class="text-danger">*</span></label>
-                            <input type="number" min="0" max="100" step="0.5" class="form-control form-control-sm fw-bold" @bind="manualPercentage" />
+                        <div class="discount-input-box mt-3">
+                            <label class="form-label fw-semibold small text-dark mb-1">
+                                Discount Percentage (%) <span class="text-danger">*</span>
+                            </label>
+                            <div class="input-group" style="max-width: 180px;">
+                                <input type="number"
+                                       min="0"
+                                       max="100"
+                                       step="0.5"
+                                       class="form-control fw-bold"
+                                       @bind="manualPercentage" />
+                                <span class="input-group-text bg-light">%</span>
+                            </div>
                         </div>
                     }
                 </div>
-                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
-                    <button type="button" class="btn btn-outline-secondary px-4 fw-medium" @onclick="ClearDiscount">
-                        Remove Discount
-                    </button>
-                    <button type="button" class="btn btn-primary px-4 fw-bold shadow-sm" @onclick="ConfirmDiscount">
-                        Apply Discount
-                    </button>
+
+                <!-- Footer -->
+                <div class="modal-footer border-top bg-light px-3 py-2.5 d-flex justify-content-between align-items-center">
+                    <div>
+                        @if (Cart.ActiveDiscountCode != "NONE")
+                        {
+                            <button type="button" class="btn btn-outline-danger btn-sm" @onclick="ClearDiscount">
+                                Remove Discount
+                            </button>
+                        }
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary px-3" @onclick="CloseDiscountModal">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-primary px-4 fw-bold" @onclick="ConfirmDiscount">
+                            Apply
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -100,9 +136,11 @@
                 new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
                 new() { Code = "PWD", Name = "PWD (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
                 new() { Code = "BNPC", Name = "Basic Commodities (5%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 5, IsStatutory = true },
-                new() { Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10, RequiresIdentification = true }
+                new() { Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10, RequiresIdentification = true },
+                new() { Code = "MANUAL", Name = "Manual Custom Discount", DiscountCategory = "CUSTOM", DiscountMethod = "PERCENTAGE", DiscountValue = 0 }
             };
         }
+
         selectedDiscountCode = Cart.ActiveDiscountCode;
         selectedDiscountType = availableDiscounts.FirstOrDefault(d => d.Code == selectedDiscountCode) ?? availableDiscounts.First();
         cardOrIdNumber = Cart.CustomerCardNumber;
@@ -119,13 +157,88 @@
         discountError = null;
     }
 
+    private IEnumerable<DiscountTypeDto> SortedDiscounts
+    {
+        get
+        {
+            if (availableDiscounts == null) return Enumerable.Empty<DiscountTypeDto>();
+
+            // Keep all standard/statutory discounts in their order, but put custom/manual discount at the bottom
+            return availableDiscounts.OrderBy(d => IsCustomDiscount(d) ? 1 : 0);
+        }
+    }
+
+    private static bool IsCustomDiscount(DiscountTypeDto dt)
+    {
+        if (dt == null) return false;
+        var code = (dt.Code ?? "").ToUpperInvariant();
+        var cat = (dt.DiscountCategory ?? "").ToUpperInvariant();
+        var name = (dt.Name ?? "").ToLowerInvariant();
+
+        return code == "MANUAL" || cat == "CUSTOM" || name.Contains("manual") || name.Contains("custom");
+    }
+
+    private string FormatDiscountName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+        return System.Text.RegularExpressions.Regex.Replace(name, @"\s*\(\d+%\)\s*$", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+    }
+
+    private string GetBadgeText(DiscountTypeDto dt)
+    {
+        if (dt.Code == "NONE") return "0%";
+        if (dt.Code == "MANUAL") return manualPercentage > 0 ? $"{manualPercentage:0.##}%" : "Custom";
+        if (dt.DiscountMethod == "PERCENTAGE")
+        {
+            return dt.DiscountValue > 0 ? $"{dt.DiscountValue:0.##}%" : "0%";
+        }
+        return $"₱{dt.DiscountValue:N2}";
+    }
+
+    private string GetBadgeColorClass(DiscountTypeDto dt)
+    {
+        var code = (dt.Code ?? "").ToUpperInvariant();
+        if (code == "NONE") return "badge-slate";
+        if (code == "MANUAL") return "badge-purple";
+
+        if (dt.DiscountMethod == "PERCENTAGE")
+        {
+            if (dt.DiscountValue >= 20) return "badge-green";
+            if (dt.DiscountValue >= 10) return "badge-blue";
+            if (dt.DiscountValue > 0) return "badge-amber";
+            return "badge-slate";
+        }
+
+        if (dt.DiscountValue > 0) return "badge-green";
+        return "badge-slate";
+    }
+
+    private string GetDiscountIcon(DiscountTypeDto dt)
+    {
+        var code = (dt.Code ?? "").ToUpperInvariant();
+        var name = (dt.Name ?? "").ToLowerInvariant();
+
+        if (code == "NONE") return "bi-slash-circle";
+        if (code == "SC" || name.Contains("senior")) return "bi-person-heart";
+        if (code == "PWD" || name.Contains("disability")) return "bi-person-wheelchair";
+        if (code == "BNPC" || name.Contains("basic")) return "bi-basket2";
+        if (code == "SOLO_PARENT" || name.Contains("solo")) return "bi-people";
+        if (code == "ATHLETE" || name.Contains("athlete")) return "bi-trophy";
+        if (code == "VALOR" || name.Contains("valor")) return "bi-shield-check";
+        if (code == "EMPLOYEE" || name.Contains("employee") || name.Contains("staff")) return "bi-person-badge";
+        if (code == "PROMO" || name.Contains("promo")) return "bi-tag";
+        if (code == "MANUAL" || name.Contains("manual")) return "bi-sliders";
+
+        return "bi-percent";
+    }
+
     private async Task ConfirmDiscount()
     {
         if (selectedDiscountType == null) return;
 
         if (selectedDiscountType.RequiresIdentification && string.IsNullOrWhiteSpace(cardOrIdNumber))
         {
-            discountError = $"Beneficiary ID or Card Number is required for {selectedDiscountType.Name}.";
+            discountError = $"Beneficiary ID or Card Number is required for {FormatDiscountName(selectedDiscountType.Name)}.";
             return;
         }
 

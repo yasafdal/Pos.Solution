@@ -1,0 +1,191 @@
+/* ==========================================================================
+   Discount Modal - 5-Column Gridbox Layout
+   ========================================================================== */
+
+.discount-modal-dialog {
+    max-width: 960px;
+    width: 95%;
+    margin: 1.5rem auto;
+}
+
+/* 5-Column Grid of Discount Tiles */
+.discount-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75rem;
+    width: 100%;
+}
+
+@media (max-width: 991px) {
+    .discount-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 576px) {
+    .discount-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.discount-item-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 120px;
+    padding: 0.9rem 0.6rem 0.75rem;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 14px;
+    background-color: #ffffff;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    user-select: none;
+    position: relative;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.discount-item-btn:hover:not(.selected) {
+    background-color: #f8fafc;
+    border-color: #93c5fd;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.06);
+}
+
+.discount-item-btn.selected {
+    background-color: #eff6ff;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 1.5px #2563eb, 0 4px 8px -2px rgba(37, 99, 235, 0.15);
+}
+
+.discount-check-icon {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    font-size: 1.05rem;
+    color: #2563eb;
+}
+
+.discount-icon-wrap {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: #f1f5f9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 0.4rem;
+    transition: all 0.15s ease;
+}
+
+.discount-item-btn.selected .discount-icon-wrap {
+    background: #dbeafe;
+}
+
+.discount-icon {
+    font-size: 1.45rem;
+    color: #475569;
+}
+
+.discount-item-btn.selected .discount-icon {
+    color: #2563eb;
+}
+
+.discount-item-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #1e293b;
+    line-height: 1.25;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    height: 2.5em;
+    margin-bottom: 0.35rem;
+    text-align: center;
+}
+
+.discount-item-btn.selected .discount-item-name {
+    color: #1d4ed8;
+}
+
+.discount-item-badge {
+    font-size: 0.75rem;
+    font-weight: 800;
+    padding: 0.22rem 0.65rem;
+    border-radius: 6px;
+    letter-spacing: 0.02em;
+    transition: all 0.15s ease-in-out;
+    display: inline-block;
+}
+
+/* Vibrant color themes for badges */
+.discount-item-badge.badge-green {
+    background-color: #dcfce7;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+}
+
+.discount-item-badge.badge-blue {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+}
+
+.discount-item-badge.badge-amber {
+    background-color: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+}
+
+.discount-item-badge.badge-purple {
+    background-color: #f3e8ff;
+    color: #7e22ce;
+    border: 1px solid #e9d5ff;
+}
+
+.discount-item-badge.badge-slate {
+    background-color: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+}
+
+/* Selected states for badges (solid fill for maximum contrast & punch) */
+.discount-item-btn.selected .discount-item-badge.badge-green {
+    background-color: #16a34a;
+    color: #ffffff;
+    border-color: #16a34a;
+}
+
+.discount-item-btn.selected .discount-item-badge.badge-blue {
+    background-color: #2563eb;
+    color: #ffffff;
+    border-color: #2563eb;
+}
+
+.discount-item-btn.selected .discount-item-badge.badge-amber {
+    background-color: #d97706;
+    color: #ffffff;
+    border-color: #d97706;
+}
+
+.discount-item-btn.selected .discount-item-badge.badge-purple {
+    background-color: #9333ea;
+    color: #ffffff;
+    border-color: #9333ea;
+}
+
+.discount-item-btn.selected .discount-item-badge.badge-slate {
+    background-color: #64748b;
+    color: #ffffff;
+    border-color: #64748b;
+}
+
+.discount-input-box {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+}

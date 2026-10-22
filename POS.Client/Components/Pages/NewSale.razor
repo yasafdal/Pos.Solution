@@ -98,19 +98,22 @@ else
             <!-- Categories Bar -->
             <div class="categories-bar mb-3">
                 <button type="button"
-                        class="category-pill @(selectedCategoryId == null ? "active" : "")"
+                        class="category-pill all-categories @(selectedCategoryId == null ? "active" : "")"
                         aria-pressed="@(selectedCategoryId == null ? "true" : "false")"
                         @onclick="() => SelectCategory(null)">
-                    All Categories
+                    <i class="bi bi-grid-fill me-1" style="font-size: 0.8rem;"></i>
+                    <span>All Categories</span>
                 </button>
                 @foreach (var cat in categories)
                 {
+                    var catColor = CategoryColor.Normalize(cat.ColorHex);
+                    var isSelected = selectedCategoryId == cat.CategoryId;
                     <button type="button"
-                            class="category-pill category-colored @(selectedCategoryId == cat.CategoryId ? "active" : "")"
-                            style="--category-color: @CategoryColor.Normalize(cat.ColorHex)"
-                            aria-pressed="@(selectedCategoryId == cat.CategoryId ? "true" : "false")"
+                            class="category-pill category-colored @(isSelected ? "active" : "")"
+                            style="--category-color: @catColor;"
+                            aria-pressed="@(isSelected ? "true" : "false")"
                             @onclick="() => SelectCategory(cat.CategoryId)">
-                        @cat.Name
+                        <span>@cat.Name</span>
                     </button>
                 }
             </div>
@@ -149,17 +152,11 @@ else
                                     else
                                     {
                                         <div class="product-placeholder-icon">
-                                            <i class="bi bi-box-seam fs-2 text-secondary"></i>
+                                            <i class="bi @GetProductCategoryIcon(product) fs-2 text-secondary"></i>
                                         </div>
                                     }
                                 </div>
                                 <div class="product-info">
-                                    <div class="product-category-wrap">
-                                        <span class="product-category-chip" title="@GetCategoryName(product.CategoryId)">
-                                            <span class="category-dot" style="background-color: @GetCategoryColor(product.CategoryId)"></span>
-                                            <span class="category-name-text text-truncate">@GetCategoryName(product.CategoryId)</span>
-                                        </span>
-                                    </div>
                                     <div class="product-name" title="@product.Name">@product.Name</div>
                                     <div class="product-bottom">
                                         <span class="product-price">₱@product.Price.ToString("N2")</span>
@@ -361,15 +358,26 @@ else
                     <!-- Modal Header -->
                     <div class="modal-header border-bottom px-4 py-3 bg-white d-flex justify-content-between align-items-center">
                         <div class="d-flex align-items-center gap-3">
-                            <div class="customization-product-icon">
-                                <i class="bi bi-cup-hot-fill fs-3 text-primary"></i>
-                            </div>
+                            @if (!string.IsNullOrWhiteSpace(customizingProduct.ImageUrl))
+                            {
+                                <img src="@GetImageUrl(customizingProduct.ImageUrl)"
+                                     alt="@customizingProduct.Name"
+                                     class="customization-product-img" />
+                            }
+                            else
+                            {
+                                var catColor = GetCategoryColor(customizingProduct.CategoryId);
+                                <div class="customization-product-icon" style="background-color: @(catColor)1a; color: @catColor;">
+                                    <i class="bi @GetProductCategoryIcon(customizingProduct) fs-3"></i>
+                                </div>
+                            }
                             <div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
                                     <h5 class="modal-title fw-bold text-dark mb-0">Customize @customizingProduct.Name</h5>
                                     @if (!string.IsNullOrEmpty(customizingProduct.CategoryName))
                                     {
-                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-2.5 py-1">
+                                        var catColor = GetCategoryColor(customizingProduct.CategoryId);
+                                        <span class="badge rounded-pill px-2.5 py-1" style="background-color: @(catColor)1a; color: @catColor; border: 1px solid @(catColor)33;">
                                             @customizingProduct.CategoryName
                                         </span>
                                     }
@@ -400,34 +408,14 @@ else
                         {
                             var set = selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var s) ? s : new HashSet<int>();
                             var isSugar = IsSugarGroup(group);
+                            var groupVisuals = GetModifierGroupVisuals(group);
 
                             <div class="modifier-group-section mb-4 p-3 bg-white rounded-4 border shadow-sm">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
                                     <div class="d-flex align-items-center gap-2">
-                                        @if (isSugar)
-                                        {
-                                            <div class="group-icon-pill bg-warning-subtle text-warning">
-                                                <i class="bi bi-droplet-half fs-5"></i>
-                                            </div>
-                                        }
-                                        else if (IsSizeGroup(group))
-                                        {
-                                            <div class="group-icon-pill bg-primary-subtle text-primary">
-                                                <i class="bi bi-cup-straw fs-5"></i>
-                                            </div>
-                                        }
-                                        else if (IsIceGroup(group))
-                                        {
-                                            <div class="group-icon-pill bg-info-subtle text-info">
-                                                <i class="bi bi-snow fs-5"></i>
-                                            </div>
-                                        }
-                                        else
-                                        {
-                                            <div class="group-icon-pill bg-secondary-subtle text-secondary">
-                                                <i class="bi bi-sliders fs-5"></i>
-                                            </div>
-                                        }
+                                        <div class="group-icon-pill @groupVisuals.PillClass">
+                                            <i class="bi @groupVisuals.IconClass fs-5"></i>
+                                        </div>
                                         <div>
                                             <h6 class="fw-bold text-dark mb-0">
                                                 @group.ModifierGroupName
@@ -590,211 +578,388 @@ else
 
 @if (isPaymentModalOpen && currentOrderResponse != null)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
-            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
-                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.55); backdrop-filter: blur(4px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered pos-payment-modal-dialog">
+            <div class="modal-content pos-payment-modal-content">
+                <!-- Modal Header -->
+                <div class="pos-payment-header">
                     <div>
-                        <h5 class="modal-title fw-bold text-dark mb-0">Payment Processing</h5>
-                        <small class="text-muted">Order: @currentOrderResponse.OrderNumber</small>
+                        <div class="d-flex align-items-center gap-2">
+                            <h5 class="modal-title fw-bold text-dark mb-0">Payment Processing</h5>
+                            @if (isOffline)
+                            {
+                                <span class="badge bg-warning text-dark fw-semibold" style="font-size: 0.7rem;">OFFLINE CASH ONLY</span>
+                            }
+                        </div>
+                        <span class="text-muted small">Order: <strong class="text-dark">@currentOrderResponse.OrderNumber</strong></span>
                     </div>
                     <div class="d-flex align-items-center gap-2">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" id="splitPaymentSwitch" checked="@isSplitPaymentMode" @onchange="@(e => ToggleSplitPayment(e.Value is bool b ? b : (bool.TryParse(e.Value?.ToString(), out var res) && res)))" />
-                            <label class="form-check-label fw-semibold small text-primary" for="splitPaymentSwitch">Split Payment</label>
-                        </div>
-                        <button type="button" class="btn-close" @onclick="ClosePaymentModal" aria-label="Close"></button>
+                        <!-- Touch-friendly Split Bill Toggle Pill -->
+                        <button type="button" 
+                                class="pos-split-pill-toggle @(isSplitPaymentMode ? "active" : "")"
+                                @onclick="() => ToggleSplitPayment(!isSplitPaymentMode)"
+                                role="switch"
+                                aria-checked="@(isSplitPaymentMode ? "true" : "false")"
+                                title="Toggle Split Bill Mode">
+                            <span class="pos-split-pill-track">
+                                <span class="pos-split-pill-thumb"></span>
+                            </span>
+                            <span class="pos-split-pill-text">Split Bill</span>
+                            <span class="pos-split-pill-badge">@(isSplitPaymentMode ? "ON" : "OFF")</span>
+                        </button>
+
+                        <div class="vr mx-1" style="height: 26px; opacity: 0.2;"></div>
+
+                        <!-- Touch-friendly Close Button -->
+                        <button type="button" class="pos-modal-close-btn" @onclick="ClosePaymentModal" aria-label="Close" title="Close (Cancel)">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
                     </div>
                 </div>
-                <div class="modal-body px-4 py-4">
+
+                <!-- Modal Body (Single Scroll Container, No Double Scroll) -->
+                <div class="pos-payment-body">
                     @if (!string.IsNullOrEmpty(paymentError))
                     {
-                        <div class="alert alert-danger py-2 mb-3" role="alert">@paymentError</div>
-                    }
-                    <div class="mb-3 text-center bg-light p-3 rounded-3">
-                        <span class="text-muted small d-block">Total Amount Due</span>
-                        <h2 class="fw-bold text-primary mb-0">₱@currentOrderResponse.TotalAmount.ToString("N2")</h2>
-                        @if (isSplitPaymentMode)
-                        {
-                            var remaining = currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount);
-                            <div class="mt-2 d-flex justify-content-center gap-3 small">
-                                <span class="text-success fw-semibold">Paid: ₱@paymentSplits.Sum(s => s.Amount).ToString("N2")</span>
-                                <span class="text-danger fw-semibold">Remaining: ₱@remaining.ToString("N2")</span>
-                            </div>
-                        }
-                    </div>
-
-                    <!-- Customer Information Section (BIR / EOPT Compliant) -->
-                    <div class="card border mb-3 bg-light rounded-3">
-                        <div class="card-header bg-white py-2 px-3 d-flex justify-content-between align-items-center" style="cursor:pointer" @onclick="() => showCustomerDetailsAccordion = !showCustomerDetailsAccordion">
-                            <span class="fw-semibold small text-dark">Customer Information (Optional / B2B)</span>
-                            <span class="small text-primary">@(showCustomerDetailsAccordion ? "▲ Hide" : "▼ Add / Edit")</span>
+                        <div class="alert alert-danger py-2 px-3 mb-3 d-flex align-items-center gap-2 small rounded-3" role="alert">
+                            <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+                            <div>@paymentError</div>
                         </div>
-                        @if (showCustomerDetailsAccordion)
-                        {
-                            <div class="card-body p-3">
-                                <div class="row g-2">
-                                    <div class="col-12">
-                                        <label class="form-label small fw-semibold mb-1">Customer Name</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerName" @bind:event="oninput" placeholder="Walk-In / Company Name" />
-                                    </div>
-                                    <div class="col-12">
-                                        <label class="form-label small fw-semibold mb-1">Address</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerAddress" @bind:event="oninput" placeholder="Customer billing address" />
-                                    </div>
-                                    <div class="col-6">
-                                        <label class="form-label small fw-semibold mb-1">TIN</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerTin" @bind:event="oninput" placeholder="Taxpayer ID Number" />
-                                    </div>
-                                    <div class="col-6">
-                                        <label class="form-label small fw-semibold mb-1">Business Style</label>
-                                        <input type="text" class="form-control form-control-sm" @bind="customerBusinessStyle" @bind:event="oninput" placeholder="e.g. Restaurant, Retail" />
-                                    </div>
-                                </div>
-                            </div>
-                        }
-                    </div>
+                    }
 
-                    @if (isSplitPaymentMode)
-                    {
-                        @if (paymentSplits.Any())
-                        {
-                            <div class="mb-3">
-                                <label class="form-label fw-semibold text-dark small">Applied Splits</label>
-                                <div class="list-group">
-                                    @for (int i = 0; i < paymentSplits.Count; i++)
-                                    {
-                                        var idx = i;
-                                        var split = paymentSplits[idx];
-                                        <div class="list-group-item d-flex justify-content-between align-items-center py-2">
-                                            <div>
-                                                <span class="fw-bold">@split.PaymentMethod</span>: ₱@split.Amount.ToString("N2")
-                                                @if (!string.IsNullOrEmpty(split.ReferenceNumber))
-                                                {
-                                                    <small class="text-muted ms-2">(Ref: @split.ReferenceNumber)</small>
-                                                }
-                                            </div>
-                                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemovePaymentSplit(idx)">Remove</button>
+                    <div class="pos-payment-grid">
+                        <!-- LEFT COLUMN: Due Card + Payment Methods + Customer Info -->
+                        <div class="pos-payment-left-col">
+                            <!-- Hero Amount Due Card -->
+                            <div class="pos-due-card">
+                                <div class="pos-due-label">TOTAL AMOUNT DUE</div>
+                                <div class="pos-due-amount">₱@currentOrderResponse.TotalAmount.ToString("N2")</div>
+                                @if (isSplitPaymentMode)
+                                {
+                                    var paid = paymentSplits.Sum(s => s.Amount);
+                                    var remaining = currentOrderResponse.TotalAmount - paid;
+                                    <div class="pos-split-progress-wrap mt-2">
+                                        <div class="d-flex justify-content-between small text-white-50 mb-1">
+                                            <span>Paid: ₱@paid.ToString("N2")</span>
+                                            <span class="@(remaining <= 0.01m ? "text-success fw-bold" : "text-warning fw-semibold")">
+                                                Remaining: ₱@(Math.Max(0m, remaining).ToString("N2"))
+                                            </span>
                                         </div>
-                                    }
-                                </div>
+                                        <div class="progress" style="height: 5px; background: rgba(255,255,255,0.25);">
+                                            <div class="progress-bar bg-success" style="width: @(Math.Min(100, currentOrderResponse.TotalAmount > 0 ? (paid / currentOrderResponse.TotalAmount * 100) : 0))%"></div>
+                                        </div>
+                                    </div>
+                                }
                             </div>
-                        }
 
-                        @if (currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount) > 0.01m)
-                        {
-                            <div class="card border bg-light p-3 mb-3">
-                                <h6 class="fw-bold text-dark mb-2">Add Payment Split</h6>
-                                <div class="mb-2">
-                                    <label class="form-label small fw-semibold">Method</label>
-                                    <div class="row g-2">
+                            @if (!isSplitPaymentMode)
+                            {
+                                <!-- Payment Method Selector Tiles -->
+                                <div class="mt-3">
+                                    <label class="pos-section-label">PAYMENT METHOD</label>
+                                    <div class="pos-methods-grid">
                                         @foreach (var pm in (paymentMethods.Any() ? paymentMethods : new List<PaymentMethodDto> { new() { Code = "CASH", Name = "Cash", RequiresReference = false } }))
                                         {
-                                            var isSelected = currentSplitMethod?.Code == pm.Code;
-                                            <div class="col-6">
-                                                <button type="button" class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") btn-sm w-100 py-2 fw-bold" @onclick="() => currentSplitMethod = pm">
-                                                    @pm.Name
-                                                </button>
-                                            </div>
+                                            var isSelected = selectedPaymentMethod?.Code == pm.Code;
+                                            <button type="button" class="pos-method-card @(isSelected ? "selected" : "")"
+                                                    disabled="@isProcessingPayment"
+                                                    @onclick="() => SelectPaymentMethod(pm)"
+                                                    aria-pressed="@(isSelected ? "true" : "false")">
+                                                <div class="pos-method-icon-wrap">
+                                                    <i class="bi @GetPaymentMethodIcon(pm)"></i>
+                                                </div>
+                                                <div class="pos-method-info">
+                                                    <span class="pos-method-name">@pm.Name</span>
+                                                    <span class="pos-method-badge">@(pm.RequiresReference ? "Ref Required" : "Instant")</span>
+                                                </div>
+                                                @if (isSelected)
+                                                {
+                                                    <i class="bi bi-check-circle-fill pos-method-check"></i>
+                                                }
+                                            </button>
                                         }
                                     </div>
                                 </div>
-
-                                <div class="mb-2">
-                                    <label class="form-label small fw-semibold">Split Amount (₱)</label>
-                                    <input type="number" min="0.01" step="0.01" class="form-control form-control-sm fw-bold" @bind="currentSplitAmount" @bind:event="oninput" />
-                                </div>
-
-                                @if (currentSplitMethod?.RequiresReference == true)
-                                {
-                                    <div class="mb-2">
-                                        <label class="form-label small fw-semibold">Reference Number <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control form-control-sm" @bind="currentSplitRef" @bind:event="oninput" placeholder="Reference or approval code..." />
-                                    </div>
-                                }
-
-                                <button type="button" class="btn btn-dark btn-sm w-100 fw-bold mt-2" @onclick="AddPaymentSplit">+ Add This Split</button>
-                            </div>
-                        }
-                    }
-                    else
-                    {
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold text-dark">Payment Method</label>
-                            <div class="row g-2">
-                                @if (paymentMethods.Any())
-                                {
-                                    @foreach (var pm in paymentMethods)
+                            }
+                            else
+                            {
+                                <!-- Applied Splits List in Left Column -->
+                                <div class="mt-3">
+                                    <label class="pos-section-label">APPLIED SPLITS (@paymentSplits.Count)</label>
+                                    @if (!paymentSplits.Any())
                                     {
-                                        var isSelected = selectedPaymentMethod?.Code == pm.Code;
-                                        <div class="col-6 col-md-3">
-                                            <button type="button" aria-pressed="@(isSelected ? "true" : "false")"
-                                                    class="btn @(isSelected ? "btn-primary" : "btn-outline-primary") w-100 h-100 py-3 fw-bold d-flex flex-column align-items-center justify-content-center"
-                                                    disabled="@isProcessingPayment"
-                                                    @onclick="() => selectedPaymentMethod = pm">
-                                                <span>@pm.Name @(isSelected ? "✓" : "")</span>
-                                                @if (pm.RequiresReference)
-                                                {
-                                                    <small class="d-block fw-normal text-muted mt-1" style="font-size: 0.75rem;">Ref Required</small>
-                                                }
-                                                else
-                                                {
-                                                    <small class="d-block fw-normal text-transparent mt-1" style="font-size: 0.75rem; visibility: hidden;">Cash</small>
-                                                }
-                                            </button>
+                                        <div class="text-muted small text-center p-3 bg-light rounded-3 border border-dashed">
+                                            No splits added yet. Add a payment split from the right panel.
                                         </div>
                                     }
+                                    else
+                                    {
+                                        <div class="pos-splits-list">
+                                            @for (int i = 0; i < paymentSplits.Count; i++)
+                                            {
+                                                var idx = i;
+                                                var split = paymentSplits[idx];
+                                                <div class="pos-split-item">
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <i class="bi @GetPaymentMethodIconByCode(split.PaymentMethod) text-primary"></i>
+                                                        <div>
+                                                            <div class="fw-bold small text-dark">@split.PaymentMethod</div>
+                                                            @if (!string.IsNullOrEmpty(split.ReferenceNumber))
+                                                            {
+                                                                <div class="text-muted" style="font-size: 0.7rem;">Ref: @split.ReferenceNumber</div>
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <span class="fw-bold text-dark small">₱@split.Amount.ToString("N2")</span>
+                                                        <button type="button" class="btn btn-sm btn-outline-danger p-1 line-height-1" title="Remove" @onclick="() => RemovePaymentSplit(idx)">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+
+                            <!-- Optional Customer / Tax Info (BIR EOPT Compliant) -->
+                            <div class="pos-customer-wrap mt-3">
+                                <button type="button" class="pos-customer-toggle" @onclick="() => showCustomerDetailsAccordion = !showCustomerDetailsAccordion">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <i class="bi bi-person-lines-fill text-muted"></i>
+                                        <span class="small fw-semibold text-secondary">Customer & Invoice Details (Optional)</span>
+                                    </div>
+                                    <i class="bi @(showCustomerDetailsAccordion ? "bi-chevron-up" : "bi-chevron-down") text-muted small"></i>
+                                </button>
+                                @if (showCustomerDetailsAccordion)
+                                {
+                                    <div class="pos-customer-form mt-2">
+                                        <div class="row g-2">
+                                            <div class="col-12">
+                                                <label class="form-label mb-0 text-muted" style="font-size: 0.7rem;">Customer / Company Name</label>
+                                                <input type="text" class="form-control form-control-sm" @bind="customerName" @bind:event="oninput" placeholder="Walk-in / Company name" />
+                                            </div>
+                                            <div class="col-12">
+                                                <label class="form-label mb-0 text-muted" style="font-size: 0.7rem;">Billing Address</label>
+                                                <input type="text" class="form-control form-control-sm" @bind="customerAddress" @bind:event="oninput" placeholder="Customer address" />
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label mb-0 text-muted" style="font-size: 0.7rem;">TIN</label>
+                                                <input type="text" class="form-control form-control-sm" @bind="customerTin" @bind:event="oninput" placeholder="000-000-000-000" />
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label mb-0 text-muted" style="font-size: 0.7rem;">Business Style</label>
+                                                <input type="text" class="form-control form-control-sm" @bind="customerBusinessStyle" @bind:event="oninput" placeholder="e.g. Retail" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- RIGHT COLUMN: Tender Action Panel -->
+                        <div class="pos-payment-right-col">
+                            @if (isSplitPaymentMode)
+                            {
+                                var remaining = currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount);
+                                @if (remaining > 0.01m)
+                                {
+                                    <div class="pos-action-panel">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <label class="pos-section-label mb-0">ADD SPLIT PAYMENT</label>
+                                            <span class="badge bg-primary bg-opacity-10 text-primary fw-semibold" style="font-size: 0.75rem;">
+                                                Due: ₱@remaining.ToString("N2")
+                                            </span>
+                                        </div>
+
+                                        <!-- Split Method Selector -->
+                                        <div class="row g-1 mb-3">
+                                            @foreach (var pm in (paymentMethods.Any() ? paymentMethods : new List<PaymentMethodDto> { new() { Code = "CASH", Name = "Cash", RequiresReference = false } }))
+                                            {
+                                                var isSelected = currentSplitMethod?.Code == pm.Code;
+                                                <div class="col-6">
+                                                    <button type="button" class="btn btn-sm w-100 py-2 d-flex align-items-center justify-content-center gap-2 fw-semibold @(isSelected ? "btn-primary" : "btn-outline-secondary")"
+                                                            @onclick="() => currentSplitMethod = pm">
+                                                        <i class="bi @GetPaymentMethodIcon(pm)"></i>
+                                                        <span>@pm.Name</span>
+                                                    </button>
+                                                </div>
+                                            }
+                                        </div>
+
+                                        <!-- Split Amount Input -->
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-semibold text-dark mb-1">Split Amount (₱)</label>
+                                            <div class="pos-tender-input-wrap">
+                                                <span class="pos-currency-symbol">₱</span>
+                                                <input type="number" min="0.01" step="0.01" inputmode="decimal" class="pos-tender-input"
+                                                       @bind="currentSplitAmount" @bind:event="oninput" />
+                                                <button type="button" class="pos-input-pill-btn" @onclick="() => currentSplitAmount = Math.Max(0m, remaining)">
+                                                    Max
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Reference If Required -->
+                                        @if (currentSplitMethod?.RequiresReference == true)
+                                        {
+                                            <div class="mb-3">
+                                                <label class="form-label small fw-semibold text-dark mb-1">
+                                                    Reference / Approval Code <span class="text-danger">*</span>
+                                                </label>
+                                                <input type="text" class="form-control" @bind="currentSplitRef" @bind:event="oninput" placeholder="Enter reference number..." />
+                                            </div>
+                                        }
+
+                                        <button type="button" class="btn btn-dark w-100 py-2 fw-bold d-flex align-items-center justify-content-center gap-2 rounded-3 mt-2" @onclick="AddPaymentSplit">
+                                            <i class="bi bi-plus-circle"></i>
+                                            <span>Add This Split</span>
+                                        </button>
+                                    </div>
                                 }
                                 else
                                 {
-                                    <div class="col-4">
-                                        <button type="button" aria-pressed="true" class="btn btn-outline-primary w-100 py-3 fw-bold" disabled="@isProcessingPayment">
-                                            Cash ✓
-                                        </button>
+                                    <div class="pos-action-panel text-center p-4">
+                                        <div class="text-success mb-2" style="font-size: 2.5rem;">
+                                            <i class="bi bi-check-circle-fill"></i>
+                                        </div>
+                                        <h6 class="fw-bold text-dark mb-1">Splits Fully Balanced</h6>
+                                        <p class="text-muted small mb-0">Total amount is covered. Click "Confirm Payment" below to complete transaction.</p>
                                     </div>
                                 }
-                            </div>
-                        </div>
+                            }
+                            else if (selectedPaymentMethod != null && selectedPaymentMethod.RequiresReference)
+                            {
+                                <!-- CARD / E-WALLET / DIGITAL TENDER -->
+                                <div class="pos-action-panel">
+                                    <div class="d-flex align-items-center gap-3 p-3 bg-light rounded-3 mb-3 border">
+                                        <div class="pos-ref-icon-wrap">
+                                            <i class="bi @GetPaymentMethodIcon(selectedPaymentMethod) text-primary fs-3"></i>
+                                        </div>
+                                        <div>
+                                            <h6 class="fw-bold text-dark mb-0">@selectedPaymentMethod.Name</h6>
+                                            <div class="text-muted small">Exact charge: <strong class="text-primary">₱@currentOrderResponse.TotalAmount.ToString("N2")</strong></div>
+                                        </div>
+                                    </div>
 
-                        @if (selectedPaymentMethod != null && selectedPaymentMethod.RequiresReference)
-                        {
-                            <div class="mb-3">
-                                <label for="ref-number" class="form-label fw-semibold text-dark">Reference Number / Approval Code <span class="text-danger">*</span></label>
-                                <input id="ref-number" type="text" @bind="referenceNumber" @bind:event="oninput" disabled="@isProcessingPayment" class="form-control form-control-lg fw-bold" placeholder="Enter transaction ref or approval code..." />
-                            </div>
-                        }
-                        else
-                        {
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold text-dark">Quick Cash Tendered</label>
-                            <div class="row g-2 mb-2">
-                                @foreach (var amt in GetSuggestedAmounts(currentOrderResponse.TotalAmount))
-                                {
-                                    <div class="col-6 col-sm-3">
-                                        <button type="button" aria-pressed="@(cashTendered == amt ? "true" : "false")" disabled="@isProcessingPayment" class="btn @(cashTendered == amt ? "btn-primary" : "btn-outline-primary") w-100 h-100 fw-bold py-3" @onclick="() => cashTendered = amt">
-                                            @(amt == currentOrderResponse.TotalAmount ? $"Exact (₱{amt:N2})" : $"₱{amt:N0}")
-                                        </button>
+                                    <div class="mb-3">
+                                        <label for="ref-number" class="pos-section-label">
+                                            REFERENCE / APPROVAL CODE <span class="text-danger">*</span>
+                                        </label>
+                                        <div class="position-relative">
+                                            <input id="ref-number" type="text" @bind="referenceNumber" @bind:event="oninput"
+                                                   disabled="@isProcessingPayment"
+                                                   class="form-control form-control-lg fw-bold ps-3"
+                                                   placeholder="Enter terminal ref or approval code..." />
+                                        </div>
+                                        <div class="form-text small text-muted mt-2">
+                                            <i class="bi bi-info-circle me-1"></i> Check POS terminal receipt slip or customer's e-wallet success screen.
+                                        </div>
                                     </div>
-                                }
-                            </div>
-                            <label for="cash-tendered" class="form-label">Amount Tendered (₱)</label>
-                            <input id="cash-tendered" type="number" min="0" step="0.01" inputmode="decimal" disabled="@isProcessingPayment" class="form-control form-control-lg fw-bold" @bind="cashTendered" @bind:event="oninput" placeholder="Enter amount tendered..." />
+                                </div>
+                            }
+                            else
+                            {
+                                <!-- CASH TENDER -->
+                                <div class="pos-action-panel">
+                                    <!-- Quick Cash Suggestions -->
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <label class="pos-section-label mb-0">QUICK TENDER SHORTCUTS</label>
+                                    </div>
+                                    <div class="pos-quick-cash-row">
+                                        @foreach (var amt in GetSuggestedAmounts(currentOrderResponse.TotalAmount))
+                                        {
+                                            var isExact = amt == currentOrderResponse.TotalAmount;
+                                            var isSelected = cashTendered == amt;
+                                            <button type="button"
+                                                    class="pos-quick-cash-btn @(isExact ? "exact" : "") @(isSelected ? "active" : "")"
+                                                    disabled="@isProcessingPayment"
+                                                    @onclick="() => cashTendered = amt">
+                                                @(isExact ? $"Exact (₱{amt:N2})" : $"₱{amt:N0}")
+                                            </button>
+                                        }
+                                    </div>
+
+                                    <!-- Amount Tendered Input -->
+                                    <div class="mb-2">
+                                        <label for="cash-tendered" class="pos-section-label">AMOUNT TENDERED</label>
+                                        <div class="pos-tender-input-wrap">
+                                            <span class="pos-currency-symbol">₱</span>
+                                            <input id="cash-tendered" type="number" min="0" step="0.01" inputmode="decimal"
+                                                   disabled="@isProcessingPayment"
+                                                   class="pos-tender-input"
+                                                   @bind="cashTendered" @bind:event="oninput"
+                                                   placeholder="0.00" />
+                                            <button type="button" class="pos-input-pill-btn" title="Set to Exact Amount"
+                                                    @onclick="() => cashTendered = currentOrderResponse.TotalAmount">
+                                                Exact
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Quick Bill Denominations (+20, +50, +100, +500, +1000) -->
+                                    <div class="pos-denominations-wrap mb-3">
+                                        <span class="text-muted small fw-semibold me-2" style="font-size: 0.72rem;">Add Bills:</span>
+                                        <div class="d-flex gap-1 flex-wrap">
+                                            @foreach (var bill in new[] { 20m, 50m, 100m, 500m, 1000m })
+                                            {
+                                                var b = bill;
+                                                <button type="button" class="pos-denom-btn" @onclick="() => AddCashBill(b)">
+                                                    +₱@b.ToString("N0")
+                                                </button>
+                                            }
+                                            <button type="button" class="pos-denom-btn text-danger border-danger-subtle" title="Clear to 0" @onclick="() => cashTendered = 0m">
+                                                Clear
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Live Change Due Display -->
+                                    @if (cashTendered >= currentOrderResponse.TotalAmount)
+                                    {
+                                        <div class="pos-change-card success">
+                                            <div>
+                                                <div class="pos-change-label">CHANGE DUE</div>
+                                                <small class="opacity-75">Return to customer</small>
+                                            </div>
+                                            <div class="pos-change-val">₱@(Math.Max(0m, cashTendered - currentOrderResponse.TotalAmount).ToString("N2"))</div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="pos-change-card warning">
+                                            <div>
+                                                <div class="pos-change-label">AMOUNT SHORT</div>
+                                                <small class="opacity-75">Tendered is below total</small>
+                                            </div>
+                                            <div class="pos-change-val">-₱@((currentOrderResponse.TotalAmount - cashTendered).ToString("N2"))</div>
+                                        </div>
+                                    }
+                                </div>
+                            }
                         </div>
-                        <div class="d-flex justify-content-between align-items-center p-3 bg-success bg-opacity-10 rounded-3 border border-success border-opacity-25">
-                            <span class="fw-bold text-success">Change Due:</span>
-                            <span class="fs-4 fw-bold text-success">₱@(Math.Max(0m, cashTendered - currentOrderResponse.TotalAmount).ToString("N2"))</span>
-                        </div>
-                        }
-                    }
+                    </div>
                 </div>
-                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between align-items-center">
-                    <button type="button" class="btn btn-outline-secondary px-4" @onclick="ClosePaymentModal">Cancel</button>
-                    <button type="button" class="btn btn-success px-5 fw-bold" disabled="@((isSplitPaymentMode ? Math.Abs(paymentSplits.Sum(s => s.Amount) - currentOrderResponse.TotalAmount) > 0.01m : ((selectedPaymentMethod?.RequiresReference == true && string.IsNullOrWhiteSpace(referenceNumber)) || (selectedPaymentMethod?.Code == "CASH" && cashTendered < currentOrderResponse.TotalAmount))) || isProcessingPayment)" @onclick="ConfirmPayment">
+
+                <!-- Modal Footer -->
+                <div class="pos-payment-footer">
+                    <button type="button" class="btn btn-outline-secondary px-4 py-2 rounded-3 fw-semibold" @onclick="ClosePaymentModal" disabled="@isProcessingPayment">
+                        Cancel
+                    </button>
+                    <button type="button" class="pos-confirm-btn"
+                            disabled="@IsConfirmDisabled()"
+                            @onclick="ConfirmPayment">
                         @if (isProcessingPayment)
                         {
                             <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                            <span>Processing...</span>
                         }
-                        Confirm Payment
+                        else
+                        {
+                            <i class="bi bi-check2-circle fs-5"></i>
+                            <span>Confirm Payment</span>
+                        }
                     </button>
                 </div>
             </div>
@@ -1180,14 +1345,71 @@ else
     {
         if (string.IsNullOrWhiteSpace(group.ModifierGroupName)) return false;
         var name = group.ModifierGroupName.ToLowerInvariant();
-        return name.Contains("size") || name.Contains("cup");
+        return name.Contains("size") || name.Contains("portion") || name.Contains("serving") || name.Contains("cup") || name.Contains("weight") || name.Contains("dimension");
     }
 
     private bool IsIceGroup(ProductModifierGroupDto group)
     {
         if (string.IsNullOrWhiteSpace(group.ModifierGroupName)) return false;
         var name = group.ModifierGroupName.ToLowerInvariant();
-        return name.Contains("ice") || name.Contains("temp");
+        return name.Contains("ice") || name.Contains("cold") || name.Contains("chill");
+    }
+
+    private (string IconClass, string PillClass) GetModifierGroupVisuals(ProductModifierGroupDto group)
+    {
+        if (group == null || string.IsNullOrWhiteSpace(group.ModifierGroupName))
+            return ("bi-sliders", "bg-secondary-subtle text-secondary");
+
+        var name = group.ModifierGroupName.ToLowerInvariant();
+
+        if (IsSugarGroup(group))
+            return ("bi-droplet-half", "bg-warning-subtle text-warning");
+
+        if (IsSizeGroup(group))
+            return ("bi-arrows-angle-expand", "bg-primary-subtle text-primary");
+
+        if (IsIceGroup(group))
+            return ("bi-snow", "bg-info-subtle text-info");
+
+        if (name.Contains("hot") || name.Contains("heat") || name.Contains("warm") || name.Contains("temp") || name.Contains("spic"))
+            return ("bi-fire", "bg-danger-subtle text-danger");
+
+        if (name.Contains("topping") || name.Contains("add") || name.Contains("extra") || name.Contains("plus") || name.Contains("side") || name.Contains("include"))
+            return ("bi-plus-circle", "bg-success-subtle text-success");
+
+        if (name.Contains("flavor") || name.Contains("flavour") || name.Contains("sauce") || name.Contains("dip") || name.Contains("dressing") || name.Contains("syrup"))
+            return ("bi-palette", "bg-secondary-subtle text-secondary");
+
+        if (name.Contains("crust") || name.Contains("base") || name.Contains("meat") || name.Contains("bun") || name.Contains("bread") || name.Contains("cook") || name.Contains("prep") || name.Contains("type") || name.Contains("style"))
+            return ("bi-check2-square", "bg-secondary-subtle text-secondary");
+
+        // Universal Generic Fallback for any other / new category modifier group
+        return ("bi-sliders", "bg-secondary-subtle text-secondary");
+    }
+
+    private string GetProductCategoryIcon(ProductDto? product)
+    {
+        if (product == null) return "bi-box-seam";
+        var text = $"{product.CategoryName} {product.Name}".ToLowerInvariant();
+
+        // Beverage / Drinks
+        if (text.Contains("tea") || text.Contains("coffee") || text.Contains("beverage") || text.Contains("drink") || text.Contains("juice") || text.Contains("boba") || text.Contains("shake") || text.Contains("smoothie") || text.Contains("latte") || text.Contains("espresso"))
+            return "bi-cup-hot-fill";
+
+        // Food / Meals / Fast Food
+        if (text.Contains("food") || text.Contains("meal") || text.Contains("burger") || text.Contains("sandwich") || text.Contains("pizza") || text.Contains("rice") || text.Contains("noodle") || text.Contains("pasta") || text.Contains("chicken") || text.Contains("steak") || text.Contains("dish"))
+            return "bi-egg-fried";
+
+        // Bakery / Pastries / Desserts
+        if (text.Contains("bakery") || text.Contains("bread") || text.Contains("pastry") || text.Contains("cake") || text.Contains("dessert") || text.Contains("donut") || text.Contains("doughnut") || text.Contains("cookie") || text.Contains("waffle") || text.Contains("pancake") || text.Contains("ice cream"))
+            return "bi-cake2";
+
+        // Merchandise / Apparel / Retail
+        if (text.Contains("apparel") || text.Contains("shirt") || text.Contains("clothes") || text.Contains("merch") || text.Contains("wear"))
+            return "bi-tag-fill";
+
+        // Clean Generic Fallback for any new category created by the user
+        return "bi-box-seam";
     }
 
     private (string Pct, string Label, int FillPercent, string IconClass) ParseSugarOption(string name)
@@ -1787,6 +2009,67 @@ else
             if (rounded > total) suggestions.Add(rounded);
         }
         return suggestions;
+    }
+
+    private string GetPaymentMethodIconByCode(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return "bi-credit-card";
+        var c = code.ToUpperInvariant();
+        if (c.Contains("CASH")) return "bi-cash-stack";
+        if (c.Contains("GCASH")) return "bi-phone";
+        if (c.Contains("MAYA")) return "bi-wallet2";
+        if (c.Contains("CARD") || c.Contains("VISA") || c.Contains("MASTER")) return "bi-credit-card-2-front";
+        if (c.Contains("BANK") || c.Contains("TRANSFER")) return "bi-bank";
+        return "bi-credit-card";
+    }
+
+    private string GetPaymentMethodIcon(PaymentMethodDto? pm)
+    {
+        if (pm == null) return "bi-credit-card";
+        var code = (pm.Code ?? "").ToUpperInvariant();
+        var name = (pm.Name ?? "").ToUpperInvariant();
+        if (code.Contains("CASH") || name.Contains("CASH")) return "bi-cash-stack";
+        if (code.Contains("GCASH") || name.Contains("GCASH")) return "bi-phone";
+        if (code.Contains("MAYA") || name.Contains("MAYA")) return "bi-wallet2";
+        if (code.Contains("CARD") || code.Contains("VISA") || code.Contains("MASTER") || name.Contains("CARD") || name.Contains("VISA") || name.Contains("MASTER")) return "bi-credit-card-2-front";
+        if (code.Contains("BANK") || name.Contains("BANK") || code.Contains("TRANSFER")) return "bi-bank";
+        return "bi-credit-card";
+    }
+
+    private void SelectPaymentMethod(PaymentMethodDto pm)
+    {
+        selectedPaymentMethod = pm;
+        paymentError = null;
+        if (pm.Code == "CASH" && currentOrderResponse != null)
+        {
+            cashTendered = currentOrderResponse.TotalAmount;
+        }
+    }
+
+    private void AddCashBill(decimal bill)
+    {
+        if (currentOrderResponse == null) return;
+        if (cashTendered == currentOrderResponse.TotalAmount)
+        {
+            cashTendered = bill;
+        }
+        else
+        {
+            cashTendered += bill;
+        }
+    }
+
+    private bool IsConfirmDisabled()
+    {
+        if (isProcessingPayment || currentOrderResponse == null) return true;
+        if (isSplitPaymentMode)
+        {
+            return Math.Abs(paymentSplits.Sum(s => s.Amount) - currentOrderResponse.TotalAmount) > 0.01m;
+        }
+        if (selectedPaymentMethod == null) return true;
+        if (selectedPaymentMethod.RequiresReference && string.IsNullOrWhiteSpace(referenceNumber)) return true;
+        if (selectedPaymentMethod.Code == "CASH" && cashTendered < currentOrderResponse.TotalAmount) return true;
+        return false;
     }
 
     private async Task HoldCurrentSale()
