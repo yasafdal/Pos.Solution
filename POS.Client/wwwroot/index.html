@@ -28,7 +28,16 @@
 
     <script src="_content/CurrieTechnologies.Razor.SweetAlert2/sweetAlert2.min.js"></script>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
-
+    <script>
+        window.posScrollCartToBottom = function () {
+            requestAnimationFrame(function () {
+                var el = document.querySelector('.order-items-scroll');
+                if (el) {
+                    el.scrollTop = el.scrollHeight;
+                }
+            });
+        };
+    </script>
 </body>
 
 </html>

@@ -15,6 +15,7 @@
 @inject POS.Client.Data.LocalPosDbContext LocalDb
 @inject IPosConnectivityService ConnectivityService
 @inject POS.Client.Services.IOfflineCheckoutService OfflineCheckoutService
+@inject IJSRuntime Js
 @implements IDisposable
 
 @if (!Session.IsAuthenticated)
@@ -43,14 +44,39 @@ else
     <div class="new-sale-container">
         <!-- Left: Product Catalog & Search -->
         <div class="catalog-section">
+            <!-- Header Bar Aligned with Left Container -->
+            <header class="catalog-header-bar d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="hamburger-btn d-flex align-items-center justify-content-center" @onclick="ToggleNavMenu" aria-label="Toggle navigation" title="Toggle Menu">
+                        <i class="bi bi-list fs-5"></i>
+                    </button>
+                    <span class="terminal-identity">@Session.Terminal?.BranchCode • @Session.Terminal?.TerminalName</span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="header-action-btn header-btn-switch" @onclick="SwitchCashier"><i class="bi bi-arrow-left-right me-1"></i>Switch Cashier</button>
+                    <button type="button" class="header-action-btn header-btn-lock" @onclick="LockTerminal"><i class="bi bi-lock me-1"></i>Lock Terminal</button>
+                </div>
+            </header>
+
+            @if (Layout != null && Layout.ConnectivityState != TerminalConnectivityState.OnlineAndHealthy)
+            {
+                <div class="alert alert-warning py-1 px-3 mb-2 small d-flex justify-content-between align-items-center rounded-3 shadow-sm" role="alert">
+                    <div class="d-flex align-items-center gap-2 small fw-medium">
+                        <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                        <span>Offline Mode (@Layout.PendingCount pending sync)</span>
+                    </div>
+                    <span class="badge bg-secondary">Offline</span>
+                </div>
+            }
+
             <!-- Top Search Bar -->
-            <div class="search-bar-wrap mb-3">
+            <div class="search-bar-wrap mb-2">
                 <div class="position-relative">
                     <i class="bi bi-search search-icon fs-5"></i>
                     <input type="text" @ref="searchInput" aria-label="Search item or scan barcode"
                            autocomplete="off" disabled="@(isLoading || quantityDialogOpen)"
                            @onkeydown="OnSearchKeyDown"
-                           class="form-control form-control-lg search-input ps-5 pe-5"
+                           class="form-control search-input ps-5 pe-5"
                            placeholder="Search products by name, SKU, or barcode..."
                            value="@searchQuery"
                            @oninput="OnSearchInput" />
@@ -96,7 +122,7 @@ else
             else
             {
             <!-- Categories Bar -->
-            <div class="categories-bar mb-3">
+            <div class="categories-bar mb-2">
                 <button type="button"
                         class="category-pill all-categories @(selectedCategoryId == null ? "active" : "")"
                         aria-pressed="@(selectedCategoryId == null ? "true" : "false")"
@@ -180,15 +206,15 @@ else
                 <!-- Service Mode & Table / Pax Bar (for F&B) -->
                 @if (!IsRetail)
                 {
-                    <div class="p-2 bg-light border-bottom">
-                        <div class="d-flex gap-1 mb-2">
-                            <button type="button" class="btn btn-sm flex-fill @(selectedServiceMode == "DINING" ? "btn-primary fw-bold" : "btn-outline-secondary")" @onclick='() => SetServiceMode("DINING")'>
+                    <div class="order-service-bar">
+                        <div class="d-flex gap-1 mb-1">
+                            <button type="button" class="service-mode-btn flex-fill @(selectedServiceMode == "DINING" ? "svc-dinein-active" : "svc-inactive")" @onclick='() => SetServiceMode("DINING")'>
                                 <i class="bi bi-cup-hot me-1"></i> Dine-In
                             </button>
-                            <button type="button" class="btn btn-sm flex-fill @(selectedServiceMode == "TAKEOUT" ? "btn-primary fw-bold" : "btn-outline-secondary")" @onclick='() => SetServiceMode("TAKEOUT")'>
+                            <button type="button" class="service-mode-btn flex-fill @(selectedServiceMode == "TAKEOUT" ? "svc-takeout-active" : "svc-inactive")" @onclick='() => SetServiceMode("TAKEOUT")'>
                                 <i class="bi bi-bag me-1"></i> Takeout
                             </button>
-                            <button type="button" class="btn btn-sm flex-fill @(selectedServiceMode == "DELIVERY" ? "btn-primary fw-bold" : "btn-outline-secondary")" @onclick='() => SetServiceMode("DELIVERY")'>
+                            <button type="button" class="service-mode-btn flex-fill @(selectedServiceMode == "DELIVERY" ? "svc-delivery-active" : "svc-inactive")" @onclick='() => SetServiceMode("DELIVERY")'>
                                 <i class="bi bi-truck me-1"></i> Delivery
                             </button>
                         </div>
@@ -196,16 +222,16 @@ else
                         <div class="d-flex gap-2">
                             <div class="flex-fill">
                                 <div class="input-group input-group-sm">
-                                    <span class="input-group-text bg-white"><i class="bi bi-grid-3x3-gap"></i></span>
-                                    <input type="text" class="form-control" placeholder="Table #" @bind="tableNumber" />
+                                    <span class="input-group-text bg-white py-1"><i class="bi bi-grid-3x3-gap"></i></span>
+                                    <input type="text" class="form-control py-1" placeholder="Table #" @bind="tableNumber" />
                                 </div>
                             </div>
                             @if (selectedServiceMode == "DINING")
                             {
-                                <div style="width: 110px;">
+                                <div style="width: 105px;">
                                     <div class="input-group input-group-sm">
-                                        <span class="input-group-text bg-white" title="Guests / Pax"><i class="bi bi-people"></i></span>
-                                        <input type="number" class="form-control" min="1" max="99" placeholder="Pax" @bind="headCount" />
+                                        <span class="input-group-text bg-white py-1" title="Guests / Pax"><i class="bi bi-people"></i></span>
+                                        <input type="number" class="form-control py-1" min="1" max="99" placeholder="Pax" @bind="headCount" />
                                     </div>
                                 </div>
                             }
@@ -216,7 +242,7 @@ else
                 <!-- Order Header -->
                 <div class="order-header d-flex justify-content-between align-items-center">
                     <div class="d-flex align-items-center gap-2">
-                        <h5 class="fw-bold mb-0 text-dark">Current Order</h5>
+                        <h6 class="fw-bold mb-0 text-dark">Current Order</h6>
                         <span class="order-badge">@Cart.TotalItems @(Cart.TotalItems == 1 ? "item" : "items")</span>
                     </div>
                     @if (Cart.Items.Any())
@@ -237,7 +263,7 @@ else
                 </div>
 
                 <!-- Cart Items List -->
-                <div class="order-items-scroll">
+                <div class="order-items-scroll @(Cart.Items.Count >= 6 ? "has-scroll" : "no-scroll")">
                     @if (!Cart.Items.Any())
                     {
                         <div class="empty-cart text-center py-5">
@@ -303,31 +329,31 @@ else
                 <!-- Order Summary & Checkout -->
                 <div class="order-footer">
                     <div class="order-totals">
-                        <div class="d-flex justify-content-between mb-2">
-                            <span class="text-muted">Subtotal</span>
-                            <span class="fw-semibold">₱@Cart.Subtotal.ToString("N2")</span>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">Subtotal</span>
+                            <span class="fw-semibold small">₱@Cart.Subtotal.ToString("N2")</span>
                         </div>
                         @if (Cart.ActiveDiscountCode != "NONE")
                         {
-                            <div class="d-flex justify-content-between mb-2 text-success">
+                            <div class="d-flex justify-content-between mb-1 text-success small">
                                 <span>Discount (@Cart.ActiveDiscountCode)</span>
-                                <span class="fw-semibold">-₱@Cart.ActiveDiscountAmount.ToString("N2")</span>
+                                <span class="fw-semibold small">-₱@Cart.ActiveDiscountAmount.ToString("N2")</span>
                             </div>
                         }
-                        <div class="d-flex justify-content-between align-items-baseline mb-3">
-                            <span class="fw-bold fs-5 text-dark">Total</span>
-                            <span class="fw-bolder fs-4 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
+                        <div class="d-flex justify-content-between align-items-baseline mb-2">
+                            <span class="fw-bold fs-6 text-dark">Total</span>
+                            <span class="fw-bolder fs-5 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
                         </div>
                     </div>
                     <div class="d-flex gap-2 mb-2">
                         <button type="button"
-                                class="btn btn-outline-secondary w-50 py-2 fw-bold btn-discount"
+                                class="footer-action-btn btn-discount"
                                 disabled="@(!Cart.Items.Any())"
                                 @onclick="OpenDiscountModal">
                             <i class="bi bi-percent me-1"></i> Discount
                         </button>
                         <button type="button"
-                                class="btn btn-outline-warning w-50 py-2 fw-bold text-dark"
+                                class="footer-action-btn btn-hold-sale"
                                 disabled="@(!Cart.Items.Any())"
                                 @onclick="HoldCurrentSale">
                             <i class="bi bi-pause-fill me-1"></i> Hold Sale
@@ -335,7 +361,7 @@ else
                     </div>
                     <div class="d-grid">
                         <button type="button"
-                                class="btn btn-primary w-100 py-3 fw-bold btn-proceed-payment"
+                                class="btn btn-primary w-100 py-2 fw-bold btn-proceed-payment"
                                 disabled="@(!Cart.Items.Any())"
                                 @onclick="ProceedToPayment">
                             Proceed to Payment
@@ -969,6 +995,36 @@ else
 
 
 @code {
+    [CascadingParameter]
+    public Layout.MainLayout? Layout { get; set; }
+
+    private void ToggleNavMenu()
+    {
+        Layout?.ToggleNavMenu();
+    }
+
+    private async Task SwitchCashier()
+    {
+        if (Layout != null)
+        {
+            await Layout.SwitchCashierAsync();
+            return;
+        }
+        Navigation.NavigateTo("/login");
+    }
+
+    private async Task LockTerminal()
+    {
+        if (Layout != null)
+        {
+            await Layout.LockTerminalAsync();
+            return;
+        }
+        Session.ClearSession();
+        Http.DefaultRequestHeaders.Authorization = null;
+        Navigation.NavigateTo("/login");
+    }
+
     private string selectedServiceMode = "DINING";
     private string tableNumber = string.Empty;
     private int headCount = 1;
@@ -1020,10 +1076,23 @@ else
         restoreSearchFocus = IsRetail;
     }
 
-    private void OnCartChanged()
+    private int previousCartItemCount = 0;
+
+    private async void OnCartChanged()
     {
         selectedCartItems.IntersectWith(Cart.Items);
-        InvokeAsync(StateHasChanged);
+        bool shouldScroll = Cart.Items.Count > previousCartItemCount && Cart.Items.Count >= 6;
+        previousCartItemCount = Cart.Items.Count;
+        await InvokeAsync(StateHasChanged);
+
+        if (shouldScroll)
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("posScrollCartToBottom");
+            }
+            catch { }
+        }
     }
 
     public void Dispose()

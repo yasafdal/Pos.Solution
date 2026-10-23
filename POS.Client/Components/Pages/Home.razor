@@ -6,12 +6,14 @@
 @inject POS.Client.Services.IPosConnectivityService ConnectivityService
 @inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
 @inject POS.Client.Data.LocalPosDbContext LocalDb
+@inject POS.Shared.Interfaces.IHeldSaleService HeldSaleService
 @implements IDisposable
 
 @code {
     private TerminalConnectivityState _connectivityState = TerminalConnectivityState.Unknown;
     private int _pendingCount = 0;
     private int _conflictedCount = 0;
+    private int _heldCount = 0;
     private DateTime? _lastSuccessfulSync = null;
     private DateTime _lastCheckTime = DateTime.UtcNow;
     private bool _isSyncing = false;
@@ -19,6 +21,12 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (!Session.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
         await RefreshStatusAsync();
         _statusTimer = new System.Threading.Timer(async _ => await InvokeAsync(RefreshStatusAsync), null, TimeSpan.Zero, TimeSpan.FromSeconds(15));
     }
@@ -50,6 +58,19 @@
             // Suppress status read errors
         }
 
+        try
+        {
+            if (Session.Terminal != null)
+            {
+                var heldSales = await HeldSaleService.GetHeldSalesAsync(Session.Terminal.BranchId, Session.Terminal.TerminalId);
+                _heldCount = heldSales?.Count ?? 0;
+            }
+        }
+        catch
+        {
+            // Suppress background held sale read errors
+        }
+
         StateHasChanged();
     }
 
@@ -75,7 +96,6 @@
     }
 }
 
-
 @if (!Session.IsAuthenticated)
 {
     <div class="pos-loading-screen">
@@ -85,92 +105,206 @@
 }
 else
 {
-    <div class="pos-terminal-container">
-
-
-        <!-- Main Terminal Body -->
-        <main class="pos-main-content">
-            <div class="alert alert-primary d-flex align-items-center rounded-3 p-3 mb-4 shadow-sm" role="alert">
-                <i class="bi bi-check-circle-fill fs-4 me-2 flex-shrink-0"></i>
+    <div class="pos-dashboard-container">
+        <!-- Hero Banner: Start New Sale CTA -->
+        <div class="dashboard-hero-card p-4 rounded-4 shadow-sm mb-4">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
                 <div>
-                    <strong>Welcome, @Session.Username!</strong> Terminal session is active. Ready to process orders.
-                </div>
-            </div>
-
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <div class="card shadow-sm border-0 rounded-3 p-3">
-                        <h6 class="text-muted text-uppercase fw-bold small">Current Cashier</h6>
-                        <h4 class="fw-bolder mb-1">@Session.Username</h4>
-                        <span class="badge bg-info text-dark align-self-start">@Session.Role</span>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <span class="hero-status-badge">
+                            <span class="hero-status-dot"></span>
+                            Active Terminal
+                        </span>
+                        <span class="text-muted small">• @(Session.Terminal?.BranchName ?? "Main Outlet")</span>
                     </div>
+                    <h2 class="hero-title mb-1">Welcome back, @Session.Username!</h2>
+                    <p class="hero-subtitle mb-0">Terminal session is active. Ready to ring up customers and manage orders.</p>
                 </div>
-                <div class="col-md-4">
-                    <div class="card shadow-sm border-0 rounded-3 p-3">
-                        <h6 class="text-muted text-uppercase fw-bold small">Active Shift</h6>
-                        <h4 class="fw-bolder mb-1">Open</h4>
-                        <span class="text-success small fw-medium">Ready for transactions</span>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card shadow-sm border-0 rounded-3 p-3">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <h6 class="text-muted text-uppercase fw-bold small mb-0">Terminal Status</h6>
-                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="ManualSyncAsync" disabled="@_isSyncing" title="Sync Pending Transactions">
-                                @if (_isSyncing)
-                                {
-                                    <span class="spinner-border spinner-border-sm" role="status"></span>
-                                }
-                                else
-                                {
-                                    <i class="bi bi-arrow-repeat"></i> <span>Sync Now</span>
-                                }
-                            </button>
-                        </div>
-                        <h4 class="fw-bolder mb-1">
-                            @if (_isSyncing)
-                            {
-                                <span class="text-primary">SYNCING</span>
-                            }
-                            else if (_conflictedCount > 0)
-                            {
-                                <span class="text-danger">NEEDS_ATTENTION</span>
-                            }
-                            else if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy)
-                            {
-                                <span class="text-success">ONLINE</span>
-                            }
-                            else
-                            {
-                                <span class="text-warning">OFFLINE</span>
-                            }
-                        </h4>
-                        <div class="small text-muted d-flex flex-column gap-1 mt-1">
-                            <span>Pending Transactions: <strong>@_pendingCount</strong></span>
-                            @if (_conflictedCount > 0)
-                            {
-                                <span class="text-danger">Conflicts/Errors: <strong>@_conflictedCount</strong></span>
-                            }
-                            <span>Last Sync: @(_lastSuccessfulSync?.ToString("hh:mm tt") ?? "None")</span>
-                            <span class="text-muted" style="font-size: 0.75rem;">Checked: @_lastCheckTime.ToString("hh:mm:ss tt")</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-4 p-4 bg-light rounded-3 border d-flex justify-content-between align-items-center">
-                <div>
-                    <h5 class="fw-bold mb-1">Ready to create a sale?</h5>
-                    <p class="text-muted mb-0 small">Access product catalog, manage customer cart, and proceed to payment.</p>
-                </div>
-                <div class="d-flex gap-3">
-                    <button type="button" class="btn btn-primary px-4 py-2 fw-semibold d-flex align-items-center gap-2 rounded-3 shadow-sm" @onclick="@(() => Navigation.NavigateTo("/new-sale"))">
-                        <i class="bi bi-cart-fill"></i>
-                        Start New Sale
+                <div class="d-flex gap-2">
+                    <button type="button" class="hero-btn"
+                            @onclick="@(() => Navigation.NavigateTo("/new-sale"))">
+                        <i class="bi bi-cart-fill fs-5"></i>
+                        <span>Start New Sale</span>
                     </button>
                 </div>
             </div>
-        </main>
+        </div>
+
+        <!-- 4 KPI Summary Cards -->
+        <div class="row g-3 mb-4">
+            <!-- Card 1: Cashier -->
+            <div class="col-12 col-sm-6 col-xl-3">
+                <div class="card stat-card shadow-sm border-0 rounded-4 p-3 h-100">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="stat-label">Current Cashier</span>
+                        <div class="stat-icon-wrap bg-primary-subtle text-primary">
+                            <i class="bi bi-person-badge fs-5"></i>
+                        </div>
+                    </div>
+                    <h4 class="fw-bolder mb-1 text-dark text-truncate" title="@Session.Username">@Session.Username</h4>
+                    <div class="d-flex align-items-center gap-2 mt-auto pt-2">
+                        <span class="badge bg-primary text-white rounded-pill px-2.5 py-1 font-monospace">@Session.Role</span>
+                        <span class="text-muted small">@Session.Terminal?.BranchCode</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2: Shift -->
+            <div class="col-12 col-sm-6 col-xl-3">
+                <div class="card stat-card shadow-sm border-0 rounded-4 p-3 h-100 clickable-card" @onclick="@(() => Navigation.NavigateTo("/my-shift"))">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="stat-label">Active Shift</span>
+                        <div class="stat-icon-wrap bg-success-subtle text-success">
+                            <i class="bi bi-clock-history fs-5"></i>
+                        </div>
+                    </div>
+                    <h4 class="fw-bolder mb-1 text-success">Open</h4>
+                    <div class="d-flex justify-content-between align-items-center mt-auto pt-2">
+                        <span class="text-muted small">Ready for transactions</span>
+                        <span class="badge bg-light text-secondary border small">View Shift →</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 3: Terminal & Connectivity -->
+            <div class="col-12 col-sm-6 col-xl-3">
+                <div class="card stat-card shadow-sm border-0 rounded-4 p-3 h-100">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="stat-label">Terminal Status</span>
+                        <button class="btn btn-sm btn-outline-secondary py-0 px-2 rounded-2" @onclick="ManualSyncAsync" disabled="@_isSyncing" title="Sync Pending Transactions">
+                            @if (_isSyncing)
+                            {
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-arrow-repeat"></i> <span class="small">Sync</span>
+                            }
+                        </button>
+                    </div>
+                    <h4 class="fw-bolder mb-1">
+                        @if (_isSyncing)
+                        {
+                            <span class="text-primary">SYNCING</span>
+                        }
+                        else if (_conflictedCount > 0)
+                        {
+                            <span class="text-danger">NEEDS ATTENTION</span>
+                        }
+                        else if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy)
+                        {
+                            <span class="text-success">ONLINE</span>
+                        }
+                        else
+                        {
+                            <span class="text-warning">OFFLINE</span>
+                        }
+                    </h4>
+                    <div class="small text-muted d-flex justify-content-between align-items-center mt-auto pt-2">
+                        <span>Pending: <strong>@_pendingCount</strong></span>
+                        <span class="text-muted" style="font-size: 0.72rem;">Last: @(_lastSuccessfulSync?.ToString("hh:mm tt") ?? "None")</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 4: Held Sales -->
+            <div class="col-12 col-sm-6 col-xl-3">
+                <div class="card stat-card shadow-sm border-0 rounded-4 p-3 h-100 clickable-card" @onclick="@(() => Navigation.NavigateTo("/held-sales"))">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="stat-label">Parked Orders</span>
+                        <div class="stat-icon-wrap bg-warning-subtle text-warning">
+                            <i class="bi bi-pause-circle fs-5"></i>
+                        </div>
+                    </div>
+                    <h4 class="fw-bolder mb-1 text-dark">@_heldCount @(_heldCount == 1 ? "Ticket" : "Tickets")</h4>
+                    <div class="d-flex justify-content-between align-items-center mt-auto pt-2">
+                        <span class="text-muted small">Held sales waiting</span>
+                        <span class="badge bg-light text-secondary border small">Resume →</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Operational Actions Grid -->
+        <h6 class="fw-bold text-uppercase text-secondary small mb-3 letter-spacing-1">Operations Hub</h6>
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
+                     role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/new-sale"))">
+                    <div class="action-icon-wrap bg-primary text-white shadow-sm">
+                        <i class="bi bi-cart3 fs-4"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-0 text-dark">New Sale</h6>
+                        <small class="text-muted">Register customer orders</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
+                     role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/held-sales"))">
+                    <div class="action-icon-wrap bg-warning text-dark shadow-sm">
+                        <i class="bi bi-pause-circle fs-4"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-0 text-dark">Held Sales</h6>
+                        <small class="text-muted">Resume parked orders</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
+                     role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/transactions"))">
+                    <div class="action-icon-wrap bg-info text-dark shadow-sm">
+                        <i class="bi bi-receipt fs-4"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-0 text-dark">Transactions</h6>
+                        <small class="text-muted">Receipts, reprints & returns</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
+                     role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/cash-drawer"))">
+                    <div class="action-icon-wrap bg-success text-white shadow-sm">
+                        <i class="bi bi-cash-stack fs-4"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-0 text-dark">Cash Drawer</h6>
+                        <small class="text-muted">Float, drops & cash movements</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Terminal System Details Card -->
+        <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="terminal-badge-wrap bg-light text-secondary rounded-3 p-2">
+                        <i class="bi bi-display fs-4"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold text-dark mb-0">Terminal Information</h6>
+                        <small class="text-muted">
+                            PTU: @(Session.Terminal?.PTUNumber ?? "N/A") • MIN: @(Session.Terminal?.MINNumber ?? "N/A") • Serial: @(Session.Terminal?.SerialNumber ?? "N/A")
+                        </small>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-light text-dark border px-3 py-2 rounded-3">
+                        <i class="bi bi-building me-1"></i> @(Session.Terminal?.BranchName ?? "Main Outlet")
+                    </span>
+                    <span class="badge bg-light text-dark border px-3 py-2 rounded-3">
+                        <i class="bi bi-tag me-1"></i> @(Session.Terminal?.BusinessType ?? "FNB")
+                    </span>
+                </div>
+            </div>
+        </div>
     </div>
 }
 
@@ -182,31 +316,141 @@ else
         min-height: 80vh;
     }
 
-    .pos-terminal-container {
-        padding: 1.5rem;
+    .pos-dashboard-container {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
-    .pos-top-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-bottom: 1.25rem;
-        margin-bottom: 1.5rem;
-        border-bottom: 1px solid #e2e8f0;
+    .dashboard-hero-card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     }
 
-    .pos-user-status {
+    .hero-status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        background-color: #ecfdf5;
+        color: #047857;
+        border: 1px solid #a7f3d0;
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.2rem 0.65rem;
+        border-radius: 9999px;
+        letter-spacing: 0.01em;
+    }
+
+    .hero-status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background-color: #10b981;
+        display: inline-block;
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    }
+
+    .hero-title {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: #0f172a;
+        letter-spacing: -0.02em;
+    }
+
+    .hero-subtitle {
+        font-size: 0.86rem;
+        color: #64748b;
+    }
+
+    .hero-btn {
+        background-color: #2563eb;
+        color: #ffffff;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.92rem;
+        font-weight: 600;
+        padding: 0.55rem 1.25rem;
+        box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        transition: all 0.15s ease;
+        cursor: pointer;
+    }
+
+    .hero-btn:hover {
+        background-color: #1d4ed8;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3) !important;
+        color: #ffffff;
+    }
+
+    .hero-btn:active {
+        transform: scale(0.98);
+    }
+
+    .stat-card {
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        background-color: #ffffff;
+    }
+
+    .stat-label {
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #64748b;
+    }
+
+    .stat-icon-wrap {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
         display: flex;
         align-items: center;
+        justify-content: center;
+    }
+
+    .clickable-card {
+        cursor: pointer;
+    }
+
+    .clickable-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08) !important;
+    }
+
+    .action-tile {
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+
+    .action-tile:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08) !important;
+        border-color: #93c5fd !important;
+    }
+
+    .action-icon-wrap {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .terminal-badge-wrap {
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .letter-spacing-1 {
+        letter-spacing: 0.05em;
     }
 </style>
-
-@code {
-    protected override void OnInitialized()
-    {
-        if (!Session.IsAuthenticated)
-        {
-            Navigation.NavigateTo("/login");
-        }
-    }
-}

@@ -39,6 +39,41 @@
     letter-spacing: -0.01em;
 }
 
+/* Header Action Buttons (Switch Cashier / Lock Terminal) */
+.header-action-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 0.35rem 0.85rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    transition: all 0.15s ease;
+    color: #ffffff;
+    letter-spacing: 0.01em;
+}
+
+.header-btn-switch {
+    background: #f59e0b;
+}
+
+.header-btn-switch:hover {
+    background: #d97706;
+}
+
+.header-btn-lock {
+    background: #ef4444;
+}
+
+.header-btn-lock:hover {
+    background: #dc2626;
+}
+
+.header-action-btn:active {
+    transform: scale(0.96);
+}
+
 .main-body {
     display: flex;
     flex: 1;
@@ -82,4 +117,35 @@
     overflow-y: auto;
     min-width: 0;
     width: 100%;
+}
+
+.content {
+    flex: 1;
+    width: 100%;
+}
+
+.page.page-new-sale {
+    height: 100vh;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+.main-body-new-sale {
+    height: 100vh;
+    overflow: hidden;
+}
+
+.page-new-sale .nav-backdrop {
+    top: 0;
+}
+
+.content-area-new-sale {
+    overflow: hidden;
+    height: 100vh;
+}
+
+.content-new-sale {
+    padding: 0 !important;
+    height: 100vh;
+    overflow: hidden;
 }

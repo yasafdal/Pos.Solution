@@ -9,8 +9,8 @@
 @using Microsoft.EntityFrameworkCore
 @implements IDisposable
 
-<div class="page">
-    @if (Session.IsAuthenticated)
+<div class="page @(IsNewSalePage ? "page-new-sale" : "")">
+    @if (Session.IsAuthenticated && !IsNewSalePage)
     {
         <header class="app-header-bar d-flex justify-content-between align-items-center px-4">
             <div class="d-flex align-items-center gap-3">
@@ -20,8 +20,12 @@
                 <span class="terminal-identity">@Session.Terminal!.BranchCode • @Session.Terminal.TerminalName</span>
             </div>
             <div class="d-flex align-items-center gap-2">
-                <button type="button" class="btn btn-outline-warning btn-sm rounded-pill px-3 fw-medium text-dark" @onclick="SwitchCashier">Switch Cashier</button>
-                <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 fw-medium" @onclick="LockTerminal">Lock Terminal</button>
+                <button type="button" class="header-action-btn header-btn-switch" @onclick="SwitchCashier">
+                    <i class="bi bi-arrow-left-right me-1"></i>Switch Cashier
+                </button>
+                <button type="button" class="header-action-btn header-btn-lock" @onclick="LockTerminal">
+                    <i class="bi bi-lock me-1"></i>Lock Terminal
+                </button>
             </div>
         </header>
 
@@ -37,7 +41,7 @@
         }
     }
 
-    <div class="main-body">
+    <div class="main-body @(IsNewSalePage ? "main-body-new-sale" : "")">
         @if (Session.IsAuthenticated && isNavVisible)
         {
             <div class="nav-backdrop" @onclick="ToggleNavMenu"></div>
@@ -46,9 +50,11 @@
             </div>
         }
 
-        <main class="content-area">
-            <article class="content px-4 py-3">
-                @Body
+        <main class="content-area @(IsNewSalePage ? "content-area-new-sale" : "")">
+            <article class="content @(IsNewSalePage ? "content-new-sale" : "px-4 py-3")">
+                <CascadingValue Value="this">
+                    @Body
+                </CascadingValue>
             </article>
         </main>
     </div>
@@ -60,8 +66,30 @@
     private int _pendingCount = 0;
     private System.Threading.Timer? _statusTimer;
 
+    public TerminalConnectivityState ConnectivityState => _connectivityState;
+    public int PendingCount => _pendingCount;
+
+    private bool IsNewSalePage => Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("new-sale", StringComparison.OrdinalIgnoreCase);
+
+    public void ToggleNavMenu()
+    {
+        isNavVisible = !isNavVisible;
+        StateHasChanged();
+    }
+
+    public async Task SwitchCashierAsync()
+    {
+        await SwitchCashier();
+    }
+
+    public async Task LockTerminalAsync()
+    {
+        await LockTerminal();
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        Navigation.LocationChanged += OnLocationChanged;
         try
         {
             LocalDb.InitializeDatabase();
@@ -73,6 +101,11 @@
 
         await CheckStatusAsync();
         _statusTimer = new System.Threading.Timer(async _ => await InvokeAsync(CheckStatusAsync), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(15));
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        InvokeAsync(StateHasChanged);
     }
 
     private async Task CheckStatusAsync()
@@ -97,15 +130,11 @@
 
     public void Dispose()
     {
+        Navigation.LocationChanged -= OnLocationChanged;
         _statusTimer?.Dispose();
     }
 
     private void CloseNavMenu() => isNavVisible = false;
-
-    private void ToggleNavMenu()
-    {
-        isNavVisible = !isNavVisible;
-    }
 
     private async Task EnsureCashiersCachedAsync()
     {

@@ -96,8 +96,8 @@
                                 <button type="button" class="btn btn-sm btn-warning text-dark" @onclick="() => OpenEditBranchModal(branch)" title="Edit Branch" aria-label="Edit Branch">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button type="button" class="btn btn-sm @(branch.IsActive ? "btn-outline-secondary" : "btn-outline-success")" @onclick="() => ToggleBranchActive(branch)" title="@(branch.IsActive ? "Deactivate Branch" : "Activate Branch")" aria-label="Toggle Status">
-                                    <i class="bi @(branch.IsActive ? "bi-pause-circle" : "bi-play-circle")"></i>
+                                <button type="button" class="btn btn-sm @(branch.IsActive ? "btn-secondary text-white" : "btn-success text-white")" @onclick="() => ToggleBranchActive(branch)" title="@(branch.IsActive ? "Deactivate Branch" : "Activate Branch")" aria-label="Toggle Status">
+                                    <i class="bi @(branch.IsActive ? "bi-pause" : "bi-play")"></i>
                                 </button>
                                 <button type="button" class="btn btn-sm btn-danger text-white" @onclick="() => DeleteBranch(branch.BranchId)" title="Delete Branch" aria-label="Delete Branch">
                                     <i class="bi bi-trash"></i>
