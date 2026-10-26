@@ -22,6 +22,8 @@
     <Compile Include="../POS.Client/Services/ReceiptHtmlFormatter.cs" Link="ReceiptHtmlFormatter.cs" />
     <Compile Include="../POS.Client/Services/PreparationTicketRouter.cs" Link="PreparationTicketRouter.cs" />
     <Compile Include="../POS.Client/Services/PreparationTicketHtmlFormatter.cs" Link="PreparationTicketHtmlFormatter.cs" />
+    <Compile Include="../POS.Client/Services/XReadingHtmlFormatter.cs" Link="XReadingHtmlFormatter.cs" />
+    <Compile Include="../POS.Client/Services/CashierDeclarationHtmlFormatter.cs" Link="CashierDeclarationHtmlFormatter.cs" />
   </ItemGroup>
 
 </Project>

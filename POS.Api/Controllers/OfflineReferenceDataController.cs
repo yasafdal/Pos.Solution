@@ -182,12 +182,35 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             })
             .ToListAsync();
 
+        var paymentMethods = await context.PaymentMethods
+            .AsNoTracking()
+            .OrderBy(pm => pm.DisplayOrder)
+            .ThenBy(pm => pm.Name)
+            .Select(pm => new PaymentMethodDto
+            {
+                PaymentMethodId = pm.PaymentMethodId,
+                Code = pm.Code,
+                Name = pm.Name,
+                RequiresReference = pm.RequiresReference,
+                IsActive = pm.IsActive,
+                DisplayOrder = pm.DisplayOrder
+            })
+            .ToListAsync();
+
         var openShiftEntity = await context.CashDrawerShifts
             .AsNoTracking()
             .Include(s => s.Movements)
             .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();
+
+        var activeShiftDto = openShiftEntity != null
+            ? await CashDrawerController.ReadSnapshotAsync(context, openShiftEntity.ShiftId, requireOpen: true)
+            : null;
+        if (activeShiftDto != null && !CashDrawerController.IsSupervisorRole(User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value))
+        {
+            CashDrawerController.RedactForCashier(activeShiftDto);
+        }
 
         var response = new OfflineReferenceDataResponseDto
         {
@@ -218,7 +241,8 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             InvoiceSequence = invoiceSequenceDto,
             Cashiers = cashiers,
             CashMovementCategories = cashMovementCategories,
-            ActiveShift = openShiftEntity != null ? await CashDrawerController.ReadSnapshotAsync(context, openShiftEntity.ShiftId, requireOpen: true) : null
+            PaymentMethods = paymentMethods,
+            ActiveShift = activeShiftDto
         };
 
         return Ok(response);

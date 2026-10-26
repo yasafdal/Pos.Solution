@@ -1,9 +1,16 @@
 @page "/sales-history"
+@using System.Security.Claims
+@using System.Text
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
 @using Microsoft.AspNetCore.Components.QuickGrid
 @using CurrieTechnologies.Razor.SweetAlert2
 @inject ITransactionService TransactionService
+@inject IBranchService BranchService
+@inject IOutletService OutletService
+@inject ITerminalService TerminalService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
 @inject SweetAlertService SwalAlert
 
 <PageTitle>Transaction History - POS Admin</PageTitle>
@@ -13,7 +20,15 @@
     <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
         <div>
             <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Transaction Sales History</h2>
-            <span class="text-secondary" style="font-size: 0.95rem;">View completed orders, tax breakdowns, and controlled invoice reprinting</span>
+            <span class="text-secondary" style="font-size: 0.95rem;">View completed orders, Branch → Outlet → Terminal attribution, tax breakdowns, and controlled invoice reprinting</span>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary rounded px-3 py-2 fw-semibold shadow-sm" @onclick="ExportCsvAsync" disabled="@(transactions == null || !transactions.Any())">
+                <i class="bi bi-download me-1"></i> Export CSV
+            </button>
+            <button class="btn btn-outline-dark rounded px-3 py-2 fw-semibold shadow-sm" @onclick="PrintPageAsync">
+                <i class="bi bi-printer me-1"></i> Print
+            </button>
         </div>
     </div>
 
@@ -36,8 +51,8 @@
             <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
-                        <span class="text-secondary small fw-semibold d-block mb-1">Paid Invoices</span>
-                        <h4 class="fw-bold text-success mb-0">@(transactions?.Count(t => t.PaymentStatus == "PAID") ?? 0)</h4>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Paid Invoices (Active)</span>
+                        <h4 class="fw-bold text-success mb-0">@(transactions?.Count(t => t.PaymentStatus == "PAID" && t.OrderStatus != "VOIDED") ?? 0)</h4>
                     </div>
                     <div class="d-flex align-items-center justify-content-center bg-success bg-opacity-10 text-success rounded-3" style="width: 44px; height: 44px;">
                         <i class="bi bi-check-circle-fill fs-4"></i>
@@ -49,8 +64,8 @@
             <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
-                        <span class="text-secondary small fw-semibold d-block mb-1">Total Paid Sales</span>
-                        <h4 class="fw-bold text-primary mb-0">₱@(transactions?.Where(t => t.PaymentStatus == "PAID").Sum(t => t.TotalAmount).ToString("N2") ?? "0.00")</h4>
+                        <span class="text-secondary small fw-semibold d-block mb-1">Total Paid Sales (Excl. Voided)</span>
+                        <h4 class="fw-bold text-primary mb-0">₱@(transactions?.Where(t => t.PaymentStatus == "PAID" && t.OrderStatus != "VOIDED").Sum(t => t.TotalAmount).ToString("N2") ?? "0.00")</h4>
                     </div>
                     <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 44px; height: 44px;">
                         <i class="bi bi-cash-stack fs-4"></i>
@@ -60,25 +75,59 @@
         </div>
     </div>
 
-    <!-- Filter Card -->
+    <!-- Cascading Filter Card -->
     <div class="card border-0 shadow-sm rounded-4 p-3 mb-3 bg-white">
         <div class="row g-3 align-items-end">
-            <div class="col-12 col-md-3">
+            <div class="col-12 col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Search Invoice #</label>
-                <div class="position-relative">
-                    <i class="bi bi-receipt position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
-                    <input type="text" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border" placeholder="e.g. INV-001" @bind="filter.InvoiceNumber" />
-                </div>
+                <input type="text" class="form-control form-control-sm rounded bg-white shadow-none border" placeholder="e.g. INV-001" @bind="filter.InvoiceNumber" />
             </div>
             <div class="col-12 col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Order #</label>
                 <input type="text" class="form-control form-control-sm rounded bg-white shadow-none border" placeholder="e.g. ORD-001" @bind="filter.OrderNumber" />
             </div>
             <div class="col-6 col-md-2">
+                <label for="history-branch" class="form-label text-dark fw-semibold small mb-1">Branch</label>
+                <select id="history-branch" class="form-select form-select-sm rounded bg-white shadow-none border" value="@(filter.BranchId?.ToString() ?? "")" @onchange="OnBranchChanged" disabled="@(lockedBranchId.HasValue)">
+                    @if (!lockedBranchId.HasValue)
+                    {
+                        <option value="">All Branches</option>
+                    }
+                    @foreach (var b in AuthorizedBranches)
+                    {
+                        <option value="@b.BranchId">@b.Name (@b.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label for="history-outlet" class="form-label text-dark fw-semibold small mb-1">Outlet</label>
+                <select id="history-outlet" class="form-select form-select-sm rounded bg-white shadow-none border" value="@(filter.OutletId?.ToString() ?? "")" @onchange="OnOutletChanged">
+                    <option value="">All Outlets</option>
+                    @foreach (var o in FilteredOutlets)
+                    {
+                        <option value="@o.OutletId">@o.Name (@o.OutletCode)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label for="history-terminal" class="form-label text-dark fw-semibold small mb-1">Terminal</label>
+                <select id="history-terminal" class="form-select form-select-sm rounded bg-white shadow-none border" value="@(filter.TerminalId?.ToString() ?? "")" @onchange="OnTerminalChanged" disabled="@(lockedTerminalId.HasValue)">
+                    @if (!lockedTerminalId.HasValue)
+                    {
+                        <option value="">All Terminals</option>
+                    }
+                    @foreach (var t in FilteredTerminals)
+                    {
+                        <option value="@t.TerminalId">@t.Name (@t.TerminalCode)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Payment Status</label>
                 <select class="form-select form-select-sm rounded bg-white shadow-none border" @bind="filter.PaymentStatus">
                     <option value="">All Statuses</option>
                     <option value="PAID">Paid</option>
+                    <option value="VOIDED">Voided</option>
                     <option value="UNPAID">Unpaid</option>
                 </select>
             </div>
@@ -86,10 +135,15 @@
                 <label class="form-label text-dark fw-semibold small mb-1">Cashier ID</label>
                 <input type="text" class="form-control form-control-sm rounded bg-white shadow-none border" placeholder="Cashier ID" @bind="filter.CashierId" />
             </div>
-            <div class="col-md-2"><label for="history-branch" class="form-label">Branch ID</label><input id="history-branch" type="number" min="1" class="form-control form-control-sm" @bind="filter.BranchId" /></div>
-            <div class="col-md-2"><label for="history-outlet" class="form-label">Outlet ID</label><input id="history-outlet" type="number" min="1" class="form-control form-control-sm" @bind="filter.OutletId" /></div>
-            <div class="col-md-2"><label for="history-terminal" class="form-label">Terminal ID</label><input id="history-terminal" type="number" min="1" class="form-control form-control-sm" @bind="filter.TerminalId" /></div>
-            <div class="col-12 col-md-3 d-flex gap-2">
+            <div class="col-6 col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Date From</label>
+                <input type="date" class="form-control form-control-sm rounded bg-white shadow-none border" @bind="filter.DateFrom" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Date To</label>
+                <input type="date" class="form-control form-control-sm rounded bg-white shadow-none border" @bind="filter.DateTo" />
+            </div>
+            <div class="col-12 col-md-3 ms-auto d-flex gap-2">
                 <button class="btn btn-primary btn-sm rounded px-3 fw-bold shadow-sm w-100" @onclick="LoadTransactions">
                     <i class="bi bi-search me-1"></i> Filter
                 </button>
@@ -128,36 +182,33 @@
         {
             <div class="commercial-grid table-responsive w-100">
                 <QuickGrid Items="@transactions.AsQueryable()" Pagination="@pagination" Theme="commercial">
-                    <!-- Col 1: Date / Time -->
                     <PropertyColumn Property="@(t => t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))" Title="Date / Time" Sortable="true" Align="Align.Left" />
-
-                    <!-- Col 2: Invoice # -->
                     <PropertyColumn Property="@(t => t.InvoiceNumber ?? "—")" Title="Invoice #" Sortable="true" Align="Align.Left" />
-
-                    <!-- Col 3: Order # -->
                     <PropertyColumn Property="@(t => t.OrderNumber)" Title="Order #" Sortable="true" Align="Align.Left" />
-
-                    <!-- Col 4: Cashier -->
+                    <TemplateColumn Context="t" Title="Branch → Outlet → Terminal" Align="Align.Left">
+                        <div class="small">
+                            <div class="fw-semibold text-dark">@t.BranchName → @t.OutletName</div>
+                            <span class="badge bg-light text-dark border">@t.TerminalName (@t.TerminalCode)</span>
+                        </div>
+                    </TemplateColumn>
                     <PropertyColumn Property="@(t => t.CashierId)" Title="Cashier" Align="Align.Left" />
-
-                    <!-- Col 5: Status -->
                     <TemplateColumn Context="t" Title="Status" Align="Align.Center">
-                        @if (t.PaymentStatus == "PAID")
+                        @if (t.PaymentStatus == "VOIDED" || t.OrderStatus == "VOIDED")
+                        {
+                            <span class="badge bg-danger">VOIDED</span>
+                        }
+                        else if (t.PaymentStatus == "PAID")
                         {
                             <span class="status-badge paid">PAID</span>
                         }
                         else
                         {
-                            <span class="status-badge unpaid">UNPAID</span>
+                            <span class="status-badge unpaid">@t.PaymentStatus</span>
                         }
                     </TemplateColumn>
-
-                    <!-- Col 6: Total Amount -->
                     <TemplateColumn Context="t" Title="Total Amount" Align="Align.Right" SortBy="@(GridSort<OrderResponseDto>.ByAscending(t => t.TotalAmount))" Sortable="true">
                         <span>₱@t.TotalAmount.ToString("N2")</span>
                     </TemplateColumn>
-
-                    <!-- Col 7: Actions -->
                     <TemplateColumn Context="t" Title="Actions" Align="Align.Right">
                         <HeaderTemplate>
                             <div class="actions-header-wrap">
@@ -229,17 +280,21 @@
                         <div>
                             <div class="d-flex align-items-center gap-2">
                                 <h5 class="fw-bold text-dark mb-0">Transaction #@selectedOrder.OrderNumber</h5>
-                                @if (selectedOrder.PaymentStatus == "PAID")
+                                @if (selectedOrder.PaymentStatus == "VOIDED" || selectedOrder.OrderStatus == "VOIDED")
+                                {
+                                    <span class="badge bg-danger">VOIDED</span>
+                                }
+                                else if (selectedOrder.PaymentStatus == "PAID")
                                 {
                                     <span class="status-badge paid">PAID</span>
                                 }
                                 else
                                 {
-                                    <span class="status-badge unpaid">UNPAID</span>
+                                    <span class="status-badge unpaid">@selectedOrder.PaymentStatus</span>
                                 }
                             </div>
                             <small class="text-secondary">
-                                Invoice: <span class="fw-semibold text-dark">@(selectedOrder.InvoiceNumber ?? "N/A")</span> &bull; 
+                                Invoice: <span class="fw-semibold text-dark">@(selectedOrder.InvoiceNumber ?? "N/A")</span> &bull;
                                 Date: <span class="fw-semibold text-dark">@selectedOrder.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
                             </small>
                         </div>
@@ -250,9 +305,10 @@
                     <div class="row g-3 mb-4">
                         <div class="col-sm-4">
                             <div class="p-3 bg-light rounded-3 border h-100">
-                                <span class="text-muted small d-block mb-1">Cashier & Terminal</span>
+                                <span class="text-muted small d-block mb-1">Cashier & Terminal Attribution</span>
                                 <strong class="text-dark d-block">@selectedOrder.CashierId</strong>
-                                <span class="text-secondary small">Terminal #@selectedOrder.TerminalId &bull; Branch #@selectedOrder.BranchId</span>
+                                <span class="text-secondary small d-block">@selectedOrder.BranchName → @selectedOrder.OutletName</span>
+                                <span class="badge bg-white text-dark border mt-1">@selectedOrder.TerminalName (@selectedOrder.TerminalCode)</span>
                             </div>
                         </div>
                         <div class="col-sm-4">
@@ -275,7 +331,7 @@
                         </div>
                         <div class="col-sm-4">
                             <div class="p-3 bg-light rounded-3 border h-100">
-                                <span class="text-muted small d-block mb-1">Payment Details</span>
+                                <span class="text-muted small d-block mb-1">Payment Details (Net of Change)</span>
                                 @if (selectedOrder.Payments != null && selectedOrder.Payments.Any())
                                 {
                                     @foreach (var p in selectedOrder.Payments)
@@ -284,6 +340,10 @@
                                             <strong class="text-dark">@p.PaymentMethod</strong>
                                             <span class="text-success fw-bold">₱@p.Amount.ToString("N2")</span>
                                         </div>
+                                        @if (p.ChangeAmount > 0)
+                                        {
+                                            <span class="text-muted small d-block">Tender: ₱@p.AmountTendered.ToString("N2") • Change: ₱@p.ChangeAmount.ToString("N2")</span>
+                                        }
                                         @if (!string.IsNullOrWhiteSpace(p.ReferenceNumber))
                                         {
                                             <span class="text-muted small d-block">Ref: @p.ReferenceNumber</span>
@@ -416,10 +476,87 @@
     private PaginationState pagination = new() { ItemsPerPage = 10 };
     private bool isLoading = true;
 
+    private List<BranchDto> allBranches = new();
+    private List<OutletDto> allOutlets = new();
+    private List<TerminalDto> allTerminals = new();
+    private int? lockedBranchId;
+    private int? lockedTerminalId;
+
+    private IEnumerable<BranchDto> AuthorizedBranches => lockedBranchId.HasValue
+        ? allBranches.Where(b => b.BranchId == lockedBranchId.Value)
+        : allBranches;
+
+    private IEnumerable<OutletDto> FilteredOutlets => filter.BranchId.HasValue
+        ? allOutlets.Where(o => o.BranchId == filter.BranchId.Value)
+        : (lockedBranchId.HasValue ? allOutlets.Where(o => o.BranchId == lockedBranchId.Value) : allOutlets);
+
+    private IEnumerable<TerminalDto> FilteredTerminals => allTerminals.Where(t =>
+        (!filter.BranchId.HasValue || t.BranchId == filter.BranchId.Value) &&
+        (!filter.OutletId.HasValue || t.OutletId == filter.OutletId.Value) &&
+        (!lockedTerminalId.HasValue || t.TerminalId == lockedTerminalId.Value));
+
     private bool isDetailModalOpen = false;
     private OrderResponseDto? selectedOrder;
 
-    protected override async Task OnInitializedAsync() => await LoadTransactions();
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var role = user.FindFirst(ClaimTypes.Role)?.Value ?? user.FindFirst("role")?.Value ?? "";
+            if (!role.Equals("Admin", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(user.FindFirst("branch_id")?.Value, out int bId))
+            {
+                lockedBranchId = bId;
+                filter.BranchId = bId;
+            }
+            if (!role.Equals("Admin", StringComparison.OrdinalIgnoreCase) &&
+                !role.Equals("Manager", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(user.FindFirst("terminal_id")?.Value, out int tId))
+            {
+                lockedTerminalId = tId;
+                filter.TerminalId = tId;
+            }
+        }
+
+        try
+        {
+            allBranches = await BranchService.GetBranchesAsync();
+            allOutlets = await OutletService.GetOutletsAsync(lockedBranchId);
+            allTerminals = await TerminalService.GetTerminalsAsync(outletId: null, branchId: lockedBranchId);
+        }
+        catch { }
+
+        await LoadTransactions();
+    }
+
+    private void OnBranchChanged(ChangeEventArgs e)
+    {
+        filter.BranchId = int.TryParse(e.Value?.ToString(), out int id) ? id : lockedBranchId;
+        filter.OutletId = null;
+        if (!lockedTerminalId.HasValue) filter.TerminalId = null;
+    }
+
+    private void OnOutletChanged(ChangeEventArgs e)
+    {
+        filter.OutletId = int.TryParse(e.Value?.ToString(), out int id) ? id : null;
+        if (!lockedTerminalId.HasValue) filter.TerminalId = null;
+    }
+
+    private void OnTerminalChanged(ChangeEventArgs e)
+    {
+        filter.TerminalId = int.TryParse(e.Value?.ToString(), out int id) ? id : lockedTerminalId;
+        if (filter.TerminalId.HasValue)
+        {
+            var term = allTerminals.FirstOrDefault(t => t.TerminalId == filter.TerminalId.Value);
+            if (term != null)
+            {
+                filter.BranchId = term.BranchId;
+                filter.OutletId = term.OutletId;
+            }
+        }
+    }
 
     private async Task LoadTransactions()
     {
@@ -441,7 +578,12 @@
 
     private async Task ResetFilters()
     {
-        filter = new TransactionFilterDto { PageSize = 100 };
+        filter = new TransactionFilterDto
+        {
+            PageSize = 100,
+            BranchId = lockedBranchId,
+            TerminalId = lockedTerminalId
+        };
         await LoadTransactions();
     }
 
@@ -494,4 +636,20 @@
             await SwalAlert.FireAsync("Error", "Failed to reprint invoice: " + ex.Message, SweetAlertIcon.Error);
         }
     }
+
+    private async Task ExportCsvAsync()
+    {
+        if (transactions == null || !transactions.Any()) return;
+        var sb = new StringBuilder();
+        sb.AppendLine("\"Date/Time\",\"Invoice #\",\"Order #\",\"Branch\",\"Outlet\",\"Terminal Name\",\"Terminal Code\",\"Cashier\",\"Order Status\",\"Payment Status\",\"Subtotal\",\"Discount\",\"Output VAT\",\"Total Amount\"");
+        foreach (var t in transactions)
+        {
+            sb.AppendLine($"\"{t.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\",\"{t.InvoiceNumber ?? ""}\",\"{t.OrderNumber}\",\"{t.BranchName.Replace("\"", "\"\"")}\",\"{t.OutletName.Replace("\"", "\"\"")}\",\"{t.TerminalName.Replace("\"", "\"\"")}\",\"{t.TerminalCode.Replace("\"", "\"\"")}\",\"{t.CashierId}\",\"{t.OrderStatus}\",\"{t.PaymentStatus}\",{t.Subtotal:0.00},{t.DiscountAmount:0.00},{t.VatAmount:0.00},{t.TotalAmount:0.00}");
+        }
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var b64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("eval", $"{{ const a = document.createElement('a'); a.href = 'data:text/csv;base64,{b64}'; a.download = 'sales-history-{DateTime.UtcNow:yyyyMMddHHmmss}.csv'; a.click(); }}");
+    }
+
+    private async Task PrintPageAsync() => await JS.InvokeVoidAsync("window.print");
 }

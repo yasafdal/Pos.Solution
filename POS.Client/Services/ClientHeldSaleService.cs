@@ -14,7 +14,7 @@ namespace POS.Client.Services;
 
 public class ClientHeldSaleService(HttpClient http, IPosConnectivityService connectivity) : IHeldSaleService
 {
-    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null)
+    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null, int? outletId = null)
     {
         var results = new List<HeldSaleDto>();
 
@@ -33,6 +33,8 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
                 var dto = POS.Shared.Services.LegacyTerminalPayload.Deserialize<HeldSaleDto>(entity.PayloadJson);
                 if (dto != null)
                 {
+                    if (outletId.HasValue && dto.OutletId > 0 && dto.OutletId != outletId.Value)
+                        continue;
                     dto.HeldSaleId = entity.HeldSaleId;
                     dto.Status = entity.Status;
                     results.Add(dto);
@@ -52,6 +54,7 @@ public class ClientHeldSaleService(HttpClient http, IPosConnectivityService conn
             {
                 var url = "api/held-sales?";
                 if (branchId.HasValue) url += $"branchId={branchId}&";
+                if (outletId.HasValue) url += $"outletId={outletId}&";
                 if (terminalId.HasValue) url += $"terminalId={terminalId}&";
 
                 var serverSales = await http.GetFromJsonAsync<List<HeldSaleDto>>(url);

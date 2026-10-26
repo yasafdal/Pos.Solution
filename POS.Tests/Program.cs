@@ -90,6 +90,14 @@ public static partial class Program
 
         await RunTestAsync("39. Blank opening float is rejected", Test39_OpeningFloatRequired);
         await RunTestAsync("40. Bar and Kitchen preparation routing, assigned printers, and ticket formatting", Test40_BarAndKitchenRouting);
+        await RunTestAsync("41. Cash denomination counting, centavos, PHP 20 coin/bill separation, and server recalculation", Test41_DenominationCountingAndCentavoArithmetic);
+        await RunTestAsync("42. Non-cash payment declarations, inactive used methods, and offsetting variance detection", Test42_PaymentMethodReconciliationAndOffsettingVariances);
+        await RunTestAsync("43. Cash expected balance ledger formula and separation of sales vs drawer float/movements", Test43_CashExpectedLedgerAndSalesSeparation);
+        await RunTestAsync("44. Duplicate close idempotency (ClientCloseId) and X-reading formatting/reprint", Test44_CloseIdempotencyAndXReadingReprint);
+        await RunTestAsync("45. Blind closing role guards, cashier redaction, and explicit zero-declaration confirmation", Test45_BlindClosingRoleGuardsAndZeroDeclarationConfirmation);
+        await RunTestAsync("46. Supervisor recount preserves original declaration and appends immutable recount audit trail", Test46_SupervisorRecountPreservesOriginalDeclarationAndAuditTrail);
+        await RunTestAsync("47. Sales report terminal breakdown, payment split isolation, and net refund separation", Test47_SalesReportTerminalBreakdownAndSeparationOfRefunds);
+        await RunTestAsync("48. Back-office shift reconciliation, historical denomination fallback, and terminal filtering", Test48_BackOfficeShiftReconciliationAndTerminalFiltering);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;

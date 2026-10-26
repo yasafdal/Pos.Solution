@@ -104,6 +104,13 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         }
         else
         {
+            // Terminal-bound supervisors (token carries branch_id) stay inside their branch; Admins are global.
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+            {
+                if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
+                branchId = supBranchId;
+            }
+
             if (branchId.HasValue)
                 query = query.Where(o => o.BranchId == branchId.Value);
 
@@ -115,7 +122,10 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         }
 
         if (outletId.HasValue)
-            query = query.Where(o => context.Terminals.Any(t => t.TerminalId == o.TerminalId && t.OutletId == outletId));
+        {
+            int outId = outletId.Value;
+            query = query.Where(o => o.OutletId == outId || context.Terminals.Any(t => t.TerminalId == o.TerminalId && t.OutletId == outId));
+        }
         if (dateFrom.HasValue)
         {
             var from = ToUtcUnspecified(dateFrom.Value);
@@ -153,13 +163,42 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
-        var result = orders.Select(o => new OrderResponseDto
+        var branchIds = orders.Select(o => o.BranchId).Distinct().ToList();
+        var terminalIds = orders.Where(o => o.TerminalId > 0).Select(o => o.TerminalId).Distinct().ToList();
+        var branchesById = branchIds.Count > 0
+            ? await context.Branches.AsNoTracking().Where(b => branchIds.Contains(b.BranchId)).ToDictionaryAsync(b => b.BranchId, cancellationToken)
+            : new Dictionary<int, Branch>();
+        var outletsById = await context.Outlets.AsNoTracking().ToDictionaryAsync(o => o.OutletId, cancellationToken);
+        var terminalsById = terminalIds.Count > 0
+            ? await context.Terminals.AsNoTracking().Where(t => terminalIds.Contains(t.TerminalId)).ToDictionaryAsync(t => t.TerminalId, cancellationToken)
+            : new Dictionary<int, Terminal>();
+
+        var result = orders.Select(o =>
         {
-            OrderId = o.OrderId,
-            OrderNumber = o.OrderNumber,
-            BranchId = o.BranchId,
-            TerminalId = o.TerminalId,
-            CashierId = o.CashierId,
+            terminalsById.TryGetValue(o.TerminalId, out var term);
+            int outId = term != null && term.OutletId > 0 ? term.OutletId : o.OutletId;
+            string outName = outletsById.TryGetValue(outId, out var outl)
+                ? outl.Name
+                : (outId > 0 ? $"Outlet #{outId}" : "Unknown / Legacy Outlet");
+            int brId = o.BranchId > 0 ? o.BranchId : (term?.BranchId ?? 0);
+            string brName = branchesById.TryGetValue(brId, out var br)
+                ? br.Name
+                : (brId > 0 ? $"Branch #{brId}" : "Unknown Branch");
+            string tCode = term?.TerminalCode ?? (o.TerminalId > 0 ? $"LEGACY-{o.TerminalId}" : "LEGACY");
+            string tName = term?.Name ?? (o.TerminalId > 0 ? $"Unknown / Legacy Terminal (#{o.TerminalId})" : "Unknown / Legacy Terminal");
+
+            return new OrderResponseDto
+            {
+                OrderId = o.OrderId,
+                OrderNumber = o.OrderNumber,
+                BranchId = brId,
+                BranchName = brName,
+                OutletId = outId,
+                OutletName = outName,
+                TerminalId = o.TerminalId,
+                TerminalCode = tCode,
+                TerminalName = tName,
+                CashierId = o.CashierId,
             ShiftId = o.ShiftId,
             OrderType = o.OrderType,
             OrderStatus = o.OrderStatus,
@@ -209,6 +248,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
                 PaymentStatus = p.PaymentStatus,
                 PaidAt = p.PaidAt
             }).ToList()
+            };
         }).ToList();
 
         return Ok(result);
@@ -248,12 +288,24 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
                 return Forbid();
         }
 
+        var branch = await context.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.BranchId == order.BranchId, cancellationToken);
+        var terminal = order.TerminalId > 0
+            ? await context.Terminals.AsNoTracking().Include(t => t.Outlet).FirstOrDefaultAsync(t => t.TerminalId == order.TerminalId, cancellationToken)
+            : null;
+        int outId = terminal != null && terminal.OutletId > 0 ? terminal.OutletId : order.OutletId;
+        var outlet = terminal?.Outlet ?? (outId > 0 ? await context.Outlets.AsNoTracking().FirstOrDefaultAsync(o => o.OutletId == outId, cancellationToken) : null);
+
         var dto = new OrderResponseDto
         {
             OrderId = order.OrderId,
             OrderNumber = order.OrderNumber,
             BranchId = order.BranchId,
+            BranchName = branch?.Name ?? (order.BranchId > 0 ? $"Branch #{order.BranchId}" : "Unknown Branch"),
+            OutletId = outId,
+            OutletName = outlet?.Name ?? (outId > 0 ? $"Outlet #{outId}" : "Unknown / Legacy Outlet"),
             TerminalId = order.TerminalId,
+            TerminalCode = terminal?.TerminalCode ?? (order.TerminalId > 0 ? $"LEGACY-{order.TerminalId}" : "LEGACY"),
+            TerminalName = terminal?.Name ?? (order.TerminalId > 0 ? $"Unknown / Legacy Terminal (#{order.TerminalId})" : "Unknown / Legacy Terminal"),
             CashierId = order.CashierId,
             ShiftId = order.ShiftId,
             OrderType = order.OrderType,
@@ -412,7 +464,10 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
     {
         var query = context.Orders.AsNoTracking().Where(o => o.PaymentStatus == "PAID");
         if (outletId.HasValue)
-            query = query.Where(o => context.Terminals.Any(t => t.TerminalId == o.TerminalId && t.OutletId == outletId));
+        {
+            int outId = outletId.Value;
+            query = query.Where(o => o.OutletId == outId || context.Terminals.Any(t => t.TerminalId == o.TerminalId && t.OutletId == outId));
+        }
 
         if (!IsSupervisor())
         {
@@ -456,6 +511,13 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         }
         else
         {
+            // Terminal-bound supervisors (token carries branch_id) stay inside their branch; Admins are global.
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+            {
+                if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
+                branchId = supBranchId;
+            }
+
             if (branchId.HasValue)
                 query = query.Where(o => o.BranchId == branchId.Value);
 

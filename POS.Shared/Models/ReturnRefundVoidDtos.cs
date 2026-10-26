@@ -20,6 +20,14 @@ public class VoidResponseDto
     public long VoidId { get; set; }
     public long OriginalOrderId { get; set; }
     public string? OriginalInvoiceNumber { get; set; }
+    public int BranchId { get; set; }
+    public string BranchName { get; set; } = string.Empty;
+    public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
+    public int TerminalId { get; set; }
+    public string TerminalCode { get; set; } = string.Empty;
+    public string TerminalName { get; set; } = "Unknown / Legacy Terminal";
+    public decimal VoidedAmount { get; set; }
     public string VoidReason { get; set; } = null!;
     public string RequestedBy { get; set; } = null!;
     public string ApprovedBy { get; set; } = null!;
@@ -68,7 +76,13 @@ public class ReturnResponseDto
     public decimal TotalRefundAmount { get; set; }
     public DateTime CreatedAt { get; set; }
     public int BranchId { get; set; }
+    public string BranchName { get; set; } = string.Empty;
+    public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
     public int TerminalId { get; set; }
+    public string TerminalCode { get; set; } = string.Empty;
+    public string TerminalName { get; set; } = "Unknown / Legacy Terminal";
+    public string RefundMethod { get; set; } = "CASH";
     public string? OriginalInvoiceNumber { get; set; }
     public List<ReturnItemResponseDto> ReturnItems { get; set; } = new();
 }

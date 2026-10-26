@@ -1,205 +1,933 @@
 @page "/sales-reports"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Manager,SeniorCashier")]
+@using System.Security.Claims
+@using System.Text
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
 @using CurrieTechnologies.Razor.SweetAlert2
 @inject ISalesReportService SalesReportService
+@inject IBranchService BranchService
+@inject IOutletService OutletService
+@inject ITerminalService TerminalService
+@inject HttpClient Http
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
 @inject SweetAlertService SwalAlert
 
-<PageTitle>Sales Reports & Summary - POS Admin</PageTitle>
+<PageTitle>Sales & Terminal Reports - POS Admin</PageTitle>
 
 <div class="w-100 py-2">
     <!-- Header Toolbar -->
     <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
         <div>
-            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Sales Reports & Analytics</h2>
-            <span class="text-secondary" style="font-size: 0.95rem;">Financial aggregation, gross/net sales, output VAT reconciliation, and performance grouping</span>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Sales, Terminal & Reconciliation Reports</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Branch → Outlet → Terminal sales analytics, VAT & refund breakdown, and shift closing reconciliation</span>
         </div>
-        <div>
+        <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-outline-secondary rounded px-3 py-2 fw-semibold shadow-sm text-nowrap" @onclick="ExportCsvAsync" disabled="@(report == null)">
+                <i class="bi bi-download me-1"></i> Export CSV
+            </button>
+            <button class="btn btn-outline-dark rounded px-3 py-2 fw-semibold shadow-sm text-nowrap" @onclick="PrintReportAsync" disabled="@(report == null)">
+                <i class="bi bi-printer me-1"></i> Print Report
+            </button>
             <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="LoadReport">
                 <i class="bi bi-arrow-repeat me-1"></i> Refresh Report
             </button>
         </div>
     </div>
 
-    <!-- Filter Card -->
+    <!-- Scope Distinction Banner -->
+    <div class="alert alert-light border rounded-4 py-2 px-3 mb-3 small text-secondary d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+            <i class="bi bi-info-circle-fill text-primary me-1"></i>
+            <strong>Report Scope:</strong> Sales Revenue metrics below strictly exclude <strong>Opening Float</strong> and <strong>Cash Drawer Movements</strong> (Paid-In, Paid-Out, Petty Cash, Cash Drops). Use the <strong>Shift Closing Reconciliation</strong> tab to audit physical drawer counts, denominations, and cashier-declared non-cash totals.
+        </div>
+        <span class="badge bg-dark-subtle text-dark border">@GetSelectedHierarchySummary()</span>
+    </div>
+
+    <!-- Cascading Filter Card -->
     <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-white">
         <div class="row g-3 align-items-end">
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Date From</label>
                 <input type="date" class="form-control form-control-sm rounded-3" @bind="request.DateFrom" />
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Date To</label>
                 <input type="date" class="form-control form-control-sm rounded-3" @bind="request.DateTo" />
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
+                <label for="report-branch" class="form-label text-dark fw-semibold small mb-1">Branch</label>
+                <select id="report-branch" class="form-select form-select-sm rounded-3" value="@(request.BranchId?.ToString() ?? "")" @onchange="OnBranchChanged" disabled="@(lockedBranchId.HasValue)">
+                    @if (!lockedBranchId.HasValue)
+                    {
+                        <option value="">All Authorized Branches</option>
+                    }
+                    @foreach (var b in AuthorizedBranches)
+                    {
+                        <option value="@b.BranchId">@b.Name (@b.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="report-outlet" class="form-label text-dark fw-semibold small mb-1">Outlet</label>
+                <select id="report-outlet" class="form-select form-select-sm rounded-3" value="@(request.OutletId?.ToString() ?? "")" @onchange="OnOutletChanged">
+                    <option value="">All Outlets</option>
+                    @foreach (var o in FilteredOutlets)
+                    {
+                        <option value="@o.OutletId">@o.Name (@o.OutletCode)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="report-terminal" class="form-label text-dark fw-semibold small mb-1">Terminal</label>
+                <select id="report-terminal" class="form-select form-select-sm rounded-3" value="@(request.TerminalId?.ToString() ?? "")" @onchange="OnTerminalChanged" disabled="@(lockedTerminalId.HasValue)">
+                    @if (!lockedTerminalId.HasValue)
+                    {
+                        <option value="">All Terminals</option>
+                    }
+                    @foreach (var t in FilteredTerminals)
+                    {
+                        <option value="@t.TerminalId">@t.Name (@t.TerminalCode)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Grouping Mode</label>
                 <select class="form-select form-select-sm rounded-3" @bind="request.Grouping">
                     <option value="DAILY">Daily Breakdown</option>
                     <option value="WEEKLY">Weekly Breakdown</option>
                     <option value="MONTHLY">Monthly Breakdown</option>
-                    <option value="CASHIER">By Cashier</option>
                     <option value="BRANCH">By Branch</option>
+                    <option value="OUTLET">By Outlet</option>
+                    <option value="TERMINAL">By Terminal</option>
+                    <option value="CASHIER">By Cashier</option>
+                    <option value="PAYMENT">By Payment Method</option>
                 </select>
             </div>
             <div class="col-md-3">
-                <label for="report-branch" class="form-label">Branch ID</label><input id="report-branch" type="number" min="1" class="form-control form-control-sm mb-2" @bind="request.BranchId" />
-                <label for="report-outlet" class="form-label">Outlet ID</label><input id="report-outlet" type="number" min="1" class="form-control form-control-sm mb-2" @bind="request.OutletId" />
-                <label for="report-terminal" class="form-label">Terminal ID</label><input id="report-terminal" type="number" min="1" class="form-control form-control-sm mb-2" @bind="request.TerminalId" />
-                <button class="btn btn-dark btn-sm rounded-3 px-3 fw-bold shadow-sm w-100" @onclick="LoadReport">
-                    <i class="bi bi-filter me-1"></i> Generate Report
+                <label class="form-label text-dark fw-semibold small mb-1">Cashier Username</label>
+                <input type="text" class="form-control form-control-sm rounded-3" placeholder="All cashiers" @bind="request.CashierId" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label text-dark fw-semibold small mb-1">Payment Method</label>
+                <input type="text" class="form-control form-control-sm rounded-3" placeholder="e.g. CASH, GCASH, MAYA, CARD" @bind="request.PaymentMethod" />
+            </div>
+            <div class="col-md-6 d-flex gap-2 justify-content-end">
+                <button class="btn btn-outline-secondary btn-sm rounded-3 px-3 fw-semibold" @onclick="ResetFilters">
+                    <i class="bi bi-x-circle me-1"></i> Reset Filters
+                </button>
+                <button class="btn btn-dark btn-sm rounded-3 px-4 fw-bold shadow-sm" @onclick="LoadReport">
+                    <i class="bi bi-funnel-fill me-1"></i> Generate Report
                 </button>
             </div>
         </div>
     </div>
 
-    @if (report == null)
+    @if (!isAuthorizedSupervisor)
+    {
+        <div class="alert alert-danger rounded-4 p-4 shadow-sm">
+            <h5 class="fw-bold mb-1"><i class="bi bi-shield-lock-fill me-2"></i>Supervisor Authorization Required</h5>
+            <p class="mb-0">Sales reports, expected drawer totals, and shift reconciliation variances are restricted to authorized supervisors and administrators.</p>
+        </div>
+    }
+    else if (report == null)
     {
         <div class="text-center py-5 text-muted">
             <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
-            Generating sales report...
+            Generating sales & terminal report...
         </div>
     }
     else
     {
         <!-- KPI Metrics Grid -->
-        <div class="row g-3 mb-4">
+        <div class="row g-3 mb-3">
             <div class="col-xl-3 col-sm-6">
                 <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
-                    <div class="d-flex align-items-center justify-content-between">
-                        <div>
-                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Gross Sales</span>
-                            <h4 class="fw-bold text-dark mb-0">₱@report.GrossSales.ToString("N2")</h4>
-                        </div>
-                        <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 44px; height: 44px;">
-                            <i class="bi bi-wallet2 fs-4"></i>
-                        </div>
-                    </div>
+                    <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Gross Sales (Excl. Float)</span>
+                    <h4 class="fw-bold text-dark mb-0">₱@report.GrossSales.ToString("N2")</h4>
+                    <small class="text-muted">@report.CompletedTransactionsCount paid orders</small>
                 </div>
             </div>
             <div class="col-xl-3 col-sm-6">
                 <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
-                    <div class="d-flex align-items-center justify-content-between">
-                        <div>
-                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Net Sales</span>
-                            <h4 class="fw-bold text-success mb-0">₱@report.NetSales.ToString("N2")</h4>
-                        </div>
-                        <div class="d-flex align-items-center justify-content-center bg-success bg-opacity-10 text-success rounded-3" style="width: 44px; height: 44px;">
-                            <i class="bi bi-graph-up-arrow fs-4"></i>
-                        </div>
-                    </div>
+                    <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Discounts & Returns</span>
+                    <h4 class="fw-bold text-danger mb-0">-₱@((report.TotalDiscounts + report.TotalRefunds).ToString("N2"))</h4>
+                    <small class="text-muted">Disc: ₱@report.TotalDiscounts.ToString("N2") • Refunds (@report.ReturnTransactionsCount): ₱@report.TotalRefunds.ToString("N2")</small>
                 </div>
             </div>
             <div class="col-xl-3 col-sm-6">
                 <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
-                    <div class="d-flex align-items-center justify-content-between">
-                        <div>
-                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Total Discounts</span>
-                            <h4 class="fw-bold text-dark mb-0">₱@report.TotalDiscounts.ToString("N2")</h4>
-                        </div>
-                        <div class="d-flex align-items-center justify-content-center bg-warning bg-opacity-10 text-warning rounded-3" style="width: 44px; height: 44px;">
-                            <i class="bi bi-tag-fill fs-4"></i>
-                        </div>
-                    </div>
+                    <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Net Sales (After Refunds)</span>
+                    <h4 class="fw-bold text-success mb-0">₱@report.NetSalesAfterRefunds.ToString("N2")</h4>
+                    <small class="text-muted">Before post-sale returns: ₱@report.NetSales.ToString("N2")</small>
                 </div>
             </div>
             <div class="col-xl-3 col-sm-6">
                 <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
-                    <div class="d-flex align-items-center justify-content-between">
-                        <div>
-                            <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Output VAT (12%)</span>
-                            <h4 class="fw-bold text-dark mb-0">₱@report.OutputVat.ToString("N2")</h4>
-                        </div>
-                        <div class="d-flex align-items-center justify-content-center bg-info bg-opacity-10 text-info rounded-3" style="width: 44px; height: 44px;">
-                            <i class="bi bi-receipt fs-4"></i>
-                        </div>
-                    </div>
+                    <span class="text-secondary small fw-semibold text-uppercase d-block mb-1">Output VAT (12%)</span>
+                    <h4 class="fw-bold text-dark mb-0">₱@report.OutputVat.ToString("N2")</h4>
+                    <small class="text-muted">VATable: ₱@report.VatableSales.ToString("N2") • Exempt: ₱@report.VatExemptSales.ToString("N2")</small>
                 </div>
             </div>
         </div>
 
         <!-- Secondary Summary Stats -->
         <div class="row g-3 mb-4">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
-                    <span class="text-secondary small fw-semibold d-block mb-1">Completed Transactions</span>
-                    <h4 class="fw-bold text-dark mb-0">@report.CompletedTransactionsCount</h4>
+                    <span class="text-secondary small fw-semibold d-block mb-1">Net Payments Collected</span>
+                    <h5 class="fw-bold text-dark mb-0">₱@report.NetPaymentsAfterRefunds.ToString("N2")</h5>
+                    <small class="text-muted">Gross tender net of change: ₱@report.TotalPaymentsCollected.ToString("N2")</small>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
-                    <span class="text-secondary small fw-semibold d-block mb-1">Average Transaction Value</span>
-                    <h4 class="fw-bold text-dark mb-0">₱@report.AverageTransactionValue.ToString("N2")</h4>
+                    <span class="text-secondary small fw-semibold d-block mb-1">Cash vs Non-Cash Net Sales</span>
+                    <h5 class="fw-bold text-dark mb-0">₱@report.CashSalesCollected.ToString("N2") <span class="text-muted fs-6">/ ₱@report.NonCashSalesCollected.ToString("N2")</span></h5>
+                    <small class="text-muted">Cash Net / Non-Cash Net</small>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
-                    <span class="text-secondary small fw-semibold d-block mb-1">Total Payments Collected</span>
-                    <h4 class="fw-bold text-dark mb-0">₱@report.TotalPaymentsCollected.ToString("N2")</h4>
+                    <span class="text-secondary small fw-semibold d-block mb-1">Voided Transactions</span>
+                    <h5 class="fw-bold text-warning mb-0">@report.VoidedTransactionsCount <span class="fs-6 text-muted">(₱@report.VoidedAmount.ToString("N2"))</span></h5>
+                    <small class="text-muted">Excluded from Gross/Net Sales</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border rounded-3 p-3 bg-white shadow-sm h-100">
+                    <span class="text-secondary small fw-semibold d-block mb-1">Average Ticket Value</span>
+                    <h5 class="fw-bold text-dark mb-0">₱@report.AverageTransactionValue.ToString("N2")</h5>
+                    <small class="text-muted">Across @report.CompletedTransactionsCount completed sales</small>
                 </div>
             </div>
         </div>
 
-        <!-- Breakdown Table -->
-        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-            <div class="card-header bg-white py-3 px-4 border-bottom">
-                <h5 class="fw-bold mb-0 text-dark">Sales Breakdown (@request.Grouping)</h5>
-            </div>
-            <div class="table-responsive">
-                <table class="table align-middle mb-0">
-                    <thead class="table-light text-uppercase fs-7 text-secondary">
-                        <tr>
-                            <th class="py-3 px-4">Period / Group</th>
-                            <th class="py-3 text-center">Transactions</th>
-                            <th class="py-3 text-end">Gross Sales</th>
-                            <th class="py-3 text-end">Discounts</th>
-                            <th class="py-3 text-end">Output VAT</th>
-                            <th class="py-3 text-end px-4">Net Sales</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @if (report.Breakdown == null || !report.Breakdown.Any())
-                        {
+        <!-- Report View Tabs -->
+        <ul class="nav nav-pills gap-2 mb-3">
+            <li class="nav-item">
+                <button class="nav-link rounded-3 fw-bold @(activeViewTab == "GROUPING" ? "active bg-dark text-white" : "bg-white text-dark border")"
+                        @onclick='() => activeViewTab = "GROUPING"'>
+                    <i class="bi bi-table me-1"></i> Sales Breakdown (@request.Grouping)
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link rounded-3 fw-bold @(activeViewTab == "TERMINALS" ? "active bg-dark text-white" : "bg-white text-dark border")"
+                        @onclick='() => activeViewTab = "TERMINALS"'>
+                    <i class="bi bi-pc-display-horizontal me-1"></i> By Branch → Outlet → Terminal (@report.TerminalBreakdown.Count)
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link rounded-3 fw-bold @(activeViewTab == "PAYMENTS" ? "active bg-dark text-white" : "bg-white text-dark border")"
+                        @onclick='() => activeViewTab = "PAYMENTS"'>
+                    <i class="bi bi-credit-card-2-front me-1"></i> By Payment Method (@report.PaymentBreakdown.Count)
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link rounded-3 fw-bold @(activeViewTab == "SHIFTS" ? "active bg-dark text-white" : "bg-white text-dark border")"
+                        @onclick='() => activeViewTab = "SHIFTS"'>
+                    <i class="bi bi-calculator me-1"></i> Shift Closing Reconciliation (@shiftsInScope.Count)
+                </button>
+            </li>
+        </ul>
+
+        @if (activeViewTab == "GROUPING")
+        {
+            <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+                <div class="card-header bg-white py-3 px-4 border-bottom d-flex justify-content-between align-items-center">
+                    <h5 class="fw-bold mb-0 text-dark">Sales Breakdown (@request.Grouping)</h5>
+                    <span class="text-muted small">@GetSelectedHierarchySummary()</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light text-uppercase fs-7 text-secondary">
                             <tr>
-                                <td colspan="6" class="text-center py-4 text-muted fst-italic">No sales data found for the selected criteria.</td>
+                                <th class="py-3 px-4">Period / Group</th>
+                                <th class="py-3 text-center">Transactions</th>
+                                <th class="py-3 text-end">Gross Sales</th>
+                                <th class="py-3 text-end">Discounts</th>
+                                <th class="py-3 text-end">Refunds</th>
+                                <th class="py-3 text-end">Output VAT</th>
+                                <th class="py-3 text-end">Net Sales</th>
+                                <th class="py-3 text-end px-4">Net After Refunds</th>
                             </tr>
-                        }
-                        else
-                        {
-                            @foreach (var item in report.Breakdown)
+                        </thead>
+                        <tbody>
+                            @if (report.Breakdown == null || !report.Breakdown.Any())
                             {
                                 <tr>
-                                    <td class="px-4 fw-bold text-dark">@item.Label</td>
-                                    <td class="text-center"><span class="badge bg-secondary-subtle text-dark">@item.TransactionCount</span></td>
-                                    <td class="text-end">₱@item.GrossSales.ToString("N2")</td>
-                                    <td class="text-end text-danger">-₱@item.TotalDiscounts.ToString("N2")</td>
-                                    <td class="text-end">₱@item.OutputVat.ToString("N2")</td>
-                                    <td class="text-end px-4 fw-bold text-success">₱@item.NetSales.ToString("N2")</td>
+                                    <td colspan="8" class="text-center py-4 text-muted fst-italic">No sales data found for the selected criteria.</td>
                                 </tr>
                             }
-                        }
-                    </tbody>
-                </table>
+                            else
+                            {
+                                @foreach (var item in report.Breakdown)
+                                {
+                                    <tr>
+                                        <td class="px-4 fw-bold text-dark">@item.Label</td>
+                                        <td class="text-center"><span class="badge bg-secondary-subtle text-dark">@item.TransactionCount</span></td>
+                                        <td class="text-end">₱@item.GrossSales.ToString("N2")</td>
+                                        <td class="text-end text-danger">-₱@item.TotalDiscounts.ToString("N2")</td>
+                                        <td class="text-end text-danger">-₱@item.TotalRefunds.ToString("N2")</td>
+                                        <td class="text-end">₱@item.OutputVat.ToString("N2")</td>
+                                        <td class="text-end fw-semibold">₱@item.NetSales.ToString("N2")</td>
+                                        <td class="text-end px-4 fw-bold text-success">₱@item.NetSalesAfterRefunds.ToString("N2")</td>
+                                    </tr>
+                                }
+                                <tr class="table-light fw-bold border-top">
+                                    <td class="px-4">TOTAL</td>
+                                    <td class="text-center">@report.Breakdown.Sum(x => x.TransactionCount)</td>
+                                    <td class="text-end">₱@report.Breakdown.Sum(x => x.GrossSales).ToString("N2")</td>
+                                    <td class="text-end text-danger">-₱@report.Breakdown.Sum(x => x.TotalDiscounts).ToString("N2")</td>
+                                    <td class="text-end text-danger">-₱@report.Breakdown.Sum(x => x.TotalRefunds).ToString("N2")</td>
+                                    <td class="text-end">₱@report.Breakdown.Sum(x => x.OutputVat).ToString("N2")</td>
+                                    <td class="text-end">₱@report.Breakdown.Sum(x => x.NetSales).ToString("N2")</td>
+                                    <td class="text-end px-4 text-success">₱@report.Breakdown.Sum(x => x.NetSalesAfterRefunds).ToString("N2")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        </div>
+        }
+        else if (activeViewTab == "TERMINALS")
+        {
+            <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+                <div class="card-header bg-white py-3 px-4 border-bottom d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold mb-0 text-dark">Terminal Attribution Breakdown (Branch → Outlet → Terminal)</h5>
+                        <small class="text-muted">Terminal attribution is derived strictly from each transaction's recorded terminal. Historical records without a terminal reference appear as Unknown / Legacy Terminal.</small>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light text-uppercase fs-7 text-secondary">
+                            <tr>
+                                <th class="py-3 px-4">Branch</th>
+                                <th class="py-3">Outlet</th>
+                                <th class="py-3">Terminal</th>
+                                <th class="py-3 text-center">Paid / Void</th>
+                                <th class="py-3 text-end">Gross Sales</th>
+                                <th class="py-3 text-end">Discounts</th>
+                                <th class="py-3 text-end">Refunds</th>
+                                <th class="py-3 text-end">Output VAT</th>
+                                <th class="py-3 text-end px-4">Net After Refunds</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (!report.TerminalBreakdown.Any())
+                            {
+                                <tr>
+                                    <td colspan="9" class="text-center py-4 text-muted fst-italic">No terminal transactions found for the selected criteria.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                @foreach (var branchGroup in report.TerminalBreakdown.GroupBy(t => new { t.BranchId, t.BranchName }))
+                                {
+                                    @foreach (var t in branchGroup)
+                                    {
+                                        <tr>
+                                            <td class="px-4 fw-semibold">@t.BranchName</td>
+                                            <td>@t.OutletName</td>
+                                            <td>
+                                                @if (t.IsLegacyUnknownTerminal)
+                                                {
+                                                    <span class="badge bg-warning-subtle text-dark border border-warning">@t.TerminalName</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="fw-bold text-dark">@t.TerminalName</span>
+                                                    <span class="badge bg-light text-secondary border ms-1">@t.TerminalCode</span>
+                                                }
+                                            </td>
+                                            <td class="text-center">
+                                                <span class="badge bg-success-subtle text-success">@t.TransactionCount</span>
+                                                @if (t.VoidedCount > 0)
+                                                {
+                                                    <span class="badge bg-danger-subtle text-danger ms-1">@t.VoidedCount void</span>
+                                                }
+                                            </td>
+                                            <td class="text-end">₱@t.GrossSales.ToString("N2")</td>
+                                            <td class="text-end text-danger">-₱@t.TotalDiscounts.ToString("N2")</td>
+                                            <td class="text-end text-danger">-₱@t.TotalRefunds.ToString("N2")</td>
+                                            <td class="text-end">₱@t.OutputVat.ToString("N2")</td>
+                                            <td class="text-end px-4 fw-bold text-success">₱@t.NetSalesAfterRefunds.ToString("N2")</td>
+                                        </tr>
+                                    }
+                                    <tr class="table-light fw-semibold small text-secondary">
+                                        <td colspan="3" class="px-4">Subtotal — @branchGroup.Key.BranchName</td>
+                                        <td class="text-center">@branchGroup.Sum(x => x.TransactionCount)</td>
+                                        <td class="text-end">₱@branchGroup.Sum(x => x.GrossSales).ToString("N2")</td>
+                                        <td class="text-end text-danger">-₱@branchGroup.Sum(x => x.TotalDiscounts).ToString("N2")</td>
+                                        <td class="text-end text-danger">-₱@branchGroup.Sum(x => x.TotalRefunds).ToString("N2")</td>
+                                        <td class="text-end">₱@branchGroup.Sum(x => x.OutputVat).ToString("N2")</td>
+                                        <td class="text-end px-4 text-dark fw-bold">₱@branchGroup.Sum(x => x.NetSalesAfterRefunds).ToString("N2")</td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+        else if (activeViewTab == "PAYMENTS")
+        {
+            <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+                <div class="card-header bg-white py-3 px-4 border-bottom">
+                    <h5 class="fw-bold mb-0 text-dark">Payment Method Collection & Refund Breakdown</h5>
+                    <small class="text-muted">Amounts reflect actual payment tenders net of change given and completed return refunds, without duplicating multi-payment order totals.</small>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light text-uppercase fs-7 text-secondary">
+                            <tr>
+                                <th class="py-3 px-4">Payment Method</th>
+                                <th class="py-3">Type</th>
+                                <th class="py-3 text-center">Payment Count</th>
+                                <th class="py-3 text-end">Gross Collected (Net of Change)</th>
+                                <th class="py-3 text-end">Completed Refunds</th>
+                                <th class="py-3 text-end px-4">Net Collected</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (!report.PaymentBreakdown.Any())
+                            {
+                                <tr>
+                                    <td colspan="6" class="text-center py-4 text-muted fst-italic">No payment records found for the selected criteria.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                @foreach (var p in report.PaymentBreakdown)
+                                {
+                                    <tr>
+                                        <td class="px-4 fw-bold text-dark">@p.PaymentMethodName <span class="text-muted small">(@p.PaymentMethodCode)</span></td>
+                                        <td>
+                                            <span class="badge @(p.IsCash ? "bg-success-subtle text-success" : "bg-primary-subtle text-primary")">
+                                                @(p.IsCash ? "Physical Cash" : "Non-Cash / Online")
+                                            </span>
+                                        </td>
+                                        <td class="text-center">@p.PaymentCount</td>
+                                        <td class="text-end">₱@p.GrossCollected.ToString("N2")</td>
+                                        <td class="text-end text-danger">-₱@p.RefundedAmount.ToString("N2")</td>
+                                        <td class="text-end px-4 fw-bold text-success">₱@p.NetCollected.ToString("N2")</td>
+                                    </tr>
+                                }
+                                <tr class="table-light fw-bold border-top">
+                                    <td colspan="2" class="px-4">TOTAL</td>
+                                    <td class="text-center">@report.PaymentBreakdown.Sum(x => x.PaymentCount)</td>
+                                    <td class="text-end">₱@report.PaymentBreakdown.Sum(x => x.GrossCollected).ToString("N2")</td>
+                                    <td class="text-end text-danger">-₱@report.PaymentBreakdown.Sum(x => x.RefundedAmount).ToString("N2")</td>
+                                    <td class="text-end px-4 text-success">₱@report.PaymentBreakdown.Sum(x => x.NetCollected).ToString("N2")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+        else if (activeViewTab == "SHIFTS")
+        {
+            <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+                <div class="card-header bg-white py-3 px-4 border-bottom d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                        <h5 class="fw-bold mb-0 text-dark">Shift Closing & Payment Method Reconciliation</h5>
+                        <small class="text-muted">Separates Opening Float & Cash Movements from Sales Revenue. Non-cash declarations are labeled <strong>Cashier-Declared (Not Provider-Verified)</strong>. Offsetting variances across methods are flagged explicitly.</small>
+                    </div>
+                    <a href="/cash-movements" class="btn btn-outline-primary btn-sm rounded-3 fw-semibold">
+                        <i class="bi bi-box-arrow-up-right me-1"></i> Open Full Drawer & Closing Audit
+                    </a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0 small">
+                        <thead class="table-light text-uppercase fs-7 text-secondary">
+                            <tr>
+                                <th class="py-3 px-3">Shift / Terminal</th>
+                                <th class="py-3">Cashier & Timestamps</th>
+                                <th class="py-3 text-end">Float / Net Drawer Mvmt</th>
+                                <th class="py-3 text-end">Expected Cash</th>
+                                <th class="py-3 text-end">Counted Cash (Denoms)</th>
+                                <th class="py-3 text-end">Cash Variance</th>
+                                <th class="py-3 text-end">Non-Cash Exp / Cashier-Declared</th>
+                                <th class="py-3 text-center">Per-Method Status</th>
+                                <th class="py-3 text-end px-3">Audit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (!shiftsInScope.Any())
+                            {
+                                <tr>
+                                    <td colspan="9" class="text-center py-4 text-muted fst-italic">No shifts found for the selected Branch / Outlet / Terminal and date range.</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                @foreach (var s in shiftsInScope)
+                                {
+                                    decimal netDrawerMovements = s.TotalCashIn - s.TotalCashOut - s.TotalCashDrops;
+                                    <tr>
+                                        <td class="px-3">
+                                            <div class="fw-bold text-dark">Shift #@s.ShiftId <span class="badge @(s.Status == "CLOSED" ? "bg-secondary" : "bg-success") ms-1">@s.Status</span></div>
+                                            <div class="text-muted">@s.BranchName → @s.OutletName</div>
+                                            <div>
+                                                <span class="badge bg-light text-dark border">@s.TerminalName (@s.TerminalCode)</span>
+                                                @if (s.RecountHistory.Count > 0)
+                                                {
+                                                    <span class="badge bg-info-subtle text-info border ms-1">@s.RecountHistory.Count Recount(s)</span>
+                                                }
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="fw-semibold text-dark">@s.CashierId</div>
+                                            <div class="text-muted">Open: @s.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</div>
+                                            <div class="text-muted">Close: @(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt") : "Active")</div>
+                                        </td>
+                                        <td class="text-end">
+                                            <div>Float: ₱@s.OpeningFloat.ToString("N2")</div>
+                                            <div class="text-muted">Mvmt: @(netDrawerMovements >= 0 ? "+" : "")₱@netDrawerMovements.ToString("N2")</div>
+                                        </td>
+                                        <td class="text-end fw-semibold">₱@s.ExpectedBalance.ToString("N2")</td>
+                                        <td class="text-end">
+                                            @if (s.ActualCountedBalance.HasValue)
+                                            {
+                                                <div class="fw-bold">₱@s.ActualCountedBalance.Value.ToString("N2")</div>
+                                                @if (s.HasRecordedDenominations)
+                                                {
+                                                    <span class="badge bg-success-subtle text-success">Denoms Recorded</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-warning-subtle text-dark border">Denoms: Not Recorded</span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">—</span>
+                                            }
+                                        </td>
+                                        <td class="text-end">
+                                            @if (s.Discrepancy.HasValue)
+                                            {
+                                                <span class="fw-bold @(s.Discrepancy.Value == 0m ? "text-success" : (s.Discrepancy.Value < 0m ? "text-danger" : "text-warning"))">
+                                                    @(s.Discrepancy.Value > 0m ? "+" : "")₱@s.Discrepancy.Value.ToString("N2")
+                                                </span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">—</span>
+                                            }
+                                        </td>
+                                        <td class="text-end">
+                                            <div>Exp: ₱@s.TotalNonCashExpected.ToString("N2")</div>
+                                            <div class="fw-semibold">Decl: ₱@s.TotalNonCashDeclared.ToString("N2")</div>
+                                            <small class="text-muted">Cashier-Declared</small>
+                                        </td>
+                                        <td class="text-center">
+                                            <span class="badge @(s.OverallReconciliationStatus == "BALANCED" ? "bg-success-subtle text-success" : s.OverallReconciliationStatus == "NOT RECONCILED" ? "bg-secondary-subtle text-secondary" : "bg-danger-subtle text-danger")">
+                                                @s.OverallReconciliationStatus
+                                            </span>
+                                            @foreach (var pm in s.PaymentReconciliations.Where(r => r.Variance != 0m))
+                                            {
+                                                <div class="small text-danger mt-1">
+                                                    @pm.PaymentMethodCode: @(pm.Variance > 0m ? "+" : "")₱@pm.Variance.ToString("N2") (@pm.Status)
+                                                </div>
+                                            }
+                                        </td>
+                                        <td class="text-end px-3">
+                                            <button class="btn btn-sm btn-outline-dark rounded-3" @onclick="() => selectedShift = s">
+                                                <i class="bi bi-eye me-1"></i> Inspect
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
     }
 </div>
+
+@if (selectedShift != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15,23,42,0.55);">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content rounded-4 border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white py-3 px-4">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">Shift #@selectedShift.ShiftId Closing Reconciliation & Audit</h5>
+                        <small class="text-white-50">@selectedShift.BranchName → @selectedShift.OutletName → @selectedShift.TerminalName (@selectedShift.TerminalCode) • Cashier: @selectedShift.CashierId</small>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => selectedShift = null"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-4">
+                            <div class="border rounded-3 p-3 bg-light h-100">
+                                <h6 class="fw-bold text-uppercase small text-secondary mb-2">1. Shift Sales Revenue (Excl. Float)</h6>
+                                <div class="d-flex justify-content-between small mb-1"><span>Cash Net Sales:</span><strong>₱@((selectedShift.TotalCashSales - selectedShift.TotalCashRefunds).ToString("N2"))</strong></div>
+                                <div class="d-flex justify-content-between small mb-1"><span>Non-Cash Expected Net Sales:</span><strong>₱@selectedShift.TotalNonCashExpected.ToString("N2")</strong></div>
+                                <hr class="my-2" />
+                                <div class="d-flex justify-content-between fw-bold text-success"><span>Total Shift Net Sales:</span><span>₱@selectedShift.TotalNetSales.ToString("N2")</span></div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="border rounded-3 p-3 bg-light h-100">
+                                <h6 class="fw-bold text-uppercase small text-secondary mb-2">2. Physical Cash Drawer Ledger</h6>
+                                <div class="d-flex justify-content-between small mb-1"><span>Opening Float:</span><strong>₱@selectedShift.OpeningFloat.ToString("N2")</strong></div>
+                                <div class="d-flex justify-content-between small mb-1"><span>Cash Sales (Net of Change):</span><span>+₱@selectedShift.TotalCashSales.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between small mb-1"><span>Cash Refunds:</span><span class="text-danger">-₱@selectedShift.TotalCashRefunds.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between small mb-1"><span>Paid-In:</span><span>+₱@selectedShift.TotalCashIn.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between small mb-1"><span>Paid-Out (incl. Petty Cash ₱@selectedShift.TotalPettyCashOut.ToString("N2")):</span><span class="text-danger">-₱@selectedShift.TotalCashOut.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between small mb-1"><span>Cash Drops:</span><span class="text-danger">-₱@selectedShift.TotalCashDrops.ToString("N2")</span></div>
+                                <hr class="my-2" />
+                                <div class="d-flex justify-content-between fw-bold"><span>Expected Drawer Cash:</span><span>₱@selectedShift.ExpectedBalance.ToString("N2")</span></div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="border rounded-3 p-3 bg-light h-100">
+                                <h6 class="fw-bold text-uppercase small text-secondary mb-2">3. Timestamps & Closing Notes</h6>
+                                <div class="small mb-1"><strong>Opened:</strong> @selectedShift.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt")</div>
+                                <div class="small mb-1"><strong>Closed:</strong> @(selectedShift.ClosedAt.HasValue ? selectedShift.ClosedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt") : "Open")</div>
+                                <div class="small mb-1"><strong>Overall Status:</strong> <span class="badge @(selectedShift.OverallReconciliationStatus == "BALANCED" ? "bg-success" : selectedShift.OverallReconciliationStatus == "NOT RECONCILED" ? "bg-secondary" : "bg-danger")">@selectedShift.OverallReconciliationStatus</span></div>
+                                <div class="small mt-2"><strong>Notes:</strong> @(string.IsNullOrWhiteSpace(selectedShift.Notes) ? "None" : selectedShift.Notes)</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Per-Method Reconciliation -->
+                    <h6 class="fw-bold text-dark mb-2">Per-Payment-Method Reconciliation (Individual Shortages/Overages Never Hidden)</h6>
+                    <div class="table-responsive mb-4">
+                        <table class="table table-sm table-bordered align-middle mb-0">
+                            <thead class="table-light small text-uppercase">
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Verification Basis</th>
+                                    <th class="text-end">Gross</th>
+                                    <th class="text-end">Refunds</th>
+                                    <th class="text-end">Expected</th>
+                                    <th class="text-end">Counted / Cashier-Declared</th>
+                                    <th class="text-end">Variance</th>
+                                    <th class="text-center">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in selectedShift.PaymentReconciliations)
+                                {
+                                    <tr>
+                                        <td class="fw-bold">@r.PaymentMethodName (@r.PaymentMethodCode)</td>
+                                        <td>
+                                            <span class="badge @(r.IsCash ? "bg-dark-subtle text-dark" : "bg-warning-subtle text-dark border")">
+                                                @r.DeclarationSourceLabel
+                                            </span>
+                                        </td>
+                                        <td class="text-end">₱@r.GrossSalesAmount.ToString("N2")</td>
+                                        <td class="text-end text-danger">-₱@r.RefundAmount.ToString("N2")</td>
+                                        <td class="text-end fw-semibold">₱@r.ExpectedAmount.ToString("N2")</td>
+                                        <td class="text-end fw-bold">₱@r.DeclaredAmount.ToString("N2")</td>
+                                        <td class="text-end fw-bold @(r.Variance == 0m ? "text-success" : (r.Variance < 0m ? "text-danger" : "text-warning"))">
+                                            @(r.Variance > 0m ? "+" : "")₱@r.Variance.ToString("N2")
+                                        </td>
+                                        <td class="text-center">
+                                            <span class="badge @(r.Status == "BALANCED" ? "bg-success" : (r.Status == "SHORT" ? "bg-danger" : "bg-warning text-dark"))">@r.Status</span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Denomination Breakdown -->
+                    <h6 class="fw-bold text-dark mb-2">Physical Cash Denomination Count</h6>
+                    @if (!selectedShift.HasRecordedDenominations)
+                    {
+                        <div class="alert alert-warning py-2 px-3 small mb-4">
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                            <strong>Denomination Breakdown: Not Recorded.</strong> This historical or legacy shift closing recorded a total counted cash balance of <strong>₱@((selectedShift.ActualCountedBalance ?? 0m).ToString("N2"))</strong> without denomination-level quantities. Zero denomination quantities are not assumed.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <table class="table table-sm table-bordered mb-0 small">
+                                    <thead class="table-light"><tr><th>Coins</th><th class="text-center">Qty</th><th class="text-end">Subtotal</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var c in selectedShift.Denominations.Where(d => d.Type == "COIN"))
+                                        {
+                                            <tr><td>@c.Label</td><td class="text-center">@c.Quantity</td><td class="text-end">₱@c.Subtotal.ToString("N2")</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <table class="table table-sm table-bordered mb-0 small">
+                                    <thead class="table-light"><tr><th>Bills</th><th class="text-center">Qty</th><th class="text-end">Subtotal</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var b in selectedShift.Denominations.Where(d => d.Type == "BILL"))
+                                        {
+                                            <tr><td>@b.Label</td><td class="text-center">@b.Quantity</td><td class="text-end">₱@b.Subtotal.ToString("N2")</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Original Declaration & Recount History -->
+                    @if (selectedShift.OriginalDeclaration != null || selectedShift.RecountHistory.Count > 0)
+                    {
+                        <h6 class="fw-bold text-dark mb-2">Original Cashier Declaration & Supervisor Recount History</h6>
+                        @if (selectedShift.OriginalDeclaration != null)
+                        {
+                            <div class="border rounded-3 p-3 bg-light mb-3 small">
+                                <strong>Original Cashier Blind Declaration (@selectedShift.OriginalDeclaration.SubmittedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt")):</strong>
+                                Counted Cash: <strong>₱@selectedShift.OriginalDeclaration.TotalCountedCash.ToString("N2")</strong> •
+                                Cashier-Declared Non-Cash Total: <strong>₱@selectedShift.OriginalDeclaration.TotalNonCashDeclared.ToString("N2")</strong> •
+                                Denominations: <strong>@(selectedShift.OriginalDeclaration.HasRecordedDenominations ? "Recorded" : "Not Recorded")</strong>
+                            </div>
+                        }
+                        @if (selectedShift.RecountHistory.Count > 0)
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered small mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Recount #</th>
+                                            <th>Supervisor</th>
+                                            <th>Timestamp</th>
+                                            <th>Reason</th>
+                                            <th class="text-end">Original Cash</th>
+                                            <th class="text-end">Revised Cash</th>
+                                            <th class="text-end">Revised Variance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var rc in selectedShift.RecountHistory)
+                                        {
+                                            <tr>
+                                                <td>#@rc.RecountNumber</td>
+                                                <td class="fw-semibold">@rc.CorrectedBy</td>
+                                                <td>@rc.CorrectedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</td>
+                                                <td>@rc.Reason</td>
+                                                <td class="text-end">₱@rc.OriginalCountedCash.ToString("N2")</td>
+                                                <td class="text-end fw-bold">₱@rc.RevisedCountedCash.ToString("N2")</td>
+                                                <td class="text-end fw-bold @(rc.RevisedCashVariance == 0m ? "text-success" : "text-danger")">
+                                                    @(rc.RevisedCashVariance > 0m ? "+" : "")₱@rc.RevisedCashVariance.ToString("N2")
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="modal-footer bg-light">
+                    <button class="btn btn-secondary rounded-3" @onclick="() => selectedShift = null">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private SalesReportRequestDto request = new() { Grouping = "DAILY" };
     private SalesReportResponseDto? report;
+    private string activeViewTab = "GROUPING";
 
-    protected override async Task OnInitializedAsync() => await LoadReport();
+    private List<BranchDto> allBranches = new();
+    private List<OutletDto> allOutlets = new();
+    private List<TerminalDto> allTerminals = new();
+    private List<CashDrawerShiftDto> shiftsInScope = new();
+    private CashDrawerShiftDto? selectedShift;
+
+    private bool isAuthorizedSupervisor = true;
+    private int? lockedBranchId;
+    private int? lockedTerminalId;
+
+    private IEnumerable<BranchDto> AuthorizedBranches => lockedBranchId.HasValue
+        ? allBranches.Where(b => b.BranchId == lockedBranchId.Value)
+        : allBranches;
+
+    private IEnumerable<OutletDto> FilteredOutlets => request.BranchId.HasValue
+        ? allOutlets.Where(o => o.BranchId == request.BranchId.Value)
+        : (lockedBranchId.HasValue ? allOutlets.Where(o => o.BranchId == lockedBranchId.Value) : allOutlets);
+
+    private IEnumerable<TerminalDto> FilteredTerminals => allTerminals.Where(t =>
+        (!request.BranchId.HasValue || t.BranchId == request.BranchId.Value) &&
+        (!request.OutletId.HasValue || t.OutletId == request.OutletId.Value) &&
+        (!lockedTerminalId.HasValue || t.TerminalId == lockedTerminalId.Value));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var role = user.FindFirst(ClaimTypes.Role)?.Value ?? user.FindFirst("role")?.Value ?? "";
+            isAuthorizedSupervisor = role.Equals("Admin", StringComparison.OrdinalIgnoreCase)
+                || role.Equals("Manager", StringComparison.OrdinalIgnoreCase)
+                || role.Equals("Senior Cashier", StringComparison.OrdinalIgnoreCase)
+                || role.Equals("SeniorCashier", StringComparison.OrdinalIgnoreCase);
+
+            if (!role.Equals("Admin", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(user.FindFirst("branch_id")?.Value, out int bId))
+            {
+                lockedBranchId = bId;
+                request.BranchId = bId;
+            }
+            if (!role.Equals("Admin", StringComparison.OrdinalIgnoreCase) &&
+                !role.Equals("Manager", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(user.FindFirst("terminal_id")?.Value, out int tId))
+            {
+                lockedTerminalId = tId;
+                request.TerminalId = tId;
+            }
+        }
+
+        try
+        {
+            allBranches = await BranchService.GetBranchesAsync();
+            allOutlets = await OutletService.GetOutletsAsync(lockedBranchId);
+            allTerminals = await TerminalService.GetTerminalsAsync(outletId: null, branchId: lockedBranchId);
+        }
+        catch { }
+
+        if (isAuthorizedSupervisor)
+        {
+            await LoadReport();
+        }
+    }
+
+    private void OnBranchChanged(ChangeEventArgs e)
+    {
+        request.BranchId = int.TryParse(e.Value?.ToString(), out int id) ? id : lockedBranchId;
+        request.OutletId = null;
+        if (!lockedTerminalId.HasValue) request.TerminalId = null;
+    }
+
+    private void OnOutletChanged(ChangeEventArgs e)
+    {
+        request.OutletId = int.TryParse(e.Value?.ToString(), out int id) ? id : null;
+        if (!lockedTerminalId.HasValue) request.TerminalId = null;
+    }
+
+    private void OnTerminalChanged(ChangeEventArgs e)
+    {
+        request.TerminalId = int.TryParse(e.Value?.ToString(), out int id) ? id : lockedTerminalId;
+        if (request.TerminalId.HasValue)
+        {
+            var term = allTerminals.FirstOrDefault(t => t.TerminalId == request.TerminalId.Value);
+            if (term != null)
+            {
+                request.BranchId = term.BranchId;
+                request.OutletId = term.OutletId;
+            }
+        }
+    }
+
+    private async Task ResetFilters()
+    {
+        request = new SalesReportRequestDto
+        {
+            Grouping = "DAILY",
+            BranchId = lockedBranchId,
+            TerminalId = lockedTerminalId
+        };
+        await LoadReport();
+    }
+
+    private string GetSelectedHierarchySummary()
+    {
+        string branchLabel = request.BranchId.HasValue
+            ? (allBranches.FirstOrDefault(b => b.BranchId == request.BranchId.Value)?.Name ?? $"Branch #{request.BranchId}")
+            : "All Branches";
+        string outletLabel = request.OutletId.HasValue
+            ? (allOutlets.FirstOrDefault(o => o.OutletId == request.OutletId.Value)?.Name ?? $"Outlet #{request.OutletId}")
+            : "All Outlets";
+        string terminalLabel = request.TerminalId.HasValue
+            ? (allTerminals.FirstOrDefault(t => t.TerminalId == request.TerminalId.Value)?.Name ?? $"Terminal #{request.TerminalId}")
+            : "All Terminals";
+        return $"{branchLabel} → {outletLabel} → {terminalLabel}";
+    }
 
     private async Task LoadReport()
     {
+        if (!isAuthorizedSupervisor) return;
         try
         {
             report = await SalesReportService.GenerateReportAsync(request);
+            await LoadShiftsInScopeAsync();
         }
         catch (Exception ex)
         {
             await SwalAlert.FireAsync("Error", "Failed to generate sales report: " + ex.Message, SweetAlertIcon.Error);
         }
+    }
+
+    private async Task LoadShiftsInScopeAsync()
+    {
+        try
+        {
+            var url = "api/cash-drawer/shifts?";
+            if (request.BranchId.HasValue) url += $"branchId={request.BranchId.Value}&";
+            if (request.OutletId.HasValue) url += $"outletId={request.OutletId.Value}&";
+            if (request.TerminalId.HasValue) url += $"terminalId={request.TerminalId.Value}&";
+            if (!string.IsNullOrWhiteSpace(request.CashierId)) url += $"cashierId={Uri.EscapeDataString(request.CashierId)}&";
+            if (request.DateFrom.HasValue) url += $"dateFrom={Uri.EscapeDataString(request.DateFrom.Value.ToString("o"))}&";
+            if (request.DateTo.HasValue) url += $"dateTo={Uri.EscapeDataString(request.DateTo.Value.Date.AddDays(1).AddTicks(-1).ToString("o"))}&";
+            shiftsInScope = await Http.GetFromJsonAsync<List<CashDrawerShiftDto>>(url) ?? new();
+        }
+        catch
+        {
+            shiftsInScope = new();
+        }
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        if (report == null || !isAuthorizedSupervisor) return;
+        var sb = new StringBuilder();
+        sb.AppendLine($"\"POS Back-Office Sales & Terminal Report\"");
+        sb.AppendLine($"\"Scope\",\"{GetSelectedHierarchySummary().Replace("\"", "\"\"")}\"");
+        sb.AppendLine($"\"Generated At (UTC)\",\"{report.GeneratedAt:yyyy-MM-dd HH:mm:ss}\"");
+        sb.AppendLine($"\"Gross Sales\",\"{report.GrossSales:0.00}\",\"Discounts\",\"{report.TotalDiscounts:0.00}\",\"Refunds\",\"{report.TotalRefunds:0.00}\",\"Net Sales After Refunds\",\"{report.NetSalesAfterRefunds:0.00}\",\"Output VAT\",\"{report.OutputVat:0.00}\"");
+        sb.AppendLine();
+
+        sb.AppendLine($"\"--- GROUPED BREAKDOWN ({(request.Grouping ?? "DAILY").ToUpperInvariant()}) ---\"");
+        sb.AppendLine("\"Group\",\"Transactions\",\"Gross Sales\",\"Discounts\",\"Refunds\",\"Output VAT\",\"Net Sales\",\"Net Sales After Refunds\"");
+        foreach (var g in report.Breakdown)
+        {
+            sb.AppendLine($"\"{g.Label.Replace("\"", "\"\"")}\",{g.TransactionCount},{g.GrossSales:0.00},{g.TotalDiscounts:0.00},{g.TotalRefunds:0.00},{g.OutputVat:0.00},{g.NetSales:0.00},{g.NetSalesAfterRefunds:0.00}");
+        }
+        sb.AppendLine();
+
+        sb.AppendLine("\"--- TERMINAL ATTRIBUTION BREAKDOWN (BRANCH -> OUTLET -> TERMINAL) ---\"");
+        sb.AppendLine("\"Branch\",\"Outlet\",\"Terminal Name\",\"Terminal Code\",\"Paid Count\",\"Void Count\",\"Gross Sales\",\"Discounts\",\"Refunds\",\"Output VAT\",\"Net Sales After Refunds\"");
+        foreach (var t in report.TerminalBreakdown)
+        {
+            sb.AppendLine($"\"{t.BranchName.Replace("\"", "\"\"")}\",\"{t.OutletName.Replace("\"", "\"\"")}\",\"{t.TerminalName.Replace("\"", "\"\"")}\",\"{t.TerminalCode.Replace("\"", "\"\"")}\",{t.TransactionCount},{t.VoidedCount},{t.GrossSales:0.00},{t.TotalDiscounts:0.00},{t.TotalRefunds:0.00},{t.OutputVat:0.00},{t.NetSalesAfterRefunds:0.00}");
+        }
+        sb.AppendLine();
+
+        sb.AppendLine("\"--- PAYMENT METHOD BREAKDOWN ---\"");
+        sb.AppendLine("\"Payment Method\",\"Code\",\"Count\",\"Gross Collected\",\"Refunds\",\"Net Collected\"");
+        foreach (var p in report.PaymentBreakdown)
+        {
+            sb.AppendLine($"\"{p.PaymentMethodName.Replace("\"", "\"\"")}\",\"{p.PaymentMethodCode}\",{p.PaymentCount},{p.GrossCollected:0.00},{p.RefundedAmount:0.00},{p.NetCollected:0.00}");
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var b64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("eval", $"{{ const a = document.createElement('a'); a.href = 'data:text/csv;base64,{b64}'; a.download = 'sales-terminal-report-{DateTime.UtcNow:yyyyMMddHHmmss}.csv'; a.click(); }}");
+    }
+
+    private async Task PrintReportAsync()
+    {
+        await JS.InvokeVoidAsync("window.print");
     }
 }

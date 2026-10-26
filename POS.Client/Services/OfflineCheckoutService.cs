@@ -139,6 +139,8 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     BranchId = createDto.BranchId,
                     OutletId = createDto.OutletId > 0 ? createDto.OutletId : outletConfig.OutletId,
                     TerminalId = createDto.TerminalId,
+                    ShiftId = confirmedShift.ShiftId,
+                    ClientShiftId = confirmedShift.ClientShiftId,
                     OrderType = createDto.OrderType ?? "DINING",
                     TableNumber = createDto.TableNumber,
                     HeadCount = createDto.HeadCount,

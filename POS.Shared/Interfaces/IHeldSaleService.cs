@@ -6,7 +6,7 @@ namespace POS.Shared.Interfaces;
 
 public interface IHeldSaleService
 {
-    Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null);
+    Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null, int? outletId = null);
     Task<HeldSaleDto?> GetHeldSaleByIdAsync(long id);
     Task<HeldSaleDto?> CreateHeldSaleAsync(HeldSaleCreateDto dto);
     Task<HeldSaleDto?> ResumeHeldSaleAsync(long id, int? terminalId = null);

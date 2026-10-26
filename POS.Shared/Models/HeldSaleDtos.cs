@@ -22,7 +22,12 @@ public class HeldSaleDto
 {
     public long HeldSaleId { get; set; }
     public int BranchId { get; set; }
+    public string BranchName { get; set; } = string.Empty;
+    public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
     public int TerminalId { get; set; }
+    public string TerminalCode { get; set; } = string.Empty;
+    public string TerminalName { get; set; } = "Unknown / Legacy Terminal";
     public string CashierId { get; set; } = null!;
     public string HoldReference { get; set; } = null!;
     public string? CustomerName { get; set; }

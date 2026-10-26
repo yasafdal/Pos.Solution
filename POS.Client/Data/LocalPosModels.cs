@@ -109,6 +109,17 @@ public class LocalDiscount
     public bool RequiresIdentification { get; set; }
 }
 
+public class LocalPaymentMethod
+{
+    [Key]
+    public int PaymentMethodId { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public bool RequiresReference { get; set; }
+    public bool IsActive { get; set; } = true;
+    public int DisplayOrder { get; set; }
+}
+
 public class LocalTerminalConfig
 {
     [Key]
@@ -157,6 +168,8 @@ public class LocalOrder
     public int BranchId { get; set; }
     public int OutletId { get; set; }
     public int TerminalId { get; set; }
+    public long? ShiftId { get; set; }
+    public string? ClientShiftId { get; set; }
     public string OrderType { get; set; } = "DINING";
     public string? TableNumber { get; set; }
     public int? HeadCount { get; set; }
@@ -274,6 +287,11 @@ public class LocalCashDrawerShift
 {
     public bool OpeningConfirmed { get; set; }
     public string? ClientShiftId { get; set; }
+    public string? ClientCloseId { get; set; }
+    public string? ClosingDenominationsJson { get; set; }
+    public string? ClosingOriginalDeclarationJson { get; set; }
+    public string? ClosingPaymentReconciliationsJson { get; set; }
+    public string? ClosingRecountHistoryJson { get; set; }
     [Key]
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
@@ -329,4 +347,3 @@ public class LocalCashDrawerMovement
     public string SyncStatus { get; set; } = "PENDING"; // PENDING, SYNCED, NEEDS_ATTENTION, CONFLICT
     public string? SyncError { get; set; }
 }
-

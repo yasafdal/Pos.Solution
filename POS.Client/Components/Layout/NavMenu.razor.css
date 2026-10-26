@@ -1,80 +1,84 @@
-.navbar-toggler {
-    background-color: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 8px;
-    padding: 0.4rem 0.6rem;
-    color: white;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.navbar-toggler:hover {
-    background-color: rgba(255, 255, 255, 0.25);
-    border-color: rgba(255, 255, 255, 0.4);
-}
-
+/* NavMenu — Dark Modern Slate Login Console Styling */
 .top-row {
-    min-height: 3.5rem;
-    background-color: rgba(0, 0, 0, 0.3);
+    min-height: 4rem;
+    height: 4rem;
+    background-color: var(--pos-bg-surface, #0f172a);
+    border-bottom: 1px solid var(--pos-border-color, #334155);
+}
+
+.nav-logo-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--pos-primary-gradient, linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 10px rgba(59, 130, 246, 0.4);
 }
 
 .navbar-brand {
-    font-size: 1.15rem;
-    color: #ffffff;
+    font-size: 1.1rem;
+    color: var(--pos-text-primary, #f8fafc);
     text-decoration: none;
     letter-spacing: -0.01em;
 }
 
+.sidebar-close-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--pos-text-secondary, #94a3b8) !important;
+    text-decoration: none !important;
+    transition: all 0.15s ease;
+}
+
+.sidebar-close-btn:hover {
+    background: var(--pos-bg-surface-hover, #334155);
+    color: #ffffff !important;
+}
+
 .nav-icon {
-    margin-right: 0.75rem;
+    margin-right: 0.85rem;
     flex-shrink: 0;
     opacity: 0.9;
 }
 
 .nav-text {
-    font-weight: 500;
-}
-
-.nav-item {
+    font-weight: 600;
     font-size: 0.95rem;
-    padding-bottom: 0.25rem;
-}
-
-.nav-item:first-of-type {
-    padding-top: 0.75rem;
-}
-
-.nav-item:last-of-type {
-    padding-bottom: 0.75rem;
 }
 
 .nav-item ::deep .nav-link {
-    color: #e2e8f0;
-    background: none;
+    color: var(--pos-text-secondary, #94a3b8);
+    background: transparent;
     border: none;
-    border-radius: 8px;
-    height: 2.75rem;
+    border-radius: 10px;
+    height: 3rem;
     display: flex;
     align-items: center;
-    padding: 0 0.85rem;
+    padding: 0 1rem;
     width: 100%;
     transition: all 0.15s ease-in-out;
 }
 
 .nav-item ::deep a.active {
-    background-color: #2563eb;
+    background: var(--pos-primary-gradient, linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%));
     color: #ffffff;
-    font-weight: 600;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    font-weight: 700;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
 }
 
 .nav-item ::deep a.active:hover {
-    background-color: #1d4ed8;
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
     color: #ffffff;
 }
 
 .nav-item ::deep .nav-link:hover:not(.active) {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--pos-bg-surface-hover, #334155);
     color: #ffffff;
 }
 

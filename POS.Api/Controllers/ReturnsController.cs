@@ -140,15 +140,31 @@ public class ReturnsController(PosDbContext context) : ControllerBase
     public async Task<ActionResult<IEnumerable<VoidResponseDto>>> GetVoids(
         [FromQuery] int? branchId,
         [FromQuery] int? terminalId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
         var query = context.TransactionVoids
             .AsNoTracking()
             .Include(v => v.OriginalOrder)
+            .Include(v => v.Refunds)
             .AsQueryable();
 
         if (branchId.HasValue)
             query = query.Where(v => v.OriginalOrder != null && v.OriginalOrder.BranchId == branchId.Value);
+
+        if (outletId.HasValue)
+        {
+            int outId = outletId.Value;
+            query = query.Where(v => v.OriginalOrder != null && (v.OriginalOrder.OutletId == outId
+                || context.Terminals.Any(t => t.TerminalId == v.OriginalOrder.TerminalId && t.OutletId == outId)));
+        }
 
         if (terminalId.HasValue)
             query = query.Where(v => v.OriginalOrder != null && v.OriginalOrder.TerminalId == terminalId.Value);
@@ -157,35 +173,82 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             .OrderByDescending(v => v.VoidedAt)
             .ToListAsync(cancellationToken);
 
-        var dtos = voids.Select(v => new VoidResponseDto
+        var branchesById = await context.Branches.AsNoTracking().ToDictionaryAsync(b => b.BranchId, cancellationToken);
+        var outletsById = await context.Outlets.AsNoTracking().ToDictionaryAsync(o => o.OutletId, cancellationToken);
+        var terminalsById = await context.Terminals.AsNoTracking().ToDictionaryAsync(t => t.TerminalId, cancellationToken);
+
+        var dtos = voids.Select(v =>
         {
-            VoidId = v.VoidId,
-            OriginalOrderId = v.OriginalOrderId,
-            OriginalInvoiceNumber = v.OriginalInvoiceNumber,
-            VoidReason = v.VoidReason,
-            RequestedBy = v.RequestedBy,
-            ApprovedBy = v.ApprovedBy,
-            VoidedAt = v.VoidedAt,
-            Status = v.Status,
-            ReversalReference = v.ReversalReference
+            int brId = v.OriginalOrder?.BranchId ?? 0;
+            int termId = v.OriginalOrder?.TerminalId ?? 0;
+            terminalsById.TryGetValue(termId, out var term);
+            int outId = term != null && term.OutletId > 0 ? term.OutletId : (v.OriginalOrder?.OutletId ?? 0);
+            string outName = outletsById.TryGetValue(outId, out var outl)
+                ? outl.Name
+                : (outId > 0 ? $"Outlet #{outId}" : "Unknown / Legacy Outlet");
+            if (brId <= 0 && term != null) brId = term.BranchId;
+            string brName = branchesById.TryGetValue(brId, out var br)
+                ? br.Name
+                : (brId > 0 ? $"Branch #{brId}" : "Unknown Branch");
+            string tCode = term?.TerminalCode ?? (termId > 0 ? $"LEGACY-{termId}" : "LEGACY");
+            string tName = term?.Name ?? (termId > 0 ? $"Unknown / Legacy Terminal (#{termId})" : "Unknown / Legacy Terminal");
+            decimal voidAmt = v.OriginalOrder?.TotalAmount ?? v.Refunds.Sum(rf => rf.RefundAmount);
+
+            return new VoidResponseDto
+            {
+                VoidId = v.VoidId,
+                OriginalOrderId = v.OriginalOrderId,
+                OriginalInvoiceNumber = v.OriginalInvoiceNumber ?? v.OriginalOrder?.InvoiceNumber,
+                BranchId = brId,
+                BranchName = brName,
+                OutletId = outId,
+                OutletName = outName,
+                TerminalId = termId,
+                TerminalCode = tCode,
+                TerminalName = tName,
+                VoidedAmount = voidAmt,
+                VoidReason = v.VoidReason,
+                RequestedBy = v.RequestedBy,
+                ApprovedBy = v.ApprovedBy,
+                VoidedAt = v.VoidedAt,
+                Status = v.Status,
+                ReversalReference = v.ReversalReference
+            };
         }).ToList();
 
         return Ok(dtos);
     }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ReturnResponseDto>>> GetReturns(
         [FromQuery] int? branchId,
         [FromQuery] int? terminalId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
         var query = context.SalesReturns
             .AsNoTracking()
-            .Include(r => r.ReturnItems)
+            .Include(r => r.ReturnItems).ThenInclude(ri => ri.OriginalOrderItem)
+            .Include(r => r.Refunds)
             .Include(r => r.OriginalOrder)
             .AsQueryable();
 
         if (branchId.HasValue)
             query = query.Where(r => r.BranchId == branchId.Value);
+
+        if (outletId.HasValue)
+        {
+            int outId = outletId.Value;
+            query = query.Where(r => (r.OriginalOrder != null && r.OriginalOrder.OutletId == outId)
+                || context.Terminals.Any(t => t.TerminalId == r.TerminalId && t.OutletId == outId));
+        }
 
         if (terminalId.HasValue)
             query = query.Where(r => r.TerminalId == terminalId.Value);
@@ -194,29 +257,57 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync(cancellationToken);
 
-        var dtos = returns.Select(r => new ReturnResponseDto
+        var branchesById = await context.Branches.AsNoTracking().ToDictionaryAsync(b => b.BranchId, cancellationToken);
+        var outletsById = await context.Outlets.AsNoTracking().ToDictionaryAsync(o => o.OutletId, cancellationToken);
+        var terminalsById = await context.Terminals.AsNoTracking().ToDictionaryAsync(t => t.TerminalId, cancellationToken);
+
+        var dtos = returns.Select(r =>
         {
-            ReturnId = r.ReturnId,
-            OriginalOrderId = r.OriginalOrderId,
-            BranchId = r.BranchId,
-            TerminalId = r.TerminalId,
-            OriginalInvoiceNumber = r.OriginalOrder?.InvoiceNumber,
-            ReturnReference = r.ReturnReference,
-            ReturnReason = r.ReturnReason,
-            Status = r.Status,
-            RequestedBy = r.RequestedBy,
-            ApprovedBy = r.ApprovedBy,
-            TotalRefundAmount = r.TotalRefundAmount,
-            CreatedAt = r.CreatedAt,
-            ReturnItems = r.ReturnItems.Select(ri => new ReturnItemResponseDto
+            int termId = r.TerminalId > 0 ? r.TerminalId : (r.OriginalOrder?.TerminalId ?? 0);
+            terminalsById.TryGetValue(termId, out var term);
+            int outId = term != null && term.OutletId > 0 ? term.OutletId : (r.OriginalOrder?.OutletId ?? 0);
+            string outName = outletsById.TryGetValue(outId, out var outl)
+                ? outl.Name
+                : (outId > 0 ? $"Outlet #{outId}" : "Unknown / Legacy Outlet");
+            int brId = r.BranchId > 0 ? r.BranchId : (r.OriginalOrder?.BranchId ?? (term?.BranchId ?? 0));
+            string brName = branchesById.TryGetValue(brId, out var br)
+                ? br.Name
+                : (brId > 0 ? $"Branch #{brId}" : "Unknown Branch");
+            string tCode = term?.TerminalCode ?? (termId > 0 ? $"LEGACY-{termId}" : "LEGACY");
+            string tName = term?.Name ?? (termId > 0 ? $"Unknown / Legacy Terminal (#{termId})" : "Unknown / Legacy Terminal");
+            string refMethod = r.Refunds.FirstOrDefault()?.RefundMethod ?? "CASH";
+
+            return new ReturnResponseDto
             {
-                ReturnItemId = ri.ReturnItemId,
-                OriginalOrderItemId = ri.OriginalOrderItemId,
-                Quantity = ri.Quantity,
-                OriginalUnitPrice = ri.OriginalUnitPrice,
-                RefundAmount = ri.RefundAmount,
-                RestockDisposition = ri.RestockDisposition
-            }).ToList()
+                ReturnId = r.ReturnId,
+                OriginalOrderId = r.OriginalOrderId,
+                BranchId = brId,
+                BranchName = brName,
+                OutletId = outId,
+                OutletName = outName,
+                TerminalId = termId,
+                TerminalCode = tCode,
+                TerminalName = tName,
+                RefundMethod = refMethod,
+                OriginalInvoiceNumber = r.OriginalOrder?.InvoiceNumber,
+                ReturnReference = r.ReturnReference,
+                ReturnReason = r.ReturnReason,
+                Status = r.Status,
+                RequestedBy = r.RequestedBy,
+                ApprovedBy = r.ApprovedBy,
+                TotalRefundAmount = r.TotalRefundAmount,
+                CreatedAt = r.CreatedAt,
+                ReturnItems = r.ReturnItems.Select(ri => new ReturnItemResponseDto
+                {
+                    ReturnItemId = ri.ReturnItemId,
+                    OriginalOrderItemId = ri.OriginalOrderItemId,
+                    ProductName = ri.OriginalOrderItem?.ProductName ?? $"Item #{ri.OriginalOrderItemId}",
+                    Quantity = ri.Quantity,
+                    OriginalUnitPrice = ri.OriginalUnitPrice,
+                    RefundAmount = ri.RefundAmount,
+                    RestockDisposition = ri.RestockDisposition
+                }).ToList()
+            };
         }).ToList();
 
         return Ok(dtos);

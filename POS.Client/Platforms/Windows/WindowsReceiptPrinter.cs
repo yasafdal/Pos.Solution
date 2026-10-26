@@ -44,6 +44,36 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
         finally { Interlocked.Exchange(ref _printing, 0); }
     }
 
+    public async Task PrintXReadingAsync(XReadingReportDto report, string? printerName = null)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+
+        if (Interlocked.CompareExchange(ref _printing, 1, 0) != 0)
+            throw new InvalidOperationException("A receipt or report is already being sent to the printer. Wait before printing again.");
+
+        try
+        {
+            var html = XReadingHtmlFormatter.Format(report);
+            await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html, printerName, "Print X-Reading Report"));
+        }
+        finally { Interlocked.Exchange(ref _printing, 0); }
+    }
+
+    public async Task PrintCashierDeclarationAsync(CashierDeclarationReportDto declaration, string? printerName = null)
+    {
+        ArgumentNullException.ThrowIfNull(declaration);
+
+        if (Interlocked.CompareExchange(ref _printing, 1, 0) != 0)
+            throw new InvalidOperationException("A receipt or acknowledgment is already being sent to the printer. Wait before printing again.");
+
+        try
+        {
+            var html = CashierDeclarationHtmlFormatter.Format(declaration);
+            await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html, printerName, "Print Cashier Declaration Acknowledgment"));
+        }
+        finally { Interlocked.Exchange(ref _printing, 0); }
+    }
+
     private static async Task PrintDirectAsync(string html, string? targetPrinter = null, string windowTitle = "Print Receipt")
     {
         var webView = new WebView2();

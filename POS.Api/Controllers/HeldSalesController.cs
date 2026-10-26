@@ -20,8 +20,16 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
     public async Task<ActionResult<IEnumerable<HeldSaleDto>>> GetHeldSales(
         [FromQuery] int? branchId,
         [FromQuery] int? terminalId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
         var query = context.HeldSales.AsNoTracking()
             .Include(h => h.HeldSaleItems).ThenInclude(i => i.HeldSaleItemModifiers)
             .Where(h => h.Status == "HELD")
@@ -30,6 +38,12 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
         if (branchId.HasValue)
             query = query.Where(h => h.BranchId == branchId.Value);
 
+        if (outletId.HasValue)
+        {
+            int outId = outletId.Value;
+            query = query.Where(h => context.Terminals.Any(t => t.TerminalId == h.TerminalId && t.OutletId == outId));
+        }
+
         if (terminalId.HasValue)
             query = query.Where(h => h.TerminalId == terminalId.Value);
 
@@ -37,7 +51,28 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             .OrderByDescending(h => h.CreatedAt)
             .ToListAsync(cancellationToken);
 
-        var result = heldSales.Select(h => MapToDto(h)).ToList();
+        var branchesById = await context.Branches.AsNoTracking().ToDictionaryAsync(b => b.BranchId, cancellationToken);
+        var outletsById = await context.Outlets.AsNoTracking().ToDictionaryAsync(o => o.OutletId, cancellationToken);
+        var terminalsById = await context.Terminals.AsNoTracking().ToDictionaryAsync(t => t.TerminalId, cancellationToken);
+
+        var result = heldSales.Select(h =>
+        {
+            var dto = MapToDto(h);
+            terminalsById.TryGetValue(h.TerminalId, out var term);
+            int outId = term?.OutletId ?? 0;
+            int brId = h.BranchId > 0 ? h.BranchId : (term?.BranchId ?? 0);
+            dto.BranchId = brId;
+            dto.BranchName = branchesById.TryGetValue(brId, out var br)
+                ? br.Name
+                : (brId > 0 ? $"Branch #{brId}" : "Unknown Branch");
+            dto.OutletId = outId;
+            dto.OutletName = outletsById.TryGetValue(outId, out var outl)
+                ? outl.Name
+                : (outId > 0 ? $"Outlet #{outId}" : "Unknown / Legacy Outlet");
+            dto.TerminalCode = term?.TerminalCode ?? (h.TerminalId > 0 ? $"LEGACY-{h.TerminalId}" : "LEGACY");
+            dto.TerminalName = term?.Name ?? (h.TerminalId > 0 ? $"Unknown / Legacy Terminal (#{h.TerminalId})" : "Unknown / Legacy Terminal");
+            return dto;
+        }).ToList();
         return Ok(result);
     }
 
@@ -49,7 +84,19 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             .SingleOrDefaultAsync(h => h.HeldSaleId == id, cancellationToken);
 
         if (heldSale == null) return NotFound();
-        return Ok(MapToDto(heldSale));
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) && heldSale.BranchId != claimBranchId)
+            return Forbid();
+        var dto = MapToDto(heldSale);
+        var branch = await context.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.BranchId == heldSale.BranchId, cancellationToken);
+        var term = heldSale.TerminalId > 0
+            ? await context.Terminals.AsNoTracking().Include(t => t.Outlet).FirstOrDefaultAsync(t => t.TerminalId == heldSale.TerminalId, cancellationToken)
+            : null;
+        dto.BranchName = branch?.Name ?? (heldSale.BranchId > 0 ? $"Branch #{heldSale.BranchId}" : "Unknown Branch");
+        dto.OutletId = term?.OutletId ?? 0;
+        dto.OutletName = term?.Outlet?.Name ?? (dto.OutletId > 0 ? $"Outlet #{dto.OutletId}" : "Unknown / Legacy Outlet");
+        dto.TerminalCode = term?.TerminalCode ?? (heldSale.TerminalId > 0 ? $"LEGACY-{heldSale.TerminalId}" : "LEGACY");
+        dto.TerminalName = term?.Name ?? (heldSale.TerminalId > 0 ? $"Unknown / Legacy Terminal (#{heldSale.TerminalId})" : "Unknown / Legacy Terminal");
+        return Ok(dto);
     }
 
     [HttpPost]

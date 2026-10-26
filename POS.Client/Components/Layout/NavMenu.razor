@@ -1,44 +1,52 @@
 <div class="top-row ps-3 pe-3 navbar navbar-dark d-flex justify-content-between align-items-center">
-    <a class="navbar-brand fw-bold" href="">POS.Client</a>
+    <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="" @onclick="HandleClose">
+        <div class="nav-logo-icon">
+            <i class="bi bi-display fs-6 text-white"></i>
+        </div>
+        <span>POS Terminal</span>
+    </a>
+    <button type="button" class="btn btn-link text-secondary p-1 sidebar-close-btn" @onclick="HandleClose" aria-label="Close navigation" title="Close Menu">
+        <i class="bi bi-x-lg fs-5"></i>
+    </button>
 </div>
 
 <div class="@NavMenuCssClass nav-scrollable">
-    <nav class="nav flex-column">
+    <nav class="nav flex-column py-2">
         <!-- Dashboard -->
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All" @onclick="HandleClose">
                 <i class="bi bi-grid-fill nav-icon fs-5"></i>
                 <span class="nav-text">Dashboard</span>
             </NavLink>
         </div>
 
         <!-- New Sale -->
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="new-sale">
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link" href="new-sale" @onclick="HandleClose">
                 <i class="bi bi-cart-fill nav-icon fs-5"></i>
                 <span class="nav-text">New Sale</span>
             </NavLink>
         </div>
 
         <!-- Transaction -->
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="transactions">
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link" href="transactions" @onclick="HandleClose">
                 <i class="bi bi-receipt nav-icon fs-5"></i>
                 <span class="nav-text">Transaction</span>
             </NavLink>
         </div>
 
         <!-- Held Sales -->
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="held-sales">
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link" href="held-sales" @onclick="HandleClose">
                 <i class="bi bi-pause-circle-fill nav-icon fs-5"></i>
                 <span class="nav-text">Held Sales</span>
             </NavLink>
         </div>
 
         <!-- Cash Drawer -->
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="cash-drawer">
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link" href="cash-drawer" @onclick="HandleClose">
                 <i class="bi bi-cash-stack nav-icon fs-5"></i>
                 <span class="nav-text">Cash Drawer</span>
             </NavLink>
@@ -47,6 +55,9 @@
 </div>
 
 @code {
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
     private bool collapseNavMenu = false;
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
@@ -54,5 +65,13 @@
     private void ToggleNavMenu()
     {
         collapseNavMenu = !collapseNavMenu;
+    }
+
+    private async Task HandleClose()
+    {
+        if (OnClose.HasDelegate)
+        {
+            await OnClose.InvokeAsync();
+        }
     }
 }

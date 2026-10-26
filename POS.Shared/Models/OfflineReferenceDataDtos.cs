@@ -18,6 +18,7 @@ public class OfflineReferenceDataResponseDto
     public OfflineInvoiceSequenceDto? InvoiceSequence { get; set; }
     public List<OfflineCashierDto> Cashiers { get; set; } = new();
     public List<CashMovementCategoryDto> CashMovementCategories { get; set; } = new();
+    public List<PaymentMethodDto> PaymentMethods { get; set; } = new();
     public CashDrawerShiftDto? ActiveShift { get; set; }
 }
 

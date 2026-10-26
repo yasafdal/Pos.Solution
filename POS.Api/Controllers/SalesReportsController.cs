@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using POS.Shared.Interfaces;
@@ -24,12 +25,27 @@ public class SalesReportsController(ISalesReportService salesReportService) : Co
         CancellationToken cancellationToken = default,
         [FromQuery] int? outletId = null)
     {
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
+        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && int.TryParse(User.FindFirst("terminal_id")?.Value, out int claimTerminalId))
+        {
+            if (terminalId.HasValue && terminalId.Value != claimTerminalId)
+                return Forbid();
+            terminalId = claimTerminalId;
+        }
+
         var request = new SalesReportRequestDto
         {
             DateFrom = dateFrom,
             DateTo = dateTo,
             BranchId = branchId,
-            TerminalId = terminalId, OutletId = outletId,
+            TerminalId = terminalId,
+            OutletId = outletId,
             CashierId = cashierId,
             PaymentMethod = paymentMethod,
             Grouping = grouping

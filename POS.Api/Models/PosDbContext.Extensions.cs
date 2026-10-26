@@ -532,7 +532,13 @@ public partial class PosDbContext
             entity.Property(e => e.OpeningFloat).HasColumnName("OpeningFloat").HasColumnType("numeric(18,2)");
             entity.Property(e => e.OpeningConfirmed).HasColumnName("OpeningConfirmed");
             entity.Property(e => e.ClientShiftId).HasColumnName("ClientShiftId").HasMaxLength(100);
+            entity.Property(e => e.ClientCloseId).HasColumnName("ClientCloseId").HasMaxLength(100);
+            entity.Property(e => e.ClosingDenominationsJson).HasColumnName("ClosingDenominationsJson");
+            entity.Property(e => e.ClosingOriginalDeclarationJson).HasColumnName("ClosingOriginalDeclarationJson");
+            entity.Property(e => e.ClosingPaymentReconciliationsJson).HasColumnName("ClosingPaymentReconciliationsJson");
+            entity.Property(e => e.ClosingRecountHistoryJson).HasColumnName("ClosingRecountHistoryJson");
             entity.HasIndex(e => e.ClientShiftId).IsUnique().HasDatabaseName("UX_CashDrawerShifts_ClientShiftId").HasFilter("\"ClientShiftId\" IS NOT NULL");
+            entity.HasIndex(e => e.ClientCloseId).IsUnique().HasDatabaseName("UX_CashDrawerShifts_ClientCloseId").HasFilter("\"ClientCloseId\" IS NOT NULL");
             entity.HasIndex(e => e.TerminalId).IsUnique().HasDatabaseName("UX_CashDrawerShifts_OpenTerminal").HasFilter("\"Status\" = 'OPEN'");
             entity.Property(e => e.TotalCashSales).HasColumnName("TotalCashSales").HasColumnType("numeric(18,2)");
             entity.Property(e => e.TotalCashRefunds).HasColumnName("TotalCashRefunds").HasColumnType("numeric(18,2)");

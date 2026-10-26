@@ -69,6 +69,12 @@ public class MigrationRunner
             );
 
             ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""TotalCashDrops"" NUMERIC(18,2) NOT NULL DEFAULT 0.00;
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""ClientCloseId"" VARCHAR(100) NULL;
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""ClosingDenominationsJson"" TEXT NULL;
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""ClosingOriginalDeclarationJson"" TEXT NULL;
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""ClosingPaymentReconciliationsJson"" TEXT NULL;
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""ClosingRecountHistoryJson"" TEXT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS ""UX_CashDrawerShifts_ClientCloseId"" ON ""CashDrawerShifts"" (""ClientCloseId"") WHERE ""ClientCloseId"" IS NOT NULL;
 
             CREATE TABLE IF NOT EXISTS ""CashDrawerMovements"" (
                 ""MovementId"" BIGSERIAL PRIMARY KEY,
@@ -139,4 +145,3 @@ public class MigrationRunner
         Console.WriteLine("All migration scripts applied successfully to pos_db!");
     }
 }
-

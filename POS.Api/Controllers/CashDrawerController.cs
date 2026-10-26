@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -31,7 +32,7 @@ public class CashDrawerController : ControllerBase
     private string GetAuthenticatedRole() =>
         User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
 
-    private static bool IsSupervisorRole(string? role)
+    public static bool IsSupervisorRole(string? role)
     {
         if (string.IsNullOrWhiteSpace(role)) return false;
         var clean = role.Trim();
@@ -39,6 +40,37 @@ public class CashDrawerController : ControllerBase
                clean.Equals("Manager", StringComparison.OrdinalIgnoreCase) ||
                clean.Equals("Senior Cashier", StringComparison.OrdinalIgnoreCase) ||
                clean.Equals("SeniorCashier", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static CashDrawerShiftDto? RedactForCashier(CashDrawerShiftDto? dto)
+    {
+        if (dto == null) return null;
+        if (dto.ConfiguredNonCashMethods.Count == 0 && dto.PaymentReconciliations.Count > 0)
+        {
+            dto.ConfiguredNonCashMethods = dto.PaymentReconciliations
+                .Where(r => !r.IsCash)
+                .Select(r => new PaymentMethodDeclarationDto
+                {
+                    PaymentMethodCode = r.PaymentMethodCode,
+                    PaymentMethodName = r.PaymentMethodName,
+                    IsActive = r.IsActive,
+                    DisplayOrder = r.DisplayOrder,
+                    DeclaredAmount = r.DeclaredAmount
+                })
+                .ToList();
+        }
+        dto.IsBlindCloseRedacted = true;
+        dto.ExpectedBalance = 0m;
+        dto.TotalCashSales = 0m;
+        dto.TotalCashRefunds = 0m;
+        dto.Discrepancy = null;
+        dto.TotalNonCashExpected = 0m;
+        dto.TotalNetSales = 0m;
+        dto.PaymentReconciliations = new();
+        dto.OriginalDeclaration = null;
+        dto.RecountHistory = new();
+        dto.XReading = null;
+        return dto;
     }
 
     private async Task<User?> VerifySupervisorPinAsync(string? rawPin, CancellationToken cancellationToken = default)
@@ -249,7 +281,8 @@ public class CashDrawerController : ControllerBase
                     || previous.CashierId != cashierId || previous.OpeningFloat != Math.Round(request.OpeningFloat.Value, 2)
                     || (request.OpenedAt.HasValue && previous.OpenedAt.ToUniversalTime().Ticks / 10 != request.OpenedAt.Value.ToUniversalTime().Ticks / 10))
                     return Conflict("Opening retry does not match the original shift.");
-                return Ok(await ReadSnapshotAsync(_context, previous.ShiftId, cancellationToken));
+                var prevSnap = await ReadSnapshotAsync(_context, previous.ShiftId, cancellationToken);
+                return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? prevSnap : RedactForCashier(prevSnap));
             }
         }
 
@@ -299,7 +332,8 @@ public class CashDrawerController : ControllerBase
         await _context.SaveChangesAsync(cancellationToken);
 
         await tx.CommitAsync(cancellationToken);
-        return Ok(await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken));
+        var openedSnap = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken);
+        return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? openedSnap : RedactForCashier(openedSnap));
     }
 
     [HttpGet("current")]
@@ -316,7 +350,8 @@ public class CashDrawerController : ControllerBase
         if (shift == null) return NotFound("No active open shift found for this outlet.");
 
         var snapshot = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: true);
-        return snapshot == null ? NotFound("No active open shift found for this terminal.") : Ok(snapshot);
+        if (snapshot == null) return NotFound("No active open shift found for this terminal.");
+        return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? snapshot : RedactForCashier(snapshot)!);
     }
 
     [HttpGet("shifts")]
@@ -327,14 +362,29 @@ public class CashDrawerController : ControllerBase
         [FromQuery] string? status = null,
         [FromQuery] DateTime? dateFrom = null,
         [FromQuery] DateTime? dateTo = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
+        if (!IsSupervisorRole(GetAuthenticatedRole())) return Forbid();
+
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
         var query = _context.CashDrawerShifts
             .AsNoTracking()
             .Include(s => s.Movements)
             .AsQueryable();
 
         if (branchId.HasValue) query = query.Where(s => s.BranchId == branchId.Value);
+        if (outletId.HasValue)
+        {
+            int outId = outletId.Value;
+            query = query.Where(s => _context.Terminals.Any(t => t.TerminalId == s.TerminalId && t.OutletId == outId));
+        }
         if (terminalId.HasValue) query = query.Where(s => s.TerminalId == terminalId.Value);
         if (!string.IsNullOrWhiteSpace(cashierId)) query = query.Where(s => s.CashierId == cashierId);
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(s => s.Status == status);
@@ -346,12 +396,22 @@ public class CashDrawerController : ControllerBase
             .Take(200)
             .ToListAsync(cancellationToken);
 
-        return Ok(shifts.Select(MapShiftToDto).ToList());
+        var results = new List<CashDrawerShiftDto>(shifts.Count);
+        foreach (var s in shifts)
+        {
+            var dto = MapShiftToDto(s);
+            await PopulateShiftReconciliationAndXReadingAsync(_context, s, dto, isReprint: false, cancellationToken);
+            results.Add(dto);
+        }
+
+        return Ok(results);
     }
 
     [HttpGet("shifts/{shiftId:long}/totals")]
     public async Task<ActionResult<ShiftCashMovementSummaryDto>> GetShiftTotals(long shiftId, CancellationToken cancellationToken = default)
     {
+        if (!IsSupervisorRole(GetAuthenticatedRole())) return Forbid();
+
         var shift = await _context.CashDrawerShifts
             .AsNoTracking()
             .Include(s => s.Movements)
@@ -551,7 +611,9 @@ public class CashDrawerController : ControllerBase
             if (IsOutflowMovement(movementType) && amount > shift.ExpectedBalance)
             {
                 await tx.RollbackAsync(cancellationToken);
-                return BadRequest($"Insufficient cash in drawer. Available expected cash is ₱{shift.ExpectedBalance:N2}, requested paid-out is ₱{amount:N2}.");
+                return BadRequest(IsSupervisorRole(callerRole)
+                    ? $"Insufficient cash in drawer. Available expected cash is ₱{shift.ExpectedBalance:N2}, requested paid-out is ₱{amount:N2}."
+                    : "Insufficient cash in drawer for the requested paid-out amount.");
             }
 
             var now = DateTime.UtcNow;
@@ -627,7 +689,11 @@ public class CashDrawerController : ControllerBase
             .FirstOrDefaultAsync(m => m.MovementId == movementId, cancellationToken);
 
         if (movement == null) return NotFound("Cash movement not found.");
-        return Ok(MapMovementToDto(movement));
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) && movement.BranchId != claimBranchId)
+            return Forbid();
+        var dto = MapMovementToDto(movement);
+        await PopulateMovementHierarchyAsync(_context, [dto], cancellationToken);
+        return Ok(dto);
     }
 
     [HttpGet("movements")]
@@ -641,8 +707,16 @@ public class CashDrawerController : ControllerBase
         [FromQuery] int? categoryId = null,
         [FromQuery] DateTime? dateFrom = null,
         [FromQuery] DateTime? dateTo = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
         var query = _context.CashDrawerMovements
             .AsNoTracking()
             .Where(m => m.MovementType != "CASH_SALE" && m.MovementType != "CASH_REFUND")
@@ -650,6 +724,11 @@ public class CashDrawerController : ControllerBase
 
         if (shiftId.HasValue) query = query.Where(m => m.ShiftId == shiftId.Value);
         if (branchId.HasValue) query = query.Where(m => m.BranchId == branchId.Value);
+        if (outletId.HasValue)
+        {
+            int outId = outletId.Value;
+            query = query.Where(m => _context.Terminals.Any(t => t.TerminalId == m.TerminalId && t.OutletId == outId));
+        }
         if (terminalId.HasValue) query = query.Where(m => m.TerminalId == terminalId.Value);
         if (!string.IsNullOrWhiteSpace(cashierId))
             query = query.Where(m => m.CreatedBy == cashierId || m.AuthorizedBy == cashierId);
@@ -669,7 +748,9 @@ public class CashDrawerController : ControllerBase
             .Take(500)
             .ToListAsync(cancellationToken);
 
-        return Ok(items.Select(MapMovementToDto).ToList());
+        var dtos = items.Select(MapMovementToDto).ToList();
+        await PopulateMovementHierarchyAsync(_context, dtos, cancellationToken);
+        return Ok(dtos);
     }
 
     [HttpPost("movements/{movementId:long}/approve")]
@@ -925,14 +1006,29 @@ public class CashDrawerController : ControllerBase
         [FromQuery] string? cashierId = null,
         [FromQuery] DateTime? dateFrom = null,
         [FromQuery] DateTime? dateTo = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int? outletId = null)
     {
+        if (!IsSupervisorRole(GetAuthenticatedRole())) return Forbid();
+
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
         var query = _context.CashDrawerMovements
             .AsNoTracking()
             .Where(m => m.MovementType != "CASH_SALE" && m.MovementType != "CASH_REFUND")
             .AsQueryable();
 
         if (branchId.HasValue) query = query.Where(m => m.BranchId == branchId.Value);
+        if (outletId.HasValue)
+        {
+            int outId = outletId.Value;
+            query = query.Where(m => _context.Terminals.Any(t => t.TerminalId == m.TerminalId && t.OutletId == outId));
+        }
         if (terminalId.HasValue) query = query.Where(m => m.TerminalId == terminalId.Value);
         if (!string.IsNullOrWhiteSpace(cashierId))
             query = query.Where(m => m.CreatedBy == cashierId || m.AuthorizedBy == cashierId);
@@ -941,6 +1037,47 @@ public class CashDrawerController : ControllerBase
 
         var movements = await query.ToListAsync(cancellationToken);
         var posted = movements.Where(m => (m.Status ?? "POSTED") == "POSTED" && m.MovementType != "REVERSAL").ToList();
+
+        var branchesById = await _context.Branches.AsNoTracking().ToDictionaryAsync(b => b.BranchId, cancellationToken);
+        var outletsById = await _context.Outlets.AsNoTracking().ToDictionaryAsync(o => o.OutletId, cancellationToken);
+        var terminalsById = await _context.Terminals.AsNoTracking().ToDictionaryAsync(t => t.TerminalId, cancellationToken);
+
+        var byTerminal = posted
+            .GroupBy(m => (m.BranchId, m.TerminalId))
+            .Select(g =>
+            {
+                terminalsById.TryGetValue(g.Key.TerminalId, out var term);
+                int outId = term?.OutletId ?? 0;
+                string outName = outletsById.TryGetValue(outId, out var outl)
+                    ? outl.Name
+                    : (outId > 0 ? $"Outlet #{outId}" : "Unknown / Legacy Outlet");
+                int brId = g.Key.BranchId > 0 ? g.Key.BranchId : (term?.BranchId ?? 0);
+                string brName = branchesById.TryGetValue(brId, out var br)
+                    ? br.Name
+                    : (brId > 0 ? $"Branch #{brId}" : "Unknown Branch");
+                string tCode = term?.TerminalCode ?? (g.Key.TerminalId > 0 ? $"LEGACY-{g.Key.TerminalId}" : "LEGACY");
+                string tName = term?.Name ?? (g.Key.TerminalId > 0 ? $"Unknown / Legacy Terminal (#{g.Key.TerminalId})" : "Unknown / Legacy Terminal");
+
+                return new CashMovementTerminalBreakdownDto
+                {
+                    BranchId = brId,
+                    BranchName = brName,
+                    OutletId = outId,
+                    OutletName = outName,
+                    TerminalId = g.Key.TerminalId,
+                    TerminalCode = tCode,
+                    TerminalName = tName,
+                    PostedCount = g.Count(),
+                    TotalPaidIn = g.Where(m => m.MovementType == "CASH_IN").Sum(m => m.Amount),
+                    TotalPaidOut = g.Where(m => m.MovementType is "CASH_OUT" or "PETTY_CASH").Sum(m => m.Amount),
+                    TotalPettyCash = g.Where(m => m.MovementType == "PETTY_CASH").Sum(m => m.Amount),
+                    TotalCashDrops = g.Where(m => m.MovementType == "CASH_DROP").Sum(m => m.Amount)
+                };
+            })
+            .OrderBy(t => t.BranchName)
+            .ThenBy(t => t.OutletName)
+            .ThenBy(t => t.TerminalName)
+            .ToList();
 
         var report = new CashMovementSummaryReportDto
         {
@@ -964,27 +1101,362 @@ public class CashDrawerController : ControllerBase
                     TotalAmount = g.Sum(x => x.Amount)
                 })
                 .OrderByDescending(x => x.TotalAmount)
-                .ToList()
+                .ToList(),
+            ByTerminal = byTerminal
         };
 
         return Ok(report);
     }
 
-    [HttpPost("close-shift")]
-    public async Task<IActionResult> CloseShift([FromBody] CloseShiftDto request, CancellationToken cancellationToken = default)
+    [HttpGet("shifts/{shiftId:long}/x-reading")]
+    public async Task<ActionResult<XReadingReportDto>> GetShiftXReading(
+        long shiftId,
+        [FromQuery] bool reprint = false,
+        [FromQuery] string? supervisorPin = null,
+        CancellationToken cancellationToken = default)
     {
-        if (request.ActualCountedBalance < 0)
-            return BadRequest("Actual counted cash balance cannot be negative.");
+        bool authorizedSupervisor = IsSupervisorRole(GetAuthenticatedRole());
+        if (!authorizedSupervisor && !string.IsNullOrWhiteSpace(supervisorPin))
+        {
+            var sup = await VerifySupervisorPinAsync(supervisorPin, cancellationToken);
+            authorizedSupervisor = sup != null;
+        }
+        if (!authorizedSupervisor)
+            return Forbid();
+
+        var shift = await _context.CashDrawerShifts.AsNoTracking().FirstOrDefaultAsync(s => s.ShiftId == shiftId, cancellationToken);
+        if (shift == null) return NotFound("Shift not found.");
+
+        var snapshot = await ReadSnapshotAsync(_context, shiftId, cancellationToken, requireOpen: false, isReprint: reprint);
+        if (snapshot?.XReading == null) return NotFound("X-Reading report not available for this shift.");
+        return Ok(snapshot.XReading);
+    }
+
+    [HttpGet("shifts/{shiftId:long}/declaration")]
+    public async Task<ActionResult<CashierDeclarationReportDto>> GetShiftDeclaration(
+        long shiftId,
+        [FromQuery] bool reprint = false,
+        CancellationToken cancellationToken = default)
+    {
+        var shift = await _context.CashDrawerShifts.AsNoTracking().FirstOrDefaultAsync(s => s.ShiftId == shiftId, cancellationToken);
+        if (shift == null) return NotFound("Shift not found.");
+        if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString())
+            return Forbid();
+        if (!IsSupervisorRole(GetAuthenticatedRole()) && !string.Equals(shift.CashierId, GetAuthenticatedUsername(), StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        var snapshot = await ReadSnapshotAsync(_context, shiftId, cancellationToken, requireOpen: false, isReprint: reprint);
+        if (snapshot?.CashierDeclaration == null) return NotFound("Cashier declaration acknowledgment not available for this shift.");
+        return Ok(snapshot.CashierDeclaration);
+    }
+
+    [HttpPost("shifts/{shiftId:long}/recount")]
+    public async Task<ActionResult<CashDrawerShiftDto>> RecountShift(
+        long shiftId,
+        [FromBody] ShiftRecountRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request == null)
+            return BadRequest("Recount request is required.");
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest("A reason is required for a shift recount or correction.");
+
+        var caller = GetAuthenticatedUsername();
+        if (string.IsNullOrEmpty(caller)) return Unauthorized();
+
+        string? supervisorUsername = null;
+        if (!string.IsNullOrWhiteSpace(request.SupervisorPin))
+        {
+            var sup = await VerifySupervisorPinAsync(request.SupervisorPin, cancellationToken);
+            if (sup == null)
+                return BadRequest("Invalid supervisor PIN or user does not have supervisor privileges.");
+            supervisorUsername = sup.Username;
+        }
+        else if (IsSupervisorRole(GetAuthenticatedRole()))
+        {
+            supervisorUsername = caller;
+        }
+        else
+        {
+            return Forbid();
+        }
+
+        bool hasDenominations = request.Denominations != null && request.Denominations.Count > 0;
+        decimal countedCash;
+        List<CashDenominationLineDto> validatedDenominations;
+        if (hasDenominations)
+        {
+            if (!CashDenominationCatalog.TryValidateAndCalculate(request.Denominations, out var normDenoms, out countedCash, out var denomError))
+                return BadRequest(denomError);
+            validatedDenominations = normDenoms;
+        }
+        else
+        {
+            if (request.ActualCountedBalance < 0m)
+                return BadRequest("Revised counted cash balance cannot be negative.");
+            if (decimal.Round(request.ActualCountedBalance, 2) != request.ActualCountedBalance)
+                return BadRequest("Revised counted cash balance supports at most two decimal places.");
+            countedCash = Math.Round(request.ActualCountedBalance, 2, MidpointRounding.AwayFromZero);
+            validatedDenominations = CashDenominationCatalog.CreateDefaultLines();
+        }
+
+        if (request.PaymentDeclarations != null)
+        {
+            var seenMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var decl in request.PaymentDeclarations)
+            {
+                if (decl == null) continue;
+                string code = (decl.PaymentMethodCode ?? string.Empty).Trim().ToUpperInvariant();
+                if (string.IsNullOrEmpty(code))
+                    return BadRequest("Payment method code is required for all payment declarations.");
+                if (code == "CASH") continue;
+                if (!seenMethods.Add(code))
+                    return BadRequest($"Duplicate payment declaration for {code}.");
+                if (decl.DeclaredAmount < 0m)
+                    return BadRequest($"Declared total for {code} cannot be negative.");
+                if (decimal.Round(decl.DeclaredAmount, 2) != decl.DeclaredAmount)
+                    return BadRequest($"Declared total for {code} supports at most two decimal places.");
+            }
+        }
 
         using var tx = await _context.Database.BeginTransactionAsync(_context.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
         try
         {
-            var terminalId = await _context.CashDrawerShifts.Where(s => s.ShiftId == request.ShiftId).Select(s => s.TerminalId).FirstOrDefaultAsync(cancellationToken);
-            await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(_context, terminalId, cancellationToken);
             var shift = await _context.CashDrawerShifts
                 .Include(s => s.Movements)
-                .FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId, cancellationToken);
-            if (shift != null && (User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString() || shift.CashierId != GetAuthenticatedUsername()) && !IsSupervisorRole(GetAuthenticatedRole())) return Forbid();
+                .FirstOrDefaultAsync(s => s.ShiftId == shiftId, cancellationToken);
+
+            if (shift == null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return NotFound("Shift not found.");
+            }
+            if (shift.Status != "CLOSED")
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return BadRequest("Only a closed shift can undergo a supervisor recount or correction.");
+            }
+
+            RecalculateShiftExpectedBalance(shift);
+
+            // Load pre-recount values
+            var prevDenoms = new List<CashDenominationLineDto>();
+            if (!string.IsNullOrWhiteSpace(shift.ClosingDenominationsJson))
+            {
+                try { prevDenoms = JsonSerializer.Deserialize<List<CashDenominationLineDto>>(shift.ClosingDenominationsJson) ?? new(); }
+                catch { prevDenoms = new(); }
+            }
+            var prevRecons = new List<PaymentMethodReconciliationDto>();
+            if (!string.IsNullOrWhiteSpace(shift.ClosingPaymentReconciliationsJson))
+            {
+                try { prevRecons = JsonSerializer.Deserialize<List<PaymentMethodReconciliationDto>>(shift.ClosingPaymentReconciliationsJson) ?? new(); }
+                catch { prevRecons = new(); }
+            }
+            var prevDeclarations = prevRecons
+                .Where(r => !r.IsCash)
+                .Select(r => new PaymentMethodDeclarationDto
+                {
+                    PaymentMethodCode = r.PaymentMethodCode,
+                    PaymentMethodName = r.PaymentMethodName,
+                    IsActive = r.IsActive,
+                    DisplayOrder = r.DisplayOrder,
+                    DeclaredAmount = r.DeclaredAmount
+                })
+                .ToList();
+
+            decimal prevCountedCash = shift.ActualCountedBalance ?? 0m;
+            decimal prevVariance = shift.Discrepancy ?? Math.Round(prevCountedCash - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+
+            // Ensure original declaration is immutably preserved
+            if (string.IsNullOrWhiteSpace(shift.ClosingOriginalDeclarationJson))
+            {
+                var origDecl = new CashierDeclarationReportDto
+                {
+                    ShiftId = shift.ShiftId,
+                    ClientShiftId = shift.ClientShiftId,
+                    BranchId = shift.BranchId,
+                    TerminalId = shift.TerminalId,
+                    CashierId = shift.CashierId,
+                    OpenedAt = shift.OpenedAt,
+                    ClosedAt = shift.ClosedAt,
+                    SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+                    TotalCountedCash = prevCountedCash,
+                    TotalNonCashDeclared = prevDeclarations.Sum(d => d.DeclaredAmount),
+                    Denominations = prevDenoms,
+                    PaymentDeclarations = prevDeclarations,
+                    Notes = shift.Notes
+                };
+                shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(origDecl);
+            }
+
+            // Apply revised values
+            shift.ActualCountedBalance = countedCash;
+            shift.Discrepancy = Math.Round(countedCash - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+            var revisedRecons = await BuildPaymentReconciliationsAsync(_context, shift, request.PaymentDeclarations, cancellationToken);
+            var revisedDeclarations = revisedRecons
+                .Where(r => !r.IsCash)
+                .Select(r => new PaymentMethodDeclarationDto
+                {
+                    PaymentMethodCode = r.PaymentMethodCode,
+                    PaymentMethodName = r.PaymentMethodName,
+                    IsActive = r.IsActive,
+                    DisplayOrder = r.DisplayOrder,
+                    DeclaredAmount = r.DeclaredAmount
+                })
+                .ToList();
+
+            var history = new List<ShiftRecountAuditDto>();
+            if (!string.IsNullOrWhiteSpace(shift.ClosingRecountHistoryJson))
+            {
+                try { history = JsonSerializer.Deserialize<List<ShiftRecountAuditDto>>(shift.ClosingRecountHistoryJson) ?? new(); }
+                catch { history = new(); }
+            }
+
+            history.Add(new ShiftRecountAuditDto
+            {
+                RecountNumber = history.Count + 1,
+                ShiftId = shift.ShiftId,
+                CorrectedBy = supervisorUsername!,
+                CorrectedAt = DateTime.UtcNow,
+                Reason = request.Reason.Trim(),
+                OriginalCountedCash = prevCountedCash,
+                RevisedCountedCash = countedCash,
+                OriginalCashVariance = prevVariance,
+                RevisedCashVariance = shift.Discrepancy.Value,
+                OriginalDenominations = prevDenoms,
+                RevisedDenominations = validatedDenominations,
+                OriginalPaymentDeclarations = prevDeclarations,
+                RevisedPaymentDeclarations = revisedDeclarations
+            });
+
+            shift.ClosingDenominationsJson = JsonSerializer.Serialize(validatedDenominations);
+            shift.ClosingPaymentReconciliationsJson = JsonSerializer.Serialize(revisedRecons);
+            shift.ClosingRecountHistoryJson = JsonSerializer.Serialize(history);
+            if (!string.IsNullOrWhiteSpace(request.Notes))
+            {
+                var trimmed = request.Notes.Trim();
+                shift.Notes = trimmed.Length > 255 ? trimmed[..255] : trimmed;
+            }
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+
+            var updatedDto = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: false, isReprint: false);
+            return Ok(updatedDto);
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return StatusCode(500, $"Failed to record shift recount: {ex.Message}");
+        }
+    }
+
+    [HttpGet("last-closed/{terminalId:int}")]
+    public async Task<ActionResult<CashDrawerShiftDto?>> GetLastClosedShift(
+        int terminalId,
+        [FromQuery] string? supervisorPin = null,
+        CancellationToken cancellationToken = default)
+    {
+        bool isSupervisor = IsSupervisorRole(GetAuthenticatedRole());
+        if (!isSupervisor && !string.IsNullOrWhiteSpace(supervisorPin))
+        {
+            var sup = await VerifySupervisorPinAsync(supervisorPin, cancellationToken);
+            isSupervisor = sup != null;
+        }
+        if (!isSupervisor && User.FindFirst("terminal_id")?.Value != terminalId.ToString()) return Forbid();
+        var lastClosed = await _context.CashDrawerShifts.AsNoTracking()
+            .Where(s => s.TerminalId == terminalId && s.Status == "CLOSED")
+            .OrderByDescending(s => s.ClosedAt)
+            .ThenByDescending(s => s.ShiftId)
+            .Select(s => (long?)s.ShiftId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (!lastClosed.HasValue) return Ok((CashDrawerShiftDto?)null);
+        var snapshot = await ReadSnapshotAsync(_context, lastClosed.Value, cancellationToken, requireOpen: false, isReprint: true);
+        return Ok(isSupervisor ? snapshot : RedactForCashier(snapshot));
+    }
+
+    [HttpPost("close-shift")]
+    public async Task<IActionResult> CloseShift([FromBody] CloseShiftDto request, CancellationToken cancellationToken = default)
+    {
+        if (request == null)
+            return BadRequest("Shift closing request is required.");
+
+        bool hasDenominations = request.Denominations != null && request.Denominations.Count > 0;
+        bool hasDeclarations = request.PaymentDeclarations != null && request.PaymentDeclarations.Count > 0;
+        bool hasStructuredReconciliation = hasDenominations || hasDeclarations;
+        if (hasStructuredReconciliation && !request.IsDeclarationConfirmed)
+            return BadRequest("Cashier must explicitly review and confirm the closing declaration before submitting.");
+
+        decimal countedCash;
+        List<CashDenominationLineDto>? validatedDenominations = null;
+        if (hasDenominations)
+        {
+            if (!CashDenominationCatalog.TryValidateAndCalculate(request.Denominations, out var normDenoms, out countedCash, out var denomError))
+                return BadRequest(denomError);
+            validatedDenominations = normDenoms;
+        }
+        else
+        {
+            if (request.ActualCountedBalance < 0m)
+                return BadRequest("Actual counted cash balance cannot be negative.");
+            if (decimal.Round(request.ActualCountedBalance, 2) != request.ActualCountedBalance)
+                return BadRequest("Actual counted cash balance supports at most two decimal places.");
+            countedCash = Math.Round(request.ActualCountedBalance, 2, MidpointRounding.AwayFromZero);
+        }
+
+        if (request.PaymentDeclarations != null)
+        {
+            var seenMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var decl in request.PaymentDeclarations)
+            {
+                if (decl == null) continue;
+                string code = (decl.PaymentMethodCode ?? string.Empty).Trim().ToUpperInvariant();
+                if (string.IsNullOrEmpty(code))
+                    return BadRequest("Payment method code is required for all payment declarations.");
+                if (code == "CASH") continue;
+                if (!seenMethods.Add(code))
+                    return BadRequest($"Duplicate payment declaration for {code}.");
+                if (decl.DeclaredAmount < 0m)
+                    return BadRequest($"Cashier-declared total for {code} cannot be negative.");
+                if (decimal.Round(decl.DeclaredAmount, 2) != decl.DeclaredAmount)
+                    return BadRequest($"Cashier-declared total for {code} supports at most two decimal places.");
+            }
+        }
+
+        using var tx = await _context.Database.BeginTransactionAsync(_context.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            var shiftLookupQuery = _context.CashDrawerShifts.AsQueryable();
+            if (request.ShiftId > 0)
+                shiftLookupQuery = shiftLookupQuery.Where(s => s.ShiftId == request.ShiftId);
+            else if (!string.IsNullOrWhiteSpace(request.ClientShiftId))
+                shiftLookupQuery = shiftLookupQuery.Where(s => s.ClientShiftId == request.ClientShiftId);
+            else
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return BadRequest("Invalid or already closed shift.");
+            }
+
+            var terminalId = await shiftLookupQuery.Select(s => s.TerminalId).FirstOrDefaultAsync(cancellationToken);
+            await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(_context, terminalId, cancellationToken);
+
+            var shift = await shiftLookupQuery
+                .Include(s => s.Movements)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            var caller = GetAuthenticatedUsername();
+            if (shift != null && (User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString() || shift.CashierId != caller) && !IsSupervisorRole(GetAuthenticatedRole()))
+                return Forbid();
+            if (shift != null && !string.IsNullOrWhiteSpace(request.CashierId) && !string.Equals(request.CashierId, shift.CashierId, StringComparison.Ordinal))
+                return Forbid();
+
+            if (shift != null && shift.Status == "CLOSED" && !string.IsNullOrWhiteSpace(request.ClientCloseId)
+                && string.Equals(shift.ClientCloseId, request.ClientCloseId.Trim(), StringComparison.Ordinal))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                var existingClosed = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: false, isReprint: false);
+                return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? existingClosed : RedactForCashier(existingClosed));
+            }
 
             if (shift == null || shift.Status != "OPEN")
             {
@@ -1000,29 +1472,62 @@ public class CashDrawerController : ControllerBase
             }
 
             RecalculateShiftExpectedBalance(shift);
-            shift.ActualCountedBalance = Math.Round(request.ActualCountedBalance, 2);
-            shift.Discrepancy = Math.Round(shift.ActualCountedBalance.Value - shift.ExpectedBalance, 2);
+            shift.ActualCountedBalance = countedCash;
+            shift.Discrepancy = Math.Round(countedCash - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+
+            var reconciliations = await BuildPaymentReconciliationsAsync(_context, shift, request.PaymentDeclarations, cancellationToken);
+
             shift.Status = "CLOSED";
-            shift.ClosedAt = DateTime.UtcNow;
-            shift.Notes = request.Notes;
+            shift.ClosedAt = request.ClosedAt.HasValue && request.ClosedAt.Value >= shift.OpenedAt
+                ? request.ClosedAt.Value
+                : DateTime.UtcNow;
+            var trimmedNotes = request.Notes?.Trim();
+            shift.Notes = string.IsNullOrWhiteSpace(trimmedNotes)
+                ? null
+                : (trimmedNotes.Length > 255 ? trimmedNotes[..255] : trimmedNotes);
+            if (!string.IsNullOrWhiteSpace(request.ClientCloseId))
+                shift.ClientCloseId = request.ClientCloseId.Trim();
+            shift.ClosingDenominationsJson = validatedDenominations != null ? JsonSerializer.Serialize(validatedDenominations) : null;
+            shift.ClosingPaymentReconciliationsJson = JsonSerializer.Serialize(reconciliations);
+
+            if (string.IsNullOrWhiteSpace(shift.ClosingOriginalDeclarationJson))
+            {
+                var origDecls = reconciliations
+                    .Where(r => !r.IsCash)
+                    .Select(r => new PaymentMethodDeclarationDto
+                    {
+                        PaymentMethodCode = r.PaymentMethodCode,
+                        PaymentMethodName = r.PaymentMethodName,
+                        IsActive = r.IsActive,
+                        DisplayOrder = r.DisplayOrder,
+                        DeclaredAmount = r.DeclaredAmount
+                    })
+                    .ToList();
+                var initialDeclaration = new CashierDeclarationReportDto
+                {
+                    ShiftId = shift.ShiftId,
+                    ClientShiftId = shift.ClientShiftId,
+                    BranchId = shift.BranchId,
+                    TerminalId = shift.TerminalId,
+                    CashierId = shift.CashierId,
+                    OpenedAt = shift.OpenedAt,
+                    ClosedAt = shift.ClosedAt,
+                    SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+                    TotalCountedCash = countedCash,
+                    TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
+                    HasRecordedDenominations = validatedDenominations != null && validatedDenominations.Count > 0,
+                    Denominations = validatedDenominations ?? new(),
+                    PaymentDeclarations = origDecls,
+                    Notes = shift.Notes
+                };
+                shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(initialDeclaration);
+            }
 
             await _context.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
 
-            return Ok(new
-            {
-                Message = "Cash drawer shift closed successfully.",
-                ShiftId = shift.ShiftId,
-                OpeningCash = shift.OpeningFloat,
-                CashSales = shift.TotalCashSales,
-                CashPaidIn = shift.TotalCashIn,
-                CashPaidOut = shift.TotalCashOut,
-                CashDrops = shift.TotalCashDrops,
-                CashRefunds = shift.TotalCashRefunds,
-                ExpectedCash = shift.ExpectedBalance,
-                ActualCountedCash = shift.ActualCountedBalance,
-                Discrepancy = shift.Discrepancy
-            });
+            var closedDto = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: false, isReprint: false);
+            return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? closedDto : RedactForCashier(closedDto));
         }
         catch (Exception ex)
         {
@@ -1031,9 +1536,141 @@ public class CashDrawerController : ControllerBase
         }
     }
 
+    public static async Task<List<PaymentMethodReconciliationDto>> BuildPaymentReconciliationsAsync(
+        PosDbContext context,
+        CashDrawerShift shift,
+        IReadOnlyList<PaymentMethodDeclarationDto>? declarations = null,
+        CancellationToken cancellationToken = default)
+    {
+        var configuredMethods = await context.PaymentMethods
+            .AsNoTracking()
+            .OrderBy(pm => pm.DisplayOrder)
+            .ThenBy(pm => pm.Name)
+            .ToListAsync(cancellationToken);
+
+        var shiftOrders = await context.Orders
+            .AsNoTracking()
+            .Include(o => o.Payments)
+            .Where(o => o.ShiftId == shift.ShiftId)
+            .ToListAsync(cancellationToken);
+
+        var shiftOrderIds = shiftOrders.Select(o => o.OrderId).ToList();
+        var returnRefunds = shiftOrderIds.Count > 0
+            ? await context.Refunds
+                .AsNoTracking()
+                .Include(r => r.OriginalPayment)
+                .Where(r => r.VoidId == null && r.Status == "COMPLETED" && r.OriginalPayment != null && shiftOrderIds.Contains(r.OriginalPayment.OrderId))
+                .ToListAsync(cancellationToken)
+            : new List<Refund>();
+
+        var list = new List<PaymentMethodReconciliationDto>();
+
+        decimal cashGross = shift.TotalCashSales;
+        decimal cashRefunds = shift.TotalCashRefunds;
+        decimal cashNetSales = Math.Round(cashGross - cashRefunds, 2, MidpointRounding.AwayFromZero);
+        decimal cashExpected = shift.ExpectedBalance;
+        decimal cashDeclared = shift.ActualCountedBalance ?? 0m;
+        decimal cashVariance = Math.Round(cashDeclared - cashExpected, 2, MidpointRounding.AwayFromZero);
+
+        list.Add(new PaymentMethodReconciliationDto
+        {
+            PaymentMethodCode = "CASH",
+            PaymentMethodName = "Cash (Drawer)",
+            IsCash = true,
+            IsActive = true,
+            DisplayOrder = 0,
+            GrossSalesAmount = cashGross,
+            RefundAmount = cashRefunds,
+            NetSalesAmount = cashNetSales,
+            ExpectedAmount = cashExpected,
+            DeclaredAmount = cashDeclared,
+            Variance = cashVariance,
+            Status = PaymentMethodReconciliationDto.ComputeStatus(cashVariance)
+        });
+
+        var nonCashCodes = new List<string>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "CASH" };
+
+        foreach (var pm in configuredMethods.Where(m => m.IsActive))
+        {
+            if (seenCodes.Add(pm.Code)) nonCashCodes.Add(pm.Code);
+        }
+
+        foreach (var p in shiftOrders.SelectMany(o => o.Payments))
+        {
+            if (!string.IsNullOrWhiteSpace(p.PaymentMethod)
+                && (p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED")
+                && seenCodes.Add(p.PaymentMethod.Trim()))
+            {
+                nonCashCodes.Add(p.PaymentMethod.Trim().ToUpperInvariant());
+            }
+        }
+
+        foreach (var r in returnRefunds)
+        {
+            if (!string.IsNullOrWhiteSpace(r.RefundMethod) && seenCodes.Add(r.RefundMethod.Trim()))
+                nonCashCodes.Add(r.RefundMethod.Trim().ToUpperInvariant());
+        }
+
+        if (declarations != null)
+        {
+            foreach (var d in declarations)
+            {
+                if (d != null && !string.IsNullOrWhiteSpace(d.PaymentMethodCode) && seenCodes.Add(d.PaymentMethodCode.Trim()))
+                    nonCashCodes.Add(d.PaymentMethodCode.Trim().ToUpperInvariant());
+            }
+        }
+
+        foreach (var code in nonCashCodes)
+        {
+            var cfg = configuredMethods.FirstOrDefault(m => string.Equals(m.Code, code, StringComparison.OrdinalIgnoreCase));
+            decimal gross = shiftOrders.SelectMany(o => o.Payments)
+                .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
+                            && (p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED"))
+                .Sum(p => p.Amount);
+            decimal voidRefund = shiftOrders.SelectMany(o => o.Payments)
+                .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
+                            && p.PaymentStatus == "REFUNDED")
+                .Sum(p => p.Amount);
+            decimal retRefund = returnRefunds
+                .Where(r => string.Equals(r.RefundMethod, code, StringComparison.OrdinalIgnoreCase))
+                .Sum(r => r.RefundAmount);
+            decimal totalRefund = Math.Round(voidRefund + retRefund, 2, MidpointRounding.AwayFromZero);
+            decimal netSales = Math.Round(gross - totalRefund, 2, MidpointRounding.AwayFromZero);
+            decimal expected = netSales;
+
+            var declEntry = declarations?.FirstOrDefault(d => d != null && string.Equals(d.PaymentMethodCode?.Trim(), code, StringComparison.OrdinalIgnoreCase));
+            decimal declared = Math.Round(declEntry?.DeclaredAmount ?? 0m, 2, MidpointRounding.AwayFromZero);
+            decimal variance = Math.Round(declared - expected, 2, MidpointRounding.AwayFromZero);
+
+            list.Add(new PaymentMethodReconciliationDto
+            {
+                PaymentMethodCode = cfg?.Code ?? code.ToUpperInvariant(),
+                PaymentMethodName = cfg?.Name ?? declEntry?.PaymentMethodName ?? code.ToUpperInvariant(),
+                IsCash = false,
+                IsActive = cfg?.IsActive ?? false,
+                DisplayOrder = cfg?.DisplayOrder ?? 999,
+                GrossSalesAmount = gross,
+                RefundAmount = totalRefund,
+                NetSalesAmount = netSales,
+                ExpectedAmount = expected,
+                DeclaredAmount = declared,
+                Variance = variance,
+                Status = PaymentMethodReconciliationDto.ComputeStatus(variance)
+            });
+        }
+
+        return list.OrderBy(r => r.IsCash ? 0 : 1).ThenBy(r => r.DisplayOrder).ThenBy(r => r.PaymentMethodName).ToList();
+    }
+
     // One SQL statement supplies both totals and accepted IDs. Reading IDs separately can
     // race an offline upload commit and either double-count or omit that sale locally.
-    public static async Task<CashDrawerShiftDto?> ReadSnapshotAsync(PosDbContext context, long shiftId, CancellationToken cancellationToken = default, bool requireOpen = false)
+    public static async Task<CashDrawerShiftDto?> ReadSnapshotAsync(
+        PosDbContext context,
+        long shiftId,
+        CancellationToken cancellationToken = default,
+        bool requireOpen = false,
+        bool isReprint = false)
     {
         var snapshot = await context.CashDrawerShifts.AsNoTracking().AsSingleQuery()
             .Include(s => s.Movements)
@@ -1049,7 +1686,308 @@ public class CashDrawerController : ControllerBase
         if (snapshot == null) return null;
         var dto = MapShiftToDto(snapshot.Shift);
         dto.AcknowledgedLocalTransactionIds = snapshot.Accepted;
+        await PopulateShiftReconciliationAndXReadingAsync(context, snapshot.Shift, dto, isReprint, cancellationToken);
         return dto;
+    }
+
+    public static async Task PopulateShiftReconciliationAndXReadingAsync(
+        PosDbContext context,
+        CashDrawerShift shift,
+        CashDrawerShiftDto dto,
+        bool isReprint = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (!string.IsNullOrWhiteSpace(shift.ClosingDenominationsJson))
+        {
+            try
+            {
+                dto.Denominations = JsonSerializer.Deserialize<List<CashDenominationLineDto>>(shift.ClosingDenominationsJson) ?? new();
+                dto.HasRecordedDenominations = dto.Denominations.Count > 0;
+            }
+            catch
+            {
+                dto.Denominations = new();
+                dto.HasRecordedDenominations = false;
+            }
+        }
+        else
+        {
+            dto.Denominations = new();
+            dto.HasRecordedDenominations = false;
+        }
+
+        List<PaymentMethodReconciliationDto>? savedReconciliations = null;
+        if (!string.IsNullOrWhiteSpace(shift.ClosingPaymentReconciliationsJson))
+        {
+            try
+            {
+                savedReconciliations = JsonSerializer.Deserialize<List<PaymentMethodReconciliationDto>>(shift.ClosingPaymentReconciliationsJson);
+            }
+            catch { savedReconciliations = null; }
+        }
+
+        List<PaymentMethodDeclarationDto>? savedDeclarations = null;
+        if (savedReconciliations != null && savedReconciliations.Count > 0)
+        {
+            savedDeclarations = savedReconciliations
+                .Where(r => !r.IsCash)
+                .Select(r => new PaymentMethodDeclarationDto
+                {
+                    PaymentMethodCode = r.PaymentMethodCode,
+                    PaymentMethodName = r.PaymentMethodName,
+                    IsActive = r.IsActive,
+                    DisplayOrder = r.DisplayOrder,
+                    DeclaredAmount = r.DeclaredAmount
+                })
+                .ToList();
+        }
+
+        dto.PaymentReconciliations = await BuildPaymentReconciliationsAsync(context, shift, savedDeclarations, cancellationToken);
+
+        dto.TotalNonCashExpected = dto.PaymentReconciliations.Where(r => !r.IsCash).Sum(r => r.ExpectedAmount);
+        dto.TotalNonCashDeclared = dto.PaymentReconciliations.Where(r => !r.IsCash).Sum(r => r.DeclaredAmount);
+        dto.TotalNetSales = Math.Round((shift.TotalCashSales - shift.TotalCashRefunds) + dto.TotalNonCashExpected, 2, MidpointRounding.AwayFromZero);
+        dto.ConfiguredNonCashMethods = dto.PaymentReconciliations
+            .Where(r => !r.IsCash)
+            .Select(r => new PaymentMethodDeclarationDto
+            {
+                PaymentMethodCode = r.PaymentMethodCode,
+                PaymentMethodName = r.PaymentMethodName,
+                IsActive = r.IsActive,
+                DisplayOrder = r.DisplayOrder,
+                DeclaredAmount = r.DeclaredAmount
+            })
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(shift.ClosingOriginalDeclarationJson))
+        {
+            try
+            {
+                dto.OriginalDeclaration = JsonSerializer.Deserialize<CashierDeclarationReportDto>(shift.ClosingOriginalDeclarationJson);
+                if (dto.OriginalDeclaration != null)
+                {
+                    dto.OriginalDeclaration.HasRecordedDenominations = dto.OriginalDeclaration.Denominations.Count > 0
+                        && (!string.IsNullOrWhiteSpace(shift.ClosingDenominationsJson) || dto.OriginalDeclaration.Denominations.Any(d => d.Quantity > 0));
+                    if (!dto.OriginalDeclaration.HasRecordedDenominations && string.IsNullOrWhiteSpace(shift.ClosingDenominationsJson))
+                        dto.OriginalDeclaration.Denominations = new();
+                }
+            }
+            catch { dto.OriginalDeclaration = null; }
+        }
+        if (!string.IsNullOrWhiteSpace(shift.ClosingRecountHistoryJson))
+        {
+            try { dto.RecountHistory = JsonSerializer.Deserialize<List<ShiftRecountAuditDto>>(shift.ClosingRecountHistoryJson) ?? new(); }
+            catch { dto.RecountHistory = new(); }
+        }
+
+        var branch = await context.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.BranchId == shift.BranchId, cancellationToken);
+        var terminal = shift.TerminalId > 0
+            ? await context.Terminals.AsNoTracking().Include(t => t.Outlet).FirstOrDefaultAsync(t => t.TerminalId == shift.TerminalId, cancellationToken)
+            : null;
+
+        string branchName = branch?.Name ?? (shift.BranchId > 0 ? $"Branch #{shift.BranchId}" : "Unknown Branch");
+        int outletId = terminal?.OutletId ?? 0;
+        string outletName = terminal?.Outlet?.Name ?? (outletId > 0 ? $"Outlet #{outletId}" : "Unknown / Legacy Outlet");
+        string terminalCode = terminal?.TerminalCode ?? (shift.TerminalId > 0 ? $"LEGACY-{shift.TerminalId}" : "LEGACY");
+        string terminalName = terminal?.Name ?? (shift.TerminalId > 0 ? $"Unknown / Legacy Terminal (#{shift.TerminalId})" : "Unknown / Legacy Terminal");
+
+        dto.BranchName = branchName;
+        dto.OutletId = outletId;
+        dto.OutletName = outletName;
+        dto.TerminalCode = terminalCode;
+        dto.TerminalName = terminalName;
+
+        foreach (var mv in dto.Movements)
+        {
+            mv.BranchName = branchName;
+            mv.OutletId = outletId;
+            mv.OutletName = outletName;
+            mv.TerminalCode = terminalCode;
+            mv.TerminalName = terminalName;
+        }
+
+        if (dto.OriginalDeclaration != null)
+        {
+            if (string.IsNullOrWhiteSpace(dto.OriginalDeclaration.BranchName)) dto.OriginalDeclaration.BranchName = branchName;
+            if (dto.OriginalDeclaration.OutletId <= 0) dto.OriginalDeclaration.OutletId = outletId;
+            if (string.IsNullOrWhiteSpace(dto.OriginalDeclaration.OutletName)) dto.OriginalDeclaration.OutletName = outletName;
+            if (string.IsNullOrWhiteSpace(dto.OriginalDeclaration.TerminalCode)) dto.OriginalDeclaration.TerminalCode = terminalCode;
+            if (string.IsNullOrWhiteSpace(dto.OriginalDeclaration.TerminalName)) dto.OriginalDeclaration.TerminalName = terminalName;
+        }
+
+        decimal countedCash = shift.ActualCountedBalance ?? dto.Denominations.Sum(d => d.Subtotal);
+        dto.CashierDeclaration = new CashierDeclarationReportDto
+        {
+            ShiftId = shift.ShiftId,
+            ClientShiftId = shift.ClientShiftId,
+            BranchId = shift.BranchId,
+            BranchName = branchName,
+            BranchCode = branch?.Code,
+            BranchAddress = branch?.Address,
+            BranchPhone = branch?.Phone,
+            OutletId = outletId,
+            OutletName = outletName,
+            TerminalId = shift.TerminalId,
+            TerminalCode = terminalCode,
+            TerminalName = terminalName,
+            PTUNumber = terminal?.Ptunumber,
+            MINNumber = terminal?.Minnumber,
+            SerialNumber = terminal?.SerialNumber,
+            CashierId = shift.CashierId,
+            OpenedAt = shift.OpenedAt,
+            ClosedAt = shift.ClosedAt,
+            SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+            IsReprint = isReprint,
+            TotalCountedCash = countedCash,
+            TotalNonCashDeclared = dto.TotalNonCashDeclared,
+            HasRecordedDenominations = dto.HasRecordedDenominations,
+            Denominations = dto.Denominations,
+            PaymentDeclarations = dto.ConfiguredNonCashMethods,
+            Notes = shift.Notes
+        };
+
+        var shiftOrders = await context.Orders.AsNoTracking()
+            .Where(o => o.ShiftId == shift.ShiftId)
+            .OrderBy(o => o.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        var shiftOrderIds = shiftOrders.Select(o => o.OrderId).ToList();
+        decimal shiftReturnRefunds = shiftOrderIds.Count > 0
+            ? await context.Refunds.AsNoTracking()
+                .Include(r => r.OriginalPayment)
+                .Where(r => r.VoidId == null && r.Status == "COMPLETED" && r.OriginalPayment != null && shiftOrderIds.Contains(r.OriginalPayment.OrderId))
+                .SumAsync(r => (decimal?)r.RefundAmount, cancellationToken) ?? 0m
+            : 0m;
+
+        var periodEnd = shift.ClosedAt ?? DateTime.UtcNow;
+        var businessDayStart = periodEnd.TimeOfDay < TimeSpan.FromHours(4)
+            ? periodEnd.Date.AddDays(-1).AddHours(4)
+            : periodEnd.Date.AddHours(4);
+        var reportStart = shift.OpenedAt < businessDayStart ? shift.OpenedAt : businessDayStart;
+
+        var periodOrders = await context.Orders.AsNoTracking()
+            .Where(o => o.TerminalId == shift.TerminalId && o.CreatedAt >= reportStart && o.CreatedAt <= periodEnd)
+            .OrderBy(o => o.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        foreach (var so in shiftOrders)
+        {
+            if (periodOrders.All(po => po.OrderId != so.OrderId))
+                periodOrders.Add(so);
+        }
+
+        var periodOrderIds = periodOrders.Select(o => o.OrderId).ToList();
+        decimal periodReturnRefunds = periodOrderIds.Count > 0
+            ? await context.Refunds.AsNoTracking()
+                .Include(r => r.OriginalPayment)
+                .Where(r => r.VoidId == null && r.Status == "COMPLETED" && r.OriginalPayment != null && periodOrderIds.Contains(r.OriginalPayment.OrderId))
+                .SumAsync(r => (decimal?)r.RefundAmount, cancellationToken) ?? 0m
+            : 0m;
+
+        int periodReturnCount = periodOrderIds.Count > 0
+            ? await context.SalesReturns.AsNoTracking()
+                .CountAsync(sr => periodOrderIds.Contains(sr.OriginalOrderId) && sr.Status == "COMPLETED", cancellationToken)
+            : 0;
+
+        var paidPeriodOrders = periodOrders.Where(o => o.PaymentStatus == "PAID" && o.OrderStatus != "VOIDED").ToList();
+        var voidPeriodOrders = periodOrders.Where(o => o.PaymentStatus == "VOIDED" || o.OrderStatus == "VOIDED").ToList();
+
+        var paidShiftOrders = shiftOrders.Where(o => o.PaymentStatus == "PAID" && o.OrderStatus != "VOIDED").ToList();
+        var voidShiftOrders = shiftOrders.Where(o => o.PaymentStatus == "VOIDED" || o.OrderStatus == "VOIDED").ToList();
+
+        decimal periodGross = paidPeriodOrders.Sum(o => o.Subtotal) + voidPeriodOrders.Sum(o => o.Subtotal);
+        decimal periodDiscounts = paidPeriodOrders.Sum(o => o.DiscountAmount);
+        decimal periodVoidTotal = voidPeriodOrders.Sum(o => o.TotalAmount);
+        decimal periodRefundsAndVoids = Math.Round(periodVoidTotal + periodReturnRefunds, 2, MidpointRounding.AwayFromZero);
+        decimal periodNetSales = Math.Round(paidPeriodOrders.Sum(o => o.TotalAmount) - periodReturnRefunds, 2, MidpointRounding.AwayFromZero);
+
+        decimal shiftGross = paidShiftOrders.Sum(o => o.Subtotal) + voidShiftOrders.Sum(o => o.Subtotal);
+        decimal shiftDiscounts = paidShiftOrders.Sum(o => o.DiscountAmount);
+        decimal shiftVoidTotal = voidShiftOrders.Sum(o => o.TotalAmount);
+        decimal shiftRefundsAndVoids = Math.Round(shiftVoidTotal + shiftReturnRefunds, 2, MidpointRounding.AwayFromZero);
+        decimal shiftNetSales = dto.TotalNetSales;
+
+        var invoices = periodOrders
+            .Where(o => !string.IsNullOrWhiteSpace(o.InvoiceNumber))
+            .OrderBy(o => o.InvoiceIssuedAt ?? o.CreatedAt)
+            .ThenBy(o => o.OrderId)
+            .Select(o => o.InvoiceNumber!)
+            .ToList();
+
+        bool allBalanced = dto.PaymentReconciliations.All(r => r.Variance == 0m);
+        bool hasShort = dto.PaymentReconciliations.Any(r => r.Variance < 0m);
+        bool hasOver = dto.PaymentReconciliations.Any(r => r.Variance > 0m);
+        string overallStatus = allBalanced
+            ? "BALANCED"
+            : (hasShort && hasOver ? "MIXED DISCREPANCY" : (hasShort ? "SHORT" : "OVER"));
+
+        decimal cashVar = Math.Round(countedCash - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+
+        dto.XReading = new XReadingReportDto
+        {
+            ShiftId = shift.ShiftId,
+            ClientShiftId = shift.ClientShiftId,
+            BranchId = shift.BranchId,
+            BranchName = branchName,
+            BranchCode = branch?.Code,
+            BranchAddress = branch?.Address,
+            BranchPhone = branch?.Phone,
+            OutletId = outletId,
+            OutletName = outletName,
+            TerminalId = shift.TerminalId,
+            TerminalCode = terminalCode,
+            TerminalName = terminalName,
+            PTUNumber = terminal?.Ptunumber,
+            MINNumber = terminal?.Minnumber,
+            SerialNumber = terminal?.SerialNumber,
+            CashierId = shift.CashierId,
+            OpenedAt = shift.OpenedAt,
+            ClosedAt = shift.ClosedAt,
+            GeneratedAt = DateTime.UtcNow,
+            IsReprint = isReprint,
+            ReportingPeriodStart = reportStart,
+            ReportingPeriodEnd = periodEnd,
+            ReportingPeriodMatchesShift = periodOrders.Count == shiftOrders.Count,
+            BeginningInvoiceNumber = invoices.FirstOrDefault(),
+            EndingInvoiceNumber = invoices.LastOrDefault(),
+            CompletedTransactionsCount = paidPeriodOrders.Count,
+            VoidedTransactionsCount = voidPeriodOrders.Count,
+            ReturnTransactionsCount = periodReturnCount,
+            GrossSales = periodGross,
+            TotalDiscounts = periodDiscounts,
+            TotalRefundsAndVoids = periodRefundsAndVoids,
+            NetSales = periodNetSales,
+            VatableSales = paidPeriodOrders.Sum(o => o.VatableSales),
+            VatExemptSales = paidPeriodOrders.Sum(o => o.VatExemptSales),
+            ZeroRatedSales = paidPeriodOrders.Sum(o => o.ZeroRatedSales),
+            VatAmount = paidPeriodOrders.Sum(o => o.VatAmount),
+            ShiftTransactionsCount = paidShiftOrders.Count,
+            ShiftGrossSales = shiftGross,
+            ShiftDiscounts = shiftDiscounts,
+            ShiftRefundsAndVoids = shiftRefundsAndVoids,
+            ShiftNetSales = shiftNetSales,
+            ShiftCashNetSales = Math.Round(shift.TotalCashSales - shift.TotalCashRefunds, 2, MidpointRounding.AwayFromZero),
+            ShiftNonCashNetSales = dto.TotalNonCashExpected,
+            OpeningFloat = shift.OpeningFloat,
+            CashSalesCollected = shift.TotalCashSales,
+            CashRefunds = shift.TotalCashRefunds,
+            NetCashSales = Math.Round(shift.TotalCashSales - shift.TotalCashRefunds, 2, MidpointRounding.AwayFromZero),
+            TotalCashIn = shift.TotalCashIn,
+            TotalCashOut = shift.TotalCashOut,
+            TotalCashDrops = shift.TotalCashDrops,
+            ExpectedCashInDrawer = shift.ExpectedBalance,
+            CountedCashInDrawer = countedCash,
+            CashVariance = cashVar,
+            CashReconciliationStatus = PaymentMethodReconciliationDto.ComputeStatus(cashVar),
+            HasRecordedDenominations = dto.HasRecordedDenominations,
+            Denominations = dto.Denominations,
+            PaymentReconciliations = dto.PaymentReconciliations,
+            OriginalDeclaration = dto.OriginalDeclaration,
+            RecountHistory = dto.RecountHistory,
+            IsOverallBalanced = allBalanced,
+            OverallStatus = overallStatus,
+            Notes = shift.Notes
+        };
     }
 
     public static CashDrawerShiftDto MapShiftToDto(CashDrawerShift shift)
@@ -1073,6 +2011,7 @@ public class CashDrawerController : ControllerBase
             OpeningFloat = shift.OpeningFloat,
             OpeningConfirmed = shift.OpeningConfirmed,
             ClientShiftId = shift.ClientShiftId,
+            ClientCloseId = shift.ClientCloseId,
             TotalCashSales = shift.TotalCashSales,
             TotalCashRefunds = shift.TotalCashRefunds,
             TotalCashIn = shift.TotalCashIn,
@@ -1089,6 +2028,40 @@ public class CashDrawerController : ControllerBase
             PendingApprovalsCount = movements.Count(m => m.Status == "PENDING_APPROVAL"),
             Movements = movements
         };
+    }
+
+    public static async Task PopulateMovementHierarchyAsync(
+        PosDbContext context,
+        IReadOnlyList<CashMovementResponseDto> movements,
+        CancellationToken cancellationToken = default)
+    {
+        if (movements.Count == 0) return;
+
+        var branchIds = movements.Select(m => m.BranchId).Distinct().ToList();
+        var terminalIds = movements.Where(m => m.TerminalId > 0).Select(m => m.TerminalId).Distinct().ToList();
+
+        var branchesById = await context.Branches.AsNoTracking()
+            .Where(b => branchIds.Contains(b.BranchId))
+            .ToDictionaryAsync(b => b.BranchId, cancellationToken);
+        var terminalsById = terminalIds.Count > 0
+            ? await context.Terminals.AsNoTracking()
+                .Include(t => t.Outlet)
+                .Where(t => terminalIds.Contains(t.TerminalId))
+                .ToDictionaryAsync(t => t.TerminalId, cancellationToken)
+            : new Dictionary<int, Terminal>();
+
+        foreach (var m in movements)
+        {
+            terminalsById.TryGetValue(m.TerminalId, out var term);
+            int brId = m.BranchId > 0 ? m.BranchId : (term?.BranchId ?? 0);
+            m.BranchName = branchesById.TryGetValue(brId, out var br)
+                ? br.Name
+                : (brId > 0 ? $"Branch #{brId}" : "Unknown Branch");
+            m.OutletId = term?.OutletId ?? 0;
+            m.OutletName = term?.Outlet?.Name ?? (m.OutletId > 0 ? $"Outlet #{m.OutletId}" : "Unknown / Legacy Outlet");
+            m.TerminalCode = term?.TerminalCode ?? (m.TerminalId > 0 ? $"LEGACY-{m.TerminalId}" : "LEGACY");
+            m.TerminalName = term?.Name ?? (m.TerminalId > 0 ? $"Unknown / Legacy Terminal (#{m.TerminalId})" : "Unknown / Legacy Terminal");
+        }
     }
 
     public static CashMovementResponseDto MapMovementToDto(CashDrawerMovement m) =>

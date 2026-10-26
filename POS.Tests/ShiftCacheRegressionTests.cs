@@ -25,6 +25,7 @@ public static class ShiftCacheRegressionTests
         await ReferenceRefreshRetiresPlaceholder();
         await CurrentEndpointReconcilesAcknowledgedShifts();
         await ServerSnapshotIncludesExactIds();
+        await OfflineShiftCloseAndSync();
     }
 
     private static void Check(bool value, string message)
@@ -193,5 +194,139 @@ public static class ShiftCacheRegressionTests
         Check((await verify.CashDrawerShifts.FindAsync(200L))!.Status == "OPEN", "Historical ACK must not close the newer drawer.");
         Check((await verify.CashDrawerShifts.FindAsync(-1L))!.Status == "CLOSED", "ACK retires its matching placeholder.");
         Console.WriteLine("PASS shift-cache: historical ACK preserves newer drawer");
+    }
+
+    private static async Task OfflineShiftCloseAndSync()
+    {
+        await Reset();
+        using (var seed = new LocalPosDbContext())
+        {
+            seed.TerminalConfigs.Add(new LocalTerminalConfig { TerminalId = 1, BranchId = 1, OutletId = 1, TerminalName = "T1", TerminalIdentifier = "T1", BranchTaxType = "VAT" });
+            await seed.SaveChangesAsync();
+        }
+
+        using var offlineHttp = new HttpClient(new Handler(_ => throw new InvalidOperationException("Must not call network offline.")));
+        var openReq = new OpenShiftDto { BranchId = 1, TerminalId = 1, OpeningFloat = 500m, ClientShiftId = "off-shift-1", OpenedAt = DateTime.UtcNow.AddHours(-2) };
+        var localShift = await ShiftSession.OpenAsync(offlineHttp, openReq, "original-owner", offline: true);
+
+        using (var saleDb = new LocalPosDbContext())
+        {
+            var tracked = await saleDb.CashDrawerShifts.SingleAsync(s => s.ShiftId == localShift.ShiftId);
+            tracked.TotalCashSales = 125.25m;
+            tracked.ExpectedBalance = 625.25m;
+            saleDb.Orders.Add(new LocalOrder { OrderId = "off-ord-1", InvoiceNumber = "INV-OFF-1", BranchId = 1, OutletId = 1, TerminalId = 1, ShiftId = localShift.ShiftId, ClientShiftId = localShift.ClientShiftId, CashierId = "original-owner", Subtotal = 200m, TotalAmount = 200m, PaymentStatus = "SUCCESS", OrderStatus = "COMPLETED", CreatedAt = DateTime.UtcNow.AddHours(-1) });
+            saleDb.Payments.Add(new LocalPayment { OrderId = "off-ord-1", Amount = 200m, PaymentMethod = "GCASH", PaymentStatus = "SUCCESS", PaidAt = DateTime.UtcNow.AddHours(-1) });
+            await saleDb.SaveChangesAsync();
+        }
+
+        // 1. Offline structured close without IsDeclarationConfirmed = true must be rejected
+        bool rejectedWithoutConfirm = false;
+        try
+        {
+            await ShiftSession.CloseAsync(offlineHttp, new CloseShiftDto
+            {
+                ShiftId = localShift.ShiftId,
+                ClientShiftId = localShift.ClientShiftId,
+                IsDeclarationConfirmed = false,
+                Denominations = [new() { Type = "BILL", Denomination = 500m, Quantity = 1 }],
+                PaymentDeclarations = [new() { PaymentMethodCode = "GCASH", DeclaredAmount = 200m }]
+            }, "original-owner", offline: true);
+        }
+        catch (InvalidOperationException)
+        {
+            rejectedWithoutConfirm = true;
+        }
+        Check(rejectedWithoutConfirm, "Offline blind close without IsDeclarationConfirmed=true must be rejected.");
+
+        // 2. Offline blind close with exact centavo denominations succeeds without discrepancy remarks,
+        //    returns blind-redacted DTO to cashier, and queues SHIFT_CLOSE
+        var closeReq = new CloseShiftDto
+        {
+            ShiftId = localShift.ShiftId,
+            ClientShiftId = localShift.ClientShiftId,
+            ClientCloseId = "off-close-1",
+            IsDeclarationConfirmed = true,
+            Denominations =
+            [
+                new() { Type = "BILL", Denomination = 500m, Quantity = 1 },
+                new() { Type = "BILL", Denomination = 100m, Quantity = 1 },
+                new() { Type = "COIN", Denomination = 20m, Quantity = 1 },
+                new() { Type = "COIN", Denomination = 5m, Quantity = 1 },
+                new() { Type = "COIN", Denomination = 0.25m, Quantity = 1 }
+            ],
+            PaymentDeclarations = [new() { PaymentMethodCode = "GCASH", DeclaredAmount = 190m }], // -10 short on GCash
+            Notes = "" // No discrepancy remarks required for blind close
+        };
+
+        var closedDto = await ShiftSession.CloseAsync(offlineHttp, closeReq, "original-owner", offline: true);
+        Check(closedDto.Status == "CLOSED" && closedDto.ActualCountedBalance == 625.25m, "Offline close must compute exact centavo balance.");
+        Check(closedDto.IsBlindCloseRedacted && closedDto.Discrepancy == null && closedDto.XReading == null && closedDto.CashierDeclaration != null,
+            "Offline cashier close response must be blind-redacted with CashierDeclaration acknowledgment.");
+
+        // 3. Reprint from saved local closing record: cashier receives CashierDeclaration reprint, supervisor receives full XReading
+        var lastClosedCashier = await ShiftSession.LastClosedDtoAsync(offlineHttp, 1, offline: true, isSupervisor: false);
+        Check(lastClosedCashier != null && lastClosedCashier.IsBlindCloseRedacted && lastClosedCashier.CashierDeclaration?.IsReprint == true && lastClosedCashier.XReading == null,
+            "LastClosedDtoAsync for cashier must return blind-redacted record with CashierDeclaration IsReprint=true.");
+
+        var lastClosedSupervisor = await ShiftSession.LastClosedDtoAsync(offlineHttp, 1, offline: true, isSupervisor: true);
+        Check(lastClosedSupervisor != null && !lastClosedSupervisor.IsBlindCloseRedacted && lastClosedSupervisor.Discrepancy == 0m && lastClosedSupervisor.XReading?.OverallStatus == "SHORT" && lastClosedSupervisor.XReading?.IsReprint == true,
+            "LastClosedDtoAsync for supervisor must return full reconciliation and XReading with SHORT status.");
+
+        // 4. Offline supervisor recount preserves OriginalDeclaration and appends RecountHistory
+        var recountedOffline = await ShiftSession.RecountAsync(offlineHttp, localShift.ShiftId, new ShiftRecountRequestDto
+        {
+            ShiftId = localShift.ShiftId,
+            Reason = "Offline manager recount found ₱10 GCash slip",
+            Denominations = closeReq.Denominations,
+            PaymentDeclarations = [new() { PaymentMethodCode = "GCASH", DeclaredAmount = 200m }]
+        }, "manager1", "Manager", offline: true);
+        Check(recountedOffline.OriginalDeclaration?.TotalNonCashDeclared == 190m && recountedOffline.TotalNonCashDeclared == 200m && recountedOffline.RecountHistory.Count == 1,
+            "Offline supervisor recount must preserve OriginalDeclaration (190) and update TotalNonCashDeclared (200) with RecountHistory.");
+
+        // 5. Synchronizing SHIFT_CLOSE outbox automatically uploads prerequisite SHIFT_OPEN and marks both SYNCED
+        int openCalls = 0, closeCalls = 0;
+        using var syncHttp = new HttpClient(new Handler(async req =>
+        {
+            if (req.RequestUri!.AbsolutePath.EndsWith("open-shift"))
+            {
+                openCalls++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new CashDrawerShiftDto
+                    {
+                        ShiftId = 555,
+                        ClientShiftId = "off-shift-1",
+                        BranchId = 1,
+                        TerminalId = 1,
+                        CashierId = "original-owner",
+                        OpeningFloat = 500m,
+                        OpeningConfirmed = true,
+                        Status = "OPEN",
+                        OpenedAt = openReq.OpenedAt!.Value
+                    })
+                };
+            }
+            if (req.RequestUri.AbsolutePath.EndsWith("close-shift"))
+            {
+                closeCalls++;
+                var sentClose = await req.Content!.ReadFromJsonAsync<CloseShiftDto>();
+                Check(sentClose!.ShiftId == 555 && sentClose.ClientCloseId == "off-close-1" && sentClose.IsDeclarationConfirmed && sentClose.ActualCountedBalance == 625.25m,
+                    "Uploaded SHIFT_CLOSE must resolve server ShiftId 555 and preserve counted balance and IsDeclarationConfirmed.");
+                var ackDto = Snapshot(555, "off-shift-1", "CLOSED", sales: 125.25m);
+                ackDto.ClientCloseId = "off-close-1";
+                ackDto.ActualCountedBalance = 625.25m;
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(ackDto) };
+            }
+            throw new InvalidOperationException("Unexpected endpoint: " + req.RequestUri);
+        })) { BaseAddress = new Uri("http://test/") };
+
+        using (var syncDb = new LocalPosDbContext())
+        {
+            var closeOutbox = await syncDb.SyncOutboxes.SingleAsync(o => o.EntityType == "SHIFT_CLOSE");
+            var svc = new OfflineTransactionSyncService(syncDb);
+            Check(await svc.UploadTransactionAsync(closeOutbox, syncHttp), "SHIFT_CLOSE outbox upload must succeed.");
+        }
+        Check(openCalls == 1 && closeCalls == 1, "SHIFT_CLOSE sync must upload prerequisite SHIFT_OPEN first and then close-shift.");
+        Console.WriteLine("PASS shift-cache: offline shift close, reprint from saved record, and SHIFT_CLOSE outbox sync");
     }
 }

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Discount Modal - 5-Column Gridbox Layout
+   Discount Modal - 5-Column Gridbox Layout (Dark Theme)
    ========================================================================== */
 
 .discount-modal-dialog {
@@ -36,28 +36,28 @@
     width: 100%;
     min-height: 120px;
     padding: 0.9rem 0.6rem 0.75rem;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 14px;
-    background-color: #ffffff;
+    border: 1.5px solid var(--pos-border-color, #334155);
+    border-radius: var(--pos-radius-md, 14px);
+    background-color: var(--pos-bg-surface, #0f172a);
     text-align: center;
     cursor: pointer;
     transition: all 0.15s ease-in-out;
     user-select: none;
     position: relative;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
 }
 
 .discount-item-btn:hover:not(.selected) {
-    background-color: #f8fafc;
-    border-color: #93c5fd;
+    background-color: var(--pos-bg-surface-hover, #334155);
+    border-color: var(--pos-border-light, #475569);
     transform: translateY(-2px);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 8px 12px -2px rgba(0, 0, 0, 0.3);
 }
 
 .discount-item-btn.selected {
-    background-color: #eff6ff;
-    border-color: #2563eb;
-    box-shadow: 0 0 0 1.5px #2563eb, 0 4px 8px -2px rgba(37, 99, 235, 0.15);
+    background-color: rgba(59, 130, 246, 0.15);
+    border-color: var(--pos-primary, #3b82f6);
+    box-shadow: 0 0 0 1.5px var(--pos-primary, #3b82f6), 0 4px 12px rgba(59, 130, 246, 0.25);
 }
 
 .discount-check-icon {
@@ -65,14 +65,14 @@
     top: 7px;
     right: 7px;
     font-size: 1.05rem;
-    color: #2563eb;
+    color: var(--pos-primary-light, #60a5fa);
 }
 
 .discount-icon-wrap {
     width: 44px;
     height: 44px;
     border-radius: 10px;
-    background: #f1f5f9;
+    background: var(--pos-bg-card, #1e293b);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -81,25 +81,26 @@
 }
 
 .discount-item-btn.selected .discount-icon-wrap {
-    background: #dbeafe;
+    background: rgba(59, 130, 246, 0.25);
 }
 
 .discount-icon {
     font-size: 1.45rem;
-    color: #475569;
+    color: var(--pos-text-secondary, #94a3b8);
 }
 
 .discount-item-btn.selected .discount-icon {
-    color: #2563eb;
+    color: var(--pos-primary-light, #60a5fa);
 }
 
 .discount-item-name {
     font-size: 0.8rem;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--pos-text-primary, #f8fafc);
     line-height: 1.25;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     height: 2.5em;
@@ -108,7 +109,7 @@
 }
 
 .discount-item-btn.selected .discount-item-name {
-    color: #1d4ed8;
+    color: var(--pos-primary-light, #60a5fa);
 }
 
 .discount-item-badge {
@@ -121,71 +122,71 @@
     display: inline-block;
 }
 
-/* Vibrant color themes for badges */
+/* Color themes for badges */
 .discount-item-badge.badge-green {
-    background-color: #dcfce7;
-    color: #15803d;
-    border: 1px solid #bbf7d0;
+    background-color: var(--pos-success-bg, rgba(16, 185, 129, 0.15));
+    color: var(--pos-success-text, #6ee7b7);
+    border: 1px solid var(--pos-success-border, rgba(16, 185, 129, 0.4));
 }
 
 .discount-item-badge.badge-blue {
-    background-color: #dbeafe;
-    color: #1d4ed8;
-    border: 1px solid #bfdbfe;
+    background-color: rgba(59, 130, 246, 0.15);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.4);
 }
 
 .discount-item-badge.badge-amber {
-    background-color: #fef3c7;
-    color: #b45309;
-    border: 1px solid #fde68a;
+    background-color: var(--pos-warning-bg, rgba(245, 158, 11, 0.15));
+    color: var(--pos-warning-text, #fcd34d);
+    border: 1px solid var(--pos-warning-border, rgba(245, 158, 11, 0.4));
 }
 
 .discount-item-badge.badge-purple {
-    background-color: #f3e8ff;
-    color: #7e22ce;
-    border: 1px solid #e9d5ff;
+    background-color: rgba(168, 85, 247, 0.15);
+    color: #d8b4fe;
+    border: 1px solid rgba(168, 85, 247, 0.4);
 }
 
 .discount-item-badge.badge-slate {
-    background-color: #f1f5f9;
-    color: #64748b;
-    border: 1px solid #e2e8f0;
+    background-color: var(--pos-bg-card, #1e293b);
+    color: var(--pos-text-secondary, #94a3b8);
+    border: 1px solid var(--pos-border-color, #334155);
 }
 
-/* Selected states for badges (solid fill for maximum contrast & punch) */
+/* Selected states for badges */
 .discount-item-btn.selected .discount-item-badge.badge-green {
-    background-color: #16a34a;
+    background-color: #10b981;
     color: #ffffff;
-    border-color: #16a34a;
+    border-color: #10b981;
 }
 
 .discount-item-btn.selected .discount-item-badge.badge-blue {
-    background-color: #2563eb;
+    background-color: #3b82f6;
     color: #ffffff;
-    border-color: #2563eb;
+    border-color: #3b82f6;
 }
 
 .discount-item-btn.selected .discount-item-badge.badge-amber {
-    background-color: #d97706;
+    background-color: #f59e0b;
     color: #ffffff;
-    border-color: #d97706;
+    border-color: #f59e0b;
 }
 
 .discount-item-btn.selected .discount-item-badge.badge-purple {
-    background-color: #9333ea;
+    background-color: #a855f7;
     color: #ffffff;
-    border-color: #9333ea;
+    border-color: #a855f7;
 }
 
 .discount-item-btn.selected .discount-item-badge.badge-slate {
-    background-color: #64748b;
+    background-color: #475569;
     color: #ffffff;
-    border-color: #64748b;
+    border-color: #475569;
 }
 
 .discount-input-box {
-    background-color: #f8fafc;
-    border: 1px solid #e2e8f0;
+    background-color: var(--pos-bg-surface, #0f172a);
+    border: 1px solid var(--pos-border-color, #334155);
     border-radius: 12px;
     padding: 0.85rem 1rem;
 }

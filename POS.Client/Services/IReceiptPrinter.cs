@@ -2,7 +2,7 @@ using POS.Shared.Models;
 
 namespace POS.Client.Services;
 
-/// <summary>Device boundary for printing a persisted, paid receipt.</summary>
+/// <summary>Device boundary for printing a persisted, paid receipt or non-resetting X-reading.</summary>
 public interface IReceiptPrinter
 {
     /// <summary>
@@ -17,4 +17,16 @@ public interface IReceiptPrinter
     /// Never duplicates sales invoices or receipts.
     /// </summary>
     Task PrintPreparationTicketAsync(PreparationTicketDto ticket, string? printerName = null);
+
+    /// <summary>
+    /// Sends an X-Reading and Shift Reconciliation report to the receipt printer (Supervisor/Admin only).
+    /// Never modifies or re-closes the shift.
+    /// </summary>
+    Task PrintXReadingAsync(XReadingReportDto report, string? printerName = null);
+
+    /// <summary>
+    /// Sends a Cashier Declaration Acknowledgment (Blind Closing submission) to the receipt printer.
+    /// Excludes expected amounts, sales totals, variances, and reconciliation status.
+    /// </summary>
+    Task PrintCashierDeclarationAsync(CashierDeclarationReportDto declaration, string? printerName = null);
 }

@@ -1,4 +1,5 @@
 @page "/cash-drawer"
+@using System.Globalization
 @using POS.Shared.Models
 @using POS.Client.Data
 @using POS.Client.Services
@@ -8,18 +9,19 @@
 @inject HttpClient Http
 @inject IPosConnectivityService ConnectivityService
 @inject IOfflineBackgroundSyncService SyncManager
+@inject IReceiptPrinter ReceiptPrinter
 @inject CurrieTechnologies.Razor.SweetAlert2.SweetAlertService Swal
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
-<PageTitle>Cash Drawer & Petty Cash Management - POS</PageTitle>
+<PageTitle>Cash Drawer &amp; Blind Shift Closing - POS</PageTitle>
 
-<div class="w-100 py-3 px-4">
+<div class="w-100 py-3 px-3 px-md-4 pos-closing-page">
     <!-- Top Header -->
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
         <div>
             <div class="d-flex align-items-center gap-2">
-                <h2 class="fw-bolder mb-0 text-dark" style="letter-spacing: -0.5px;">Petty Cash &amp; Cash Drawer Management</h2>
+                <h2 class="fw-bolder mb-0 text-light" style="letter-spacing: -0.5px;">Cash Drawer &amp; Blind Shift Closing</h2>
                 @if (isOffline)
                 {
                     <span class="badge bg-warning text-dark">OFFLINE MODE</span>
@@ -33,8 +35,20 @@
                 Terminal #@(Session.Terminal?.TerminalId ?? 1) (@(Session.Terminal?.TerminalName ?? "Terminal")) • Cashier: @(Session.Username ?? "Unknown") (@(Session.Role ?? "Cashier"))
             </span>
         </div>
-        <div class="d-flex gap-2">
-            <button class="btn btn-outline-secondary rounded-3 px-3 py-2 fw-semibold" @onclick="TriggerSyncAndReloadAsync" disabled="@isLoading">
+        <div class="d-flex flex-wrap gap-2">
+            @if (lastClosedShift?.CashierDeclaration != null)
+            {
+                <button type="button" class="btn btn-outline-light rounded-3 px-3 py-2 fw-semibold" @onclick="OpenLastClosedDeclarationModal" disabled="@isPrintingDeclaration">
+                    <i class="bi bi-file-earmark-check me-1"></i> View / Reprint Declaration (Shift #@lastClosedShift.ShiftId)
+                </button>
+            }
+            @if (IsSupervisorUnlocked && lastClosedShift?.XReading != null)
+            {
+                <button type="button" class="btn btn-outline-info rounded-3 px-3 py-2 fw-semibold" @onclick="OpenLastClosedXReadingModal" disabled="@isPrintingXReading">
+                    <i class="bi bi-printer me-1"></i> Supervisor X-Reading (Shift #@lastClosedShift.ShiftId)
+                </button>
+            }
+            <button type="button" class="btn btn-outline-secondary rounded-3 px-3 py-2 fw-semibold" @onclick="TriggerSyncAndReloadAsync" disabled="@isLoading">
                 <i class="bi bi-cloud-arrow-up me-1"></i> Sync &amp; Refresh
             </button>
         </div>
@@ -49,192 +63,919 @@
         </div>
     }
 
+    @if (!string.IsNullOrWhiteSpace(printWarningMessage))
+    {
+        <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2 rounded-3 shadow-sm mb-3" role="alert">
+            <div>
+                <i class="bi bi-printer-fill me-2"></i>
+                <strong>Print Notice:</strong> @printWarningMessage
+            </div>
+            <div class="d-flex gap-2">
+                @if (lastClosedShift?.CashierDeclaration != null)
+                {
+                    <button type="button" class="btn btn-sm btn-dark fw-bold rounded-3" @onclick="ReprintSavedDeclarationAsync" disabled="@isPrintingDeclaration">
+                        <i class="bi bi-arrow-repeat me-1"></i> @(isPrintingDeclaration ? "Reprinting..." : "Reprint Declaration Acknowledgment")
+                    </button>
+                }
+                @if (IsSupervisorUnlocked && lastClosedShift?.XReading != null)
+                {
+                    <button type="button" class="btn btn-sm btn-outline-dark fw-bold rounded-3" @onclick="ReprintSavedXReadingAsync" disabled="@isPrintingXReading">
+                        <i class="bi bi-printer me-1"></i> @(isPrintingXReading ? "Reprinting..." : "Reprint X-Reading")
+                    </button>
+                }
+            </div>
+        </div>
+    }
+
     @if (isLoading)
     {
         <div class="text-center py-5">
             <div class="spinner-border text-primary" role="status"></div>
-            <p class="text-muted small mt-2">Loading cash drawer shift and petty cash records...</p>
+            <p class="text-muted small mt-2">Loading cash drawer shift records...</p>
         </div>
     }
     else if (currentShift == null)
     {
-        <!-- Open Shift Card -->
-        <div class="card border-0 shadow-sm rounded-4 p-5 bg-white text-center mx-auto" style="max-width: 600px;">
-            <div class="mb-3 text-primary">
-                <i class="bi bi-cash-stack" style="font-size: 3rem;"></i>
-            </div>
-            <h4 class="fw-bold mb-2">No Active Cashier Drawer Shift</h4>
-            <p class="text-muted small mb-4">
-                Cash movements (Petty Cash, Paid-In, Paid-Out, and Cash Drops) require an active open drawer shift. Enter the starting opening float in PHP (₱) below.
-            </p>
+        <div class="row g-4 justify-content-center">
+            <div class="col-12 col-lg-5">
+                <!-- Open Shift Card -->
+                <div class="pos-panel-card rounded-4 p-4 p-md-5 text-center h-100">
+                    <div class="mb-3 text-primary">
+                        <i class="bi bi-cash-stack" style="font-size: 3rem;"></i>
+                    </div>
+                    <h4 class="fw-bold mb-2 text-light">No Active Cashier Drawer Shift</h4>
+                    <p class="text-secondary small mb-4">
+                        Opening float is drawer starting cash, not sales revenue. Confirm the starting float in PHP (₱) below to open the drawer shift.
+                    </p>
 
-            <div class="mb-3 text-start">
-                <label class="form-label fw-semibold text-dark small">Opening Float Amount (₱)</label>
-                <input type="number" step="0.01" min="0" class="form-control form-control-lg rounded-3 fw-bold" @bind="openingFloat" placeholder="0.00" />
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-semibold text-light small">Opening Float Amount (₱)</label>
+                        <input type="number" step="0.01" min="0" class="form-control form-control-lg rounded-3 fw-bold" @bind="openFloatInput" placeholder="0.00" />
+                    </div>
+
+                    <div class="mb-4 text-start">
+                        <label class="form-label fw-semibold text-light small">Shift Notes / Remarks</label>
+                        <input type="text" class="form-control rounded-3 py-2" @bind="shiftNotes" placeholder="Optional remarks..." />
+                    </div>
+
+                    <button class="btn btn-success rounded-3 py-3 fw-bold shadow-sm w-100" @onclick="OpenShift" disabled="@isSubmittingShift">
+                        <i class="bi bi-unlock-fill me-1"></i> @(isSubmittingShift ? "Opening Shift..." : "Open Cash Drawer Shift")
+                    </button>
+                </div>
             </div>
 
-            <div class="mb-4 text-start">
-                <label class="form-label fw-semibold text-dark small">Shift Notes / Remarks</label>
-                <input type="text" class="form-control rounded-3 py-2" @bind="shiftNotes" placeholder="Optional remarks..." />
-            </div>
+            @if (lastClosedShift != null)
+            {
+                <div class="col-12 col-lg-7">
+                    <div class="pos-panel-card rounded-4 p-4 h-100 d-flex flex-column justify-content-between">
+                        <div>
+                            <!-- Saved Cashier Declaration Acknowledgment (Cashier-Safe) -->
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div>
+                                    <span class="badge bg-secondary mb-1">LAST CLOSED SHIFT #@lastClosedShift.ShiftId</span>
+                                    <h5 class="fw-bold text-light mb-0">Cashier Declaration Acknowledgment</h5>
+                                </div>
+                                <span class="badge bg-primary">LOCKED &amp; SUBMITTED</span>
+                            </div>
 
-            <button class="btn btn-success rounded-3 py-3 fw-bold shadow-sm w-100" @onclick="OpenShift" disabled="@isSubmittingShift">
-                <i class="bi bi-unlock-fill me-1"></i> @(isSubmittingShift ? "Opening Shift..." : "Open Cash Drawer Shift")
-            </button>
+                            <div class="small text-secondary mb-3">
+                                <div>Cashier: <strong class="text-light">@lastClosedShift.CashierId</strong></div>
+                                <div>Opened: @lastClosedShift.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") • Submitted: @(lastClosedShift.ClosedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "N/A")</div>
+                            </div>
+
+                            <div class="pos-subpanel rounded-3 p-3 mb-3 small">
+                                <div class="d-flex justify-content-between py-1">
+                                    <span class="text-secondary">Total Counted Cash (Drawer):</span>
+                                    <span class="fw-bold text-success font-monospace">₱@((lastClosedShift.ActualCountedBalance ?? 0m).ToString("N2"))</span>
+                                </div>
+                                <div class="d-flex justify-content-between py-1">
+                                    <span class="text-secondary">Total Non-Cash Declared:</span>
+                                    <span class="fw-bold text-info font-monospace">₱@lastClosedShift.TotalNonCashDeclared.ToString("N2")</span>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(lastClosedShift.Notes))
+                                {
+                                    <div class="mt-2 pt-2 border-top border-secondary border-opacity-25 text-light">
+                                        <strong>General Notes:</strong> @lastClosedShift.Notes
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="d-flex flex-wrap gap-2 mb-4">
+                                <button type="button" class="btn btn-primary rounded-3 py-2 px-3 fw-bold flex-grow-1" @onclick="ReprintSavedDeclarationAsync" disabled="@isPrintingDeclaration">
+                                    <i class="bi bi-printer-fill me-1"></i> @(isPrintingDeclaration ? "Printing..." : "Reprint Declaration Acknowledgment")
+                                </button>
+                                <button type="button" class="btn btn-outline-light rounded-3 py-2 px-3 fw-semibold" @onclick="OpenLastClosedDeclarationModal">
+                                    <i class="bi bi-eye me-1"></i> View Declaration
+                                </button>
+                            </div>
+
+                            <!-- Supervisor / Admin Reconciliation & Recount Section -->
+                            <div class="border-top border-secondary border-opacity-25 pt-3">
+                                @if (!IsSupervisorUnlocked)
+                                {
+                                    <div class="pos-subpanel rounded-3 p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span class="fw-bold text-warning small">
+                                                <i class="bi bi-shield-lock-fill me-1"></i> Supervisor / Admin Reconciliation &amp; Recount
+                                            </span>
+                                            <span class="badge bg-dark text-secondary border border-secondary">Authorized Only</span>
+                                        </div>
+                                        <p class="small text-secondary mb-2">
+                                            Expected totals, variances, X-Reading inquiry reports, and recount adjustments are restricted to authorized supervisors and managers.
+                                        </p>
+                                        <div class="input-group input-group-sm" style="max-width: 360px;">
+                                            <input type="password" maxlength="10" class="form-control" @bind="supervisorUnlockPin" placeholder="Enter Supervisor / Manager PIN" />
+                                            <button type="button" class="btn btn-warning fw-bold text-dark" @onclick="UnlockSupervisorReconciliationAsync" disabled="@isUnlockingSupervisor">
+                                                <i class="bi bi-unlock-fill me-1"></i> @(isUnlockingSupervisor ? "Verifying..." : "Unlock Reconciliation")
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="pos-subpanel rounded-3 p-3">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                            <span class="fw-bold text-info small text-uppercase">
+                                                <i class="bi bi-shield-check me-1"></i> Supervisor Reconciliation &amp; Audit
+                                            </span>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span class="badge @GetVarianceStatusBadgeClass(lastClosedShift.XReading?.OverallStatus ?? "BALANCED")">
+                                                    @(lastClosedShift.XReading?.OverallStatus ?? "RECONCILED")
+                                                </span>
+                                                @if (!IsSupervisorRole(Session.Role))
+                                                {
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="LockSupervisorReconciliation">
+                                                        <i class="bi bi-lock-fill"></i> Lock
+                                                    </button>
+                                                }
+                                            </div>
+                                        </div>
+
+                                        <div class="small mb-2">
+                                            <div class="d-flex justify-content-between py-1">
+                                                <span class="text-secondary">Expected Drawer Cash:</span>
+                                                <span class="fw-bold text-light font-monospace">₱@lastClosedShift.ExpectedBalance.ToString("N2")</span>
+                                            </div>
+                                            <div class="d-flex justify-content-between py-1">
+                                                <span class="text-secondary">Counted Drawer Cash:</span>
+                                                <span class="fw-bold text-info font-monospace">₱@((lastClosedShift.ActualCountedBalance ?? 0m).ToString("N2"))</span>
+                                            </div>
+                                            <div class="d-flex justify-content-between py-1 border-bottom border-secondary border-opacity-25 pb-2">
+                                                <span class="text-secondary">Cash Variance:</span>
+                                                @{
+                                                    decimal closedCashVar = lastClosedShift.Discrepancy ?? 0m;
+                                                }
+                                                <span class="fw-bold font-monospace @GetVarianceTextClass(closedCashVar)">
+                                                    @FormatSignedCurrency(closedCashVar) (@PaymentMethodReconciliationDto.ComputeStatus(closedCashVar))
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        @if (lastClosedShift.PaymentReconciliations.Count > 0)
+                                        {
+                                            <div class="table-responsive mb-2">
+                                                <table class="table table-sm table-dark align-middle mb-0" style="font-size: 0.78rem;">
+                                                    <thead>
+                                                        <tr class="text-secondary">
+                                                            <th>Method</th>
+                                                            <th class="text-end">Expected</th>
+                                                            <th class="text-end">Counted/Declared</th>
+                                                            <th class="text-end">Variance</th>
+                                                            <th class="text-center">Status</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var pm in lastClosedShift.PaymentReconciliations)
+                                                        {
+                                                            <tr>
+                                                                <td class="fw-semibold">@pm.PaymentMethodName</td>
+                                                                <td class="text-end font-monospace">₱@pm.ExpectedAmount.ToString("N2")</td>
+                                                                <td class="text-end font-monospace fw-bold">₱@pm.DeclaredAmount.ToString("N2")</td>
+                                                                <td class="text-end font-monospace fw-bold @GetVarianceTextClass(pm.Variance)">@FormatSignedCurrency(pm.Variance)</td>
+                                                                <td class="text-center">
+                                                                    <span class="badge @GetVarianceStatusBadgeClass(pm.Status)">@pm.Status</span>
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        @if (lastClosedShift.RecountHistory != null && lastClosedShift.RecountHistory.Count > 0)
+                                        {
+                                            <div class="border-top border-secondary border-opacity-25 pt-2 mt-2 small">
+                                                <div class="fw-bold text-warning mb-1">
+                                                    <i class="bi bi-clock-history me-1"></i> Recount / Correction Audit Trail (@lastClosedShift.RecountHistory.Count)
+                                                </div>
+                                                @if (lastClosedShift.OriginalDeclaration != null)
+                                                {
+                                                    <div class="text-secondary mb-1" style="font-size: 0.76rem;">
+                                                        Original Cashier Declaration: Cash ₱@lastClosedShift.OriginalDeclaration.TotalCountedCash.ToString("N2") • Non-Cash ₱@lastClosedShift.OriginalDeclaration.TotalNonCashDeclared.ToString("N2")
+                                                    </div>
+                                                }
+                                                @foreach (var rec in lastClosedShift.RecountHistory)
+                                                {
+                                                    <div class="p-2 rounded-2 bg-dark bg-opacity-50 mb-1" style="font-size: 0.76rem;">
+                                                        <div class="d-flex justify-content-between fw-bold text-light">
+                                                            <span>Recount #@rec.RecountNumber by @rec.CorrectedBy</span>
+                                                            <span>@rec.CorrectedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                                        </div>
+                                                        <div class="text-secondary">
+                                                            Cash: ₱@rec.OriginalCountedCash.ToString("N2") → ₱@rec.RevisedCountedCash.ToString("N2")
+                                                            (Var: @FormatSignedCurrency(rec.OriginalCashVariance) → @FormatSignedCurrency(rec.RevisedCashVariance))
+                                                        </div>
+                                                        <div class="text-warning">Reason: @rec.Reason</div>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+
+                                        <div class="d-flex flex-wrap gap-2 mt-3">
+                                            <button type="button" class="btn btn-sm btn-info fw-bold text-dark rounded-3 px-3 py-2" @onclick="ReprintSavedXReadingAsync" disabled="@isPrintingXReading">
+                                                <i class="bi bi-printer-fill me-1"></i> @(isPrintingXReading ? "Printing..." : "Print X-Reading")
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-info rounded-3 px-3 py-2 fw-semibold" @onclick="OpenLastClosedXReadingModal">
+                                                <i class="bi bi-eye me-1"></i> View X-Reading
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-warning fw-bold text-dark rounded-3 px-3 py-2" @onclick="OpenRecountModal">
+                                                <i class="bi bi-pencil-square me-1"></i> Supervisor Recount / Correction
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
         </div>
     }
     else
     {
-        <!-- Shift Reconciliation Summary Cards (Layer 5) -->
+        <!-- Active Shift Summary Row (Blind Closing: Hides Expected Cash & System Sales Totals) -->
         <div class="row g-3 mb-4">
-            <div class="col-6 col-md-4 col-xl-2">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-primary border-4 h-100">
-                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Opening Cash</span>
-                    <h4 class="fw-bolder text-dark mb-0 mt-1">₱@currentShift.OpeningFloat.ToString("N2")</h4>
-                    <small class="text-muted" style="font-size: 0.75rem;">Opened @currentShift.OpenedAt.ToLocalTime().ToString("HH:mm")</small>
+            <div class="col-6 col-md-3">
+                <div class="pos-kpi-card rounded-4 p-3 border-start border-primary border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Opening Float</span>
+                    <h4 class="fw-bolder text-light mb-0 mt-1">₱@currentShift.OpeningFloat.ToString("N2")</h4>
+                    <small class="text-secondary" style="font-size: 0.75rem;">Include remaining float in cash count</small>
                 </div>
             </div>
-            <div class="col-6 col-md-4 col-xl-2">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-success border-4 h-100">
-                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Cash Sales (Net)</span>
-                    <h4 class="fw-bolder text-success mb-0 mt-1">+₱@currentShift.TotalCashSales.ToString("N2")</h4>
-                    <small class="text-danger" style="font-size: 0.75rem;">Refunds: -₱@currentShift.TotalCashRefunds.ToString("N2")</small>
+            <div class="col-6 col-md-3">
+                <div class="pos-kpi-card rounded-4 p-3 border-start border-warning border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Cash In / Paid-Out / Drops</span>
+                    <h4 class="fw-bolder text-warning mb-0 mt-1">+₱@currentShift.TotalCashIn.ToString("N2") / -₱@((currentShift.TotalCashOut + currentShift.TotalCashDrops).ToString("N2"))</h4>
+                    <small class="text-secondary" style="font-size: 0.75rem;">Recorded non-sales vouchers</small>
                 </div>
             </div>
-            <div class="col-6 col-md-4 col-xl-2">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-info border-4 h-100">
-                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Cash Paid-In</span>
-                    <h4 class="fw-bolder text-info mb-0 mt-1">+₱@currentShift.TotalCashIn.ToString("N2")</h4>
-                    <small class="text-muted" style="font-size: 0.75rem;">Change fund / Replenish</small>
+            <div class="col-6 col-md-3">
+                <div class="pos-kpi-card rounded-4 p-3 border-start border-success border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Counted Drawer Cash</span>
+                    <h4 class="fw-bolder text-success mb-0 mt-1">₱@TotalCountedCash.ToString("N2")</h4>
+                    <small class="text-secondary" style="font-size: 0.75rem;">Coins ₱@CoinsSubtotal.ToString("N2") • Bills ₱@BillsSubtotal.ToString("N2")</small>
                 </div>
             </div>
-            <div class="col-6 col-md-4 col-xl-2">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-danger border-4 h-100">
-                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Paid-Out / Petty Cash</span>
-                    <h4 class="fw-bolder text-danger mb-0 mt-1">-₱@currentShift.TotalCashOut.ToString("N2")</h4>
-                    <small class="text-muted" style="font-size: 0.75rem;">Petty Cash: ₱@currentShift.TotalPettyCashOut.ToString("N2")</small>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-xl-2">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-white border-start border-secondary border-4 h-100">
-                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Safe Cash Drops</span>
-                    <h4 class="fw-bolder text-secondary mb-0 mt-1">-₱@currentShift.TotalCashDrops.ToString("N2")</h4>
-                    <small class="text-muted" style="font-size: 0.75rem;">Remitted to safe</small>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-xl-2">
-                <div class="card border-0 shadow-sm rounded-4 p-3 bg-dark text-white h-100">
-                    <span class="text-uppercase text-warning fw-bold" style="font-size: 0.72rem;">Available Expected Cash</span>
-                    <h4 class="fw-bolder text-white mb-0 mt-1">₱@currentShift.ExpectedBalance.ToString("N2")</h4>
-                    <small class="text-light opacity-75" style="font-size: 0.72rem;">Physical Drawer Balance</small>
+            <div class="col-6 col-md-3">
+                <div class="pos-kpi-card rounded-4 p-3 border-start border-info border-4 h-100">
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Declared Non-Cash Total</span>
+                    <h4 class="fw-bolder text-info mb-0 mt-1">₱@DeclaredNonCashTotal.ToString("N2")</h4>
+                    <small class="text-secondary" style="font-size: 0.75rem;">Across @nonCashDeclarations.Count configured method(s)</small>
                 </div>
             </div>
         </div>
 
-        <div class="row g-4 mb-4">
-            <!-- Left: Record Petty Cash / Paid-In / Paid-Out / Drop -->
-            <div class="col-lg-7">
-                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white h-100">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="fw-bold text-dark mb-0">
-                            <i class="bi bi-wallet2 me-2 text-primary"></i> Record Cash Movement / Petty Cash Voucher
+        <!-- Tabbed Cash Drawer & Blind Closing Navigation Bar -->
+        <div class="pos-tabs-wrapper mb-3">
+            <div class="pos-tabs-nav" role="tablist" aria-label="Cash Drawer and Shift Closing Tabs" @onkeydown="OnTabBarKeyDown">
+                <!-- Primary Closing Flow Tabs (Steps 1 - 3) -->
+                <button type="button"
+                        id="tab-cash-count"
+                        role="tab"
+                        aria-selected="@(activeTab == "CASH_COUNT")"
+                        aria-controls="panel-cash-count"
+                        class="pos-tab-btn @(activeTab == "CASH_COUNT" ? "active" : "")"
+                        @onclick='() => SelectTab("CASH_COUNT")'>
+                    <i class="bi bi-coin text-warning"></i>
+                    <span>1. Cash Count</span>
+                    <span class="badge rounded-pill @(activeTab == "CASH_COUNT" ? "bg-success text-white" : "bg-dark text-success border border-success border-opacity-50") font-monospace">
+                        ₱@TotalCountedCash.ToString("N2")
+                    </span>
+                    @if (requiresRecountConfirmationAfterMovement)
+                    {
+                        <span class="badge bg-warning text-dark" title="Cash movement recorded after counting — reconfirm physical count">!</span>
+                    }
+                </button>
+
+                <button type="button"
+                        id="tab-other-payments"
+                        role="tab"
+                        aria-selected="@(activeTab == "OTHER_PAYMENTS")"
+                        aria-controls="panel-other-payments"
+                        class="pos-tab-btn @(activeTab == "OTHER_PAYMENTS" ? "active" : "")"
+                        @onclick='() => SelectTab("OTHER_PAYMENTS")'>
+                    <i class="bi bi-credit-card-2-front text-info"></i>
+                    <span>2. Other Payments</span>
+                    <span class="badge rounded-pill @(activeTab == "OTHER_PAYMENTS" ? "bg-info text-dark" : "bg-dark text-info border border-info border-opacity-50") font-monospace">
+                        ₱@DeclaredNonCashTotal.ToString("N2")
+                    </span>
+                </button>
+
+                <button type="button"
+                        id="tab-review-close"
+                        role="tab"
+                        aria-selected="@(activeTab == "REVIEW_CLOSE")"
+                        aria-controls="panel-review-close"
+                        class="pos-tab-btn @(activeTab == "REVIEW_CLOSE" ? "active" : "")"
+                        @onclick='() => SelectTab("REVIEW_CLOSE")'>
+                    <i class="bi bi-clipboard2-check-fill text-primary"></i>
+                    <span>3. Review &amp; Close</span>
+                    @if (isDeclarationConfirmed && !requiresRecountConfirmationAfterMovement)
+                    {
+                        <span class="badge rounded-pill bg-success text-white">Confirmed</span>
+                    }
+                    else
+                    {
+                        <span class="badge rounded-pill bg-secondary bg-opacity-50 text-light">Final Step</span>
+                    }
+                </button>
+
+                <div class="pos-tabs-divider" aria-hidden="true"></div>
+
+                <!-- Supporting Drawer Tabs -->
+                <button type="button"
+                        id="tab-cash-movements"
+                        role="tab"
+                        aria-selected="@(activeTab == "CASH_MOVEMENTS")"
+                        aria-controls="panel-cash-movements"
+                        class="pos-tab-btn pos-tab-supporting @(activeTab == "CASH_MOVEMENTS" ? "active" : "")"
+                        @onclick='() => SelectTab("CASH_MOVEMENTS")'>
+                    <i class="bi bi-wallet2 text-warning"></i>
+                    <span>Cash Movements</span>
+                </button>
+
+                <button type="button"
+                        id="tab-movement-history"
+                        role="tab"
+                        aria-selected="@(activeTab == "MOVEMENT_HISTORY")"
+                        aria-controls="panel-movement-history"
+                        class="pos-tab-btn pos-tab-supporting @(activeTab == "MOVEMENT_HISTORY" ? "active" : "")"
+                        @onclick='() => SelectTab("MOVEMENT_HISTORY")'>
+                    <i class="bi bi-clock-history text-info"></i>
+                    <span>Movement History</span>
+                    <span class="badge rounded-pill bg-secondary bg-opacity-50 text-light">@(currentShift.Movements?.Count ?? 0)</span>
+                    @if (currentShift.PendingApprovalsCount > 0)
+                    {
+                        <span class="badge rounded-pill bg-warning text-dark" title="Pending supervisor approvals">
+                            @currentShift.PendingApprovalsCount Pending
+                        </span>
+                    }
+                </button>
+            </div>
+        </div>
+
+        <!-- Active Tab Content Panel (Only one tab displayed at a time) -->
+        @if (activeTab == "CASH_COUNT")
+        {
+            <div id="panel-cash-count" role="tabpanel" aria-labelledby="tab-cash-count" class="pos-panel-card rounded-4 p-3 p-md-4 mb-4">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                    <div>
+                        <h5 class="fw-bold text-light mb-1">
+                            <i class="bi bi-coin me-2 text-warning"></i>1. Cash Count (Denomination Breakdown)
                         </h5>
-                        <span class="badge bg-light text-secondary border">BIR Non-Sales Voucher</span>
+                        <p class="small text-info mb-0">
+                            <i class="bi bi-info-circle-fill me-1"></i>
+                            Count <strong>all physical cash currently in the drawer</strong>, including the remaining opening float (₱@currentShift.OpeningFloat.ToString("N2")).
+                        </p>
                     </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary rounded-3 px-3" @onclick="ResetDenominationCounts" disabled="@isSubmittingShift">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Counts
+                    </button>
+                </div>
 
-                    <!-- Touch-friendly Movement Type Buttons -->
-                    <div class="row g-2 mb-3">
-                        <div class="col-6 col-sm-3">
-                            <button type="button"
-                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "PETTY_CASH" ? "btn-danger shadow-sm" : "btn-outline-danger")"
-                                    @onclick='() => SelectMovementType("PETTY_CASH")'>
-                                <i class="bi bi-receipt me-1"></i> Petty Cash Out
-                            </button>
+                @if (requiresRecountConfirmationAfterMovement)
+                {
+                    <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 px-3 small mb-3">
+                        <div>
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                            <strong>Cash Movement Recorded After Counting:</strong> A cash movement was posted or updated after you started counting. Your entered quantities were preserved—please verify your physical drawer count and reconfirm below.
                         </div>
-                        <div class="col-6 col-sm-3">
-                            <button type="button"
-                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_OUT" ? "btn-warning text-dark shadow-sm" : "btn-outline-warning text-dark")"
-                                    @onclick='() => SelectMovementType("CASH_OUT")'>
-                                <i class="bi bi-box-arrow-up-right me-1"></i> Cash Paid-Out
-                            </button>
-                        </div>
-                        <div class="col-6 col-sm-3">
-                            <button type="button"
-                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_IN" ? "btn-success shadow-sm" : "btn-outline-success")"
-                                    @onclick='() => SelectMovementType("CASH_IN")'>
-                                <i class="bi bi-box-arrow-in-down-left me-1"></i> Cash Paid-In
-                            </button>
-                        </div>
-                        <div class="col-6 col-sm-3">
-                            <button type="button"
-                                    class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_DROP" ? "btn-secondary shadow-sm" : "btn-outline-secondary")"
-                                    @onclick='() => SelectMovementType("CASH_DROP")'>
-                                <i class="bi bi-safe2 me-1"></i> Cash Drop
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="row g-3 mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label fw-semibold text-dark small mb-1">Movement Category</label>
-                            <select class="form-select rounded-3 py-2" @bind="selectedCategoryId">
-                                <option value="0">-- Select Category --</option>
-                                @foreach (var cat in FilteredCategories)
-                                {
-                                    <option value="@cat.CategoryId">@cat.Name @(cat.RequiresApproval ? "(Approval Req.)" : "")</option>
-                                }
-                            </select>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label fw-semibold text-dark small mb-1">
-                                Amount in PHP (₱)
-                                @if (IsOutflow(movementType))
-                                {
-                                    <span class="text-muted fw-normal">(Max: ₱@currentShift.ExpectedBalance.ToString("N2"))</span>
-                                }
-                            </label>
-                            <input type="number" step="0.01" min="0.01" class="form-control rounded-3 py-2 fw-bold fs-5" @bind="movementAmount" placeholder="0.00" />
-                        </div>
-                    </div>
-
-                    <!-- Touch Quick Amount Presets -->
-                    <div class="d-flex flex-wrap gap-2 mb-3">
-                        @foreach (var preset in new decimal[] { 50m, 100m, 200m, 500m, 1000m })
-                        {
-                            <button type="button" class="btn btn-outline-dark btn-sm rounded-pill px-3 fw-semibold" @onclick="() => movementAmount += preset">
-                                +₱@preset.ToString("N0")
-                            </button>
-                        }
-                        <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3" @onclick="() => movementAmount = 0m">
-                            Clear Amount
+                        <button type="button" class="btn btn-sm btn-warning fw-bold text-dark rounded-3 px-3" @onclick="ConfirmPhysicalCountAfterMovement">
+                            <i class="bi bi-check2-circle me-1"></i>Reconfirm Physical Count (₱@TotalCountedCash.ToString("N2"))
                         </button>
                     </div>
+                }
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold text-dark small mb-1">Reason / Particulars / Payee &amp; Supplier Reference</label>
-                        <input type="text" maxlength="255" class="form-control rounded-3 py-2" @bind="movementReason"
-                               placeholder="e.g., 5 bags tube ice from ABC Ice Plant (OR #1042) / Change fund coins" />
+                @if (!string.IsNullOrWhiteSpace(denominationValidationError))
+                {
+                    <div class="alert alert-danger py-2 px-3 small mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i> @denominationValidationError
+                    </div>
+                }
+
+                <div class="row g-3">
+                    <!-- Coins Column (Side-by-side on desktop, stacked on mobile) -->
+                    <div class="col-12 col-md-6">
+                        <div class="pos-subpanel rounded-3 p-3 h-100">
+                            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary border-opacity-25">
+                                <span class="fw-bold text-uppercase small text-warning">
+                                    <i class="bi bi-circle-fill me-1" style="font-size: 0.55rem;"></i>Coins (₱0.01 – ₱20)
+                                </span>
+                                <span class="small fw-bold text-light font-monospace">Subtotal: ₱@CoinsSubtotal.ToString("N2")</span>
+                            </div>
+
+                            <div class="d-flex flex-column gap-2">
+                                @foreach (var row in denominationRows.Where(r => r.Type == "COIN"))
+                                {
+                                    <div class="pos-denom-row d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 @(row.HasError ? "border border-danger" : "")">
+                                        <div class="fw-bold text-light" style="min-width: 76px; font-size: 0.92rem;">
+                                            ₱@FormatDenomValue(row.Denomination)
+                                            @if (row.Denomination == 20m)
+                                            {
+                                                <span class="badge bg-secondary ms-1" style="font-size: 0.62rem;">Coin</span>
+                                            }
+                                        </div>
+                                        <div class="input-group input-group-sm" style="max-width: 144px;">
+                                            <button type="button" class="btn btn-outline-secondary px-2"
+                                                    disabled="@(isSubmittingShift || row.Quantity <= 0)"
+                                                    @onclick="() => StepDenominationQuantity(row, -1)">−</button>
+                                            <input type="text"
+                                                   inputmode="numeric"
+                                                   class="form-control text-center fw-bold pos-denom-input @(row.HasError ? "is-invalid" : "")"
+                                                   value="@row.RawQuantity"
+                                                   disabled="@isSubmittingShift"
+                                                   @oninput="(e) => OnDenominationInputChanged(row, e.Value?.ToString())" />
+                                            <button type="button" class="btn btn-outline-secondary px-2"
+                                                    disabled="@isSubmittingShift"
+                                                    @onclick="() => StepDenominationQuantity(row, 1)">+</button>
+                                        </div>
+                                        <div class="text-end fw-semibold text-info font-monospace" style="min-width: 92px; font-size: 0.9rem;">
+                                            ₱@row.Subtotal.ToString("N2")
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
                     </div>
 
-                    @if (CurrentSelectionRequiresApproval)
-                    {
-                        <div class="p-3 rounded-3 bg-warning-subtle border border-warning mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <span class="fw-bold text-dark small">
-                                    <i class="bi bi-shield-lock-fill text-warning me-1"></i> Supervisor Approval Required
-                                </span>
-                                <span class="badge bg-warning text-dark">Manager / Senior Cashier</span>
-                            </div>
-                            <p class="small text-secondary mb-2">
-                                Enter a Supervisor 4-digit PIN below to post and disburse immediately, or leave blank to submit as <strong>PENDING_APPROVAL</strong> (will not affect drawer balance until approved).
-                            </p>
-                            <input type="password" maxlength="10" class="form-control form-control-sm rounded-3" style="max-width: 240px;"
-                                   @bind="supervisorPin" placeholder="Supervisor PIN (optional for pending)" />
-                        </div>
-                    }
+                    <!-- Bills Column (Side-by-side on desktop, stacked on mobile) -->
+                    <div class="col-12 col-md-6">
+                        <div class="pos-subpanel rounded-3 p-3 h-100 d-flex flex-column justify-content-between">
+                            <div>
+                                <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary border-opacity-25">
+                                    <span class="fw-bold text-uppercase small text-success">
+                                        <i class="bi bi-cash me-1"></i>Bills (₱20 – ₱1,000)
+                                    </span>
+                                    <span class="small fw-bold text-light font-monospace">Subtotal: ₱@BillsSubtotal.ToString("N2")</span>
+                                </div>
 
+                                <div class="d-flex flex-column gap-2">
+                                    @foreach (var row in denominationRows.Where(r => r.Type == "BILL"))
+                                    {
+                                        <div class="pos-denom-row d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 @(row.HasError ? "border border-danger" : "")">
+                                            <div class="fw-bold text-light" style="min-width: 76px; font-size: 0.92rem;">
+                                                ₱@FormatDenomValue(row.Denomination)
+                                                @if (row.Denomination == 20m)
+                                                {
+                                                    <span class="badge bg-success bg-opacity-75 ms-1" style="font-size: 0.62rem;">Bill</span>
+                                                }
+                                            </div>
+                                            <div class="input-group input-group-sm" style="max-width: 144px;">
+                                                <button type="button" class="btn btn-outline-secondary px-2"
+                                                        disabled="@(isSubmittingShift || row.Quantity <= 0)"
+                                                        @onclick="() => StepDenominationQuantity(row, -1)">−</button>
+                                                <input type="text"
+                                                       inputmode="numeric"
+                                                       class="form-control text-center fw-bold pos-denom-input @(row.HasError ? "is-invalid" : "")"
+                                                       value="@row.RawQuantity"
+                                                       disabled="@isSubmittingShift"
+                                                       @oninput="(e) => OnDenominationInputChanged(row, e.Value?.ToString())" />
+                                                <button type="button" class="btn btn-outline-secondary px-2"
+                                                        disabled="@isSubmittingShift"
+                                                        @onclick="() => StepDenominationQuantity(row, 1)">+</button>
+                                            </div>
+                                            <div class="text-end fw-semibold text-success font-monospace" style="min-width: 92px; font-size: 0.9rem;">
+                                                ₱@row.Subtotal.ToString("N2")
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+
+                            <div class="mt-3 pt-3 border-top border-secondary border-opacity-25">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span class="text-uppercase small fw-bold text-secondary">Total Counted Cash</span>
+                                    <span class="fs-4 fw-bolder text-success font-monospace">₱@TotalCountedCash.ToString("N2")</span>
+                                </div>
+                                <small class="text-secondary d-block text-end" style="font-size: 0.78rem;">
+                                    Coins ₱@CoinsSubtotal.ToString("N2") + Bills ₱@BillsSubtotal.ToString("N2")
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 1 Footer Navigation -->
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-4 pt-3 border-top border-secondary border-opacity-25">
+                    <div class="small text-secondary">
+                        Step 1 of 3 • Enter physical drawer quantities, then proceed to non-cash payment declarations.
+                    </div>
+                    <button type="button" class="btn btn-primary rounded-3 px-4 py-2 fw-bold shadow-sm" @onclick="GoToOtherPaymentsTab" disabled="@isSubmittingShift">
+                        Next: Other Payments <i class="bi bi-arrow-right ms-1"></i>
+                    </button>
+                </div>
+            </div>
+        }
+        else if (activeTab == "OTHER_PAYMENTS")
+        {
+            <div id="panel-other-payments" role="tabpanel" aria-labelledby="tab-other-payments" class="pos-panel-card rounded-4 p-3 p-md-4 mb-4">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                    <div>
+                        <h5 class="fw-bold text-light mb-1">
+                            <i class="bi bi-credit-card-2-front me-2 text-info"></i>2. Other Payment Methods (Cashier-Declared Totals)
+                        </h5>
+                        <p class="small text-secondary mb-0">
+                            Enter <strong>cashier-declared totals</strong> from payment history or supporting terminal slips (up to 2 decimal places). System-recorded totals and variances are hidden during blind closing.
+                        </p>
+                    </div>
+                    <span class="badge bg-info-subtle text-info border border-info-subtle px-3 py-2 font-monospace">
+                        Declared Non-Cash Total: ₱@DeclaredNonCashTotal.ToString("N2")
+                    </span>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(declarationValidationError))
+                {
+                    <div class="alert alert-danger py-2 px-3 small mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i> @declarationValidationError
+                    </div>
+                }
+
+                @if (nonCashDeclarations.Count == 0)
+                {
+                    <div class="pos-subpanel rounded-3 p-4 text-center text-secondary small">
+                        No non-cash payment methods are configured or recorded for this shift. You may proceed directly to Review &amp; Close.
+                    </div>
+                }
+                else
+                {
+                    <div class="row g-3">
+                        @foreach (var decl in nonCashDeclarations)
+                        {
+                            <div class="col-12 col-md-6 col-xl-4">
+                                <div class="pos-subpanel rounded-3 p-3 h-100 @(decl.HasError ? "border border-danger" : "")">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label class="fw-bold text-light small mb-0">
+                                            @decl.PaymentMethodName
+                                            <span class="text-secondary font-monospace ms-1">(@decl.PaymentMethodCode)</span>
+                                        </label>
+                                        @if (!decl.IsActive)
+                                        {
+                                            <span class="badge bg-warning text-dark" style="font-size: 0.68rem;">Inactive • Used in Shift</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-secondary bg-opacity-50 text-light" style="font-size: 0.68rem;">Cashier-Declared</span>
+                                        }
+                                    </div>
+                                    <div class="input-group mt-2">
+                                        <span class="input-group-text bg-dark text-light border-secondary">₱</span>
+                                        <input type="text"
+                                               inputmode="decimal"
+                                               class="form-control fw-bold font-monospace pos-denom-input @(decl.HasError ? "is-invalid" : "")"
+                                               value="@decl.RawAmount"
+                                               disabled="@isSubmittingShift"
+                                               placeholder="0.00"
+                                               @oninput="(e) => OnDeclarationInputChanged(decl, e.Value?.ToString())" />
+                                    </div>
+                                    @if (decl.HasError)
+                                    {
+                                        <small class="text-danger d-block mt-1">Enter a non-negative amount with up to 2 decimal places.</small>
+                                    }
+                                    else
+                                    {
+                                        <small class="text-secondary d-block mt-1">Declared amount from terminal slips/payment records.</small>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Step 2 Footer Navigation -->
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-4 pt-3 border-top border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-light rounded-3 px-3 py-2 fw-semibold" @onclick='() => SelectTab("CASH_COUNT")' disabled="@isSubmittingShift">
+                        <i class="bi bi-arrow-left me-1"></i> Back: Cash Count
+                    </button>
+                    <button type="button" class="btn btn-primary rounded-3 px-4 py-2 fw-bold shadow-sm" @onclick="GoToReviewCloseTab" disabled="@isSubmittingShift">
+                        Next: Review &amp; Close <i class="bi bi-arrow-right ms-1"></i>
+                    </button>
+                </div>
+            </div>
+        }
+        else if (activeTab == "REVIEW_CLOSE")
+        {
+            <div id="panel-review-close" role="tabpanel" aria-labelledby="tab-review-close" class="pos-panel-card rounded-4 p-3 p-md-4 mb-4">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                    <div>
+                        <h5 class="fw-bold text-light mb-1">
+                            <i class="bi bi-clipboard2-check-fill me-2 text-primary"></i>3. Review Declaration &amp; Submit Closing
+                        </h5>
+                        <p class="text-secondary small mb-0">
+                            Verify your read-only denomination counts and declared non-cash payment totals below. Expected amounts and variances are restricted to supervisor reconciliation.
+                        </p>
+                    </div>
+                    <span class="badge @(isDeclarationConfirmed ? "bg-success" : "bg-primary") px-3 py-2">
+                        @(isDeclarationConfirmed ? "DECLARATION CONFIRMED" : "REVIEW & CONFIRM")
+                    </span>
+                </div>
+
+                @if (requiresRecountConfirmationAfterMovement)
+                {
+                    <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 px-3 small mb-3">
+                        <div>
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                            <strong>Physical Cash Recount Required:</strong> A cash movement was posted after you started counting. Please return to <strong>Cash Count</strong> to verify and reconfirm your physical drawer cash before closing.
+                        </div>
+                        <button type="button" class="btn btn-sm btn-warning fw-bold text-dark rounded-3 px-3" @onclick='() => SelectTab("CASH_COUNT")'>
+                            <i class="bi bi-coin me-1"></i> Go to Cash Count to Reconfirm
+                        </button>
+                    </div>
+                }
+
+                @if (currentShift.PendingApprovalsCount > 0)
+                {
+                    <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 px-3 small mb-3">
+                        <div>
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                            <strong>@currentShift.PendingApprovalsCount pending cash movement(s)</strong> must be approved or rejected by a supervisor before closing the shift.
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-dark fw-bold rounded-3 px-3" @onclick='() => SelectTab("MOVEMENT_HISTORY")'>
+                            <i class="bi bi-clock-history me-1"></i> View Pending Movements
+                        </button>
+                    </div>
+                }
+
+                <div class="row g-3 mb-3">
+                    <!-- A. Read-Only Entered Cash Denomination Summary -->
+                    <div class="col-12 col-lg-6">
+                        <div class="pos-subpanel rounded-3 p-3 h-100 d-flex flex-column justify-content-between small">
+                            <div>
+                                <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary border-opacity-25">
+                                    <span class="fw-bold text-uppercase text-warning" style="font-size: 0.76rem; letter-spacing: 0.04em;">
+                                        Entered Cash Count Summary (Includes Float)
+                                    </span>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="EditCashCountFromReview" disabled="@isSubmittingShift">
+                                        <i class="bi bi-pencil-square me-1"></i>Edit Cash Count
+                                    </button>
+                                </div>
+                                <div class="d-flex justify-content-between py-1">
+                                    <span class="text-secondary">Coins Subtotal:</span>
+                                    <span class="fw-semibold text-light font-monospace">₱@CoinsSubtotal.ToString("N2")</span>
+                                </div>
+                                <div class="d-flex justify-content-between py-1 border-bottom border-secondary border-opacity-25 pb-2">
+                                    <span class="text-secondary">Bills Subtotal:</span>
+                                    <span class="fw-semibold text-light font-monospace">₱@BillsSubtotal.ToString("N2")</span>
+                                </div>
+                                @if (denominationRows.Any(r => r.Quantity > 0))
+                                {
+                                    <div class="py-2 border-bottom border-secondary border-opacity-25" style="max-height: 210px; overflow-y: auto;">
+                                        @foreach (var d in denominationRows.Where(r => r.Quantity > 0))
+                                        {
+                                            <div class="d-flex justify-content-between text-secondary py-1" style="font-size: 0.8rem;">
+                                                <span>@d.Label × @d.Quantity</span>
+                                                <span class="font-monospace text-light">₱@d.Subtotal.ToString("N2")</span>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="py-2 border-bottom border-secondary border-opacity-25 text-secondary fst-italic" style="font-size: 0.8rem;">
+                                        All denomination quantities are currently 0 (₱0.00 counted cash).
+                                    </div>
+                                }
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center pt-2 mt-2">
+                                <span class="fw-bold text-light">Total Counted Cash:</span>
+                                <span class="fw-bolder text-success fs-5 font-monospace">₱@TotalCountedCash.ToString("N2")</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- B. Read-Only Entered Non-Cash Payment Declarations Summary -->
+                    <div class="col-12 col-lg-6">
+                        <div class="pos-subpanel rounded-3 p-3 h-100 d-flex flex-column justify-content-between">
+                            <div>
+                                <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary border-opacity-25">
+                                    <span class="fw-bold text-uppercase small text-info" style="font-size: 0.76rem; letter-spacing: 0.04em;">
+                                        Cashier-Declared Non-Cash Totals
+                                    </span>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="EditOtherPaymentsFromReview" disabled="@isSubmittingShift">
+                                        <i class="bi bi-pencil-square me-1"></i>Edit Other Payments
+                                    </button>
+                                </div>
+
+                                @if (nonCashDeclarations.Count == 0)
+                                {
+                                    <div class="small text-secondary py-3">No non-cash payment methods configured.</div>
+                                }
+                                else
+                                {
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-dark align-middle mb-0" style="font-size: 0.82rem;">
+                                            <thead>
+                                                <tr class="text-secondary">
+                                                    <th>Payment Method</th>
+                                                    <th class="text-end">Cashier-Declared Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var decl in nonCashDeclarations)
+                                                {
+                                                    <tr>
+                                                        <td>
+                                                            <div class="fw-semibold">@decl.PaymentMethodName</div>
+                                                            @if (!decl.IsActive)
+                                                            {
+                                                                <small class="text-warning" style="font-size: 0.68rem;">Inactive • Used in Shift</small>
+                                                            }
+                                                        </td>
+                                                        <td class="text-end font-monospace fw-bold">₱@decl.DeclaredAmount.ToString("N2")</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center pt-2 mt-2 border-top border-secondary border-opacity-25">
+                                <span class="fw-bold text-light small">Total Non-Cash Declared:</span>
+                                <span class="fw-bolder text-info fs-5 font-monospace">₱@DeclaredNonCashTotal.ToString("N2")</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- C. Optional General Notes -->
+                <div class="mb-3">
+                    <label class="form-label fw-semibold text-light small mb-1">
+                        Optional General Notes
+                    </label>
+                    <textarea rows="2"
+                              maxlength="255"
+                              class="form-control rounded-3 pos-denom-input"
+                              @bind="closingNotes"
+                              @bind:event="oninput"
+                              disabled="@isSubmittingShift"
+                              placeholder="Optional general shift notes..."></textarea>
+                </div>
+
+                <!-- D. Explicit Confirmation & Final Submit Closing -->
+                <div class="p-3 rounded-3 mb-3 border border-primary bg-primary bg-opacity-10 small text-light">
+                    <div class="fw-bold mb-1">
+                        <i class="bi bi-shield-check me-1 text-info"></i> Confirm Blind Closing Declaration
+                    </div>
+                    <div class="mb-2 text-secondary">
+                        Submitting will permanently lock this declaration, close Shift #@currentShift.ShiftId, and print your Cashier Declaration Acknowledgment.
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="confirmBlindDeclarationCheck"
+                               @bind="isDeclarationConfirmed"
+                               disabled="@(isSubmittingShift || requiresRecountConfirmationAfterMovement)" />
+                        <label class="form-check-label fw-semibold text-warning" for="confirmBlindDeclarationCheck">
+                            I confirm that my cash denomination counts (₱@TotalCountedCash.ToString("N2")) and non-cash declarations (₱@DeclaredNonCashTotal.ToString("N2")), including any ₱0.00 amounts, are complete and accurate.
+                        </label>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2">
                     <button type="button"
-                            class="btn btn-dark rounded-3 py-3 fw-bold w-100 shadow-sm"
+                            class="btn btn-outline-light rounded-3 py-2 px-3 fw-semibold"
+                            @onclick="EditOtherPaymentsFromReview"
+                            disabled="@isSubmittingShift">
+                        <i class="bi bi-arrow-left me-1"></i> Back: Other Payments
+                    </button>
+                    <button type="button"
+                            class="btn btn-danger rounded-3 py-2 px-4 fw-bold shadow-sm"
+                            @onclick="CloseShift"
+                            disabled="@(isSubmittingShift || !isDeclarationConfirmed || requiresRecountConfirmationAfterMovement || currentShift.PendingApprovalsCount > 0)">
+                        <i class="bi bi-lock-fill me-1"></i>
+                        @(isSubmittingShift ? "Submitting & Printing..." : "Submit Closing & Print Acknowledgment")
+                    </button>
+                </div>
+            </div>
+        }
+        else if (activeTab == "CASH_MOVEMENTS")
+        {
+            <div id="panel-cash-movements" role="tabpanel" aria-labelledby="tab-cash-movements" class="pos-panel-card rounded-4 p-3 p-md-4 mb-4">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                    <div>
+                        <h5 class="fw-bold text-light mb-1">
+                            <i class="bi bi-wallet2 me-2 text-primary"></i>Record Cash Movement / Petty Cash
+                        </h5>
+                        <p class="small text-secondary mb-0">
+                            Supporting drawer tab for non-sales cash inflows and outflows. Entered closing counts and notes are preserved while you record movements.
+                        </p>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-dark text-secondary border border-secondary">Non-Sales Voucher</span>
+                        <button type="button" class="btn btn-sm btn-outline-info rounded-3" @onclick='() => SelectTab("MOVEMENT_HISTORY")'>
+                            <i class="bi bi-clock-history me-1"></i>View History (@(currentShift.Movements?.Count ?? 0))
+                        </button>
+                    </div>
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-6 col-md-3">
+                        <button type="button"
+                                class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "PETTY_CASH" ? "btn-danger shadow-sm" : "btn-outline-danger")"
+                                @onclick='() => SelectMovementType("PETTY_CASH")'>
+                            <i class="bi bi-receipt me-1"></i> Petty Cash Out
+                        </button>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <button type="button"
+                                class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_OUT" ? "btn-warning text-dark shadow-sm" : "btn-outline-warning")"
+                                @onclick='() => SelectMovementType("CASH_OUT")'>
+                            <i class="bi bi-box-arrow-up-right me-1"></i> Cash Paid-Out
+                        </button>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <button type="button"
+                                class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_IN" ? "btn-success shadow-sm" : "btn-outline-success")"
+                                @onclick='() => SelectMovementType("CASH_IN")'>
+                            <i class="bi bi-box-arrow-in-down-left me-1"></i> Cash Paid-In
+                        </button>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <button type="button"
+                                class="btn w-100 py-2 fw-bold rounded-3 @(movementType == "CASH_DROP" ? "btn-secondary shadow-sm" : "btn-outline-secondary")"
+                                @onclick='() => SelectMovementType("CASH_DROP")'>
+                            <i class="bi bi-safe2 me-1"></i> Cash Drop
+                        </button>
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-light small mb-1">Movement Category</label>
+                        <select class="form-select rounded-3 py-2 pos-denom-input" @bind="selectedCategoryId">
+                            <option value="0">-- Select Category --</option>
+                            @foreach (var cat in FilteredCategories)
+                            {
+                                <option value="@cat.CategoryId">@cat.Name @(cat.RequiresApproval ? "(Approval Req.)" : "")</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold text-light small mb-1">
+                            Amount in PHP (₱)
+                        </label>
+                        <input type="number" step="0.01" min="0.01" class="form-control rounded-3 py-2 fw-bold fs-5 pos-denom-input" @bind="movementAmount" placeholder="0.00" />
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    @foreach (var preset in new decimal[] { 50m, 100m, 200m, 500m, 1000m })
+                    {
+                        <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3 fw-semibold" @onclick="() => movementAmount += preset">
+                            +₱@preset.ToString("N0")
+                        </button>
+                    }
+                    <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill px-3" @onclick="() => movementAmount = 0m">
+                        Clear
+                    </button>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold text-light small mb-1">Reason / Particulars / Payee &amp; Supplier Reference</label>
+                    <input type="text" maxlength="255" class="form-control rounded-3 py-2 pos-denom-input" @bind="movementReason"
+                           placeholder="e.g., 5 bags tube ice from ABC Ice Plant (OR #1042) / Change fund coins" />
+                </div>
+
+                @if (CurrentSelectionRequiresApproval)
+                {
+                    <div class="p-3 rounded-3 bg-warning bg-opacity-10 border border-warning mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="fw-bold text-warning small">
+                                <i class="bi bi-shield-lock-fill me-1"></i> Supervisor Approval Required
+                            </span>
+                            <span class="badge bg-warning text-dark">Manager / Senior Cashier</span>
+                        </div>
+                        <p class="small text-secondary mb-2">
+                            Enter a Supervisor PIN below to post immediately, or leave blank to submit as <strong>PENDING_APPROVAL</strong>.
+                        </p>
+                        <input type="password" maxlength="10" class="form-control form-control-sm rounded-3 pos-denom-input" style="max-width: 240px;"
+                               @bind="supervisorPin" placeholder="Supervisor PIN (optional for pending)" />
+                    </div>
+                }
+
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2">
+                    <button type="button" class="btn btn-outline-light rounded-3 px-3 py-2 fw-semibold" @onclick='() => SelectTab("CASH_COUNT")'>
+                        <i class="bi bi-coin me-1"></i> Return to Cash Count
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary rounded-3 py-2 px-4 fw-bold shadow-sm"
                             @onclick="OpenConfirmMovementModal"
                             disabled="@isSubmittingMovement">
                         <i class="bi bi-check2-circle me-1"></i>
@@ -242,212 +983,111 @@
                     </button>
                 </div>
             </div>
-
-            <!-- Right: Close Shift & Reconcile (Layer 5) -->
-            <div class="col-lg-5">
-                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white h-100">
-                    <h5 class="fw-bold text-dark mb-2">
-                        <i class="bi bi-calculator-fill me-2 text-danger"></i> Shift Closing &amp; Cash Reconciliation
-                    </h5>
-                    <p class="text-secondary small mb-3">
-                        Verify physical drawer cash against the expected balance. Petty cash paid-outs do not reduce BIR Gross Sales or Output VAT.
-                    </p>
-
-                    <div class="bg-light rounded-3 p-3 mb-3 small">
-                        <div class="d-flex justify-content-between py-1">
-                            <span class="text-secondary">Opening Cash Float:</span>
-                            <span class="fw-semibold">₱@currentShift.OpeningFloat.ToString("N2")</span>
-                        </div>
-                        <div class="d-flex justify-content-between py-1">
-                            <span class="text-secondary">(+) Cash Sales Collected:</span>
-                            <span class="fw-semibold text-success">+₱@currentShift.TotalCashSales.ToString("N2")</span>
-                        </div>
-                        <div class="d-flex justify-content-between py-1">
-                            <span class="text-secondary">(+) Cash Paid-In:</span>
-                            <span class="fw-semibold text-info">+₱@currentShift.TotalCashIn.ToString("N2")</span>
-                        </div>
-                        <div class="d-flex justify-content-between py-1">
-                            <span class="text-secondary">(-) Cash Paid-Out &amp; Petty Cash:</span>
-                            <span class="fw-semibold text-danger">-₱@currentShift.TotalCashOut.ToString("N2")</span>
-                        </div>
-                        <div class="d-flex justify-content-between py-1">
-                            <span class="text-secondary">(-) Safe Cash Drops:</span>
-                            <span class="fw-semibold text-secondary">-₱@currentShift.TotalCashDrops.ToString("N2")</span>
-                        </div>
-                        <div class="d-flex justify-content-between py-1 border-bottom pb-2">
-                            <span class="text-secondary">(-) Cash Refunds:</span>
-                            <span class="fw-semibold text-danger">-₱@currentShift.TotalCashRefunds.ToString("N2")</span>
-                        </div>
-                        <div class="d-flex justify-content-between pt-2 fs-6">
-                            <span class="fw-bold text-dark">Expected Drawer Cash:</span>
-                            <span class="fw-bolder text-primary">₱@currentShift.ExpectedBalance.ToString("N2")</span>
-                        </div>
-                        <div class="d-flex justify-content-between pt-1">
-                            <span class="fw-semibold text-secondary">Counted Over / (Short):</span>
-                            @{
-                                decimal previewDiff = Math.Round(actualCounted - currentShift.ExpectedBalance, 2);
-                            }
-                            <span class="fw-bold @(previewDiff == 0 ? "text-success" : previewDiff > 0 ? "text-primary" : "text-danger")">
-                                @(previewDiff >= 0 ? $"+₱{previewDiff:N2}" : $"-₱{Math.Abs(previewDiff):N2}")
-                            </span>
-                        </div>
+        }
+        else if (activeTab == "MOVEMENT_HISTORY")
+        {
+            <div id="panel-movement-history" role="tabpanel" aria-labelledby="tab-movement-history" class="pos-panel-card rounded-4 overflow-hidden mb-4">
+                <div class="py-3 px-4 d-flex flex-wrap justify-content-between align-items-center gap-2 border-bottom border-secondary border-opacity-25">
+                    <div>
+                        <h5 class="fw-bold text-light mb-0">
+                            <i class="bi bi-clock-history me-2 text-info"></i>Shift Cash Movement History
+                        </h5>
+                        <small class="text-secondary">Filter recorded vouchers, print receipts, or complete supervisor approvals.</small>
                     </div>
-
-                    @if (currentShift.PendingApprovalsCount > 0)
-                    {
-                        <div class="alert alert-warning py-2 px-3 small mb-3">
-                            <i class="bi bi-exclamation-triangle-fill me-1"></i>
-                            <strong>@currentShift.PendingApprovalsCount pending movement(s)</strong> must be approved or rejected before closing the shift.
-                        </div>
-                    }
-
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold text-dark small mb-1">Actual Counted Physical Cash (₱)</label>
-                        <input type="number" step="0.01" min="0" class="form-control rounded-3 fw-bold text-success fs-5" @bind="actualCounted" @bind:event="oninput" placeholder="0.00" />
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                        <select class="form-select form-select-sm rounded-3 pos-denom-input" style="width: 175px;" @bind="historyFilterStatus">
+                            <option value="">All Statuses</option>
+                            <option value="POSTED">Posted</option>
+                            <option value="PENDING_APPROVAL">Pending Approval</option>
+                            <option value="REJECTED">Rejected</option>
+                            <option value="REVERSED">Reversed</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-primary rounded-3" @onclick='() => SelectTab("CASH_MOVEMENTS")'>
+                            <i class="bi bi-plus-circle me-1"></i>New Movement
+                        </button>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold text-dark small mb-1">Closing Remarks / Discrepancy Explanation</label>
-                        <input type="text" class="form-control rounded-3" @bind="closingNotes" placeholder="Optional explanation for overage/shortage..." />
+                </div>
+
+                @if (!FilteredMovements.Any())
+                {
+                    <div class="text-center py-5 text-secondary">
+                        <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                        <p class="mb-0 small">No cash movements recorded for this shift matching the selected filter.</p>
                     </div>
-                    <button class="btn btn-danger rounded-3 py-2 fw-bold w-100"
-                            @onclick="CloseShift"
-                            disabled="@(isSubmittingShift || isOffline || currentShift.PendingApprovalsCount > 0)">
-                        <i class="bi bi-shield-lock-fill me-1"></i>
-                        @(isOffline ? "Reconnect Online to Finalize Shift Close" : "Close Drawer Shift & Reconcile")
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Shift Cash Movement History Table -->
-        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
-            <div class="card-header bg-light py-3 px-4 d-flex flex-wrap justify-content-between align-items-center gap-2">
-                <div>
-                    <h5 class="fw-bold text-dark mb-0">
-                        <i class="bi bi-clock-history me-2 text-primary"></i> Shift Cash Movement &amp; Petty Cash History
-                    </h5>
-                </div>
-                <div class="d-flex gap-2 align-items-center">
-                    <select class="form-select form-select-sm rounded-3" style="width: 170px;" @bind="historyFilterStatus">
-                        <option value="">All Statuses</option>
-                        <option value="POSTED">Posted</option>
-                        <option value="PENDING_APPROVAL">Pending Approval</option>
-                        <option value="REJECTED">Rejected</option>
-                        <option value="REVERSED">Reversed</option>
-                    </select>
-                </div>
-            </div>
-
-            @if (!FilteredMovements.Any())
-            {
-                <div class="text-center py-5 text-muted">
-                    <i class="bi bi-inbox fs-2 d-block mb-2"></i>
-                    <p class="mb-0 small">No cash movements recorded for this shift yet.</p>
-                </div>
-            }
-            else
-            {
-                <div class="table-responsive">
-                    <table class="table align-middle mb-0">
-                        <thead class="table-light text-uppercase text-secondary" style="font-size: 0.75rem;">
-                            <tr>
-                                <th class="py-3 px-4">Voucher #</th>
-                                <th class="py-3">Type</th>
-                                <th class="py-3">Category</th>
-                                <th class="py-3">Reason / Particulars</th>
-                                <th class="py-3">Cashier / Approver</th>
-                                <th class="py-3">Status</th>
-                                <th class="py-3">Sync</th>
-                                <th class="py-3">Time</th>
-                                <th class="py-3 text-end">Amount (₱)</th>
-                                <th class="py-3 text-end px-4">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var m in FilteredMovements)
-                            {
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-dark align-middle mb-0">
+                            <thead class="text-uppercase text-secondary" style="font-size: 0.72rem;">
                                 <tr>
-                                    <td class="px-4 fw-bold font-monospace text-primary">@m.ReferenceNumber</td>
-                                    <td>
-                                        <span class="badge @GetMovementTypeBadgeClass(m.MovementType)">
-                                            @FormatMovementTypeLabel(m.MovementType)
-                                        </span>
-                                    </td>
-                                    <td class="small fw-medium">@(string.IsNullOrWhiteSpace(m.CategoryName) ? "General" : m.CategoryName)</td>
-                                    <td>
-                                        <div class="small text-dark">@m.Reason</div>
-                                        @if (!string.IsNullOrWhiteSpace(m.RejectionReason))
-                                        {
-                                            <small class="text-danger">Rejected: @m.RejectionReason</small>
-                                        }
-                                        @if (!string.IsNullOrWhiteSpace(m.ReversalReason))
-                                        {
-                                            <small class="text-secondary">Reversed by @m.ReversedBy: @m.ReversalReason</small>
-                                        }
-                                    </td>
-                                    <td class="small">
-                                        <div>By: <strong>@m.CreatedBy</strong></div>
-                                        @if (!string.IsNullOrWhiteSpace(m.ApprovedBy))
-                                        {
-                                            <div class="text-muted">Appr: @m.ApprovedBy</div>
-                                        }
-                                    </td>
-                                    <td>
-                                        <span class="badge @GetStatusBadgeClass(m.Status)">@m.Status</span>
-                                    </td>
-                                    <td>
-                                        <span class="badge @(m.SyncStatus == "SYNCED" ? "bg-success-subtle text-success" : m.SyncStatus == "CONFLICT" ? "bg-danger text-white" : "bg-warning text-dark")">
-                                            @m.SyncStatus
-                                        </span>
-                                    </td>
-                                    <td class="text-secondary small">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                                    <td class="text-end fw-bold @(m.MovementType == "CASH_IN" ? "text-success" : "text-danger")">
-                                        @(m.MovementType == "CASH_IN" ? "+" : "-")₱@m.Amount.ToString("N2")
-                                    </td>
-                                    <td class="text-end px-4">
-                                        <div class="d-flex justify-content-end gap-1">
-                                            <button class="btn btn-outline-primary btn-sm rounded-3" title="Print Voucher" @onclick="() => OpenVoucherPreview(m)">
-                                                <i class="bi bi-printer"></i> Voucher
-                                            </button>
-                                            @if (m.Status == "PENDING_APPROVAL" && !isOffline && m.MovementId > 0)
-                                            {
-                                                <button class="btn btn-success btn-sm rounded-3" title="Approve" @onclick='() => OpenSupervisorActionModal(m, "APPROVE")'>
-                                                    Approve
-                                                </button>
-                                                <button class="btn btn-outline-danger btn-sm rounded-3" title="Reject" @onclick='() => OpenSupervisorActionModal(m, "REJECT")'>
-                                                    Reject
-                                                </button>
-                                            }
-                                            @if (m.Status == "POSTED" && m.MovementType != "REVERSAL" && !isOffline && m.MovementId > 0)
-                                            {
-                                                <button class="btn btn-outline-secondary btn-sm rounded-3" title="Reverse" @onclick='() => OpenSupervisorActionModal(m, "REVERSE")'>
-                                                    Reverse
-                                                </button>
-                                            }
-                                        </div>
-                                    </td>
+                                    <th class="py-2 px-3">Voucher #</th>
+                                    <th class="py-2">Type</th>
+                                    <th class="py-2">Reason</th>
+                                    <th class="py-2">Status</th>
+                                    <th class="py-2 text-end">Amount</th>
+                                    <th class="py-2 text-end px-3">Actions</th>
                                 </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            }
-        </div>
+                            </thead>
+                            <tbody>
+                                @foreach (var m in FilteredMovements)
+                                {
+                                    <tr>
+                                        <td class="px-3 fw-bold font-monospace text-info small">@m.ReferenceNumber</td>
+                                        <td>
+                                            <span class="badge @GetMovementTypeBadgeClass(m.MovementType)">
+                                                @FormatMovementTypeLabel(m.MovementType)
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="small text-light">@m.Reason</div>
+                                            <small class="text-secondary">By @m.CreatedBy • @m.CreatedAt.ToLocalTime().ToString("HH:mm")</small>
+                                        </td>
+                                        <td>
+                                            <span class="badge @GetStatusBadgeClass(m.Status)">@m.Status</span>
+                                        </td>
+                                        <td class="text-end fw-bold font-monospace @(m.MovementType == "CASH_IN" ? "text-success" : "text-danger")">
+                                            @(m.MovementType == "CASH_IN" ? "+" : "-")₱@m.Amount.ToString("N2")
+                                        </td>
+                                        <td class="text-end px-3">
+                                            <div class="d-flex justify-content-end gap-1">
+                                                <button class="btn btn-outline-info btn-sm rounded-3" title="Print Voucher" @onclick="() => OpenVoucherPreview(m)">
+                                                    <i class="bi bi-printer"></i>
+                                                </button>
+                                                @if (m.Status == "PENDING_APPROVAL" && !isOffline && m.MovementId > 0)
+                                                {
+                                                    <button class="btn btn-success btn-sm rounded-3" @onclick='() => OpenSupervisorActionModal(m, "APPROVE")'>Approve</button>
+                                                    <button class="btn btn-outline-danger btn-sm rounded-3" @onclick='() => OpenSupervisorActionModal(m, "REJECT")'>Reject</button>
+                                                }
+                                                @if (m.Status == "POSTED" && m.MovementType != "REVERSAL" && !isOffline && m.MovementId > 0)
+                                                {
+                                                    <button class="btn btn-outline-secondary btn-sm rounded-3" @onclick='() => OpenSupervisorActionModal(m, "REVERSE")'>Reverse</button>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
     }
 </div>
 
 <!-- Confirmation Modal Before Submitting Movement -->
 @if (showConfirmModal && currentShift != null)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.65);">
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.75);">
         <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 rounded-4 shadow-lg">
+            <div class="modal-content border-0 rounded-4 shadow-lg bg-dark text-light">
                 <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold text-dark">Confirm Cash Movement</h5>
-                    <button type="button" class="btn-close" @onclick="() => showConfirmModal = false"></button>
+                    <h5 class="modal-title fw-bold">Confirm Cash Movement</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => showConfirmModal = false"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="p-3 rounded-3 bg-light mb-3">
+                    <div class="p-3 rounded-3 pos-subpanel mb-3">
                         <div class="d-flex justify-content-between mb-2">
                             <span class="text-secondary small">Movement Type:</span>
                             <span class="fw-bold">@FormatMovementTypeLabel(movementType)</span>
@@ -460,18 +1100,9 @@
                             <span class="text-secondary small">Amount:</span>
                             <span class="fw-bolder fs-5 @(movementType == "CASH_IN" ? "text-success" : "text-danger")">₱@movementAmount.ToString("N2")</span>
                         </div>
-                        <div class="d-flex justify-content-between mb-2">
+                        <div class="d-flex justify-content-between">
                             <span class="text-secondary small">Reason / Particulars:</span>
                             <span class="fw-medium text-end">@movementReason</span>
-                        </div>
-                        <div class="d-flex justify-content-between border-top pt-2 mt-2">
-                            <span class="text-secondary small">Projected Drawer Cash After Posting:</span>
-                            @{
-                                decimal projected = movementType == "CASH_IN"
-                                    ? currentShift.ExpectedBalance + movementAmount
-                                    : currentShift.ExpectedBalance - movementAmount;
-                            }
-                            <span class="fw-bold text-primary">₱@projected.ToString("N2")</span>
                         </div>
                     </div>
                 </div>
@@ -491,14 +1122,14 @@
 <!-- Supervisor Approve / Reject / Reverse Modal -->
 @if (actionModalMovement != null)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.65);">
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.75);">
         <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 rounded-4 shadow-lg">
+            <div class="modal-content border-0 rounded-4 shadow-lg bg-dark text-light">
                 <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold text-dark">
+                    <h5 class="modal-title fw-bold">
                         @actionModalType Cash Movement (@actionModalMovement.ReferenceNumber)
                     </h5>
-                    <button type="button" class="btn-close" @onclick="CloseSupervisorActionModal"></button>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseSupervisorActionModal"></button>
                 </div>
                 <div class="modal-body">
                     <p class="small text-secondary mb-3">
@@ -512,13 +1143,13 @@
                         </div>
                     }
                     <div class="mb-2">
-                        <label class="form-label fw-semibold small">Supervisor 4-Digit PIN</label>
+                        <label class="form-label fw-semibold small">Supervisor PIN</label>
                         <input type="password" maxlength="10" class="form-control rounded-3" @bind="actionModalSupervisorPin" placeholder="Enter Admin / Manager / Senior Cashier PIN" />
                     </div>
                 </div>
                 <div class="modal-footer border-0 pt-0">
                     <button type="button" class="btn btn-outline-secondary rounded-3" @onclick="CloseSupervisorActionModal">Cancel</button>
-                    <button type="button" class="btn btn-dark rounded-3 fw-bold" @onclick="ExecuteSupervisorActionAsync" disabled="@isSubmittingAction">
+                    <button type="button" class="btn btn-primary rounded-3 fw-bold" @onclick="ExecuteSupervisorActionAsync" disabled="@isSubmittingAction">
                         @(isSubmittingAction ? "Processing..." : $"Confirm {actionModalType}")
                     </button>
                 </div>
@@ -530,7 +1161,7 @@
 <!-- Printable Cash Movement Voucher Modal -->
 @if (selectedVoucher != null)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.65);">
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.75);">
         <div class="modal-dialog modal-dialog-centered" style="max-width: 420px;">
             <div class="modal-content border-0 rounded-4 shadow-lg">
                 <div class="modal-header border-0 pb-0">
@@ -538,7 +1169,7 @@
                     <button type="button" class="btn-close" @onclick="() => selectedVoucher = null"></button>
                 </div>
                 <div class="modal-body">
-                    <div id="printable-cash-voucher" class="p-3 border rounded-3 bg-white font-monospace" style="font-size: 0.84rem; line-height: 1.45;">
+                    <div id="printable-cash-voucher" class="p-3 border rounded-3 bg-white text-dark font-monospace" style="font-size: 0.84rem; line-height: 1.45;">
                         <div class="text-center border-bottom pb-2 mb-2">
                             <div class="fw-bold fs-6">@(Session.Terminal?.BranchName ?? "POS F&B QUICK SERVICE")</div>
                             @if (!string.IsNullOrWhiteSpace(Session.Terminal?.BranchAddress))
@@ -586,12 +1217,6 @@
                             <div>Prepared By: <strong>@selectedVoucher.CreatedBy</strong></div>
                             <div>Approved By: <strong>@(selectedVoucher.ApprovedBy ?? "Pending Supervisor")</strong></div>
                         </div>
-
-                        <div class="mt-4 pt-2 border-top text-center small">
-                            <div class="mb-3">_______________________________<br />Cashier / Prepared By</div>
-                            <div class="mb-3">_______________________________<br />Supervisor / Approved By</div>
-                            <div class="mb-1">_______________________________<br />Payee / Received By (Signature)</div>
-                        </div>
                     </div>
                 </div>
                 <div class="modal-footer border-0 pt-0">
@@ -605,21 +1230,554 @@
     </div>
 }
 
+<!-- Cashier Declaration Acknowledgment Modal (Cashier-Safe View & Reprint) -->
+@if (selectedDeclaration != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.78);">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width: 460px;">
+            <div class="modal-content border-0 rounded-4 shadow-lg bg-dark text-light">
+                <div class="modal-header border-secondary border-opacity-25">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">Cashier Declaration Acknowledgment</h5>
+                        <small class="text-secondary">Shift #@selectedDeclaration.ShiftId • Blind Closing Receipt</small>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => selectedDeclaration = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="p-3 border rounded-3 bg-white text-dark font-monospace" style="font-size: 0.8rem; line-height: 1.4;">
+                        <div class="text-center border-bottom pb-2 mb-2">
+                            <div class="fw-bold fs-6">@selectedDeclaration.BranchName</div>
+                            @if (!string.IsNullOrWhiteSpace(selectedDeclaration.BranchAddress))
+                            {
+                                <div>@selectedDeclaration.BranchAddress</div>
+                            }
+                            <div>Terminal: @selectedDeclaration.TerminalName</div>
+                            <div class="fw-bold mt-1">CASHIER DECLARATION ACKNOWLEDGMENT</div>
+                            <div>(BLIND SHIFT CLOSING RECEIPT)</div>
+                            @if (selectedDeclaration.IsReprint)
+                            {
+                                <div class="fw-bold mt-1">** REPRINT **</div>
+                            }
+                        </div>
+
+                        <div class="d-flex justify-content-between"><span>Shift ID:</span><span>#@selectedDeclaration.ShiftId</span></div>
+                        <div class="d-flex justify-content-between"><span>Cashier:</span><span>@selectedDeclaration.CashierId</span></div>
+                        <div class="d-flex justify-content-between"><span>Opened:</span><span>@selectedDeclaration.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span></div>
+                        <div class="d-flex justify-content-between"><span>Submitted:</span><span>@selectedDeclaration.SubmittedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span></div>
+
+                        <div class="border-top mt-2 pt-2">
+                            <div class="fw-bold">DECLARED CASH DENOMINATIONS</div>
+                            @if (selectedDeclaration.Denominations.Any(d => d.Quantity > 0))
+                            {
+                                @foreach (var d in selectedDeclaration.Denominations.Where(x => x.Quantity > 0))
+                                {
+                                    <div class="d-flex justify-content-between">
+                                        <span>@d.Label x @d.Quantity</span>
+                                        <span>₱@d.Subtotal.ToString("N2")</span>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <div>No cash denominations declared (₱0.00)</div>
+                            }
+                            <div class="d-flex justify-content-between fw-bold border-top mt-1 pt-1">
+                                <span>TOTAL COUNTED CASH:</span>
+                                <span>₱@selectedDeclaration.TotalCountedCash.ToString("N2")</span>
+                            </div>
+                        </div>
+
+                        <div class="border-top mt-2 pt-2">
+                            <div class="fw-bold">DECLARED OTHER PAYMENTS</div>
+                            @if (selectedDeclaration.PaymentDeclarations.Count > 0)
+                            {
+                                @foreach (var pm in selectedDeclaration.PaymentDeclarations)
+                                {
+                                    <div class="d-flex justify-content-between">
+                                        <span>@pm.PaymentMethodName</span>
+                                        <span>₱@pm.DeclaredAmount.ToString("N2")</span>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <div>No non-cash payment methods declared</div>
+                            }
+                            <div class="d-flex justify-content-between fw-bold border-top mt-1 pt-1">
+                                <span>TOTAL NON-CASH DECLARED:</span>
+                                <span>₱@selectedDeclaration.TotalNonCashDeclared.ToString("N2")</span>
+                            </div>
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(selectedDeclaration.Notes))
+                        {
+                            <div class="border-top mt-2 pt-2">
+                                <strong>General Notes:</strong> @selectedDeclaration.Notes
+                            </div>
+                        }
+
+                        <div class="border-top mt-3 pt-2 text-center small">
+                            <div class="mt-3">_______________________________</div>
+                            <div>Cashier Signature (@selectedDeclaration.CashierId)</div>
+                            <div class="mt-3">_______________________________</div>
+                            <div>Supervisor / Witness Signature</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-light rounded-3" @onclick="() => selectedDeclaration = null">Close</button>
+                    <button type="button" class="btn btn-primary rounded-3 fw-bold" @onclick="ReprintSavedDeclarationAsync" disabled="@isPrintingDeclaration">
+                        <i class="bi bi-printer-fill me-1"></i> @(isPrintingDeclaration ? "Printing..." : "Print Acknowledgment")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- X-Reading & Shift Reconciliation Report Modal (Supervisor/Admin Only) -->
+@if (selectedXReading != null && IsSupervisorUnlocked)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.78);">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width: 480px;">
+            <div class="modal-content border-0 rounded-4 shadow-lg bg-dark text-light">
+                <div class="modal-header border-secondary border-opacity-25">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">X-Reading &amp; Shift Reconciliation</h5>
+                        <small class="text-secondary">Shift #@selectedXReading.ShiftId • Non-Resetting Supervisor Inquiry Report</small>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => selectedXReading = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="p-3 border rounded-3 bg-white text-dark font-monospace" style="font-size: 0.8rem; line-height: 1.4;">
+                        <div class="text-center border-bottom pb-2 mb-2">
+                            <div class="fw-bold fs-6">@selectedXReading.BranchName</div>
+                            @if (!string.IsNullOrWhiteSpace(selectedXReading.BranchAddress))
+                            {
+                                <div>@selectedXReading.BranchAddress</div>
+                            }
+                            <div>Terminal: @selectedXReading.TerminalName</div>
+                            <div class="fw-bold mt-1">X-READING &amp; SHIFT RECONCILIATION</div>
+                            <div>(NON-RESETTING INQUIRY REPORT)</div>
+                            @if (selectedXReading.IsReprint)
+                            {
+                                <div class="fw-bold mt-1">** REPRINT **</div>
+                            }
+                        </div>
+
+                        <div class="d-flex justify-content-between"><span>Shift ID:</span><span>#@selectedXReading.ShiftId</span></div>
+                        <div class="d-flex justify-content-between"><span>Cashier:</span><span>@selectedXReading.CashierId</span></div>
+                        <div class="d-flex justify-content-between"><span>Opened:</span><span>@selectedXReading.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span></div>
+                        <div class="d-flex justify-content-between"><span>Closed:</span><span>@(selectedXReading.ClosedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "OPEN")</span></div>
+
+                        @if (!selectedXReading.ReportingPeriodMatchesShift)
+                        {
+                            <div class="border-top mt-1 pt-1">
+                                <div class="fw-bold">X-Reading Period (4AM Business Day)</div>
+                                <div>@selectedXReading.ReportingPeriodStart.ToLocalTime().ToString("yyyy-MM-dd HH:mm") to @selectedXReading.ReportingPeriodEnd.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                            </div>
+                        }
+
+                        <div class="border-top mt-2 pt-2">
+                            <div class="fw-bold">X-READING SALES COUNTERS</div>
+                            <div class="d-flex justify-content-between"><span>Beg. Invoice:</span><span>@(selectedXReading.BeginningInvoiceNumber ?? "N/A")</span></div>
+                            <div class="d-flex justify-content-between"><span>End. Invoice:</span><span>@(selectedXReading.EndingInvoiceNumber ?? "N/A")</span></div>
+                            <div class="d-flex justify-content-between"><span>Gross Sales:</span><span>₱@selectedXReading.GrossSales.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>Discounts:</span><span>-₱@selectedXReading.TotalDiscounts.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>Refunds/Voids:</span><span>-₱@selectedXReading.TotalRefundsAndVoids.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between fw-bold"><span>Net Sales (Period):</span><span>₱@selectedXReading.NetSales.ToString("N2")</span></div>
+                        </div>
+
+                        <div class="border-top mt-2 pt-2">
+                            <div class="fw-bold">SHIFT SALES (EXCL. FLOAT)</div>
+                            <div class="d-flex justify-content-between"><span>Cash Net Sales:</span><span>₱@selectedXReading.ShiftCashNetSales.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>Non-Cash Net Sales:</span><span>₱@selectedXReading.ShiftNonCashNetSales.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between fw-bold"><span>Total Shift Net Sales:</span><span>₱@selectedXReading.ShiftNetSales.ToString("N2")</span></div>
+                        </div>
+
+                        <div class="border-top mt-2 pt-2">
+                            <div class="fw-bold">CASH DRAWER LEDGER</div>
+                            <div class="d-flex justify-content-between"><span>Opening Float:</span><span>₱@selectedXReading.OpeningFloat.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>(+) Cash Sales:</span><span>+₱@selectedXReading.CashSalesCollected.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>(+) Cash In:</span><span>+₱@selectedXReading.TotalCashIn.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>(−) Cash Refunds:</span><span>-₱@selectedXReading.CashRefunds.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>(−) Cash Out/Drops:</span><span>-₱@((selectedXReading.TotalCashOut + selectedXReading.TotalCashDrops).ToString("N2"))</span></div>
+                            <div class="d-flex justify-content-between fw-bold"><span>Expected Cash:</span><span>₱@selectedXReading.ExpectedCashInDrawer.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between fw-bold"><span>Counted Cash:</span><span>₱@selectedXReading.CountedCashInDrawer.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between fw-bold"><span>Cash Variance (@selectedXReading.CashReconciliationStatus):</span><span>@FormatSignedCurrency(selectedXReading.CashVariance)</span></div>
+                        </div>
+
+                        @if (selectedXReading.Denominations.Any(d => d.Quantity > 0))
+                        {
+                            <div class="border-top mt-2 pt-2">
+                                <div class="fw-bold">DENOMINATION BREAKDOWN</div>
+                                @foreach (var d in selectedXReading.Denominations.Where(x => x.Quantity > 0))
+                                {
+                                    <div class="d-flex justify-content-between">
+                                        <span>@d.Label x @d.Quantity</span>
+                                        <span>₱@d.Subtotal.ToString("N2")</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <div class="border-top mt-2 pt-2">
+                            <div class="fw-bold">PAYMENT RECONCILIATION</div>
+                            @foreach (var pm in selectedXReading.PaymentReconciliations)
+                            {
+                                <div class="mb-1">
+                                    <div class="d-flex justify-content-between fw-bold">
+                                        <span>@pm.PaymentMethodName @(pm.IsCash ? "[Counted]" : "[Declared]")</span>
+                                        <span>@pm.Status</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between">
+                                        <span>Exp: ₱@pm.ExpectedAmount.ToString("N2") | @(pm.IsCash ? "Cnt" : "Dec"): ₱@pm.DeclaredAmount.ToString("N2")</span>
+                                        <span>Var: @FormatSignedCurrency(pm.Variance)</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        @if (selectedXReading.RecountHistory != null && selectedXReading.RecountHistory.Count > 0)
+                        {
+                            <div class="border-top mt-2 pt-2">
+                                <div class="fw-bold">SUPERVISOR RECOUNT / CORRECTION AUDIT</div>
+                                @if (selectedXReading.OriginalDeclaration != null)
+                                {
+                                    <div>Orig. Cash: ₱@selectedXReading.OriginalDeclaration.TotalCountedCash.ToString("N2") | Orig. Non-Cash: ₱@selectedXReading.OriginalDeclaration.TotalNonCashDeclared.ToString("N2")</div>
+                                }
+                                @foreach (var rec in selectedXReading.RecountHistory)
+                                {
+                                    <div class="mt-1">
+                                        <div class="fw-bold">#@rec.RecountNumber by @rec.CorrectedBy (@rec.CorrectedAt.ToLocalTime().ToString("MM-dd HH:mm"))</div>
+                                        <div>Cash: ₱@rec.OriginalCountedCash.ToString("N2") -> ₱@rec.RevisedCountedCash.ToString("N2")</div>
+                                        <div>Reason: @rec.Reason</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <div class="border-top border-bottom my-2 py-1 d-flex justify-content-between fw-bold">
+                            <span>OVERALL STATUS:</span>
+                            <span>@selectedXReading.OverallStatus</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(selectedXReading.Notes))
+                        {
+                            <div><strong>Remarks:</strong> @selectedXReading.Notes</div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-light rounded-3" @onclick="() => selectedXReading = null">Close</button>
+                    <button type="button" class="btn btn-primary rounded-3 fw-bold" @onclick="ReprintSavedXReadingAsync" disabled="@isPrintingXReading">
+                        <i class="bi bi-printer-fill me-1"></i> @(isPrintingXReading ? "Printing..." : "Reprint X-Reading")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Supervisor Recount / Correction Modal -->
+@if (showRecountModal && lastClosedShift != null && IsSupervisorUnlocked)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.82);">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 rounded-4 shadow-lg bg-dark text-light">
+                <div class="modal-header border-secondary border-opacity-25">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">
+                            <i class="bi bi-shield-lock-fill text-warning me-2"></i>Supervisor Recount / Declaration Correction (Shift #@lastClosedShift.ShiftId)
+                        </h5>
+                        <small class="text-secondary">
+                            Original cashier declaration is preserved in the immutable audit trail. Enter revised counts and a mandatory reason below.
+                        </small>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" @onclick="() => showRecountModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    @if (lastClosedShift.OriginalDeclaration != null)
+                    {
+                        <div class="p-2 px-3 rounded-3 bg-secondary bg-opacity-25 border border-secondary mb-3 small d-flex flex-wrap justify-content-between gap-2">
+                            <span><strong>Original Cashier Counted Cash:</strong> ₱@lastClosedShift.OriginalDeclaration.TotalCountedCash.ToString("N2")</span>
+                            <span><strong>Original Non-Cash Declared:</strong> ₱@lastClosedShift.OriginalDeclaration.TotalNonCashDeclared.ToString("N2")</span>
+                            <span><strong>Expected Cash:</strong> ₱@lastClosedShift.ExpectedBalance.ToString("N2")</span>
+                        </div>
+                    }
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-6">
+                            <div class="pos-subpanel rounded-3 p-3 h-100">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span class="fw-bold small text-warning text-uppercase">Revised Cash Denominations</span>
+                                    <span class="fw-bold text-success font-monospace">₱@RecountTotalCash.ToString("N2")</span>
+                                </div>
+                                <div class="d-flex flex-column gap-1" style="max-height: 280px; overflow-y: auto;">
+                                    @foreach (var row in recountDenominationRows)
+                                    {
+                                        <div class="d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 pos-denom-row">
+                                            <span class="small fw-semibold" style="min-width: 90px;">@row.Label</span>
+                                            <input type="number" min="0" step="1" class="form-control form-control-sm text-center fw-bold pos-denom-input" style="max-width: 90px;"
+                                                   @bind="row.Quantity" @bind:event="oninput" />
+                                            <span class="small font-monospace text-info text-end" style="min-width: 78px;">₱@row.Subtotal.ToString("N2")</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <div class="pos-subpanel rounded-3 p-3 h-100 d-flex flex-column justify-content-between">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span class="fw-bold small text-info text-uppercase">Revised Non-Cash Declarations</span>
+                                        <span class="fw-bold text-info font-monospace">₱@RecountNonCashDeclarations.Sum(x => x.DeclaredAmount).ToString("N2")</span>
+                                    </div>
+                                    @if (RecountNonCashDeclarations.Count == 0)
+                                    {
+                                        <div class="small text-secondary">No non-cash methods configured.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="d-flex flex-column gap-2">
+                                            @foreach (var decl in RecountNonCashDeclarations)
+                                            {
+                                                <div>
+                                                    <div class="d-flex justify-content-between small">
+                                                        <span class="fw-semibold">@decl.PaymentMethodName</span>
+                                                        <span class="text-secondary">Exp: ₱@decl.ExpectedAmount.ToString("N2")</span>
+                                                    </div>
+                                                    <div class="input-group input-group-sm mt-1">
+                                                        <span class="input-group-text bg-dark text-light border-secondary">₱</span>
+                                                        <input type="number" min="0" step="0.01" class="form-control fw-bold font-monospace"
+                                                               @bind="decl.DeclaredAmount" @bind:event="oninput" />
+                                                    </div>
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+
+                                <div class="border-top border-secondary border-opacity-25 pt-2 mt-3 small">
+                                    <div class="d-flex justify-content-between">
+                                        <span class="text-secondary">Revised Cash Variance:</span>
+                                        @{
+                                            decimal revVar = Math.Round(RecountTotalCash - lastClosedShift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+                                        }
+                                        <span class="fw-bold font-monospace @GetVarianceTextClass(revVar)">@FormatSignedCurrency(revVar)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-12 col-md-8">
+                            <label class="form-label fw-semibold small text-warning">Recount / Correction Reason (Required for Audit Log) *</label>
+                            <input type="text" maxlength="255" class="form-control rounded-3" @bind="recountReason"
+                                   placeholder="Explain physical recount or terminal slip correction..." />
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold small">Supervisor PIN @(IsSupervisorRole(Session.Role) ? "(Optional)" : "*")</label>
+                            <input type="password" maxlength="10" class="form-control rounded-3" @bind="recountSupervisorPin"
+                                   placeholder="Supervisor PIN" />
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-secondary rounded-3" @onclick="() => showRecountModal = false" disabled="@isSubmittingRecount">Cancel</button>
+                    <button type="button" class="btn btn-warning fw-bold text-dark rounded-3 px-4" @onclick="SubmitRecountAsync" disabled="@isSubmittingRecount">
+                        <i class="bi bi-check2-circle me-1"></i> @(isSubmittingRecount ? "Recording Recount..." : "Save Authorized Recount")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .pos-closing-page {
+        color: var(--pos-text-primary, #f8fafc);
+        overflow-x: hidden;
+    }
+
+    .pos-panel-card {
+        background-color: var(--pos-bg-card, #1e293b);
+        border: 1px solid var(--pos-border-color, #334155);
+        box-shadow: var(--pos-shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.25));
+    }
+
+    .pos-kpi-card {
+        background-color: var(--pos-bg-card, #1e293b);
+        border: 1px solid var(--pos-border-color, #334155);
+    }
+
+    .pos-subpanel {
+        background-color: var(--pos-bg-surface, #0f172a);
+        border: 1px solid var(--pos-border-color, #334155);
+    }
+
+    .pos-denom-row {
+        background-color: rgba(30, 41, 59, 0.55);
+    }
+
+    .pos-denom-input {
+        background-color: #0f172a !important;
+        color: #f8fafc !important;
+        border-color: #475569 !important;
+    }
+
+    .pos-tabs-wrapper {
+        max-width: 100%;
+        overflow: hidden;
+    }
+
+    .pos-tabs-nav {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        overflow-x: auto;
+        white-space: nowrap;
+        flex-wrap: nowrap;
+        padding: 0.45rem;
+        background-color: var(--pos-bg-surface, #0f172a);
+        border: 1px solid var(--pos-border-color, #334155);
+        border-radius: 0.85rem;
+        scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .pos-tab-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1rem;
+        border-radius: 0.65rem;
+        border: 1px solid transparent;
+        background-color: transparent;
+        color: #94a3b8;
+        font-weight: 600;
+        font-size: 0.9rem;
+        line-height: 1.2;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .pos-tab-btn:hover {
+        background-color: rgba(51, 65, 85, 0.5);
+        color: #f8fafc;
+    }
+
+    .pos-tab-btn.active {
+        background-color: #1e293b;
+        color: #f8fafc;
+        border-color: #3b82f6;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.22);
+    }
+
+    .pos-tab-btn.pos-tab-supporting.active {
+        border-color: #38bdf8;
+    }
+
+    .pos-tab-btn:focus-visible,
+    .pos-closing-page .btn:focus-visible,
+    .pos-closing-page .form-control:focus-visible,
+    .pos-closing-page .form-select:focus-visible,
+    .pos-closing-page .form-check-input:focus-visible {
+        outline: 2px solid #38bdf8;
+        outline-offset: 2px;
+    }
+
+    .pos-tabs-divider {
+        width: 1px;
+        height: 28px;
+        background-color: #334155;
+        margin: 0 0.25rem;
+        flex-shrink: 0;
+    }
+</style>
+
 @code {
+    private static readonly string[] TabOrder =
+    [
+        "CASH_COUNT",
+        "OTHER_PAYMENTS",
+        "REVIEW_CLOSE",
+        "CASH_MOVEMENTS",
+        "MOVEMENT_HISTORY"
+    ];
+
+    private sealed class DenominationRowState
+    {
+        public string Type { get; init; } = "BILL";
+        public decimal Denomination { get; init; }
+        public string Label { get; init; } = string.Empty;
+        public int Quantity { get; set; }
+        public string RawQuantity { get; set; } = "0";
+        public bool HasError { get; set; }
+        public decimal Subtotal => Math.Round(Denomination * Quantity, 2, MidpointRounding.AwayFromZero);
+    }
+
+    private sealed class NonCashDeclarationRowState
+    {
+        public string PaymentMethodCode { get; init; } = string.Empty;
+        public string PaymentMethodName { get; init; } = string.Empty;
+        public bool IsActive { get; init; } = true;
+        public int DisplayOrder { get; init; }
+        public decimal ExpectedAmount { get; set; }
+        public decimal DeclaredAmount { get; set; }
+        public string RawAmount { get; set; } = "0.00";
+        public bool HasError { get; set; }
+        public decimal Variance => Math.Round(DeclaredAmount - ExpectedAmount, 2, MidpointRounding.AwayFromZero);
+    }
+
+    private string activeTab = "CASH_COUNT";
+    private bool hasStartedCounting = false;
+    private bool requiresRecountConfirmationAfterMovement = false;
+
     private bool isLoading = true;
     private bool isOffline = false;
     private bool isSubmittingShift = false;
     private bool isSubmittingMovement = false;
+    private bool isPrintingXReading = false;
+    private bool isPrintingDeclaration = false;
+    private bool isReviewingClose = false;
+    private bool isDeclarationConfirmed = false;
     private bool showConfirmModal = false;
+
+    private bool isSupervisorUnlockedByPin = false;
+    private bool isUnlockingSupervisor = false;
+    private string supervisorUnlockPin = string.Empty;
+    private string? unlockedSupervisorPin;
+
+    private bool showRecountModal = false;
+    private bool isSubmittingRecount = false;
+    private string recountReason = string.Empty;
+    private string recountSupervisorPin = string.Empty;
+    private List<DenominationRowState> recountDenominationRows = new();
+    private List<NonCashDeclarationRowState> RecountNonCashDeclarations = new();
 
     private string? statusAlertMessage;
     private bool statusAlertIsError;
+    private string? printWarningMessage;
+    private string? denominationValidationError;
+    private string? declarationValidationError;
 
     private CashDrawerShiftDto? currentShift;
+    private CashDrawerShiftDto? lastClosedShift;
+    private CashierDeclarationReportDto? selectedDeclaration;
+    private XReadingReportDto? selectedXReading;
     private List<CashMovementCategoryDto> categories = new();
 
-    private decimal openingFloat = 1000.00m;
+    private decimal? openFloatInput = 1000.00m;
     private string shiftNotes = string.Empty;
+    private string pendingOpenShiftId = Guid.NewGuid().ToString("N");
+    private string pendingClientCloseId = Guid.NewGuid().ToString("N");
+
+    private List<DenominationRowState> denominationRows = new();
+    private List<NonCashDeclarationRowState> nonCashDeclarations = new();
+    private string closingNotes = string.Empty;
 
     private string movementType = "PETTY_CASH";
     private int selectedCategoryId = 0;
@@ -627,9 +1785,6 @@
     private string movementReason = string.Empty;
     private string supervisorPin = string.Empty;
     private string pendingClientMovementId = Guid.NewGuid().ToString("N");
-
-    private decimal actualCounted = 0.00m;
-    private string closingNotes = string.Empty;
     private string historyFilterStatus = string.Empty;
 
     private CashMovementResponseDto? selectedVoucher;
@@ -638,6 +1793,14 @@
     private string actionModalReason = string.Empty;
     private string actionModalSupervisorPin = string.Empty;
     private bool isSubmittingAction = false;
+
+    private bool IsSupervisorUnlocked => IsSupervisorRole(Session.Role) || isSupervisorUnlockedByPin;
+
+    private decimal CoinsSubtotal => denominationRows.Where(r => r.Type == "COIN").Sum(r => r.Subtotal);
+    private decimal BillsSubtotal => denominationRows.Where(r => r.Type == "BILL").Sum(r => r.Subtotal);
+    private decimal TotalCountedCash => Math.Round(CoinsSubtotal + BillsSubtotal, 2, MidpointRounding.AwayFromZero);
+    private decimal DeclaredNonCashTotal => Math.Round(nonCashDeclarations.Sum(d => d.DeclaredAmount), 2, MidpointRounding.AwayFromZero);
+    private decimal RecountTotalCash => Math.Round(recountDenominationRows.Sum(r => r.Subtotal), 2, MidpointRounding.AwayFromZero);
 
     private IEnumerable<CashMovementCategoryDto> FilteredCategories =>
         categories.Where(c => c.IsActive && string.Equals(c.MovementType, movementType, StringComparison.OrdinalIgnoreCase));
@@ -669,7 +1832,684 @@
             Navigation.NavigateTo("/login");
             return;
         }
+        InitializeDenominationRows();
         await LoadShiftData();
+    }
+
+    private void InitializeDenominationRows()
+    {
+        denominationRows = CashDenominationCatalog.CreateDefaultLines()
+            .Select(d => new DenominationRowState
+            {
+                Type = d.Type,
+                Denomination = d.Denomination,
+                Label = d.Label,
+                Quantity = 0,
+                RawQuantity = "0",
+                HasError = false
+            })
+            .ToList();
+        denominationValidationError = null;
+    }
+
+    private void ResetDenominationCounts()
+    {
+        foreach (var row in denominationRows)
+        {
+            row.Quantity = 0;
+            row.RawQuantity = "0";
+            row.HasError = false;
+        }
+        denominationValidationError = null;
+        isDeclarationConfirmed = false;
+    }
+
+    private void OnDenominationInputChanged(DenominationRowState row, string? rawValue)
+    {
+        string trimmed = (rawValue ?? string.Empty).Trim();
+        row.RawQuantity = trimmed;
+
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            row.Quantity = 0;
+            row.HasError = false;
+        }
+        else if (int.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out int parsed) && parsed >= 0 && parsed <= 1_000_000)
+        {
+            row.Quantity = parsed;
+            row.HasError = false;
+        }
+        else
+        {
+            row.HasError = true;
+        }
+
+        hasStartedCounting = true;
+        isDeclarationConfirmed = false;
+        denominationValidationError = denominationRows.Any(r => r.HasError)
+            ? "All denomination quantities must be non-negative whole numbers (0 or greater)."
+            : null;
+    }
+
+    private void StepDenominationQuantity(DenominationRowState row, int delta)
+    {
+        int next = Math.Max(0, row.Quantity + delta);
+        row.Quantity = next;
+        row.RawQuantity = next.ToString(CultureInfo.InvariantCulture);
+        row.HasError = false;
+        hasStartedCounting = true;
+        isDeclarationConfirmed = false;
+        denominationValidationError = denominationRows.Any(r => r.HasError)
+            ? "All denomination quantities must be non-negative whole numbers (0 or greater)."
+            : null;
+    }
+
+    private void OnDeclarationInputChanged(NonCashDeclarationRowState decl, string? rawValue)
+    {
+        string trimmed = (rawValue ?? string.Empty).Trim();
+        decl.RawAmount = trimmed;
+
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            decl.DeclaredAmount = 0m;
+            decl.HasError = false;
+        }
+        else if (TryParseCashAmount(trimmed, out decimal parsed))
+        {
+            decl.DeclaredAmount = parsed;
+            decl.HasError = false;
+        }
+        else
+        {
+            decl.HasError = true;
+        }
+
+        isDeclarationConfirmed = false;
+        declarationValidationError = nonCashDeclarations.Any(d => d.HasError)
+            ? "All cashier-declared payment totals must be non-negative amounts with at most 2 decimal places."
+            : null;
+    }
+
+    private static bool TryParseCashAmount(string? text, out decimal amount)
+    {
+        amount = 0m;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var point = text.IndexOf('.');
+        if (point >= 0 && text.Length - point - 1 > 2) return false;
+        return decimal.TryParse(text, NumberStyles.AllowDecimalPoint,
+            CultureInfo.InvariantCulture, out amount)
+            && amount >= 0m && amount <= 9999999999999999.99m;
+    }
+
+    private void SyncNonCashDeclarationRows(CashDrawerShiftDto shiftDto)
+    {
+        var existingByCode = nonCashDeclarations.ToDictionary(d => d.PaymentMethodCode, StringComparer.OrdinalIgnoreCase);
+        var nextList = new List<NonCashDeclarationRowState>();
+
+        var configuredMethods = shiftDto.ConfiguredNonCashMethods.Count > 0
+            ? shiftDto.ConfiguredNonCashMethods
+            : shiftDto.PaymentReconciliations.Where(r => !r.IsCash).Select(r => new PaymentMethodDeclarationDto
+            {
+                PaymentMethodCode = r.PaymentMethodCode,
+                PaymentMethodName = r.PaymentMethodName,
+                IsActive = r.IsActive,
+                DisplayOrder = r.DisplayOrder,
+                DeclaredAmount = r.DeclaredAmount
+            }).ToList();
+
+        foreach (var method in configuredMethods)
+        {
+            if (existingByCode.TryGetValue(method.PaymentMethodCode, out var existing))
+            {
+                nextList.Add(existing);
+            }
+            else
+            {
+                nextList.Add(new NonCashDeclarationRowState
+                {
+                    PaymentMethodCode = method.PaymentMethodCode,
+                    PaymentMethodName = method.PaymentMethodName,
+                    IsActive = method.IsActive,
+                    DisplayOrder = method.DisplayOrder,
+                    ExpectedAmount = 0m,
+                    DeclaredAmount = 0m,
+                    RawAmount = "0.00",
+                    HasError = false
+                });
+            }
+        }
+
+        nonCashDeclarations = nextList;
+    }
+
+    private void SelectTab(string targetTab)
+    {
+        if (currentShift == null) return;
+
+        if (targetTab == "REVIEW_CLOSE")
+        {
+            GoToReviewCloseTab();
+            return;
+        }
+
+        if (targetTab == "OTHER_PAYMENTS")
+        {
+            hasStartedCounting = true;
+        }
+
+        activeTab = targetTab;
+    }
+
+    private void GoToOtherPaymentsTab()
+    {
+        if (currentShift == null) return;
+        if (!ValidateCashCountInputs())
+        {
+            activeTab = "CASH_COUNT";
+            return;
+        }
+
+        hasStartedCounting = true;
+        statusAlertMessage = null;
+        activeTab = "OTHER_PAYMENTS";
+    }
+
+    private void GoToReviewCloseTab()
+    {
+        if (currentShift == null) return;
+        if (!ValidateCashCountInputs())
+        {
+            activeTab = "CASH_COUNT";
+            return;
+        }
+        if (!ValidateOtherPaymentInputs())
+        {
+            activeTab = "OTHER_PAYMENTS";
+            return;
+        }
+
+        hasStartedCounting = true;
+        isReviewingClose = true;
+        statusAlertMessage = null;
+        activeTab = "REVIEW_CLOSE";
+    }
+
+    private void EditCashCountFromReview()
+    {
+        isReviewingClose = false;
+        isDeclarationConfirmed = false;
+        activeTab = "CASH_COUNT";
+    }
+
+    private void EditOtherPaymentsFromReview()
+    {
+        isReviewingClose = false;
+        isDeclarationConfirmed = false;
+        activeTab = "OTHER_PAYMENTS";
+    }
+
+    private void ConfirmPhysicalCountAfterMovement()
+    {
+        if (!ValidateCashCountInputs()) return;
+        requiresRecountConfirmationAfterMovement = false;
+        isDeclarationConfirmed = false;
+        ShowAlert($"Physical drawer cash count (₱{TotalCountedCash:N2}) reconfirmed after cash movement.", isError: false);
+    }
+
+    private void MarkCashMovementPostedDuringCounting()
+    {
+        isDeclarationConfirmed = false;
+        if (hasStartedCounting || denominationRows.Any(r => r.Quantity > 0))
+        {
+            requiresRecountConfirmationAfterMovement = true;
+        }
+    }
+
+    private void OnTabBarKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        int currentIndex = Array.IndexOf(TabOrder, activeTab);
+        if (currentIndex < 0) currentIndex = 0;
+
+        if (e.Key == "ArrowRight")
+        {
+            int nextIndex = (currentIndex + 1) % TabOrder.Length;
+            SelectTab(TabOrder[nextIndex]);
+        }
+        else if (e.Key == "ArrowLeft")
+        {
+            int prevIndex = (currentIndex - 1 + TabOrder.Length) % TabOrder.Length;
+            SelectTab(TabOrder[prevIndex]);
+        }
+        else if (e.Key == "Home")
+        {
+            SelectTab(TabOrder[0]);
+        }
+        else if (e.Key == "End")
+        {
+            SelectTab(TabOrder[^1]);
+        }
+    }
+
+    private bool ValidateCashCountInputs()
+    {
+        foreach (var row in denominationRows)
+        {
+            if (string.IsNullOrWhiteSpace(row.RawQuantity))
+            {
+                row.RawQuantity = "0";
+                row.Quantity = 0;
+                row.HasError = false;
+            }
+            else if (!int.TryParse(row.RawQuantity, NumberStyles.None, CultureInfo.InvariantCulture, out int q) || q < 0 || q > 1_000_000)
+            {
+                row.HasError = true;
+            }
+            else
+            {
+                row.Quantity = q;
+                row.HasError = false;
+            }
+        }
+
+        if (denominationRows.Any(r => r.HasError))
+        {
+            denominationValidationError = "All denomination quantities must be non-negative whole numbers.";
+            ShowAlert(denominationValidationError, isError: true);
+            return false;
+        }
+
+        denominationValidationError = null;
+        return true;
+    }
+
+    private bool ValidateOtherPaymentInputs()
+    {
+        foreach (var decl in nonCashDeclarations)
+        {
+            if (string.IsNullOrWhiteSpace(decl.RawAmount))
+            {
+                decl.RawAmount = "0.00";
+                decl.DeclaredAmount = 0m;
+                decl.HasError = false;
+            }
+            else if (!TryParseCashAmount(decl.RawAmount, out decimal amt))
+            {
+                decl.HasError = true;
+            }
+            else
+            {
+                decl.DeclaredAmount = amt;
+                decl.HasError = false;
+            }
+        }
+
+        if (nonCashDeclarations.Any(d => d.HasError))
+        {
+            declarationValidationError = "All cashier-declared payment totals must be non-negative amounts with up to two decimal places.";
+            ShowAlert(declarationValidationError, isError: true);
+            return false;
+        }
+
+        declarationValidationError = null;
+        return true;
+    }
+
+    private bool ValidateClosingInputs()
+    {
+        if (!ValidateCashCountInputs())
+        {
+            activeTab = "CASH_COUNT";
+            return false;
+        }
+        if (!ValidateOtherPaymentInputs())
+        {
+            activeTab = "OTHER_PAYMENTS";
+            return false;
+        }
+        return true;
+    }
+
+    private async Task CloseShift()
+    {
+        if (currentShift == null || isSubmittingShift) return;
+        if (!ValidateClosingInputs()) return;
+        if (requiresRecountConfirmationAfterMovement)
+        {
+            activeTab = "CASH_COUNT";
+            ShowAlert("A cash movement was recorded after counting. Please verify and reconfirm your physical drawer cash count before closing.", isError: true);
+            return;
+        }
+        if (!isDeclarationConfirmed)
+        {
+            ShowAlert("Please explicitly confirm your blind closing declaration before submitting.", isError: true);
+            return;
+        }
+
+        isSubmittingShift = true;
+        printWarningMessage = null;
+        try
+        {
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            var closeDto = new CloseShiftDto
+            {
+                ShiftId = currentShift.ShiftId,
+                ClientShiftId = currentShift.ClientShiftId,
+                ClientCloseId = pendingClientCloseId,
+                BranchId = currentShift.BranchId,
+                TerminalId = currentShift.TerminalId,
+                CashierId = Session.Username ?? currentShift.CashierId,
+                ClosedAt = DateTime.UtcNow,
+                ActualCountedBalance = TotalCountedCash,
+                IsDeclarationConfirmed = isDeclarationConfirmed,
+                Denominations = denominationRows.Select(r => new CashDenominationLineDto
+                {
+                    Type = r.Type,
+                    Denomination = r.Denomination,
+                    Quantity = r.Quantity,
+                    Subtotal = r.Subtotal
+                }).ToList(),
+                PaymentDeclarations = nonCashDeclarations.Select(d => new PaymentMethodDeclarationDto
+                {
+                    PaymentMethodCode = d.PaymentMethodCode,
+                    PaymentMethodName = d.PaymentMethodName,
+                    DeclaredAmount = d.DeclaredAmount
+                }).ToList(),
+                Notes = string.IsNullOrWhiteSpace(closingNotes) ? null : closingNotes.Trim()
+            };
+
+            var closedShift = await ShiftSession.CloseAsync(Http, closeDto, Session.Username ?? currentShift.CashierId, isOffline);
+
+            lastClosedShift = closedShift;
+            currentShift = null;
+            activeTab = "CASH_COUNT";
+            hasStartedCounting = false;
+            requiresRecountConfirmationAfterMovement = false;
+            isReviewingClose = false;
+            isDeclarationConfirmed = false;
+            closingNotes = string.Empty;
+            pendingClientCloseId = Guid.NewGuid().ToString("N");
+            ResetDenominationCounts();
+            nonCashDeclarations.Clear();
+
+            if (IsSupervisorUnlocked)
+            {
+                var terminalId = Session.Terminal?.TerminalId ?? closedShift.TerminalId;
+                var fullShift = await ShiftSession.LastClosedDtoAsync(Http, terminalId, isOffline, isSupervisor: true, supervisorPin: unlockedSupervisorPin);
+                if (fullShift != null)
+                {
+                    lastClosedShift = fullShift;
+                }
+            }
+
+            ShowAlert($"Shift #{closedShift.ShiftId} declaration submitted and shift closed.", isError: false);
+
+            var declarationToPrint = lastClosedShift?.CashierDeclaration ?? closedShift.CashierDeclaration;
+            if (declarationToPrint != null)
+            {
+                selectedDeclaration = declarationToPrint;
+                try
+                {
+                    isPrintingDeclaration = true;
+                    await ReceiptPrinter.PrintCashierDeclarationAsync(declarationToPrint, Session.Terminal?.ReceiptPrinterName);
+                }
+                catch (Exception printEx)
+                {
+                    printWarningMessage = $"Shift #{closedShift.ShiftId} is closed and saved, but automatic Cashier Declaration Acknowledgment printing failed ({printEx.Message}). You can reprint from the saved closing record at any time without creating another declaration.";
+                }
+                finally
+                {
+                    isPrintingDeclaration = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isSubmittingShift = false;
+        }
+    }
+
+    private void OpenLastClosedDeclarationModal()
+    {
+        if (lastClosedShift?.CashierDeclaration != null)
+        {
+            lastClosedShift.CashierDeclaration.IsReprint = true;
+            selectedDeclaration = lastClosedShift.CashierDeclaration;
+        }
+    }
+
+    private async Task ReprintSavedDeclarationAsync()
+    {
+        var report = selectedDeclaration ?? lastClosedShift?.CashierDeclaration;
+        if (report == null || isPrintingDeclaration) return;
+
+        report.IsReprint = true;
+        isPrintingDeclaration = true;
+        try
+        {
+            await ReceiptPrinter.PrintCashierDeclarationAsync(report, Session.Terminal?.ReceiptPrinterName);
+            printWarningMessage = null;
+            ShowAlert($"Reprinted Cashier Declaration Acknowledgment for Shift #{report.ShiftId}.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            printWarningMessage = $"Reprint failed: {ex.Message}. Saved declaration record for Shift #{report.ShiftId} remains intact.";
+        }
+        finally
+        {
+            isPrintingDeclaration = false;
+        }
+    }
+
+    private void OpenLastClosedXReadingModal()
+    {
+        if (!IsSupervisorUnlocked)
+        {
+            ShowAlert("Supervisor authorization is required to view X-Reading and reconciliation reports.", isError: true);
+            return;
+        }
+        if (lastClosedShift?.XReading != null)
+        {
+            lastClosedShift.XReading.IsReprint = true;
+            selectedXReading = lastClosedShift.XReading;
+        }
+    }
+
+    private async Task ReprintSavedXReadingAsync()
+    {
+        if (!IsSupervisorUnlocked)
+        {
+            ShowAlert("Supervisor authorization is required to print X-Reading and reconciliation reports.", isError: true);
+            return;
+        }
+        var report = selectedXReading ?? lastClosedShift?.XReading;
+        if (report == null || isPrintingXReading) return;
+
+        report.IsReprint = true;
+        isPrintingXReading = true;
+        try
+        {
+            await ReceiptPrinter.PrintXReadingAsync(report, Session.Terminal?.ReceiptPrinterName);
+            printWarningMessage = null;
+            ShowAlert($"Reprinted X-Reading for Shift #{report.ShiftId}.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            printWarningMessage = $"Reprint failed: {ex.Message}. Saved closing record for Shift #{report.ShiftId} remains intact.";
+        }
+        finally
+        {
+            isPrintingXReading = false;
+        }
+    }
+
+    private async Task UnlockSupervisorReconciliationAsync()
+    {
+        if (isUnlockingSupervisor || lastClosedShift == null) return;
+        string pin = (supervisorUnlockPin ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(pin))
+        {
+            ShowAlert("Enter a valid Supervisor or Manager PIN to unlock reconciliation.", isError: true);
+            return;
+        }
+
+        isUnlockingSupervisor = true;
+        try
+        {
+            var terminalId = Session.Terminal?.TerminalId ?? lastClosedShift.TerminalId;
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            if (isOffline)
+            {
+                string pinHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(pin)));
+                using var db = new LocalPosDbContext();
+                db.InitializeDatabase();
+                var sup = await db.Cashiers.AsNoTracking().FirstOrDefaultAsync(c => c.PinHash == pinHash);
+                if (sup == null || !IsSupervisorRole(sup.Role))
+                {
+                    ShowAlert("Invalid Supervisor PIN or user does not have supervisor permissions.", isError: true);
+                    return;
+                }
+            }
+
+            var unlockedDto = await ShiftSession.LastClosedDtoAsync(Http, terminalId, isOffline, isSupervisor: true, supervisorPin: pin);
+            if (unlockedDto == null || unlockedDto.IsBlindCloseRedacted)
+            {
+                ShowAlert("Invalid Supervisor PIN or unauthorized access.", isError: true);
+                return;
+            }
+
+            lastClosedShift = unlockedDto;
+            isSupervisorUnlockedByPin = true;
+            unlockedSupervisorPin = pin;
+            supervisorUnlockPin = string.Empty;
+            ShowAlert($"Supervisor reconciliation unlocked for Shift #{unlockedDto.ShiftId}.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isUnlockingSupervisor = false;
+        }
+    }
+
+    private async Task LockSupervisorReconciliation()
+    {
+        isSupervisorUnlockedByPin = false;
+        unlockedSupervisorPin = null;
+        selectedXReading = null;
+        showRecountModal = false;
+        var terminalId = Session.Terminal?.TerminalId ?? 1;
+        lastClosedShift = await ShiftSession.LastClosedDtoAsync(Http, terminalId, isOffline, isSupervisor: false);
+    }
+
+    private void OpenRecountModal()
+    {
+        if (lastClosedShift == null || !IsSupervisorUnlocked) return;
+
+        var existingDenoms = lastClosedShift.Denominations.ToDictionary(
+            d => $"{d.Type}:{d.Denomination:0.00}",
+            d => d.Quantity,
+            StringComparer.OrdinalIgnoreCase);
+
+        recountDenominationRows = CashDenominationCatalog.CreateDefaultLines()
+            .Select(d =>
+            {
+                string key = $"{d.Type}:{d.Denomination:0.00}";
+                int qty = existingDenoms.TryGetValue(key, out int q) ? q : 0;
+                return new DenominationRowState
+                {
+                    Type = d.Type,
+                    Denomination = d.Denomination,
+                    Label = d.Label,
+                    Quantity = qty,
+                    RawQuantity = qty.ToString(CultureInfo.InvariantCulture)
+                };
+            })
+            .ToList();
+
+        RecountNonCashDeclarations = lastClosedShift.PaymentReconciliations
+            .Where(r => !r.IsCash)
+            .Select(r => new NonCashDeclarationRowState
+            {
+                PaymentMethodCode = r.PaymentMethodCode,
+                PaymentMethodName = r.PaymentMethodName,
+                IsActive = r.IsActive,
+                DisplayOrder = r.DisplayOrder,
+                ExpectedAmount = r.ExpectedAmount,
+                DeclaredAmount = r.DeclaredAmount,
+                RawAmount = r.DeclaredAmount.ToString("0.00", CultureInfo.InvariantCulture)
+            })
+            .ToList();
+
+        recountReason = string.Empty;
+        recountSupervisorPin = unlockedSupervisorPin ?? string.Empty;
+        showRecountModal = true;
+    }
+
+    private async Task SubmitRecountAsync()
+    {
+        if (lastClosedShift == null || isSubmittingRecount || !IsSupervisorUnlocked) return;
+        if (string.IsNullOrWhiteSpace(recountReason))
+        {
+            ShowAlert("A recount/correction reason is required for the audit trail.", isError: true);
+            return;
+        }
+
+        isSubmittingRecount = true;
+        try
+        {
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            var req = new ShiftRecountRequestDto
+            {
+                ShiftId = lastClosedShift.ShiftId,
+                Reason = recountReason.Trim(),
+                SupervisorPin = string.IsNullOrWhiteSpace(recountSupervisorPin) ? unlockedSupervisorPin : recountSupervisorPin.Trim(),
+                Denominations = recountDenominationRows.Select(r => new CashDenominationLineDto
+                {
+                    Type = r.Type,
+                    Denomination = r.Denomination,
+                    Quantity = Math.Max(0, r.Quantity),
+                    Subtotal = r.Subtotal
+                }).ToList(),
+                PaymentDeclarations = RecountNonCashDeclarations.Select(d => new PaymentMethodDeclarationDto
+                {
+                    PaymentMethodCode = d.PaymentMethodCode,
+                    PaymentMethodName = d.PaymentMethodName,
+                    DeclaredAmount = Math.Max(0m, Math.Round(d.DeclaredAmount, 2, MidpointRounding.AwayFromZero))
+                }).ToList()
+            };
+
+            var updated = await ShiftSession.RecountAsync(
+                Http,
+                lastClosedShift.ShiftId,
+                req,
+                Session.Username ?? "supervisor",
+                Session.Role,
+                isOffline);
+
+            lastClosedShift = updated;
+            showRecountModal = false;
+            ShowAlert($"Supervisor recount recorded for Shift #{updated.ShiftId}. Original declaration preserved in audit history.", isError: false);
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isSubmittingRecount = false;
+        }
     }
 
     private void SelectMovementType(string type)
@@ -681,6 +2521,28 @@
 
     private static bool IsOutflow(string type) =>
         type is "PETTY_CASH" or "CASH_OUT" or "CASH_DROP";
+
+    private static string FormatDenomValue(decimal denom) =>
+        denom < 1m
+            ? denom.ToString("0.00", CultureInfo.InvariantCulture)
+            : denom.ToString("N0", CultureInfo.InvariantCulture);
+
+    private static string FormatSignedCurrency(decimal value) =>
+        value >= 0m
+            ? $"+₱{value:N2}"
+            : $"-₱{Math.Abs(value):N2}";
+
+    private static string GetVarianceTextClass(decimal variance) =>
+        variance == 0m ? "text-success" : (variance > 0m ? "text-info" : "text-danger");
+
+    private static string GetVarianceStatusBadgeClass(string status) =>
+        (status ?? string.Empty).ToUpperInvariant() switch
+        {
+            "BALANCED" => "bg-success",
+            "OVER" => "bg-info text-dark",
+            "SHORT" => "bg-danger",
+            _ => "bg-warning text-dark"
+        };
 
     private static string FormatMovementTypeLabel(string type) =>
         (type ?? string.Empty).ToUpperInvariant() switch
@@ -745,33 +2607,30 @@
                     }
                 }
                 catch { }
-
-                try
-                {
-                    var shiftResp = await Http.GetAsync($"api/cash-drawer/current?terminalId={terminalId}");
-                    if (shiftResp.IsSuccessStatusCode)
-                    {
-                        currentShift = await shiftResp.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
-                        if (currentShift != null)
-                        {
-                            await CacheShiftLocallyAsync(currentShift);
-                            actualCounted = currentShift.ExpectedBalance;
-                        }
-                    }
-                    else
-                    {
-                        currentShift = null;
-                    }
-                }
-                catch
-                {
-                    isOffline = true;
-                }
             }
 
-            if (isOffline || categories.Count == 0)
+            if (categories.Count == 0)
             {
-                await LoadOfflineShiftAndCategoriesAsync(terminalId);
+                await LoadOfflineCategoriesAsync();
+            }
+
+            try
+            {
+                currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, isOffline);
+            }
+            catch
+            {
+                isOffline = true;
+                currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, offline: true);
+            }
+
+            if (currentShift != null)
+            {
+                SyncNonCashDeclarationRows(currentShift);
+            }
+            else
+            {
+                lastClosedShift = await ShiftSession.LastClosedDtoAsync(Http, terminalId, isOffline, isSupervisor: IsSupervisorUnlocked, supervisorPin: unlockedSupervisorPin);
             }
 
             if (selectedCategoryId == 0 && FilteredCategories.Any())
@@ -816,58 +2675,10 @@
         }
     }
 
-    private async Task CacheShiftLocallyAsync(CashDrawerShiftDto shiftDto)
-    {
-        await LocalPosDbContext.WriteLock.WaitAsync();
-        try
-        {
-            using var db = new LocalPosDbContext();
-            db.InitializeDatabase();
-            var localShift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == shiftDto.ShiftId);
-            if (localShift == null)
-            {
-                db.CashDrawerShifts.Add(new LocalCashDrawerShift
-                {
-                    ShiftId = shiftDto.ShiftId,
-                    BranchId = shiftDto.BranchId,
-                    TerminalId = shiftDto.TerminalId,
-                    CashierId = shiftDto.CashierId,
-                    OpeningFloat = shiftDto.OpeningFloat,
-                    TotalCashSales = shiftDto.TotalCashSales,
-                    TotalCashRefunds = shiftDto.TotalCashRefunds,
-                    TotalCashIn = shiftDto.TotalCashIn,
-                    TotalCashOut = shiftDto.TotalCashOut,
-                    TotalCashDrops = shiftDto.TotalCashDrops,
-                    ExpectedBalance = shiftDto.ExpectedBalance,
-                    Status = shiftDto.Status,
-                    OpenedAt = shiftDto.OpenedAt
-                });
-            }
-            else
-            {
-                localShift.OpeningFloat = shiftDto.OpeningFloat;
-                localShift.TotalCashSales = shiftDto.TotalCashSales;
-                localShift.TotalCashRefunds = shiftDto.TotalCashRefunds;
-                localShift.TotalCashIn = shiftDto.TotalCashIn;
-                localShift.TotalCashOut = shiftDto.TotalCashOut;
-                localShift.TotalCashDrops = shiftDto.TotalCashDrops;
-                localShift.ExpectedBalance = shiftDto.ExpectedBalance;
-                localShift.Status = shiftDto.Status;
-            }
-            await db.SaveChangesAsync();
-        }
-        catch { }
-        finally
-        {
-            LocalPosDbContext.WriteLock.Release();
-        }
-    }
-
-    private async Task LoadOfflineShiftAndCategoriesAsync(int terminalId)
+    private async Task LoadOfflineCategoriesAsync()
     {
         using var db = new LocalPosDbContext();
         db.InitializeDatabase();
-
         var localCats = await db.CashMovementCategories.AsNoTracking().Where(c => c.IsActive).ToListAsync();
         if (localCats.Count > 0)
         {
@@ -882,78 +2693,12 @@
                 IsActive = c.IsActive
             }).ToList();
         }
-
-        if (!isOffline) return;
-
-        var localShift = await db.CashDrawerShifts
-            .AsNoTracking()
-            .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
-            .OrderByDescending(s => s.OpenedAt)
-            .FirstOrDefaultAsync();
-
-        if (localShift == null)
-        {
-            currentShift = null;
-            return;
-        }
-
-        var localMovements = await db.CashDrawerMovements
-            .AsNoTracking()
-            .Where(m => m.ShiftId == localShift.ShiftId)
-            .OrderByDescending(m => m.CreatedAt)
-            .ToListAsync();
-
-        decimal pettyCash = localMovements
-            .Where(m => m.Status == "POSTED" && m.MovementType == "PETTY_CASH")
-            .Sum(m => m.Amount);
-
-        currentShift = new CashDrawerShiftDto
-        {
-            ShiftId = localShift.ShiftId,
-            BranchId = localShift.BranchId,
-            TerminalId = localShift.TerminalId,
-            CashierId = localShift.CashierId,
-            OpeningFloat = localShift.OpeningFloat,
-            TotalCashSales = localShift.TotalCashSales,
-            TotalCashRefunds = localShift.TotalCashRefunds,
-            TotalCashIn = localShift.TotalCashIn,
-            TotalCashOut = localShift.TotalCashOut,
-            TotalCashDrops = localShift.TotalCashDrops,
-            TotalPettyCashOut = pettyCash,
-            ExpectedBalance = localShift.ExpectedBalance,
-            Status = localShift.Status,
-            OpenedAt = localShift.OpenedAt,
-            PendingApprovalsCount = localMovements.Count(m => m.Status == "PENDING_APPROVAL"),
-            Movements = localMovements.Select(m => new CashMovementResponseDto
-            {
-                MovementId = m.MovementId,
-                ShiftId = m.ShiftId,
-                BranchId = m.BranchId,
-                TerminalId = m.TerminalId,
-                MovementType = m.MovementType,
-                CategoryId = m.CategoryId,
-                CategoryName = m.CategoryName,
-                Amount = m.Amount,
-                Reason = m.Reason,
-                ReferenceNumber = m.ReferenceNumber,
-                ClientMovementId = m.ClientMovementId,
-                Status = m.Status,
-                CreatedBy = m.CreatedBy,
-                AuthorizedBy = m.AuthorizedBy,
-                ApprovedBy = m.ApprovedBy,
-                CreatedAt = m.CreatedAt,
-                ApprovedAt = m.ApprovedAt,
-                PostedAt = m.PostedAt,
-                SyncStatus = m.SyncStatus
-            }).ToList()
-        };
-        actualCounted = currentShift.ExpectedBalance;
     }
 
     private async Task OpenShift()
     {
         if (isSubmittingShift) return;
-        if (openingFloat < 0)
+        if (openFloatInput is null or < 0)
         {
             ShowAlert("Opening float cannot be negative.", isError: true);
             return;
@@ -967,65 +2712,28 @@
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
 
-            if (!isOffline)
+            var dto = new OpenShiftDto
             {
-                var dto = new OpenShiftDto
-                {
-                    BranchId = branchId,
-                    TerminalId = terminalId,
-                    OpeningFloat = openingFloat,
-                    Notes = shiftNotes
-                };
+                BranchId = branchId,
+                TerminalId = terminalId,
+                CashierId = Session.Username,
+                ClientShiftId = pendingOpenShiftId,
+                OpenedAt = DateTime.UtcNow,
+                OpeningFloat = openFloatInput,
+                Notes = shiftNotes
+            };
 
-                var response = await Http.PostAsJsonAsync("api/cash-drawer/open-shift", dto);
-                if (response.IsSuccessStatusCode)
-                {
-                    ShowAlert("Cash drawer shift opened successfully!", isError: false);
-                    await LoadShiftData();
-                }
-                else
-                {
-                    var err = await response.Content.ReadAsStringAsync();
-                    ShowAlert(err, isError: true);
-                }
-            }
-            else
-            {
-                await LocalPosDbContext.WriteLock.WaitAsync();
-                try
-                {
-                    using var db = new LocalPosDbContext();
-                    db.InitializeDatabase();
-                    var existing = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.Status == "OPEN");
-                    if (existing != null)
-                    {
-                        ShowAlert("An open shift already exists locally for this outlet.", isError: true);
-                        return;
-                    }
-
-                    long localShiftId = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                    db.CashDrawerShifts.Add(new LocalCashDrawerShift
-                    {
-                        ShiftId = localShiftId,
-                        BranchId = branchId,
-                        TerminalId = terminalId,
-                        CashierId = Session.Username ?? "offline_cashier",
-                        OpeningFloat = Math.Round(openingFloat, 2),
-                        ExpectedBalance = Math.Round(openingFloat, 2),
-                        Status = "OPEN",
-                        OpenedAt = DateTime.UtcNow,
-                        Notes = shiftNotes
-                    });
-                    await db.SaveChangesAsync();
-                }
-                finally
-                {
-                    LocalPosDbContext.WriteLock.Release();
-                }
-
-                ShowAlert("Offline cash drawer shift opened locally.", isError: false);
-                await LoadShiftData();
-            }
+            await ShiftSession.OpenAsync(Http, dto, Session.Username ?? "cashier", isOffline);
+            pendingOpenShiftId = Guid.NewGuid().ToString("N");
+            ResetDenominationCounts();
+            nonCashDeclarations.Clear();
+            activeTab = "CASH_COUNT";
+            hasStartedCounting = false;
+            requiresRecountConfirmationAfterMovement = false;
+            isReviewingClose = false;
+            isDeclarationConfirmed = false;
+            ShowAlert("Cash drawer shift opened successfully!", isError: false);
+            await LoadShiftData();
         }
         catch (Exception ex)
         {
@@ -1050,11 +2758,6 @@
         if (string.IsNullOrWhiteSpace(movementReason))
         {
             ShowAlert("Reason / particulars is required for all cash movements.", isError: true);
-            return;
-        }
-        if (IsOutflow(movementType) && rounded > currentShift.ExpectedBalance)
-        {
-            ShowAlert($"Insufficient cash in drawer! Available expected cash is ₱{currentShift.ExpectedBalance:N2}, requested is ₱{rounded:N2}.", isError: true);
             return;
         }
 
@@ -1095,6 +2798,7 @@
                     var created = await response.Content.ReadFromJsonAsync<CashMovementResponseDto>();
                     showConfirmModal = false;
                     ResetMovementForm();
+                    MarkCashMovementPostedDuringCounting();
                     await LoadShiftData();
                     if (created != null)
                     {
@@ -1136,7 +2840,6 @@
             db.InitializeDatabase();
             using var tx = await db.Database.BeginTransactionAsync();
 
-            // Prevent duplicate local ClientMovementId
             if (await db.CashDrawerMovements.AnyAsync(m => m.ClientMovementId == pendingClientMovementId))
             {
                 showConfirmModal = false;
@@ -1155,7 +2858,7 @@
             if (IsOutflow(movementType) && movementAmount > localShift.ExpectedBalance)
             {
                 showConfirmModal = false;
-                ShowAlert($"Insufficient offline drawer balance (Available: ₱{localShift.ExpectedBalance:N2}).", isError: true);
+                ShowAlert("Insufficient cash in drawer for the requested paid-out/drop amount.", isError: true);
                 return;
             }
 
@@ -1190,7 +2893,6 @@
                 verifiedApprover = Session.Username ?? "offline_cashier";
             }
 
-            // Critical Offline Rule: If approval is required and cannot be cryptographically verified against a supervisor PIN hash, keep PENDING_APPROVAL
             string status = (CurrentSelectionRequiresApproval && verifiedApprover == null) ? "PENDING_APPROVAL" : "POSTED";
             var now = DateTime.UtcNow;
 
@@ -1258,6 +2960,7 @@
 
             showConfirmModal = false;
             ResetMovementForm();
+            MarkCashMovementPostedDuringCounting();
             await LoadShiftData();
 
             selectedVoucher = currentShift?.Movements.FirstOrDefault(m => m.ClientMovementId == localMovement.ClientMovementId);
@@ -1356,6 +3059,10 @@
 
             if (response.IsSuccessStatusCode)
             {
+                if (actionModalType is "APPROVE" or "REVERSE")
+                {
+                    MarkCashMovementPostedDuringCounting();
+                }
                 ShowAlert($"Movement {actionModalMovement.ReferenceNumber} {actionModalType.ToLowerInvariant()}d successfully.", isError: false);
                 CloseSupervisorActionModal();
                 await LoadShiftData();
@@ -1373,56 +3080,6 @@
         finally
         {
             isSubmittingAction = false;
-        }
-    }
-
-    private async Task CloseShift()
-    {
-        if (currentShift == null || isSubmittingShift) return;
-
-        decimal diff = Math.Round(actualCounted - currentShift.ExpectedBalance, 2);
-        bool confirm = await Swal.FireAsync(new SweetAlertOptions
-        {
-            Title = "Close Drawer Shift & Reconcile?",
-            Text = $"Expected Cash: ₱{currentShift.ExpectedBalance:N2} | Counted Cash: ₱{actualCounted:N2} | Over/(Short): ₱{diff:N2}. Proceed?",
-            Icon = SweetAlertIcon.Warning,
-            ShowCancelButton = true,
-            ConfirmButtonText = "Yes, Close Shift"
-        }).ContinueWith(t => t.Result.IsConfirmed);
-
-        if (!confirm) return;
-
-        isSubmittingShift = true;
-        try
-        {
-            var dto = new CloseShiftDto
-            {
-                ShiftId = currentShift.ShiftId,
-                ActualCountedBalance = actualCounted,
-                Notes = closingNotes
-            };
-
-            var response = await Http.PostAsJsonAsync("api/cash-drawer/close-shift", dto);
-            if (response.IsSuccessStatusCode)
-            {
-                ShowAlert($"Cash drawer shift closed! Over/(Short): ₱{diff:N2}", isError: false);
-                actualCounted = 0.00m;
-                closingNotes = string.Empty;
-                await LoadShiftData();
-            }
-            else
-            {
-                var err = await response.Content.ReadAsStringAsync();
-                ShowAlert(err, isError: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowAlert(ex.Message, isError: true);
-        }
-        finally
-        {
-            isSubmittingShift = false;
         }
     }
 

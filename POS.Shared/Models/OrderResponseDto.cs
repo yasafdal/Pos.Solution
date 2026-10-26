@@ -8,8 +8,12 @@ public class OrderResponseDto
     public long OrderId { get; set; }
     public string OrderNumber { get; set; } = null!;
     public int BranchId { get; set; }
+    public string BranchName { get; set; } = string.Empty;
     public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
     public int TerminalId { get; set; }
+    public string TerminalCode { get; set; } = string.Empty;
+    public string TerminalName { get; set; } = "Unknown / Legacy Terminal";
     public string? TableNumber { get; set; }
     public int? HeadCount { get; set; }
     public string CashierId { get; set; } = null!;

@@ -231,6 +231,23 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         }
                     }
 
+                    if (data.PaymentMethods != null && data.PaymentMethods.Count > 0)
+                    {
+                        await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalPaymentMethods;");
+                        foreach (var pm in data.PaymentMethods)
+                        {
+                            db.PaymentMethods.Add(new LocalPaymentMethod
+                            {
+                                PaymentMethodId = pm.PaymentMethodId,
+                                Code = pm.Code,
+                                Name = pm.Name,
+                                IsActive = pm.IsActive,
+                                RequiresReference = pm.RequiresReference,
+                                DisplayOrder = pm.DisplayOrder
+                            });
+                        }
+                    }
+
                     // Retire cached acknowledged shifts absent from the server snapshot; never revive a closed drawer offline.
                     foreach (var stale in await db.CashDrawerShifts.Where(s => s.TerminalId == terminalId && s.Status == "OPEN" && s.ShiftId > 0).ToListAsync())
                         if (data.ActiveShift == null || stale.ShiftId != data.ActiveShift.ShiftId) stale.Status = "CLOSED";

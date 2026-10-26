@@ -1,38 +1,76 @@
 @page "/returns-management"
+@using System.Security.Claims
+@using System.Text
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
 @inject HttpClient Http
+@inject IBranchService BranchService
+@inject IOutletService OutletService
+@inject ITerminalService TerminalService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
 @inject CurrieTechnologies.Razor.SweetAlert2.SweetAlertService Swal
 
 <PageTitle>Returns & Voids Management - POS Admin</PageTitle>
 
 <div class="w-100 py-2">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
         <div>
             <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Returns & Voids Audit</h2>
-            <span class="text-secondary" style="font-size: 0.95rem;">Monitor processed product returns, refunds, and full transaction voids</span>
+            <span class="text-secondary" style="font-size: 0.95rem;">Monitor processed product returns, refund methods, and full transaction voids across Branch → Outlet → Terminal</span>
         </div>
-        <div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary rounded px-3 py-2 fw-semibold shadow-sm" @onclick="ExportReport">
+                <i class="bi bi-download me-1"></i> Export CSV
+            </button>
             <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm" @onclick="LoadData">
                 <i class="bi bi-arrow-repeat me-1"></i> Refresh Data
             </button>
         </div>
     </div>
 
-    <!-- Enhanced Filter & Search Card -->
+    <!-- Cascading Filter & Search Card -->
     <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-white">
         <div class="row g-3 align-items-end">
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Search Invoice / Ref #</label>
                 <input type="text" class="form-control form-control-sm rounded-3" placeholder="e.g. RET-1234 or INV-001" @bind="searchTerm" @bind:event="oninput" />
             </div>
             <div class="col-md-2">
-                <label class="form-label text-dark fw-semibold small mb-1">Branch ID</label>
-                <input type="number" class="form-control form-control-sm rounded-3" placeholder="All Branches" @bind="filterBranchId" />
+                <label class="form-label text-dark fw-semibold small mb-1">Branch</label>
+                <select class="form-select form-select-sm rounded-3" value="@(filterBranchId?.ToString() ?? "")" @onchange="OnBranchChanged" disabled="@(lockedBranchId.HasValue)">
+                    @if (!lockedBranchId.HasValue)
+                    {
+                        <option value="">All Branches</option>
+                    }
+                    @foreach (var b in AuthorizedBranches)
+                    {
+                        <option value="@b.BranchId">@b.Name (@b.Code)</option>
+                    }
+                </select>
             </div>
             <div class="col-md-2">
-                <label class="form-label text-dark fw-semibold small mb-1">Terminal ID</label>
-                <input type="number" class="form-control form-control-sm rounded-3" placeholder="All Terminals" @bind="filterTerminalId" />
+                <label class="form-label text-dark fw-semibold small mb-1">Outlet</label>
+                <select class="form-select form-select-sm rounded-3" value="@(filterOutletId?.ToString() ?? "")" @onchange="OnOutletChanged">
+                    <option value="">All Outlets</option>
+                    @foreach (var o in FilteredOutlets)
+                    {
+                        <option value="@o.OutletId">@o.Name (@o.OutletCode)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Terminal</label>
+                <select class="form-select form-select-sm rounded-3" value="@(filterTerminalId?.ToString() ?? "")" @onchange="OnTerminalChanged" disabled="@(lockedTerminalId.HasValue)">
+                    @if (!lockedTerminalId.HasValue)
+                    {
+                        <option value="">All Terminals</option>
+                    }
+                    @foreach (var t in FilteredTerminals)
+                    {
+                        <option value="@t.TerminalId">@t.Name (@t.TerminalCode)</option>
+                    }
+                </select>
             </div>
             <div class="col-md-2">
                 <label class="form-label text-dark fw-semibold small mb-1">Status</label>
@@ -43,9 +81,9 @@
                     <option value="APPROVED">Approved</option>
                 </select>
             </div>
-            <div class="col-md-3 d-flex gap-2">
+            <div class="col-md-2 d-flex gap-2">
                 <button class="btn btn-primary btn-sm rounded-3 px-3 fw-bold shadow-sm w-100 py-2" @onclick="LoadData">
-                    Apply Filter
+                    Apply
                 </button>
                 <button class="btn btn-outline-secondary btn-sm rounded-3 px-3 fw-medium w-100 py-2" @onclick="ResetFilters">
                     Reset
@@ -56,8 +94,9 @@
 
     <!-- Returns Table Card -->
     <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white mb-4">
-        <div class="card-header bg-light py-3 px-4">
+        <div class="card-header bg-light py-3 px-4 d-flex justify-content-between align-items-center">
             <h5 class="fw-bold text-dark mb-0"><i class="bi bi-arrow-counterclockwise text-warning me-2"></i> Processed Sales Returns</h5>
+            <span class="badge bg-warning-subtle text-dark border">Total Refunds: ₱@(FilteredReturns.Sum(r => r.TotalRefundAmount).ToString("N2"))</span>
         </div>
         @if (returnsList == null)
         {
@@ -78,11 +117,11 @@
                 <table class="table align-middle mb-0">
                     <thead class="table-light text-uppercase fs-7 text-secondary">
                         <tr>
-                            <th class="py-3 px-4">Ref #</th>
-                            <th class="py-3">Order ID</th>
-                            <th class="py-3">Reason</th>
-                            <th class="py-3">Requested By</th>
-                            <th class="py-3">Approved By</th>
+                            <th class="py-3 px-4">Ref # / Invoice</th>
+                            <th class="py-3">Branch → Outlet → Terminal</th>
+                            <th class="py-3">Reason & Items</th>
+                            <th class="py-3">Refund Method</th>
+                            <th class="py-3">Requested / Approved</th>
                             <th class="py-3">Date</th>
                             <th class="py-3 text-end px-4">Refund Amount</th>
                         </tr>
@@ -91,13 +130,30 @@
                         @foreach (var r in FilteredReturns)
                         {
                             <tr>
-                                <td class="px-4 fw-bold font-monospace text-primary">@r.ReturnReference</td>
-                                <td>#@r.OriginalOrderId</td>
-                                <td>@r.ReturnReason</td>
-                                <td>@r.RequestedBy</td>
-                                <td>@r.ApprovedBy</td>
+                                <td class="px-4">
+                                    <div class="fw-bold font-monospace text-primary">@r.ReturnReference</div>
+                                    <small class="text-muted">Order #@r.OriginalOrderId • @(r.OriginalInvoiceNumber ?? "No Inv")</small>
+                                </td>
+                                <td class="small">
+                                    <div class="fw-semibold text-dark">@r.BranchName → @r.OutletName</div>
+                                    <span class="badge bg-light text-dark border">@r.TerminalName (@r.TerminalCode)</span>
+                                </td>
+                                <td>
+                                    <div class="fw-medium">@r.ReturnReason</div>
+                                    @if (r.ReturnItems != null && r.ReturnItems.Any())
+                                    {
+                                        <small class="text-secondary">
+                                            @string.Join(", ", r.ReturnItems.Select(i => $"{i.ProductName} x{i.Quantity:0.##}"))
+                                        </small>
+                                    }
+                                </td>
+                                <td><span class="badge bg-secondary-subtle text-dark">@r.RefundMethod</span></td>
+                                <td class="small">
+                                    <div>Req: <strong>@r.RequestedBy</strong></div>
+                                    <div class="text-success">Appr: @r.ApprovedBy</div>
+                                </td>
                                 <td class="text-secondary small">@r.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                                <td class="text-end px-4 fw-bold text-success">₱@r.TotalRefundAmount.ToString("N2")</td>
+                                <td class="text-end px-4 fw-bold text-danger">-₱@r.TotalRefundAmount.ToString("N2")</td>
                             </tr>
                         }
                     </tbody>
@@ -108,8 +164,9 @@
 
     <!-- Voids Table Card -->
     <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white mb-4">
-        <div class="card-header bg-light py-3 px-4">
+        <div class="card-header bg-light py-3 px-4 d-flex justify-content-between align-items-center">
             <h5 class="fw-bold text-dark mb-0"><i class="bi bi-x-circle text-danger me-2"></i> Voided Transactions</h5>
+            <span class="badge bg-danger-subtle text-danger border">Total Voided: ₱@(FilteredVoids.Sum(v => v.VoidedAmount).ToString("N2"))</span>
         </div>
         @if (voidsList == null)
         {
@@ -131,12 +188,12 @@
                     <thead class="table-light text-uppercase fs-7 text-secondary">
                         <tr>
                             <th class="py-3 px-4">Void Ref #</th>
-                            <th class="py-3">Order ID</th>
-                            <th class="py-3">Invoice #</th>
+                            <th class="py-3">Order / Invoice #</th>
+                            <th class="py-3">Branch → Outlet → Terminal</th>
                             <th class="py-3">Void Reason</th>
-                            <th class="py-3">Requested By</th>
-                            <th class="py-3">Approved By</th>
-                            <th class="py-3 text-end px-4">Voided At</th>
+                            <th class="py-3">Requested / Approved</th>
+                            <th class="py-3">Voided At</th>
+                            <th class="py-3 text-end px-4">Voided Amount</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -144,12 +201,21 @@
                         {
                             <tr>
                                 <td class="px-4 fw-bold font-monospace text-danger">@v.ReversalReference</td>
-                                <td>#@v.OriginalOrderId</td>
-                                <td class="font-monospace">@(v.OriginalInvoiceNumber ?? "—")</td>
+                                <td>
+                                    <div class="fw-semibold">#@v.OriginalOrderId</div>
+                                    <small class="font-monospace text-muted">@(v.OriginalInvoiceNumber ?? "—")</small>
+                                </td>
+                                <td class="small">
+                                    <div class="fw-semibold text-dark">@v.BranchName → @v.OutletName</div>
+                                    <span class="badge bg-light text-dark border">@v.TerminalName (@v.TerminalCode)</span>
+                                </td>
                                 <td>@v.VoidReason</td>
-                                <td>@v.RequestedBy</td>
-                                <td>@v.ApprovedBy</td>
-                                <td class="text-end px-4 text-secondary small">@v.VoidedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="small">
+                                    <div>Req: <strong>@v.RequestedBy</strong></div>
+                                    <div class="text-success">Appr: @v.ApprovedBy</div>
+                                </td>
+                                <td class="text-secondary small">@v.VoidedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="text-end px-4 fw-bold text-danger">₱@v.VoidedAmount.ToString("N2")</td>
                             </tr>
                         }
                     </tbody>
@@ -162,10 +228,30 @@
 @code {
     private List<ReturnResponseDto>? returnsList;
     private List<VoidResponseDto>? voidsList;
+    private List<BranchDto> allBranches = new();
+    private List<OutletDto> allOutlets = new();
+    private List<TerminalDto> allTerminals = new();
+
     private string searchTerm = string.Empty;
     private int? filterBranchId = null;
+    private int? filterOutletId = null;
     private int? filterTerminalId = null;
+    private int? lockedBranchId;
+    private int? lockedTerminalId;
     private string filterStatus = string.Empty;
+
+    private IEnumerable<BranchDto> AuthorizedBranches => lockedBranchId.HasValue
+        ? allBranches.Where(b => b.BranchId == lockedBranchId.Value)
+        : allBranches;
+
+    private IEnumerable<OutletDto> FilteredOutlets => filterBranchId.HasValue
+        ? allOutlets.Where(o => o.BranchId == filterBranchId.Value)
+        : (lockedBranchId.HasValue ? allOutlets.Where(o => o.BranchId == lockedBranchId.Value) : allOutlets);
+
+    private IEnumerable<TerminalDto> FilteredTerminals => allTerminals.Where(t =>
+        (!filterBranchId.HasValue || t.BranchId == filterBranchId.Value) &&
+        (!filterOutletId.HasValue || t.OutletId == filterOutletId.Value) &&
+        (!lockedTerminalId.HasValue || t.TerminalId == lockedTerminalId.Value));
 
     private IEnumerable<ReturnResponseDto> FilteredReturns =>
         returnsList == null ? Enumerable.Empty<ReturnResponseDto>() :
@@ -176,8 +262,10 @@
              (r.RequestedBy?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
              (r.ApprovedBy?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
              (r.OriginalInvoiceNumber?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
+             (r.TerminalName?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
              r.OriginalOrderId.ToString().Contains(searchTerm)) &&
             (!filterBranchId.HasValue || r.BranchId == filterBranchId.Value) &&
+            (!filterOutletId.HasValue || r.OutletId == filterOutletId.Value) &&
             (!filterTerminalId.HasValue || r.TerminalId == filterTerminalId.Value) &&
             (string.IsNullOrWhiteSpace(filterStatus) || r.Status.Equals(filterStatus, StringComparison.OrdinalIgnoreCase)));
 
@@ -190,21 +278,85 @@
              (v.RequestedBy?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
              (v.ApprovedBy?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
              (v.OriginalInvoiceNumber?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
+             (v.TerminalName?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
              v.OriginalOrderId.ToString().Contains(searchTerm)) &&
+            (!filterBranchId.HasValue || v.BranchId == filterBranchId.Value) &&
+            (!filterOutletId.HasValue || v.OutletId == filterOutletId.Value) &&
+            (!filterTerminalId.HasValue || v.TerminalId == filterTerminalId.Value) &&
             (string.IsNullOrWhiteSpace(filterStatus) || v.Status.Equals(filterStatus, StringComparison.OrdinalIgnoreCase)));
 
-    protected override async Task OnInitializedAsync() => await LoadData();
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var role = user.FindFirst(ClaimTypes.Role)?.Value ?? user.FindFirst("role")?.Value ?? "";
+            if (!role.Equals("Admin", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(user.FindFirst("branch_id")?.Value, out int bId))
+            {
+                lockedBranchId = bId;
+                filterBranchId = bId;
+            }
+            if (!role.Equals("Admin", StringComparison.OrdinalIgnoreCase) &&
+                !role.Equals("Manager", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(user.FindFirst("terminal_id")?.Value, out int tId))
+            {
+                lockedTerminalId = tId;
+                filterTerminalId = tId;
+            }
+        }
+
+        try
+        {
+            allBranches = await BranchService.GetBranchesAsync();
+            allOutlets = await OutletService.GetOutletsAsync(lockedBranchId);
+            allTerminals = await TerminalService.GetTerminalsAsync(outletId: null, branchId: lockedBranchId);
+        }
+        catch { }
+
+        await LoadData();
+    }
+
+    private void OnBranchChanged(ChangeEventArgs e)
+    {
+        filterBranchId = int.TryParse(e.Value?.ToString(), out int id) ? id : lockedBranchId;
+        filterOutletId = null;
+        if (!lockedTerminalId.HasValue) filterTerminalId = null;
+    }
+
+    private void OnOutletChanged(ChangeEventArgs e)
+    {
+        filterOutletId = int.TryParse(e.Value?.ToString(), out int id) ? id : null;
+        if (!lockedTerminalId.HasValue) filterTerminalId = null;
+    }
+
+    private void OnTerminalChanged(ChangeEventArgs e)
+    {
+        filterTerminalId = int.TryParse(e.Value?.ToString(), out int id) ? id : lockedTerminalId;
+        if (filterTerminalId.HasValue)
+        {
+            var term = allTerminals.FirstOrDefault(t => t.TerminalId == filterTerminalId.Value);
+            if (term != null)
+            {
+                filterBranchId = term.BranchId;
+                filterOutletId = term.OutletId;
+            }
+        }
+    }
 
     private async Task LoadData()
     {
         try
         {
-            var url = "api/returns?";
-            if (filterBranchId.HasValue) url += $"branchId={filterBranchId.Value}&";
-            if (filterTerminalId.HasValue) url += $"terminalId={filterTerminalId.Value}&";
+            var q = new List<string>();
+            if (filterBranchId.HasValue) q.Add($"branchId={filterBranchId.Value}");
+            if (filterOutletId.HasValue) q.Add($"outletId={filterOutletId.Value}");
+            if (filterTerminalId.HasValue) q.Add($"terminalId={filterTerminalId.Value}");
+            string qs = q.Count > 0 ? "?" + string.Join("&", q) : string.Empty;
 
-            returnsList = await Http.GetFromJsonAsync<List<ReturnResponseDto>>(url);
-            voidsList = await Http.GetFromJsonAsync<List<VoidResponseDto>>("api/returns/voids" + (filterBranchId.HasValue || filterTerminalId.HasValue ? $"?branchId={filterBranchId}&terminalId={filterTerminalId}" : ""));
+            returnsList = await Http.GetFromJsonAsync<List<ReturnResponseDto>>($"api/returns{qs}");
+            voidsList = await Http.GetFromJsonAsync<List<VoidResponseDto>>($"api/returns/voids{qs}");
         }
         catch (Exception ex)
         {
@@ -215,14 +367,27 @@
     private void ResetFilters()
     {
         searchTerm = string.Empty;
-        filterBranchId = null;
-        filterTerminalId = null;
+        filterBranchId = lockedBranchId;
+        filterOutletId = null;
+        filterTerminalId = lockedTerminalId;
         filterStatus = string.Empty;
         _ = LoadData();
     }
 
     private async Task ExportReport()
     {
-        await Swal.FireAsync("Export Authorized", "Returns & Voids audit report successfully prepared for CSV/Excel download.", SweetAlertIcon.Success);
+        var sb = new StringBuilder();
+        sb.AppendLine("\"Type\",\"Ref #\",\"Order ID\",\"Invoice #\",\"Branch\",\"Outlet\",\"Terminal Name\",\"Terminal Code\",\"Method\",\"Reason\",\"Requested By\",\"Approved By\",\"Date\",\"Amount\"");
+        foreach (var r in FilteredReturns)
+        {
+            sb.AppendLine($"\"RETURN\",\"{r.ReturnReference}\",{r.OriginalOrderId},\"{r.OriginalInvoiceNumber ?? ""}\",\"{r.BranchName.Replace("\"", "\"\"")}\",\"{r.OutletName.Replace("\"", "\"\"")}\",\"{r.TerminalName.Replace("\"", "\"\"")}\",\"{r.TerminalCode.Replace("\"", "\"\"")}\",\"{r.RefundMethod}\",\"{r.ReturnReason.Replace("\"", "\"\"")}\",\"{r.RequestedBy}\",\"{r.ApprovedBy}\",\"{r.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\",{r.TotalRefundAmount:0.00}");
+        }
+        foreach (var v in FilteredVoids)
+        {
+            sb.AppendLine($"\"VOID\",\"{v.ReversalReference}\",{v.OriginalOrderId},\"{v.OriginalInvoiceNumber ?? ""}\",\"{v.BranchName.Replace("\"", "\"\"")}\",\"{v.OutletName.Replace("\"", "\"\"")}\",\"{v.TerminalName.Replace("\"", "\"\"")}\",\"{v.TerminalCode.Replace("\"", "\"\"")}\",\"VOID\",\"{v.VoidReason.Replace("\"", "\"\"")}\",\"{v.RequestedBy}\",\"{v.ApprovedBy}\",\"{v.VoidedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\",{v.VoidedAmount:0.00}");
+        }
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var b64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("eval", $"{{ const a = document.createElement('a'); a.href = 'data:text/csv;base64,{b64}'; a.download = 'returns-voids-audit-{DateTime.UtcNow:yyyyMMddHHmmss}.csv'; a.click(); }}");
     }
 }

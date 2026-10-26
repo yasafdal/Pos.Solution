@@ -9,10 +9,11 @@ namespace POS.Shared.Services;
 
 public class HeldSaleService(HttpClient http) : IHeldSaleService
 {
-    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null)
+    public async Task<List<HeldSaleDto>> GetHeldSalesAsync(int? branchId = null, int? terminalId = null, int? outletId = null)
     {
         var url = "api/held-sales?";
         if (branchId.HasValue) url += $"branchId={branchId}&";
+        if (outletId.HasValue) url += $"outletId={outletId}&";
         if (terminalId.HasValue) url += $"terminalId={terminalId}&";
 
         return await http.GetFromJsonAsync<List<HeldSaleDto>>(url) ?? new();

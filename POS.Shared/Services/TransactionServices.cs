@@ -63,10 +63,11 @@ public class TransactionService(HttpClient http) : ITransactionService
         return await response.Content.ReadFromJsonAsync<ReturnResponseDto>();
     }
 
-    public async Task<List<ReturnResponseDto>> GetReturnsAsync(int? branchId = null, int? terminalId = null)
+    public async Task<List<ReturnResponseDto>> GetReturnsAsync(int? branchId = null, int? terminalId = null, int? outletId = null)
     {
         var url = "api/returns?";
         if (branchId.HasValue) url += $"branchId={branchId.Value}&";
+        if (outletId.HasValue) url += $"outletId={outletId.Value}&";
         if (terminalId.HasValue) url += $"terminalId={terminalId.Value}&";
         return await http.GetFromJsonAsync<List<ReturnResponseDto>>(url) ?? new();
     }
@@ -84,11 +85,13 @@ public class TransactionService(HttpClient http) : ITransactionService
         return await http.GetFromJsonAsync<TransactionSummaryDto>(url) ?? new();
     }
 }
+
 public class SalesReportApiService(HttpClient http) : ISalesReportService
 {
     public async Task<SalesReportResponseDto> GenerateReportAsync(SalesReportRequestDto request, System.Threading.CancellationToken cancellationToken = default)
     {
         var url = "api/sales-reports?";
+        if (request.DateFrom.HasValue) url += $"dateFrom={Uri.EscapeDataString(request.DateFrom.Value.ToString("o"))}&";
         if (request.DateTo.HasValue) url += $"dateTo={Uri.EscapeDataString(request.DateTo.Value.ToString("o"))}&";
         if (request.BranchId.HasValue) url += $"branchId={request.BranchId}&";
         if (request.TerminalId.HasValue) url += $"terminalId={request.TerminalId}&";

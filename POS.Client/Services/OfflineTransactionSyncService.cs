@@ -81,6 +81,10 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             }
             catch (Exception ex) { await UpdateOutboxStatusAsync(outboxItem.OutboxId, "RETRY_PENDING", ex.Message, true, DateTime.UtcNow.AddMinutes(1)); return false; }
         }
+        if (string.Equals(outboxItem.EntityType, "SHIFT_CLOSE", StringComparison.OrdinalIgnoreCase))
+        {
+            return await UploadShiftCloseAsync(outboxItem, httpClient);
+        }
         if (string.Equals(outboxItem.EntityType, "CASH_MOVEMENT", StringComparison.OrdinalIgnoreCase))
         {
             return await UploadCashMovementAsync(outboxItem, httpClient);
@@ -269,6 +273,97 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
             DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
 
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, nextStatus, ex.Message, incrementRetry: true, nextRetryAt: nextRetryTime);
+            return false;
+        }
+    }
+
+    private async Task<bool> UploadShiftCloseAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
+    {
+        try
+        {
+            var closing = System.Text.Json.JsonSerializer.Deserialize<CloseShiftDto>(outboxItem.PayloadJson)
+                ?? throw new InvalidOperationException("Missing queued shift closing payload.");
+
+            if (!string.IsNullOrWhiteSpace(closing.ClientShiftId))
+            {
+                using var dependencyDb = new LocalPosDbContext();
+                dependencyDb.InitializeDatabase();
+                var pendingOpening = await dependencyDb.SyncOutboxes.AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.EntityType == "SHIFT_OPEN" && o.EntityId == closing.ClientShiftId && o.Status != "SYNCED");
+                if (pendingOpening != null && !await UploadTransactionAsync(pendingOpening, httpClient))
+                {
+                    await UpdateOutboxStatusAsync(outboxItem.OutboxId, "RETRY_PENDING", "Waiting for opening shift acknowledgement before closing.", false, DateTime.UtcNow.AddMinutes(1));
+                    return false;
+                }
+            }
+
+            using (var ownerDb = new LocalPosDbContext())
+            {
+                ownerDb.InitializeDatabase();
+                var localShift = await ownerDb.CashDrawerShifts.AsNoTracking()
+                    .Where(s =>
+                        (!string.IsNullOrWhiteSpace(closing.ClientCloseId) && s.ClientCloseId == closing.ClientCloseId)
+                        || (!string.IsNullOrWhiteSpace(closing.ClientShiftId) && s.ClientShiftId == closing.ClientShiftId)
+                        || (closing.ShiftId != 0 && s.ShiftId == closing.ShiftId))
+                    .OrderByDescending(s => s.ShiftId)
+                    .FirstOrDefaultAsync();
+
+                if (localShift != null)
+                {
+                    if (localShift.ShiftId > 0) closing.ShiftId = localShift.ShiftId;
+                    if (!string.IsNullOrWhiteSpace(localShift.ClientShiftId)) closing.ClientShiftId = localShift.ClientShiftId;
+                    if (!string.IsNullOrWhiteSpace(localShift.CashierId)) closing.CashierId = localShift.CashierId;
+                    closing.BranchId = localShift.BranchId;
+                    closing.TerminalId = localShift.TerminalId;
+                }
+            }
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
+
+            var response = await httpClient.PostAsJsonAsync("api/cash-drawer/close-shift", closing);
+            if (response.IsSuccessStatusCode)
+            {
+                var closedDto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                if (closedDto != null && closedDto.ShiftId > 0 && closedDto.Status == "CLOSED")
+                {
+                    await ShiftSession.CacheAsync(closedDto);
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "SYNCED",
+                        null,
+                        incrementRetry: false,
+                        nextRetryAt: null,
+                        auditMessage: $"Synchronized offline shift closing {closing.ClientCloseId} for Shift #{closedDto.ShiftId}");
+                    return true;
+                }
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", await response.Content.ReadAsStringAsync(), incrementRetry: false, nextRetryAt: null);
+                return false;
+            }
+
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5 || OfflineRetryPolicy.IsPermanentFailureStatusCode((int)response.StatusCode);
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                $"Shift close upload failed ({response.StatusCode}): {await response.Content.ReadAsStringAsync()}",
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5;
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
             await UpdateOutboxStatusAsync(outboxItem.OutboxId, nextStatus, ex.Message, incrementRetry: true, nextRetryAt: nextRetryTime);
             return false;
         }
@@ -476,4 +571,3 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
         }
     }
 }
-

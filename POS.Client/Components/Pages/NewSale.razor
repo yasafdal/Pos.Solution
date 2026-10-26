@@ -166,31 +166,60 @@ else
                 else
                 {
                     var inCart = CartQuantityByProduct();
-                    <div class="products-grid">
-                        @foreach (var product in FilteredProducts)
+                    if (selectedCategoryId == null)
+                    {
+                        <!-- All Categories: Grouped by Category -->
+                        @foreach (var group in GroupedCategoryProducts)
                         {
-                            var cartQty = inCart.GetValueOrDefault(product.ProductId);
-                            var catColor = GetCategoryColor(product.CategoryId);
-                            <button type="button" @key="product.ProductId"
-                                    class="product-card @(cartQty > 0 ? "in-cart" : "")"
-                                    style="--category-color: @catColor;"
-                                    title="@product.Name"
-                                    @onclick="() => AddToCart(product)">
-                                @if (cartQty > 0)
-                                {
-                                    <span class="product-qty" aria-label="@cartQty in order">@cartQty</span>
-                                }
-                                <span class="product-name">@product.Name</span>
-                                <span class="product-bottom">
-                                    <span class="product-price">₱@product.Price.ToString("N2")@if (!string.IsNullOrEmpty(product.UnitOfMeasure)){<span class="product-uom">/@product.UnitOfMeasure</span>}</span>
-                                    @if (!string.IsNullOrWhiteSpace(product.ShortCode))
+                            <section class="category-group-section mb-4" @key="@(group.CategoryId ?? -1)">
+                                <div class="category-group-header">
+                                    <span class="category-heading-accent" style="--category-color: @group.ColorHex;" aria-hidden="true"></span>
+                                    <h5 class="category-group-title">@group.CategoryName</h5>
+                                    <span class="category-count-badge">@group.Products.Count</span>
+                                </div>
+                                <div class="products-grid">
+                                    @foreach (var product in group.Products)
                                     {
-                                        <span class="product-code">@product.ShortCode</span>
+                                        var cartQty = inCart.GetValueOrDefault(product.ProductId);
+                                        var catColor = group.ColorHex;
+                                        <button type="button" @key="product.ProductId"
+                                                class="product-card @(cartQty > 0 ? "in-cart" : "")"
+                                                style="--category-color: @catColor;"
+                                                title="@product.Name"
+                                                @onclick="() => AddToCart(product)">
+                                            @if (cartQty > 0)
+                                            {
+                                                <span class="product-qty" aria-label="@cartQty in order">@cartQty</span>
+                                            }
+                                            <span class="product-name">@product.Name</span>
+                                        </button>
                                     }
-                                </span>
-                            </button>
+                                </div>
+                            </section>
                         }
-                    </div>
+                    }
+                    else
+                    {
+                        <!-- Single Category View -->
+                        <div class="products-grid">
+                            @foreach (var product in FilteredProducts)
+                            {
+                                var cartQty = inCart.GetValueOrDefault(product.ProductId);
+                                var catColor = GetCategoryColor(product.CategoryId);
+                                <button type="button" @key="product.ProductId"
+                                        class="product-card @(cartQty > 0 ? "in-cart" : "")"
+                                        style="--category-color: @catColor;"
+                                        title="@product.Name"
+                                        @onclick="() => AddToCart(product)">
+                                    @if (cartQty > 0)
+                                    {
+                                        <span class="product-qty" aria-label="@cartQty in order">@cartQty</span>
+                                    }
+                                    <span class="product-name">@product.Name</span>
+                                </button>
+                            }
+                        </div>
+                    }
                 }
             </div>
             }
@@ -218,7 +247,7 @@ else
                         <div class="d-flex gap-2">
                             <div class="flex-fill">
                                 <div class="input-group input-group-sm">
-                                    <span class="input-group-text bg-white py-1"><i class="bi bi-grid-3x3-gap"></i></span>
+                                    <span class="input-group-text py-1"><i class="bi bi-grid-3x3-gap"></i></span>
                                     <input type="text" class="form-control py-1" placeholder="Table #" @bind="tableNumber" />
                                 </div>
                             </div>
@@ -226,7 +255,7 @@ else
                             {
                                 <div style="width: 105px;">
                                     <div class="input-group input-group-sm">
-                                        <span class="input-group-text bg-white py-1" title="Guests / Pax"><i class="bi bi-people"></i></span>
+                                        <span class="input-group-text py-1" title="Guests / Pax"><i class="bi bi-people"></i></span>
                                         <input type="number" class="form-control py-1" min="1" max="99" placeholder="Pax" @bind="headCount" />
                                     </div>
                                 </div>
@@ -374,37 +403,42 @@ else
     <!-- Customization Modal -->
     @if (isCustomizationOpen && customizingProduct != null)
     {
-        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px);" role="dialog" aria-modal="true">
+        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(5px); z-index: 1060;" role="dialog" aria-modal="true">
             <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg customization-modal-dialog">
-                <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-content customization-modal-content border-0 rounded-4 shadow-lg overflow-hidden">
                     <!-- Modal Header -->
-                    <div class="modal-header border-bottom px-4 py-3 bg-white d-flex justify-content-between align-items-center">
+                    <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
                         <div class="d-flex align-items-center gap-3">
                             <div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
-                                    <h5 class="modal-title fw-bold text-dark mb-0">Customize @customizingProduct.Name</h5>
+                                    <h4 class="modal-title fw-bold text-white mb-0">@customizingProduct.Name</h4>
                                     @if (!string.IsNullOrEmpty(customizingProduct.CategoryName))
                                     {
                                         var catColor = GetCategoryColor(customizingProduct.CategoryId);
-                                        <span class="badge rounded-pill px-2.5 py-1" style="background-color: @(catColor)1a; color: @catColor; border: 1px solid @(catColor)33;">
+                                        <span class="badge rounded-pill px-2.5 py-1" style="background-color: @(catColor)22; color: @catColor; border: 1px solid @(catColor)44;">
                                             @customizingProduct.CategoryName
                                         </span>
                                     }
                                 </div>
-                                <div class="text-secondary small mt-1">
-                                    Base Price: <strong class="text-dark">₱@customizingProduct.Price.ToString("N2")</strong>
+                                <div class="text-secondary small mt-1 d-flex align-items-center gap-2">
+                                    @if (customizingProduct.Price > 0)
+                                    {
+                                        <span>Base Price: <strong class="text-white">₱@customizingProduct.Price.ToString("N2")</strong></span>
+                                    }
                                     @if (!string.IsNullOrEmpty(customizingProduct.SKU))
                                     {
-                                        <span class="text-muted ms-2">• SKU: @customizingProduct.SKU</span>
+                                        <span class="text-muted">• SKU: @customizingProduct.SKU</span>
                                     }
                                 </div>
                             </div>
                         </div>
-                        <button type="button" class="btn-close shadow-none" @onclick="CloseCustomizationModal" aria-label="Close"></button>
+                        <button type="button" class="btn btn-link text-secondary p-1 modal-close-btn" @onclick="CloseCustomizationModal" aria-label="Close" title="Cancel">
+                            <i class="bi bi-x-lg fs-5"></i>
+                        </button>
                     </div>
 
                     <!-- Modal Body -->
-                    <div class="modal-body px-4 py-3 bg-light-subtle">
+                    <div class="modal-body px-4 py-3">
                         @if (!string.IsNullOrEmpty(customizationError))
                         {
                             <div class="alert alert-danger d-flex align-items-center gap-2 py-2 mb-3 rounded-3" role="alert">
@@ -416,160 +450,133 @@ else
                         @foreach (var group in currentModifierGroups)
                         {
                             var set = selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var s) ? s : new HashSet<int>();
-                            var isSugar = IsSugarGroup(group);
+                            var isRadio = group.MaxSelections == 1;
                             var groupVisuals = GetModifierGroupVisuals(group);
+                            var isRequired = group.IsRequired || group.MinSelections > 0;
+                            var requiredMin = group.IsRequired ? Math.Max(1, group.MinSelections) : group.MinSelections;
+                            var isFulfilled = (!isRequired || set.Count >= requiredMin) && (group.MaxSelections <= 0 || set.Count <= group.MaxSelections);
 
-                            <div class="modifier-group-section mb-4 p-3 bg-white rounded-4 border shadow-sm">
-                                <div class="d-flex justify-content-between align-items-center mb-3">
+                            <section class="modifier-group-section mb-3 p-3 rounded-4" @key="group.ModifierGroupId">
+                                <div class="d-flex justify-content-between align-items-center mb-2.5 flex-wrap gap-2">
                                     <div class="d-flex align-items-center gap-2">
                                         <div class="group-icon-pill @groupVisuals.PillClass">
                                             <i class="bi @groupVisuals.IconClass fs-5"></i>
                                         </div>
                                         <div>
-                                            <h6 class="fw-bold text-dark mb-0">
+                                            <h6 class="fw-bold text-white mb-0">
                                                 @group.ModifierGroupName
-                                                @if (group.IsRequired || group.MinSelections > 0)
+                                                @if (isRequired)
                                                 {
-                                                    <span class="text-danger ms-1">*</span>
+                                                    <span class="text-danger ms-1" title="Required selection">*</span>
                                                 }
                                             </h6>
                                         </div>
                                     </div>
-                                    <div>
-                                        @if (group.IsRequired || group.MinSelections > 0)
+                                    <div class="d-flex align-items-center gap-2">
+                                        @if (isRequired)
                                         {
-                                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill px-2.5 py-1">
-                                                Required • @(group.MaxSelections == 1 ? "Select 1" : $"Select {group.MinSelections}-{group.MaxSelections}")
+                                            <span class="badge modifier-rule-badge required">
+                                                Required • @(isRadio ? "Choose 1" : (group.MinSelections == group.MaxSelections ? $"Choose {group.MinSelections}" : $"Choose {group.MinSelections}–{group.MaxSelections}"))
                                             </span>
                                         }
                                         else
                                         {
-                                            <span class="badge bg-secondary-subtle text-secondary rounded-pill px-2.5 py-1">
-                                                Optional @(group.MaxSelections > 0 ? $"(Max {group.MaxSelections})" : "")
+                                            <span class="badge modifier-rule-badge optional">
+                                                Optional @(group.MaxSelections > 0 ? $"• Max {group.MaxSelections}" : "")
                                             </span>
                                         }
+                                        <span class="small fw-semibold @(isFulfilled && set.Count > 0 ? "text-success" : "text-secondary")">
+                                            @if (isFulfilled && set.Count > 0)
+                                            {
+                                                <i class="bi bi-check2 me-1"></i>
+                                            }
+                                            (@set.Count@(group.MaxSelections > 0 ? $"/{group.MaxSelections}" : ""))
+                                        </span>
                                     </div>
                                 </div>
 
-                                @if (isSugar)
-                                {
-                                    <!-- Specialized Sugar Level Grid -->
-                                    <div class="sugar-selector-grid" role="group" aria-label="@group.ModifierGroupName">
-                                        @foreach (var option in group.Options.Where(o => o.IsActive).OrderBy(o => o.DisplayOrder))
-                                        {
-                                            var isSelected = set.Contains(option.ModifierOptionId);
-                                            var (pct, desc, fill, iconClass) = ParseSugarOption(option.Name);
-                                            <button type="button"
-                                                    class="sugar-option-card @(isSelected ? "selected" : "")"
-                                                    aria-pressed="@(isSelected ? "true" : "false")"
-                                                    @onclick="() => SelectRadioOption(group, option)">
-                                                <div class="sugar-card-header">
-                                                    <div class="d-flex align-items-center gap-2">
-                                                        <i class="bi @iconClass @(isSelected ? "text-primary" : "text-secondary") fs-5"></i>
-                                                        <span class="sugar-pct">@pct</span>
-                                                    </div>
-                                                    <span class="sugar-radio-indicator">
-                                                        @if (isSelected)
-                                                        {
-                                                            <i class="bi bi-check-circle-fill text-primary fs-5"></i>
-                                                        }
-                                                        else
-                                                        {
-                                                            <i class="bi bi-circle text-muted fs-5"></i>
-                                                        }
-                                                    </span>
-                                                </div>
-                                                @if (!string.IsNullOrEmpty(desc))
-                                                {
-                                                    <div class="sugar-desc">@desc</div>
-                                                }
-                                                <div class="sugar-meter-track" title="@pct sweetness">
-                                                    <div class="sugar-meter-fill" style="width: @(fill)%;"></div>
-                                                </div>
-                                                @if (option.Price > 0)
-                                                {
-                                                    <div class="sugar-price-tag">+₱@option.Price.ToString("N2")</div>
-                                                }
-                                            </button>
-                                        }
-                                    </div>
-                                }
-                                else
-                                {
-                                    <!-- Standard Modifier Card Grid -->
-                                    <div class="modifier-grid" role="group" aria-label="@group.ModifierGroupName">
-                                        @foreach (var option in group.Options.Where(o => o.IsActive).OrderBy(o => o.DisplayOrder))
-                                        {
-                                            var isSelected = set.Contains(option.ModifierOptionId);
-                                            <button type="button"
-                                                    class="modifier-card @(isSelected ? "selected" : "")"
-                                                    aria-pressed="@(isSelected ? "true" : "false")"
-                                                    @onclick="() => { if (group.MaxSelections == 1) SelectRadioOption(group, option); else ToggleCheckboxOption(group, option, !isSelected); }">
-                                                <div class="modifier-card-left">
-                                                    <span class="modifier-indicator">
-                                                        @if (group.MaxSelections == 1)
-                                                        {
-                                                            @if (isSelected)
-                                                            {
-                                                                <i class="bi bi-check-circle-fill text-primary fs-5"></i>
-                                                            }
-                                                            else
-                                                            {
-                                                                <i class="bi bi-circle text-muted fs-5"></i>
-                                                            }
-                                                        }
-                                                        else
-                                                        {
-                                                            @if (isSelected)
-                                                            {
-                                                                <i class="bi bi-check-square-fill text-primary fs-5"></i>
-                                                            }
-                                                            else
-                                                            {
-                                                                <i class="bi bi-square text-muted fs-5"></i>
-                                                            }
-                                                        }
-                                                    </span>
-                                                    <span class="modifier-name">@option.Name</span>
-                                                </div>
-                                                <div class="modifier-card-right">
-                                                    @if (option.Price > 0)
+                                <!-- Modifier Options Grid -->
+                                <div class="modifier-grid" role="group" aria-label="@group.ModifierGroupName">
+                                    @foreach (var option in group.Options.Where(o => o.IsActive).OrderBy(o => o.DisplayOrder))
+                                    {
+                                        var isSelected = set.Contains(option.ModifierOptionId);
+                                        <button type="button"
+                                                class="modifier-card @(isSelected ? "selected" : "")"
+                                                aria-pressed="@(isSelected ? "true" : "false")"
+                                                role="@(isRadio ? "radio" : "checkbox")"
+                                                aria-checked="@(isSelected ? "true" : "false")"
+                                                @onclick="() => { if (isRadio) SelectRadioOption(group, option); else ToggleCheckboxOption(group, option, !isSelected); }">
+                                            <div class="modifier-card-left">
+                                                <span class="modifier-indicator">
+                                                    @if (isRadio)
                                                     {
-                                                        <span class="price-badge extra">+₱@option.Price.ToString("N2")</span>
+                                                        <i class="bi @(isSelected ? "bi-check-circle-fill text-primary" : "bi-circle text-secondary") fs-5"></i>
                                                     }
                                                     else
                                                     {
-                                                        <span class="price-badge free">Included</span>
+                                                        <i class="bi @(isSelected ? "bi-check-square-fill text-primary" : "bi-square text-secondary") fs-5"></i>
                                                     }
-                                                </div>
-                                            </button>
-                                        }
-                                    </div>
-                                }
-                            </div>
+                                                </span>
+                                                <span class="modifier-name">@option.Name</span>
+                                            </div>
+                                            <div class="modifier-card-right">
+                                                @if (option.Price > 0)
+                                                {
+                                                    <span class="price-badge extra">+₱@option.Price.ToString("N2")</span>
+                                                }
+                                                else if (option.Price < 0)
+                                                {
+                                                    <span class="price-badge discount">-₱@Math.Abs(option.Price).ToString("N2")</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="price-badge free">Included</span>
+                                                }
+                                            </div>
+                                        </button>
+                                    }
+                                </div>
+                            </section>
                         }
                     </div>
 
                     <!-- Modal Footer -->
-                    <div class="modal-footer border-top bg-white px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div class="modal-footer border-top px-4 py-3 d-flex justify-content-between align-items-center flex-wrap gap-3">
                         <div>
-                            <span class="text-secondary small fw-semibold text-uppercase d-block" style="letter-spacing: 0.5px; font-size: 0.72rem;">Total Item Price</span>
+                            <span class="text-secondary small fw-bold text-uppercase d-block" style="letter-spacing: 0.5px; font-size: 0.72rem;">Total Item Price</span>
                             <div class="d-flex align-items-baseline gap-2">
                                 <div class="fw-bolder fs-3 text-primary">₱@CustomizationTotalPrice.ToString("N2")</div>
                                 @if (CustomizationTotalPrice > customizingProduct.Price)
                                 {
-                                    <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2 py-0.5 small">
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-2.5 py-0.5 small">
                                         +₱@((CustomizationTotalPrice - customizingProduct.Price).ToString("N2")) extras
                                     </span>
                                 }
                             </div>
                         </div>
-                        <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-outline-secondary px-4 py-2 rounded-3 fw-semibold" @onclick="CloseCustomizationModal">
+
+                        @{
+                            var validation = GetCustomizationValidationState();
+                        }
+
+                        @if (!validation.IsValid && !string.IsNullOrEmpty(validation.MissingMessage))
+                        {
+                            <div class="customization-validation-pill d-flex align-items-center gap-1.5 small">
+                                <i class="bi bi-info-circle-fill"></i>
+                                <span>@validation.MissingMessage</span>
+                            </div>
+                        }
+
+                        <div class="d-flex gap-2 ms-auto">
+                            <button type="button" class="btn btn-outline-secondary px-3.5 py-2 rounded-3 fw-semibold" @onclick="CloseCustomizationModal">
                                 Cancel
                             </button>
-                            <button type="button" class="btn btn-primary px-4 py-2 rounded-3 fw-bold shadow-sm d-flex align-items-center gap-2" @onclick="ConfirmCustomization">
-                                <i class="bi bi-cart-plus-fill"></i> Add to Cart
+                            <button type="button"
+                                    class="btn btn-primary px-4 py-2 rounded-3 fw-bold shadow-sm d-flex align-items-center gap-2"
+                                    disabled="@(!validation.IsValid)"
+                                    @onclick="ConfirmCustomization">
+                                <i class="bi bi-cart-plus-fill fs-5"></i>
+                                <span>Add to Cart</span>
                             </button>
                         </div>
                     </div>
@@ -604,7 +611,7 @@ else
                     </div>
                     <div class="d-flex align-items-center gap-2">
                         <!-- Touch-friendly Split Bill Toggle Pill -->
-                        <button type="button" 
+                        <button type="button"
                                 class="pos-split-pill-toggle @(isSplitPaymentMode ? "active" : "")"
                                 @onclick="() => ToggleSplitPayment(!isSplitPaymentMode)"
                                 role="switch"
@@ -1261,8 +1268,86 @@ else
                     (p.Barcode != null && p.Barcode.Contains(q, StringComparison.OrdinalIgnoreCase)));
             }
 
-            filteredCache = query.ToList();
+            filteredCache = query.OrderBy(p => p.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase).ToList();
             return filteredCache;
+        }
+    }
+
+    private sealed class CategoryProductGroup
+    {
+        public int? CategoryId { get; set; }
+        public string CategoryName { get; set; } = string.Empty;
+        public string ColorHex { get; set; } = POS.Shared.Helpers.CategoryColor.NeutralFallback;
+        public List<ProductDto> Products { get; set; } = new();
+    }
+
+    private List<CategoryProductGroup> groupedCache = new();
+    private List<ProductDto>? groupedCacheFilteredSource;
+
+    private List<CategoryProductGroup> GroupedCategoryProducts
+    {
+        get
+        {
+            var filtered = FilteredProducts;
+            if (ReferenceEquals(groupedCacheFilteredSource, filtered))
+                return groupedCache;
+
+            groupedCacheFilteredSource = filtered;
+
+            if (!filtered.Any())
+            {
+                groupedCache = new();
+                return groupedCache;
+            }
+
+            var productsByCategory = filtered
+                .GroupBy(p => p.CategoryId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderBy(p => p.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase).ToList()
+                );
+
+            var groups = new List<CategoryProductGroup>();
+            var knownCategoryIds = new HashSet<int>();
+
+            foreach (var cat in categories)
+            {
+                knownCategoryIds.Add(cat.CategoryId);
+                if (productsByCategory.TryGetValue(cat.CategoryId, out var prods) && prods.Any())
+                {
+                    groups.Add(new CategoryProductGroup
+                    {
+                        CategoryId = cat.CategoryId,
+                        CategoryName = cat.Name,
+                        ColorHex = GetCategoryColor(cat.CategoryId),
+                        Products = prods
+                    });
+                }
+            }
+
+            // Products with missing or unresolved categories placed under "Uncategorized"
+            var uncategorized = new List<ProductDto>();
+            foreach (var kvp in productsByCategory)
+            {
+                if (kvp.Key <= 0 || !knownCategoryIds.Contains(kvp.Key))
+                {
+                    uncategorized.AddRange(kvp.Value);
+                }
+            }
+
+            if (uncategorized.Any())
+            {
+                groups.Add(new CategoryProductGroup
+                {
+                    CategoryId = null,
+                    CategoryName = "Uncategorized",
+                    ColorHex = POS.Shared.Helpers.CategoryColor.NeutralFallback,
+                    Products = uncategorized.OrderBy(p => p.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase).ToList()
+                });
+            }
+
+            groupedCache = groups;
+            return groupedCache;
         }
     }
 
@@ -1370,7 +1455,7 @@ else
                 // OFFLINE FALLBACK: Read exact product-modifier mapping from isolated local SQLite database
                 using var db = new POS.Client.Data.LocalPosDbContext();
                 db.InitializeDatabase();
-                
+
                 var mappedGroupIds = db.ProductModifierGroups
                     .AsNoTracking()
                     .Where(pmg => pmg.ProductId == product.ProductId)
@@ -1416,7 +1501,7 @@ else
                     });
                 }
             }
-        
+
             if (groups != null && groups.Any())
             {
                 customizingProduct = product;
@@ -1456,10 +1541,42 @@ else
             selectedOptionIdsByGroup[group.ModifierGroupId] = new HashSet<int>();
         }
         var set = selectedOptionIdsByGroup[group.ModifierGroupId];
-        set.Clear();
-        set.Add(option.ModifierOptionId);
+        if (!group.IsRequired && group.MinSelections == 0 && set.Contains(option.ModifierOptionId))
+        {
+            set.Clear();
+        }
+        else
+        {
+            set.Clear();
+            set.Add(option.ModifierOptionId);
+        }
         customizationError = null;
         StateHasChanged();
+    }
+
+    private (bool IsValid, string? MissingMessage) GetCustomizationValidationState()
+    {
+        if (customizingProduct == null) return (false, null);
+
+        foreach (var group in currentModifierGroups)
+        {
+            var set = selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var s) ? s : null;
+            int count = set?.Count ?? 0;
+
+            int requiredMin = group.IsRequired ? Math.Max(1, group.MinSelections) : group.MinSelections;
+            if (requiredMin > 0 && count < requiredMin)
+            {
+                int remaining = requiredMin - count;
+                var groupName = group.ModifierGroupName ?? "Modifier Group";
+                return (false, requiredMin == 1 ? $"Select an option for '{groupName}'." : $"Select {remaining} more option(s) for '{groupName}'.");
+            }
+            if (group.MaxSelections > 0 && count > group.MaxSelections)
+            {
+                return (false, $"Group '{group.ModifierGroupName}' allows at most {group.MaxSelections} selections.");
+            }
+        }
+
+        return (true, null);
     }
 
     private bool IsSugarGroup(ProductModifierGroupDto group)
@@ -1609,26 +1726,11 @@ else
     {
         if (customizingProduct == null) return;
 
-        foreach (var group in currentModifierGroups)
+        var validation = GetCustomizationValidationState();
+        if (!validation.IsValid)
         {
-            var set = selectedOptionIdsByGroup.TryGetValue(group.ModifierGroupId, out var s) ? s : new HashSet<int>();
-            int count = set.Count;
-
-            if (group.IsRequired && count < Math.Max(1, group.MinSelections))
-            {
-                customizationError = $"Please select at least {Math.Max(1, group.MinSelections)} option(s) for '{group.ModifierGroupName ?? "Modifier Group"}'.";
-                return;
-            }
-            if (group.MinSelections > 0 && count < group.MinSelections)
-            {
-                customizationError = $"Please select at least {group.MinSelections} option(s) for '{group.ModifierGroupName ?? "Modifier Group"}'.";
-                return;
-            }
-            if (group.MaxSelections > 0 && count > group.MaxSelections)
-            {
-                customizationError = $"Group '{group.ModifierGroupName ?? "Modifier Group"}' allows at most {group.MaxSelections} selections.";
-                return;
-            }
+            customizationError = validation.MissingMessage;
+            return;
         }
 
         var selectedModifiers = new List<ModifierOptionDto>();
@@ -2117,8 +2219,8 @@ else
                 };
 
                 var offlineResult = await OfflineCheckoutService.ProcessOfflineCashSaleAsync(
-                    offlineCreateDto, 
-                    cashTendered, 
+                    offlineCreateDto,
+                    cashTendered,
                     Session.Username ?? "cashier");
 
                 if (!offlineResult.Success)

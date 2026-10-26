@@ -13,6 +13,7 @@ public class LocalPosDbContext : DbContext
     public DbSet<LocalProductModifierGroup> ProductModifierGroups => Set<LocalProductModifierGroup>();
     public DbSet<LocalTax> Taxes => Set<LocalTax>();
     public DbSet<LocalDiscount> Discounts => Set<LocalDiscount>();
+    public DbSet<LocalPaymentMethod> PaymentMethods => Set<LocalPaymentMethod>();
     public DbSet<LocalTerminalConfig> TerminalConfigs => Set<LocalTerminalConfig>();
     public DbSet<LocalInvoiceSequence> InvoiceSequences => Set<LocalInvoiceSequence>();
     public DbSet<LocalOrder> Orders => Set<LocalOrder>();
@@ -75,6 +76,7 @@ public class LocalPosDbContext : DbContext
         modelBuilder.Entity<LocalProductModifierGroup>().ToTable("LocalProductModifierGroups");
         modelBuilder.Entity<LocalTax>().ToTable("LocalTaxes");
         modelBuilder.Entity<LocalDiscount>().ToTable("LocalDiscounts");
+        modelBuilder.Entity<LocalPaymentMethod>().ToTable("LocalPaymentMethods");
         modelBuilder.Entity<LocalTerminalConfig>().ToTable("LocalTerminalConfigs");
         modelBuilder.Entity<LocalInvoiceSequence>().ToTable("LocalInvoiceSequences");
         modelBuilder.Entity<LocalOrder>().ToTable("LocalOrders");
@@ -102,6 +104,8 @@ public class LocalPosDbContext : DbContext
                 // Ensure newly added columns and tables exist on existing SQLite files
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OutletId INTEGER NOT NULL DEFAULT 0;"); }
                 catch { /* Column already exists */ }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN ShiftId INTEGER NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN ClientShiftId TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OrderType TEXT NOT NULL DEFAULT 'DINING';"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN TableNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN HeadCount INTEGER NULL;"); } catch { }
@@ -111,6 +115,31 @@ public class LocalPosDbContext : DbContext
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
                 }
+
+                Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS LocalPaymentMethods (
+                        PaymentMethodId INTEGER PRIMARY KEY,
+                        Code TEXT NOT NULL,
+                        Name TEXT NOT NULL,
+                        RequiresReference INTEGER NOT NULL DEFAULT 0,
+                        IsActive INTEGER NOT NULL DEFAULT 1,
+                        DisplayOrder INTEGER NOT NULL DEFAULT 0
+                    );");
+
+                Database.ExecuteSqlRaw(@"
+                    INSERT INTO LocalPaymentMethods (PaymentMethodId, Code, Name, RequiresReference, IsActive, DisplayOrder)
+                    SELECT 1, 'CASH', 'Cash', 0, 1, 1
+                    WHERE NOT EXISTS (SELECT 1 FROM LocalPaymentMethods);
+                    INSERT INTO LocalPaymentMethods (PaymentMethodId, Code, Name, RequiresReference, IsActive, DisplayOrder)
+                    SELECT 2, 'GCASH', 'GCash', 1, 1, 2
+                    WHERE NOT EXISTS (SELECT 1 FROM LocalPaymentMethods WHERE Code = 'GCASH');
+                    INSERT INTO LocalPaymentMethods (PaymentMethodId, Code, Name, RequiresReference, IsActive, DisplayOrder)
+                    SELECT 3, 'MAYA', 'Maya', 1, 1, 3
+                    WHERE NOT EXISTS (SELECT 1 FROM LocalPaymentMethods WHERE Code = 'MAYA');
+                    INSERT INTO LocalPaymentMethods (PaymentMethodId, Code, Name, RequiresReference, IsActive, DisplayOrder)
+                    SELECT 4, 'CARD', 'Credit / Debit Card', 1, 1, 4
+                    WHERE NOT EXISTS (SELECT 1 FROM LocalPaymentMethods WHERE Code = 'CARD');
+                ");
 
                 Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS LocalHeldSales (
@@ -213,6 +242,11 @@ public class LocalPosDbContext : DbContext
 
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningConfirmed INTEGER NOT NULL DEFAULT 0;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClientShiftId TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClientCloseId TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClosingDenominationsJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClosingOriginalDeclarationJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClosingPaymentReconciliationsJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClosingRecountHistoryJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 // Enable WAL mode and busy_timeout for high concurrency and durability
                 Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
                 Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");
