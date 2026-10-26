@@ -327,4 +327,98 @@ public static partial class Program
         return Task.CompletedTask;
     }
 
+    private static Task Test40_BarAndKitchenRouting()
+    {
+        var receipt = new ReceiptDto
+        {
+            OrderId = 999,
+            OrderNumber = "ORD-TEST-40",
+            InvoiceNumber = "INV-TEST-40",
+            TerminalName = "POS-01",
+            CashierId = "cashier1",
+            OrderType = "DINING",
+            TableNumber = "5",
+            HeadCount = 2,
+            CreatedAt = DateTime.UtcNow,
+            Items = new()
+            {
+                new OrderItemResponseDto { ProductId = 1, ProductName = "Ribeye Steak", Quantity = 1, IsKitchenItem = true, IsBarItem = false },
+                new OrderItemResponseDto { ProductId = 2, ProductName = "Classic Mojito", Quantity = 2, IsKitchenItem = false, IsBarItem = true },
+                new OrderItemResponseDto { ProductId = 3, ProductName = "Irish Coffee Combo", Quantity = 1, IsKitchenItem = true, IsBarItem = true, Modifiers = new() { new() { ModifierName = "Extra Shot" } } },
+                new OrderItemResponseDto { ProductId = 4, ProductName = "Souvenir T-Shirt", Quantity = 1, IsKitchenItem = false, IsBarItem = false }
+            }
+        };
+
+        // 1. Generate tickets with independent assigned printers
+        var tickets = POS.Client.Services.PreparationTicketRouter.GenerateTickets(receipt, "Kitchen-Thermal-1", "Bar-Thermal-1");
+        Assert(tickets.Count == 2, $"Expected exactly 2 preparation tickets (Kitchen and Bar), got {tickets.Count}");
+
+        var kitchen = tickets.FirstOrDefault(t => t.Station == "KITCHEN");
+        Assert(kitchen != null, "Kitchen ticket must be generated.");
+        Assert(kitchen!.AssignedPrinterName == "Kitchen-Thermal-1", "Kitchen ticket must receive assigned kitchen printer.");
+        Assert(kitchen.OrderNumber == "ORD-TEST-40", "Kitchen ticket must preserve exact order number.");
+        Assert(kitchen.TableNumber == "5" && kitchen.HeadCount == 2, "Kitchen ticket must preserve table and guest metadata.");
+        Assert(kitchen.Items.Count == 2, "Kitchen ticket must contain exactly 2 items (Steak and Combo).");
+        Assert(kitchen.Items.Any(i => i.ProductName == "Ribeye Steak"), "Kitchen ticket must contain Ribeye Steak.");
+        Assert(kitchen.Items.Any(i => i.ProductName == "Irish Coffee Combo"), "Kitchen ticket must contain combined Combo item.");
+        Assert(!kitchen.Items.Any(i => i.ProductName == "Classic Mojito"), "Kitchen ticket must NOT contain Bar-only Mojito.");
+        Assert(!kitchen.Items.Any(i => i.ProductName == "Souvenir T-Shirt"), "Kitchen ticket must NOT contain non-preparation T-Shirt.");
+
+        var bar = tickets.FirstOrDefault(t => t.Station == "BAR");
+        Assert(bar != null, "Bar ticket must be generated.");
+        Assert(bar!.AssignedPrinterName == "Bar-Thermal-1", "Bar ticket must receive assigned bar printer.");
+        Assert(bar.OrderNumber == "ORD-TEST-40", "Bar ticket must preserve exact order number identical to kitchen.");
+        Assert(bar.TableNumber == "5" && bar.HeadCount == 2, "Bar ticket must preserve table and guest metadata.");
+        Assert(bar.Items.Count == 2, "Bar ticket must contain exactly 2 items (Mojito and Combo).");
+        Assert(bar.Items.Any(i => i.ProductName == "Classic Mojito"), "Bar ticket must contain Classic Mojito.");
+        Assert(bar.Items.Any(i => i.ProductName == "Irish Coffee Combo"), "Bar ticket must contain combined Combo item.");
+        Assert(!bar.Items.Any(i => i.ProductName == "Ribeye Steak"), "Bar ticket must NOT contain Kitchen-only Steak.");
+        Assert(!bar.Items.Any(i => i.ProductName == "Souvenir T-Shirt"), "Bar ticket must NOT contain non-preparation T-Shirt.");
+
+        // 2. Format HTML output and check station headers & BIR segregation
+        var kHtml = POS.Client.Services.PreparationTicketHtmlFormatter.Format(kitchen);
+        Assert(kHtml.Contains("*** KITCHEN ORDER ***"), "Kitchen HTML must display prominent kitchen order header.");
+        Assert(kHtml.Contains("Ribeye Steak"), "Kitchen HTML must render Ribeye Steak.");
+        Assert(kHtml.Contains("ORD-TEST-40"), "Kitchen HTML must render Order Number.");
+        Assert(kHtml.Contains("TABLE: 5"), "Kitchen HTML must render Table Number.");
+        Assert(kHtml.Contains("PREPARATION TICKET"), "Preparation ticket must identify as preparation ticket.");
+        Assert(!kHtml.Contains(".Append("), "Formatted preparation ticket must not contain code artifacts.");
+
+        var bHtml = POS.Client.Services.PreparationTicketHtmlFormatter.Format(bar);
+        Assert(bHtml.Contains("*** BAR ORDER ***"), "Bar HTML must display prominent bar order header.");
+        Assert(bHtml.Contains("Classic Mojito"), "Bar HTML must render Classic Mojito.");
+        Assert(bHtml.Contains("ORD-TEST-40"), "Bar HTML must render Order Number.");
+        Assert(bHtml.Contains("TABLE: 5"), "Bar HTML must render Table Number.");
+        Assert(!bHtml.Contains(".Append("), "Formatted bar ticket must not contain code artifacts.");
+
+        // 3. Retail-only order generates NO preparation tickets
+        var retailReceipt = new ReceiptDto
+        {
+            OrderNumber = "ORD-RETAIL",
+            Items = new() { new OrderItemResponseDto { ProductId = 10, ProductName = "Gift Bag", IsKitchenItem = false, IsBarItem = false } }
+        };
+        var noTickets = POS.Client.Services.PreparationTicketRouter.GenerateTickets(retailReceipt);
+        Assert(noTickets.Count == 0, "Order with no preparation routing must not generate any preparation tickets.");
+
+        // 4. Bar-only order generates ONLY Bar ticket
+        var barOnlyReceipt = new ReceiptDto
+        {
+            OrderNumber = "ORD-BAR",
+            Items = new() { new OrderItemResponseDto { ProductId = 11, ProductName = "Beer", IsKitchenItem = false, IsBarItem = true } }
+        };
+        var barTickets = POS.Client.Services.PreparationTicketRouter.GenerateTickets(barOnlyReceipt);
+        Assert(barTickets.Count == 1 && barTickets[0].Station == "BAR", "Bar-only order must generate exactly 1 Bar ticket.");
+
+        // 5. Kitchen-only order generates ONLY Kitchen ticket
+        var kitchenOnlyReceipt = new ReceiptDto
+        {
+            OrderNumber = "ORD-KITCHEN",
+            Items = new() { new OrderItemResponseDto { ProductId = 12, ProductName = "Fries", IsKitchenItem = true, IsBarItem = false } }
+        };
+        var kitchenTickets = POS.Client.Services.PreparationTicketRouter.GenerateTickets(kitchenOnlyReceipt);
+        Assert(kitchenTickets.Count == 1 && kitchenTickets[0].Station == "KITCHEN", "Kitchen-only order must generate exactly 1 Kitchen ticket.");
+
+        return Task.CompletedTask;
+    }
+
 }

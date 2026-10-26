@@ -1,14 +1,47 @@
 @inject IReceiptService ReceiptService
 @inject IReceiptPrinter ReceiptPrinter
+@using POS.Client.Services
+@using POS.Client.Data
+@using Microsoft.EntityFrameworkCore
 
 <div class="modal show d-block receipt-preview-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-title" style="background:rgba(15,23,42,.55)">
     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
         <div class="modal-content">
-            <div class="modal-header">
-                <h5 id="receipt-title" class="modal-title">Payment Successful</h5>
+            <div class="modal-header d-flex justify-content-between align-items-center">
+                <h5 id="receipt-title" class="modal-title mb-0">Payment Successful</h5>
+                <ul class="nav nav-pills gap-1 mb-0">
+                    <li class="nav-item">
+                        <button type="button" class="nav-link btn-sm py-1 px-3 @(activeTab == "receipt" ? "active" : "")" @onclick='() => activeTab = "receipt"'>
+                            <i class="bi bi-receipt me-1"></i> Receipt
+                            @if (receiptSentToPrinter) { <span class="badge bg-success ms-1"><i class="bi bi-check"></i></span> }
+                        </button>
+                    </li>
+                    @if (kitchenTicket != null)
+                    {
+                        <li class="nav-item">
+                            <button type="button" class="nav-link btn-sm py-1 px-3 @(activeTab == "kitchen" ? "active" : "")" @onclick='() => activeTab = "kitchen"'>
+                                <i class="bi bi-fire me-1"></i> Kitchen (@kitchenTicket.Items.Count)
+                                @if (kitchenSentToPrinter) { <span class="badge bg-success ms-1"><i class="bi bi-check"></i></span> }
+                            </button>
+                        </li>
+                    }
+                    @if (barTicket != null)
+                    {
+                        <li class="nav-item">
+                            <button type="button" class="nav-link btn-sm py-1 px-3 @(activeTab == "bar" ? "active" : "")" @onclick='() => activeTab = "bar"'>
+                                <i class="bi bi-cup-straw me-1"></i> Bar (@barTicket.Items.Count)
+                                @if (barSentToPrinter) { <span class="badge bg-success ms-1"><i class="bi bi-check"></i></span> }
+                            </button>
+                        </li>
+                    }
+                    <li class="nav-item">
+                        <button type="button" class="nav-link btn-sm py-1 px-2 @(activeTab == "settings" ? "active" : "")" @onclick='() => activeTab = "settings"' title="Printer Routing Settings">
+                            <i class="bi bi-gear-fill"></i>
+                        </button>
+                    </li>
+                </ul>
             </div>
             <div class="modal-body">
-                <p class="text-success fw-bold">Payment is saved. Printing does not affect your payment.</p>
                 @if (loading)
                 {
                     <p role="status">Loading saved receipt…</p>
@@ -16,19 +49,22 @@
                 @if (error != null)
                 {
                     <div class="alert alert-warning" role="alert">
-                        <strong>Payment Successful — Receipt Not Printed</strong>
+                        <strong>Printing Notice</strong>
                         <p class="mb-0">@error</p>
+                    </div>
+                }
+                @if (settingsSavedMessage != null)
+                {
+                    <div class="alert alert-success py-2 mb-3">
+                        <i class="bi bi-check-circle me-1"></i> @settingsSavedMessage
                     </div>
                 }
                 @if (printing)
                 {
-                    <p role="status">Sending receipt to printer. Closing does not cancel the print job. Check the Windows queue before retrying.</p>
+                    <p role="status" class="text-primary"><span class="spinner-border spinner-border-sm me-1"></span> @printingMessage</p>
                 }
-                @if (receiptSentToPrinter)
-                {
-                    <p role="status">Receipt sent to printer.</p>
-                }
-                @if (receipt != null)
+
+                @if (activeTab == "receipt" && receipt != null)
                 {
                     <article class="border rounded p-3 bg-white text-dark receipt-document">
                         <h5 class="text-center">@receipt.BranchName</h5>
@@ -56,7 +92,14 @@
                         @foreach (var item in receipt.Items)
                         {
                             <div class="mb-2" @key="item.OrderItemId">
-                                <div class="d-flex justify-content-between gap-3"><strong>@item.ProductName</strong><span>₱@item.LineTotal.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between gap-3">
+                                    <span>
+                                        <strong>@item.ProductName</strong>
+                                        @if (item.IsKitchenItem) { <span class="badge bg-warning bg-opacity-25 text-dark ms-1" style="font-size:0.65rem;">Kitchen</span> }
+                                        @if (item.IsBarItem) { <span class="badge bg-info bg-opacity-25 text-dark ms-1" style="font-size:0.65rem;">Bar</span> }
+                                    </span>
+                                    <span>₱@item.LineTotal.ToString("N2")</span>
+                                </div>
                                 <small>@item.Quantity.ToString("0.###") × ₱@item.UnitPrice.ToString("N2")</small>
                                 @foreach (var modifier in item.Modifiers)
                                 {
@@ -98,13 +141,126 @@
                         <small>Transaction receipt preview — not a BIR-compliant official invoice.</small>
                     </article>
                 }
+                else if (activeTab == "kitchen" && kitchenTicket != null)
+                {
+                    <article class="border rounded p-3 bg-white text-dark ticket-document">
+                        <div class="text-center p-2 mb-2 border border-2 border-dark rounded fw-bold fs-5">
+                            *** KITCHEN ORDER ***
+                        </div>
+                        <div class="p-2 mb-2 bg-dark text-white rounded text-center fw-bold">
+                            @(!string.IsNullOrWhiteSpace(kitchenTicket.TableNumber) ? $"TABLE: {kitchenTicket.TableNumber}" : "")
+                            @(kitchenTicket.HeadCount.HasValue && kitchenTicket.HeadCount > 0 ? $"({kitchenTicket.HeadCount} Guests)" : "")
+                            · @(kitchenTicket.OrderType ?? "DINING")
+                        </div>
+                        <div class="small">
+                            <div><strong>Order #: </strong>@kitchenTicket.OrderNumber</div>
+                            <div><strong>Server: </strong>@kitchenTicket.CashierId · <strong>Terminal: </strong>@kitchenTicket.TerminalName</div>
+                            <div><strong>Time: </strong>@kitchenTicket.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
+                            @if (!string.IsNullOrWhiteSpace(kitchenPrinterName))
+                            {
+                                <div><strong>Assigned Printer: </strong>@kitchenPrinterName</div>
+                            }
+                        </div>
+                        <hr class="border-2 border-dark" />
+                        @foreach (var item in kitchenTicket.Items)
+                        {
+                            <div class="mb-2">
+                                <div class="fs-6 fw-bold">@item.Quantity.ToString("0.###")x @item.ProductName</div>
+                                @foreach (var mod in item.Modifiers)
+                                {
+                                    <div class="small ps-3 fw-bold text-secondary">+ @mod</div>
+                                }
+                            </div>
+                        }
+                        <hr class="border-2 border-dark" />
+                        <div class="text-center small text-muted">PREPARATION TICKET — NOT A BIR TAX INVOICE</div>
+                    </article>
+                }
+                else if (activeTab == "bar" && barTicket != null)
+                {
+                    <article class="border rounded p-3 bg-white text-dark ticket-document">
+                        <div class="text-center p-2 mb-2 border border-2 border-primary rounded fw-bold fs-5 text-primary">
+                            *** BAR ORDER ***
+                        </div>
+                        <div class="p-2 mb-2 bg-primary text-white rounded text-center fw-bold">
+                            @(!string.IsNullOrWhiteSpace(barTicket.TableNumber) ? $"TABLE: {barTicket.TableNumber}" : "")
+                            @(barTicket.HeadCount.HasValue && barTicket.HeadCount > 0 ? $"({barTicket.HeadCount} Guests)" : "")
+                            · @(barTicket.OrderType ?? "DINING")
+                        </div>
+                        <div class="small">
+                            <div><strong>Order #: </strong>@barTicket.OrderNumber</div>
+                            <div><strong>Server: </strong>@barTicket.CashierId · <strong>Terminal: </strong>@barTicket.TerminalName</div>
+                            <div><strong>Time: </strong>@barTicket.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
+                            @if (!string.IsNullOrWhiteSpace(barPrinterName))
+                            {
+                                <div><strong>Assigned Printer: </strong>@barPrinterName</div>
+                            }
+                        </div>
+                        <hr class="border-2 border-dark" />
+                        @foreach (var item in barTicket.Items)
+                        {
+                            <div class="mb-2">
+                                <div class="fs-6 fw-bold">@item.Quantity.ToString("0.###")x @item.ProductName</div>
+                                @foreach (var mod in item.Modifiers)
+                                {
+                                    <div class="small ps-3 fw-bold text-secondary">+ @mod</div>
+                                }
+                            </div>
+                        }
+                        <hr class="border-2 border-dark" />
+                        <div class="text-center small text-muted">PREPARATION TICKET — NOT A BIR TAX INVOICE</div>
+                    </article>
+                }
+                else if (activeTab == "settings")
+                {
+                    <div class="border rounded p-3 bg-light">
+                        <h6 class="fw-bold mb-3"><i class="bi bi-printer me-1"></i> Preparation Printer Routing Settings</h6>
+                        <p class="small text-secondary mb-3">
+                            Configure destination printer names for Kitchen and Bar stations. Leave blank to use the operating system default printer.
+                        </p>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold small" for="kitchenPrinterInput">Kitchen Printer Name</label>
+                            <input id="kitchenPrinterInput" class="form-control" placeholder="e.g. POS-Kitchen-Thermal or network printer name" @bind="kitchenPrinterInput" />
+                            <small class="text-muted">Orders with Kitchen items route here.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold small" for="barPrinterInput">Bar Printer Name</label>
+                            <input id="barPrinterInput" class="form-control" placeholder="e.g. POS-Bar-Thermal or network printer name" @bind="barPrinterInput" />
+                            <small class="text-muted">Orders with Bar/beverage items route here.</small>
+                        </div>
+                        <button type="button" class="btn btn-primary btn-sm px-3" @onclick="SavePrinterSettings">
+                            <i class="bi bi-save me-1"></i> Save Printer Settings
+                        </button>
+                    </div>
+                }
             </div>
             <div class="modal-footer d-flex justify-content-between">
-                <button type="button" class="btn btn-outline-secondary px-3 py-2" @onclick="OnClose">@(printing ? "Close" : "Skip Printing")</button>
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-primary px-4 py-2" disabled="@(loading || printing)" @onclick="PrintReceipt">
-                        @(printing ? "Printing…" : error != null ? "Retry Print" : "Print Receipt")
+                <button type="button" class="btn btn-outline-secondary px-3 py-2" @onclick="OnClose">@(printing ? "Close" : "Skip / Done")</button>
+                <div class="d-flex gap-2 flex-wrap justify-content-end">
+                    <button type="button" class="btn btn-outline-primary px-3 py-2" disabled="@(loading || printing)" @onclick="PrintReceipt">
+                        <i class="bi bi-receipt me-1"></i>
+                        @(receiptSentToPrinter ? "Receipt (Re-print)" : "Print Receipt")
                     </button>
+                    @if (kitchenTicket != null)
+                    {
+                        <button type="button" class="btn btn-outline-warning text-dark px-3 py-2" disabled="@(loading || printing)" @onclick="PrintKitchenTicket">
+                            <i class="bi bi-fire me-1"></i>
+                            @(kitchenSentToPrinter ? "Kitchen (Re-print)" : "Print Kitchen")
+                        </button>
+                    }
+                    @if (barTicket != null)
+                    {
+                        <button type="button" class="btn btn-outline-info text-dark px-3 py-2" disabled="@(loading || printing)" @onclick="PrintBarTicket">
+                            <i class="bi bi-cup-straw me-1"></i>
+                            @(barSentToPrinter ? "Bar (Re-print)" : "Print Bar")
+                        </button>
+                    }
+                    @if (kitchenTicket != null || barTicket != null)
+                    {
+                        <button type="button" class="btn btn-primary px-3 py-2" disabled="@(loading || printing)" @onclick="PrintAllTickets">
+                            <i class="bi bi-printer-fill me-1"></i> Print All
+                        </button>
+                    }
                 </div>
             </div>
         </div>
@@ -116,31 +272,101 @@
     [Parameter] public ReceiptDto? OfflineReceipt { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
     private ReceiptDto? receipt;
+    private PreparationTicketDto? kitchenTicket;
+    private PreparationTicketDto? barTicket;
     private string? error;
     private bool loading;
     private bool printing;
+    private string printingMessage = "Sending to printer…";
     private bool receiptSentToPrinter;
+    private bool kitchenSentToPrinter;
+    private bool barSentToPrinter;
     private long loadedOrderId;
     private string? loadedInvoiceNumber;
+    private string activeTab = "receipt";
+
+    private string? kitchenPrinterName;
+    private string? barPrinterName;
+    private string? kitchenPrinterInput;
+    private string? barPrinterInput;
+    private string? settingsSavedMessage;
 
     protected override async Task OnParametersSetAsync()
     {
+        LoadConfiguredPrinters();
+
         if (OfflineReceipt != null)
         {
             if (loadedInvoiceNumber == OfflineReceipt.InvoiceNumber && receipt != null) return;
             loadedInvoiceNumber = OfflineReceipt.InvoiceNumber;
             receipt = OfflineReceipt;
+            GeneratePreparationTickets();
             error = null;
             loading = false;
             receiptSentToPrinter = false;
+            kitchenSentToPrinter = false;
+            barSentToPrinter = false;
             return;
         }
 
         if (loadedOrderId == OrderId) return;
         loadedOrderId = OrderId;
         receipt = null;
+        kitchenTicket = null;
+        barTicket = null;
         receiptSentToPrinter = false;
+        kitchenSentToPrinter = false;
+        barSentToPrinter = false;
         await LoadReceipt();
+    }
+
+    private void LoadConfiguredPrinters()
+    {
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var config = db.TerminalConfigs.FirstOrDefault();
+            kitchenPrinterName = config?.KitchenPrinterName;
+            barPrinterName = config?.BarPrinterName;
+            kitchenPrinterInput = kitchenPrinterName;
+            barPrinterInput = barPrinterName;
+        }
+        catch { }
+    }
+
+    private async Task SavePrinterSettings()
+    {
+        settingsSavedMessage = null;
+        error = null;
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var config = await db.TerminalConfigs.FirstOrDefaultAsync();
+            if (config != null)
+            {
+                config.KitchenPrinterName = string.IsNullOrWhiteSpace(kitchenPrinterInput) ? null : kitchenPrinterInput.Trim();
+                config.BarPrinterName = string.IsNullOrWhiteSpace(barPrinterInput) ? null : barPrinterInput.Trim();
+                await db.SaveChangesAsync();
+                kitchenPrinterName = config.KitchenPrinterName;
+                barPrinterName = config.BarPrinterName;
+                GeneratePreparationTickets();
+                settingsSavedMessage = "Printer configuration saved successfully.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to save printer settings: {ex.Message}";
+        }
+    }
+
+    private void GeneratePreparationTickets()
+    {
+        if (receipt == null) return;
+        var tickets = PreparationTicketRouter.GenerateTickets(receipt, kitchenPrinterName, barPrinterName);
+        kitchenTicket = tickets.FirstOrDefault(t => t.Station == "KITCHEN");
+        barTicket = tickets.FirstOrDefault(t => t.Station == "BAR");
     }
 
     private async Task LoadReceipt()
@@ -148,6 +374,7 @@
         if (OfflineReceipt != null)
         {
             receipt = OfflineReceipt;
+            GeneratePreparationTickets();
             error = null;
             return;
         }
@@ -157,7 +384,14 @@
         try
         {
             receipt = await ReceiptService.GetReceiptAsync(OrderId);
-            if (receipt == null) error = "Saved receipt could not be found. Retry receipt retrieval; do not take payment again.";
+            if (receipt == null)
+            {
+                error = "Saved receipt could not be found. Retry receipt retrieval; do not take payment again.";
+            }
+            else
+            {
+                GeneratePreparationTickets();
+            }
         }
         catch
         {
@@ -170,8 +404,8 @@
     {
         if (printing || loading) return;
         printing = true;
+        printingMessage = "Sending sales receipt to printer…";
         error = null;
-        receiptSentToPrinter = false;
         try
         {
             if (receipt == null) await LoadReceipt();
@@ -185,5 +419,66 @@
             error = $"Could not print receipt: {ex.Message}";
         }
         finally { printing = false; }
+    }
+
+    private async Task PrintKitchenTicket()
+    {
+        if (printing || kitchenTicket == null) return;
+        printing = true;
+        printingMessage = "Sending kitchen ticket to kitchen printer…";
+        error = null;
+        try
+        {
+            await ReceiptPrinter.PrintPreparationTicketAsync(kitchenTicket, kitchenPrinterName);
+            kitchenSentToPrinter = true;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Kitchen ticket printing failed: {ex}");
+            error = $"Could not print kitchen ticket: {ex.Message}";
+        }
+        finally { printing = false; }
+    }
+
+    private async Task PrintBarTicket()
+    {
+        if (printing || barTicket == null) return;
+        printing = true;
+        printingMessage = "Sending bar ticket to bar printer…";
+        error = null;
+        try
+        {
+            await ReceiptPrinter.PrintPreparationTicketAsync(barTicket, barPrinterName);
+            barSentToPrinter = true;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Bar ticket printing failed: {ex}");
+            error = $"Could not print bar ticket: {ex.Message}";
+        }
+        finally { printing = false; }
+    }
+
+    private async Task PrintAllTickets()
+    {
+        if (printing) return;
+
+        // 1. Print receipt if not printed yet
+        if (!receiptSentToPrinter && receipt != null)
+        {
+            await PrintReceipt();
+        }
+
+        // 2. Print kitchen ticket if available and not printed yet
+        if (kitchenTicket != null && !kitchenSentToPrinter)
+        {
+            await PrintKitchenTicket();
+        }
+
+        // 3. Print bar ticket if available and not printed yet
+        if (barTicket != null && !barSentToPrinter)
+        {
+            await PrintBarTicket();
+        }
     }
 }

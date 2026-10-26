@@ -28,7 +28,17 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
         if (order.PaymentStatus == "PAID")
             return Conflict("Order is already paid. Duplicate payment prevented.");
 
-        using var transaction = await context.Database.BeginTransactionAsync();
+        using var transaction = await context.Database.BeginTransactionAsync(context.Database.IsNpgsql() ? System.Data.IsolationLevel.ReadCommitted : System.Data.IsolationLevel.Serializable);
+        await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(context, order.TerminalId);
+        await context.Entry(order).ReloadAsync();
+        if (order.PaymentStatus == "PAID") return Conflict("Order is already paid.");
+        var cashier = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+        var activeShift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.TerminalId == order.TerminalId && s.Status == "OPEN" && s.OpeningConfirmed && s.CashierId == cashier && s.BranchId == order.BranchId);
+        if (order.CashierId != cashier) return Forbid();
+        if (activeShift == null) return Conflict("Open a shift and explicitly confirm opening float before payment.");
+        if (dto.ShiftId.HasValue && dto.ShiftId != activeShift.ShiftId) return Conflict("Shift changed; reopen payment.");
+        dto.ProcessedBy = cashier;
+        order.ShiftId = activeShift.ShiftId;
         try
         {
             Payment lastPayment;
@@ -133,10 +143,7 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
 
                 if (cashPaid > 0m)
                 {
-                    var openShift = await context.CashDrawerShifts
-                        .Where(s => s.TerminalId == order.TerminalId && s.Status == "OPEN")
-                        .OrderByDescending(s => s.OpenedAt)
-                        .FirstOrDefaultAsync();
+                    var openShift = activeShift;
 
                     if (openShift != null)
                     {

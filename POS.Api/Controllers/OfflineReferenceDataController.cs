@@ -57,7 +57,8 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                 TaxName = p.Tax != null ? p.Tax.Name : "No Tax",
                 ProductType = p.ProductType,
                 IsActive = p.IsActive,
-                IsKitchenItem = p.IsKitchenItem
+                IsKitchenItem = p.IsKitchenItem,
+                IsBarItem = p.IsBarItem
             })
             .ToListAsync();
 
@@ -217,7 +218,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             InvoiceSequence = invoiceSequenceDto,
             Cashiers = cashiers,
             CashMovementCategories = cashMovementCategories,
-            ActiveShift = openShiftEntity != null ? CashDrawerController.MapShiftToDto(openShiftEntity) : null
+            ActiveShift = openShiftEntity != null ? await CashDrawerController.ReadSnapshotAsync(context, openShiftEntity.ShiftId, requireOpen: true) : null
         };
 
         return Ok(response);

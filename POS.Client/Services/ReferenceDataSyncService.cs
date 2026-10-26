@@ -146,7 +146,8 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                             TaxName = p.TaxName,
                             ProductType = p.ProductType,
                             IsActive = p.IsActive,
-                            IsKitchenItem = p.IsKitchenItem
+                            IsKitchenItem = p.IsKitchenItem,
+                            IsBarItem = p.IsBarItem
                         });
                     }
 
@@ -215,7 +216,6 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     if (data.CashMovementCategories != null && data.CashMovementCategories.Count > 0)
                     {
                         await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashMovementCategories;");
-                        db.ChangeTracker.Clear();
                         foreach (var cat in data.CashMovementCategories)
                         {
                             db.CashMovementCategories.Add(new LocalCashMovementCategory
@@ -231,47 +231,11 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         }
                     }
 
+                    // Retire cached acknowledged shifts absent from the server snapshot; never revive a closed drawer offline.
+                    foreach (var stale in await db.CashDrawerShifts.Where(s => s.TerminalId == terminalId && s.Status == "OPEN" && s.ShiftId > 0).ToListAsync())
+                        if (data.ActiveShift == null || stale.ShiftId != data.ActiveShift.ShiftId) stale.Status = "CLOSED";
                     if (data.ActiveShift != null)
-                    {
-                        var existingShift = await db.CashDrawerShifts
-                            .FirstOrDefaultAsync(s => s.ShiftId == data.ActiveShift.ShiftId);
-
-                        if (existingShift == null)
-                        {
-                            db.CashDrawerShifts.Add(new LocalCashDrawerShift
-                            {
-                                ShiftId = data.ActiveShift.ShiftId,
-                                BranchId = data.ActiveShift.BranchId,
-                                TerminalId = data.ActiveShift.TerminalId,
-                                CashierId = data.ActiveShift.CashierId,
-                                OpeningFloat = data.ActiveShift.OpeningFloat,
-                                TotalCashSales = data.ActiveShift.TotalCashSales,
-                                TotalCashRefunds = data.ActiveShift.TotalCashRefunds,
-                                TotalCashIn = data.ActiveShift.TotalCashIn,
-                                TotalCashOut = data.ActiveShift.TotalCashOut,
-                                TotalCashDrops = data.ActiveShift.TotalCashDrops,
-                                ExpectedBalance = data.ActiveShift.ExpectedBalance,
-                                Status = data.ActiveShift.Status,
-                                OpenedAt = data.ActiveShift.OpenedAt
-                            });
-                        }
-                        else
-                        {
-                            existingShift.OpeningFloat = data.ActiveShift.OpeningFloat;
-                            existingShift.TotalCashSales = Math.Max(existingShift.TotalCashSales, data.ActiveShift.TotalCashSales);
-                            existingShift.TotalCashRefunds = data.ActiveShift.TotalCashRefunds;
-                            existingShift.TotalCashIn = Math.Max(existingShift.TotalCashIn, data.ActiveShift.TotalCashIn);
-                            existingShift.TotalCashOut = Math.Max(existingShift.TotalCashOut, data.ActiveShift.TotalCashOut);
-                            existingShift.TotalCashDrops = Math.Max(existingShift.TotalCashDrops, data.ActiveShift.TotalCashDrops);
-                            existingShift.ExpectedBalance = existingShift.OpeningFloat
-                                + existingShift.TotalCashSales
-                                - existingShift.TotalCashRefunds
-                                + existingShift.TotalCashIn
-                                - existingShift.TotalCashOut
-                                - existingShift.TotalCashDrops;
-                            existingShift.Status = data.ActiveShift.Status;
-                        }
-                    }
+                        await ShiftSession.ApplySnapshotAsync(db, data.ActiveShift, reconcileCurrent: true);
 
                     // Upsert active InvoiceSequence for offline checkout while preserving any higher local counter
                     var seqDto = data.InvoiceSequence;

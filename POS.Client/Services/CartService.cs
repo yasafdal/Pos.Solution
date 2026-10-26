@@ -84,7 +84,9 @@ namespace POS.Client.Services
                     Quantity = quantity,
                     ImageUrl = product.ImageUrl,
                     UnitOfMeasure = product.UnitOfMeasure,
-                    TaxName = product.TaxName ?? "VATable"
+                    TaxName = product.TaxName ?? "VATable",
+                    IsKitchenItem = product.IsKitchenItem,
+                    IsBarItem = product.IsBarItem
                 });
             }
             NotifyStateChanged();

@@ -230,9 +230,28 @@ public class CashDrawerController : ControllerBase
     {
         var cashierId = GetAuthenticatedUsername();
         if (string.IsNullOrEmpty(cashierId)) return Unauthorized();
+        if (request.CashierId != null && request.CashierId != cashierId) return Forbid();
 
-        if (request.OpeningFloat < 0)
-            return BadRequest("Opening float cannot be negative.");
+        if (!request.OpeningFloat.HasValue || request.OpeningFloat < 0)
+            return BadRequest("Explicit opening float is required; zero is allowed, negative is not.");
+        if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
+        if (request.ClientShiftId?.Length > 100 || request.OpenedAt > DateTime.UtcNow.AddMinutes(1))
+            return BadRequest("Invalid opening identity or timestamp.");
+        using var tx = await _context.Database.BeginTransactionAsync(_context.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
+        // Serialize opening with payment, replay and closing on the terminal row.
+        await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(_context, request.TerminalId, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(request.ClientShiftId))
+        {
+            var previous = await _context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ClientShiftId == request.ClientShiftId, cancellationToken);
+            if (previous != null)
+            {
+                if (previous.TerminalId != request.TerminalId || (request.BranchId > 0 && previous.BranchId != request.BranchId)
+                    || previous.CashierId != cashierId || previous.OpeningFloat != Math.Round(request.OpeningFloat.Value, 2)
+                    || (request.OpenedAt.HasValue && previous.OpenedAt.ToUniversalTime().Ticks / 10 != request.OpenedAt.Value.ToUniversalTime().Ticks / 10))
+                    return Conflict("Opening retry does not match the original shift.");
+                return Ok(await ReadSnapshotAsync(_context, previous.ShiftId, cancellationToken));
+            }
+        }
 
         if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
         var outlet = await _context.Terminals.AsNoTracking()
@@ -253,31 +272,40 @@ public class CashDrawerController : ControllerBase
 
         if (existingOpen != null)
         {
-            return BadRequest("An open shift already exists for this outlet.");
+            return Conflict(existingOpen.OpeningConfirmed
+                ? "This drawer already has an open shift."
+                : "Reconcile and close the legacy shift in My Shift before confirming a new opening float. Historical opening cash cannot be changed.");
         }
 
-        decimal openingFloat = Math.Round(request.OpeningFloat, 2);
+        var openingTime = request.OpenedAt ?? DateTime.UtcNow;
+        if (await _context.CashDrawerShifts.AnyAsync(s => s.TerminalId == request.TerminalId && (s.ClosedAt == null || s.ClosedAt >= openingTime), cancellationToken))
+            return Conflict("Opening overlaps an existing drawer lifecycle.");
+        decimal openingFloat = Math.Round(request.OpeningFloat.Value, 2);
         var shift = new CashDrawerShift
         {
             BranchId = request.BranchId > 0 ? request.BranchId : (outlet?.BranchId ?? 1),
             TerminalId = request.TerminalId,
             CashierId = cashierId,
             OpeningFloat = openingFloat,
+            OpeningConfirmed = true,
+            ClientShiftId = request.ClientShiftId,
             ExpectedBalance = openingFloat,
             Status = "OPEN",
-            OpenedAt = DateTime.UtcNow,
+            OpenedAt = request.OpenedAt ?? DateTime.UtcNow,
             Notes = request.Notes
         };
 
         _context.CashDrawerShifts.Add(shift);
         await _context.SaveChangesAsync(cancellationToken);
 
-        return Ok(new { Message = "Cash drawer shift opened successfully.", ShiftId = shift.ShiftId });
+        await tx.CommitAsync(cancellationToken);
+        return Ok(await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken));
     }
 
     [HttpGet("current")]
     public async Task<ActionResult<CashDrawerShiftDto>> GetCurrentShift([FromQuery] int terminalId, CancellationToken cancellationToken = default)
     {
+        if (User.FindFirst("terminal_id")?.Value != terminalId.ToString() && !IsSupervisorRole(GetAuthenticatedRole())) return Forbid();
         var shift = await _context.CashDrawerShifts
             .AsNoTracking()
             .Include(s => s.Movements)
@@ -287,7 +315,8 @@ public class CashDrawerController : ControllerBase
 
         if (shift == null) return NotFound("No active open shift found for this outlet.");
 
-        return Ok(MapShiftToDto(shift));
+        var snapshot = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: true);
+        return snapshot == null ? NotFound("No active open shift found for this terminal.") : Ok(snapshot);
     }
 
     [HttpGet("shifts")]
@@ -947,12 +976,15 @@ public class CashDrawerController : ControllerBase
         if (request.ActualCountedBalance < 0)
             return BadRequest("Actual counted cash balance cannot be negative.");
 
-        using var tx = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        using var tx = await _context.Database.BeginTransactionAsync(_context.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
         try
         {
+            var terminalId = await _context.CashDrawerShifts.Where(s => s.ShiftId == request.ShiftId).Select(s => s.TerminalId).FirstOrDefaultAsync(cancellationToken);
+            await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(_context, terminalId, cancellationToken);
             var shift = await _context.CashDrawerShifts
                 .Include(s => s.Movements)
                 .FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId, cancellationToken);
+            if (shift != null && (User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString() || shift.CashierId != GetAuthenticatedUsername()) && !IsSupervisorRole(GetAuthenticatedRole())) return Forbid();
 
             if (shift == null || shift.Status != "OPEN")
             {
@@ -999,6 +1031,27 @@ public class CashDrawerController : ControllerBase
         }
     }
 
+    // One SQL statement supplies both totals and accepted IDs. Reading IDs separately can
+    // race an offline upload commit and either double-count or omit that sale locally.
+    public static async Task<CashDrawerShiftDto?> ReadSnapshotAsync(PosDbContext context, long shiftId, CancellationToken cancellationToken = default, bool requireOpen = false)
+    {
+        var snapshot = await context.CashDrawerShifts.AsNoTracking().AsSingleQuery()
+            .Include(s => s.Movements)
+            .Where(s => s.ShiftId == shiftId && (!requireOpen || s.Status == "OPEN"))
+            .Select(s => new
+            {
+                Shift = s,
+                Accepted = (from acknowledgement in context.OfflineSyncIdempotencyRecords
+                            join order in context.Orders on acknowledgement.ServerOrderId equals order.OrderId
+                            where order.ShiftId == s.ShiftId
+                            select acknowledgement.LocalTransactionId).ToList()
+            }).FirstOrDefaultAsync(cancellationToken);
+        if (snapshot == null) return null;
+        var dto = MapShiftToDto(snapshot.Shift);
+        dto.AcknowledgedLocalTransactionIds = snapshot.Accepted;
+        return dto;
+    }
+
     public static CashDrawerShiftDto MapShiftToDto(CashDrawerShift shift)
     {
         var movements = (shift.Movements ?? Array.Empty<CashDrawerMovement>())
@@ -1018,6 +1071,8 @@ public class CashDrawerController : ControllerBase
             TerminalId = shift.TerminalId,
             CashierId = shift.CashierId,
             OpeningFloat = shift.OpeningFloat,
+            OpeningConfirmed = shift.OpeningConfirmed,
+            ClientShiftId = shift.ClientShiftId,
             TotalCashSales = shift.TotalCashSales,
             TotalCashRefunds = shift.TotalCashRefunds,
             TotalCashIn = shift.TotalCashIn,

@@ -170,8 +170,14 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         return Ok(MapToDto(order));
     }
 
-    private static OrderResponseDto MapToDto(Order order)
+    private OrderResponseDto MapToDto(Order order)
     {
+        var productIds = order.OrderItems.Select(i => i.ProductId).Distinct().ToList();
+        var routing = context.Products.AsNoTracking()
+            .Where(p => productIds.Contains(p.ProductId))
+            .Select(p => new { p.ProductId, p.IsKitchenItem, p.IsBarItem })
+            .ToDictionary(p => p.ProductId);
+
         return new OrderResponseDto
         {
             OrderId = order.OrderId,
@@ -205,6 +211,8 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 ModifierTotal = i.ModifierTotal,
                 UnitPrice = i.UnitPrice,
                 LineTotal = i.LineTotal,
+                IsKitchenItem = routing.TryGetValue(i.ProductId, out var r) && r.IsKitchenItem,
+                IsBarItem = routing.TryGetValue(i.ProductId, out var r2) && r2.IsBarItem,
                 Modifiers = i.OrderItemModifiers.Select(m => new OrderItemModifierResponseDto
                 {
                     OrderItemModifierId = m.OrderItemModifierId,

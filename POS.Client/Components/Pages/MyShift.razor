@@ -1,6 +1,9 @@
 @page "/my-shift"
 @inject PosSessionService Session
 @inject NavigationManager Navigation
+@inject HttpClient Http
+@using System.Net.Http.Json
+@using POS.Shared.Models
 
 @if (!Session.IsAuthenticated)
 {
@@ -11,6 +14,16 @@ else
     <div class="p-4">
         <h3 class="fw-bold text-dark mb-1">My Shift</h3>
         <p class="text-muted small">Shift summary, cash reconciliations, and end-of-shift reports</p>
+        @if (error != null) { <div class="alert alert-danger">@error</div> }
+        @if (shift != null)
+        {
+            <p>Opened @shift.OpenedAt.ToLocalTime() by @shift.CashierId · Opening float ₱@shift.OpeningFloat.ToString("N2") · Expected ₱@shift.ExpectedBalance.ToString("N2")</p>
+            <label for="counted">Actual counted cash</label>
+            <input id="counted" class="form-control" type="text" inputmode="decimal" @bind="countedText" @bind:event="oninput" disabled="@busy" />
+            <small>Enter 0 to 9999999999999999.99 using a decimal point (up to two decimal places).</small>
+            <button class="btn btn-danger mt-3" disabled="@(busy || !TryParseCashAmount(countedText, out _) || shift.CashierId != Session.Username)" @onclick="Close">Close Shift</button>
+        }
+        else { <p>No active shift. Payment will ask you to explicitly confirm opening float.</p> }
         <div class="card p-4 border-0 shadow-sm rounded-3 mt-3">
             <div class="d-flex align-items-center gap-3">
                 <div class="p-3 bg-primary bg-opacity-10 text-primary rounded-circle d-flex align-items-center justify-content-center">
@@ -23,4 +36,55 @@ else
             </div>
         </div>
     </div>
+}
+@code {
+    private CashDrawerShiftDto? shift;
+    private string countedText = string.Empty;
+
+    // Match numeric(18,2) without culture-dependent separators or silent rounding.
+    private static bool TryParseCashAmount(string? text, out decimal amount)
+    {
+        amount = 0m;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var point = text.IndexOf('.');
+        if (point >= 0 && text.Length - point - 1 > 2) return false;
+        return decimal.TryParse(text, System.Globalization.NumberStyles.AllowDecimalPoint,
+            System.Globalization.CultureInfo.InvariantCulture, out amount)
+            && amount >= 0m && amount <= 9999999999999999.99m;
+    }
+    private bool busy;
+    private string? error;
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsAuthenticated || Session.Terminal == null) return;
+        try
+        {
+            var response = await Http.GetAsync($"api/cash-drawer/current?terminalId={Session.Terminal.TerminalId}");
+            if (response.IsSuccessStatusCode) shift = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+            else if (response.StatusCode != System.Net.HttpStatusCode.NotFound) error = "Unable to load shift.";
+        }
+        catch { error = "Connect to the server to view and close your shift."; }
+    }
+    private async Task Close()
+    {
+        if (busy || shift == null || shift.CashierId != Session.Username) return;
+        if (!TryParseCashAmount(countedText, out var amount))
+        {
+            error = "Enter counted cash from 0 to 9999999999999999.99 using up to two decimal places.";
+            return;
+        }
+        busy = true;
+        error = null;
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/cash-drawer/close-shift", new CloseShiftDto { ShiftId = shift.ShiftId, ActualCountedBalance = amount });
+            if (!response.IsSuccessStatusCode) { error = await response.Content.ReadAsStringAsync(); return; }
+            var check = await Http.GetAsync($"api/cash-drawer/current?terminalId={shift.TerminalId}");
+            if (check.StatusCode != System.Net.HttpStatusCode.NotFound) { error = "Close acknowledgement could not be verified; refresh before retrying."; return; }
+            shift.Status = "CLOSED"; shift.ClosedAt = DateTime.UtcNow;
+            await POS.Client.Services.ShiftSession.CacheAsync(shift); shift = null;
+        }
+        catch { error = "Close could not be verified. Reconnect and refresh before retrying."; }
+        finally { busy = false; }
+    }
 }

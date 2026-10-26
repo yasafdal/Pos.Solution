@@ -1,4 +1,4 @@
-@page "/new-sale"
+﻿@page "/new-sale"
 @inject PosSessionService Session
 @inject NavigationManager Navigation
 @using Microsoft.EntityFrameworkCore
@@ -77,7 +77,7 @@ else
                            autocomplete="off" disabled="@(isLoading || quantityDialogOpen)"
                            @onkeydown="OnSearchKeyDown"
                            class="form-control search-input ps-5 pe-5"
-                           placeholder="Search products by name, SKU, or barcode..."
+                           placeholder="Search by name, short code, SKU, or barcode..."
                            value="@searchQuery"
                            @oninput="OnSearchInput" />
                     @if (!string.IsNullOrEmpty(searchQuery))
@@ -111,7 +111,8 @@ else
                     }
                     @foreach (var product in FilteredProducts)
                     {
-                        <button type="button" class="retail-result" style="--category-color: @GetCategoryColor(product.CategoryId)" disabled="@quantityDialogOpen"
+                        var catColor = GetCategoryColor(product.CategoryId);
+                        <button type="button" class="retail-result" style="--category-color: @catColor;" disabled="@quantityDialogOpen"
                                 @onclick="() => ChooseQuantity(product)">
                             <span><strong>@product.Name</strong><small>@product.SKU · @product.Barcode</small><small>@GetCategoryName(product.CategoryId)</small></span>
                             <span>₱@product.Price.ToString("N2")</span>
@@ -132,13 +133,14 @@ else
                 </button>
                 @foreach (var cat in categories)
                 {
-                    var catColor = CategoryColor.Normalize(cat.ColorHex);
                     var isSelected = selectedCategoryId == cat.CategoryId;
+                    var catColor = GetCategoryColor(cat.CategoryId);
                     <button type="button"
-                            class="category-pill category-colored @(isSelected ? "active" : "")"
+                            class="category-pill category-item @(isSelected ? "active" : "")"
                             style="--category-color: @catColor;"
                             aria-pressed="@(isSelected ? "true" : "false")"
                             @onclick="() => SelectCategory(cat.CategoryId)">
+                        <span class="category-dot" aria-hidden="true"></span>
                         <span>@cat.Name</span>
                     </button>
                 }
@@ -163,36 +165,30 @@ else
                 }
                 else
                 {
+                    var inCart = CartQuantityByProduct();
                     <div class="products-grid">
                         @foreach (var product in FilteredProducts)
                         {
-                            <div class="product-card" style="--category-color: @GetCategoryColor(product.CategoryId)" @onclick="() => AddToCart(product)" role="button" tabindex="0">
-                                <div class="product-img-wrap">
-                                    @if (!string.IsNullOrWhiteSpace(product.ImageUrl))
+                            var cartQty = inCart.GetValueOrDefault(product.ProductId);
+                            var catColor = GetCategoryColor(product.CategoryId);
+                            <button type="button" @key="product.ProductId"
+                                    class="product-card @(cartQty > 0 ? "in-cart" : "")"
+                                    style="--category-color: @catColor;"
+                                    title="@product.Name"
+                                    @onclick="() => AddToCart(product)">
+                                @if (cartQty > 0)
+                                {
+                                    <span class="product-qty" aria-label="@cartQty in order">@cartQty</span>
+                                }
+                                <span class="product-name">@product.Name</span>
+                                <span class="product-bottom">
+                                    <span class="product-price">₱@product.Price.ToString("N2")@if (!string.IsNullOrEmpty(product.UnitOfMeasure)){<span class="product-uom">/@product.UnitOfMeasure</span>}</span>
+                                    @if (!string.IsNullOrWhiteSpace(product.ShortCode))
                                     {
-                                        <img src="@GetImageUrl(product.ImageUrl)"
-                                             alt="@product.Name"
-                                             class="product-img"
-                                             loading="lazy" />
+                                        <span class="product-code">@product.ShortCode</span>
                                     }
-                                    else
-                                    {
-                                        <div class="product-placeholder-icon">
-                                            <i class="bi @GetProductCategoryIcon(product) fs-2 text-secondary"></i>
-                                        </div>
-                                    }
-                                </div>
-                                <div class="product-info">
-                                    <div class="product-name" title="@product.Name">@product.Name</div>
-                                    <div class="product-bottom">
-                                        <span class="product-price">₱@product.Price.ToString("N2")</span>
-                                        @if (!string.IsNullOrEmpty(product.UnitOfMeasure))
-                                        {
-                                            <span class="product-uom">@product.UnitOfMeasure</span>
-                                        }
-                                    </div>
-                                </div>
-                            </div>
+                                </span>
+                            </button>
                         }
                     </div>
                 }
@@ -342,7 +338,7 @@ else
                         }
                         <div class="d-flex justify-content-between align-items-baseline mb-2">
                             <span class="fw-bold fs-6 text-dark">Total</span>
-                            <span class="fw-bolder fs-5 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
+                            <span class="fw-bolder fs-4 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
                         </div>
                     </div>
                     <div class="d-flex gap-2 mb-2">
@@ -362,7 +358,7 @@ else
                     <div class="d-grid">
                         <button type="button"
                                 class="btn btn-primary w-100 py-2 fw-bold btn-proceed-payment"
-                                disabled="@(!Cart.Items.Any())"
+                                disabled="@(isProcessingPayment || openingBusy || openingShiftModal || isPaymentModalOpen || !Cart.Items.Any())"
                                 @onclick="ProceedToPayment">
                             Proceed to Payment
                         </button>
@@ -384,19 +380,6 @@ else
                     <!-- Modal Header -->
                     <div class="modal-header border-bottom px-4 py-3 bg-white d-flex justify-content-between align-items-center">
                         <div class="d-flex align-items-center gap-3">
-                            @if (!string.IsNullOrWhiteSpace(customizingProduct.ImageUrl))
-                            {
-                                <img src="@GetImageUrl(customizingProduct.ImageUrl)"
-                                     alt="@customizingProduct.Name"
-                                     class="customization-product-img" />
-                            }
-                            else
-                            {
-                                var catColor = GetCategoryColor(customizingProduct.CategoryId);
-                                <div class="customization-product-icon" style="background-color: @(catColor)1a; color: @catColor;">
-                                    <i class="bi @GetProductCategoryIcon(customizingProduct) fs-3"></i>
-                                </div>
-                            }
                             <div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
                                     <h5 class="modal-title fw-bold text-dark mb-0">Customize @customizingProduct.Name</h5>
@@ -994,6 +977,26 @@ else
 }
 
 
+@if (openingShiftModal)
+{
+    <div class="modal d-block" role="dialog" aria-modal="true" aria-label="Open Shift" style="background:rgba(0,0,0,.5);z-index:1100">
+        <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+            <div class="modal-header"><h5>Open Shift — Confirm Opening Float</h5></div>
+            <div class="modal-body">
+                <p>Cashier: <strong>@Session.Username</strong><br />Terminal: <strong>@Session.Terminal?.TerminalName</strong></p>
+                <label for="opening-float">Counted opening cash (zero is allowed)</label>
+                <input id="opening-float" type="text" inputmode="decimal" class="form-control" @bind="openingFloatText" @bind:event="oninput" disabled="@openingBusy" />
+                <small>Enter 0 to 9999999999999999.99 using a decimal point (up to two decimal places). Your cart is preserved. Payment is blocked until you confirm.</small>
+                @if (openingError != null) { <div class="alert alert-danger">@openingError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" disabled="@openingBusy" @onclick="() => openingShiftModal = false">Cancel</button>
+                <button class="btn btn-primary" disabled="@(openingBusy || !TryParseCashAmount(openingFloatText, out _))" @onclick="ConfirmOpeningFloat">Confirm &amp; Open Shift</button>
+            </div>
+        </div></div>
+    </div>
+}
+
 @code {
     [CascadingParameter]
     public Layout.MainLayout? Layout { get; set; }
@@ -1149,7 +1152,8 @@ else
                         TaxName = p.TaxName ?? "VATable",
                         ProductType = p.ProductType,
                         IsActive = p.IsActive,
-                        IsKitchenItem = p.IsKitchenItem
+                        IsKitchenItem = p.IsKitchenItem,
+                        IsBarItem = p.IsBarItem
                     })
                     .ToList();
 
@@ -1179,17 +1183,67 @@ else
         }
     }
 
-    private string GetCategoryColor(int? categoryId) =>
-        CategoryColor.Normalize(categories.FirstOrDefault(c => c.CategoryId == categoryId)?.ColorHex);
+    private Dictionary<int, CategoryDto> categoryMap = new();
+    private List<CategoryDto>? categoryMapSource;
+
+    private CategoryDto? FindCategory(int? categoryId)
+    {
+        if (!ReferenceEquals(categoryMapSource, categories))
+        {
+            categoryMap = categories.GroupBy(c => c.CategoryId).ToDictionary(g => g.Key, g => g.First());
+            categoryMapSource = categories;
+        }
+        return categoryId.HasValue && categoryMap.TryGetValue(categoryId.Value, out var cat) ? cat : null;
+    }
+
+    private Dictionary<int, string> categoryColorMap = new();
+    private List<CategoryDto>? categoryColorMapSource;
+
+    private string GetCategoryColor(int? categoryId)
+    {
+        if (!categoryId.HasValue)
+            return CategoryColor.NeutralFallback;
+
+        if (!ReferenceEquals(categoryColorMapSource, categories))
+        {
+            categoryColorMap = categories.GroupBy(c => c.CategoryId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => CategoryColor.Normalize(g.First().ColorHex, CategoryColor.NeutralFallback)
+                );
+            categoryColorMapSource = categories;
+        }
+
+        return categoryColorMap.TryGetValue(categoryId.Value, out var color) ? color : CategoryColor.NeutralFallback;
+    }
 
     private string GetCategoryName(int? categoryId) =>
-        categories.FirstOrDefault(c => c.CategoryId == categoryId)?.Name ?? "Uncategorized";
+        FindCategory(categoryId)?.Name ?? "Uncategorized";
 
-    private IEnumerable<ProductDto> FilteredProducts
+    // Filtered list is recomputed only when the catalog, category or search text changes,
+    // not on every render (the cart updating, for example, re-renders this page).
+    private List<ProductDto> filteredCache = new();
+    private List<ProductDto>? filteredSource;
+    private int? filteredCategoryId;
+    private string? filteredQuery;
+
+    private List<ProductDto> FilteredProducts
     {
         get
         {
-            if (IsRetail && string.IsNullOrWhiteSpace(searchQuery)) return Enumerable.Empty<ProductDto>();
+            if (ReferenceEquals(filteredSource, products) && filteredCategoryId == selectedCategoryId && filteredQuery == searchQuery)
+                return filteredCache;
+
+            filteredSource = products;
+            filteredCategoryId = selectedCategoryId;
+            filteredQuery = searchQuery;
+
+            if (IsRetail && string.IsNullOrWhiteSpace(searchQuery))
+            {
+                filteredCache = new();
+                return filteredCache;
+            }
+
             var query = products.AsEnumerable();
 
             if (selectedCategoryId.HasValue)
@@ -1202,13 +1256,18 @@ else
                 var q = searchQuery.Trim();
                 query = query.Where(p =>
                     (p.Name != null && p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                    (p.ShortCode != null && p.ShortCode.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
                     (p.SKU != null && p.SKU.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
                     (p.Barcode != null && p.Barcode.Contains(q, StringComparison.OrdinalIgnoreCase)));
             }
 
-            return query;
+            filteredCache = query.ToList();
+            return filteredCache;
         }
     }
+
+    private Dictionary<int, int> CartQuantityByProduct() =>
+        Cart.Items.GroupBy(i => i.ProductId).ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
 
     private void SelectCategory(int? categoryId)
     {
@@ -1454,31 +1513,6 @@ else
 
         // Universal Generic Fallback for any other / new category modifier group
         return ("bi-sliders", "bg-secondary-subtle text-secondary");
-    }
-
-    private string GetProductCategoryIcon(ProductDto? product)
-    {
-        if (product == null) return "bi-box-seam";
-        var text = $"{product.CategoryName} {product.Name}".ToLowerInvariant();
-
-        // Beverage / Drinks
-        if (text.Contains("tea") || text.Contains("coffee") || text.Contains("beverage") || text.Contains("drink") || text.Contains("juice") || text.Contains("boba") || text.Contains("shake") || text.Contains("smoothie") || text.Contains("latte") || text.Contains("espresso"))
-            return "bi-cup-hot-fill";
-
-        // Food / Meals / Fast Food
-        if (text.Contains("food") || text.Contains("meal") || text.Contains("burger") || text.Contains("sandwich") || text.Contains("pizza") || text.Contains("rice") || text.Contains("noodle") || text.Contains("pasta") || text.Contains("chicken") || text.Contains("steak") || text.Contains("dish"))
-            return "bi-egg-fried";
-
-        // Bakery / Pastries / Desserts
-        if (text.Contains("bakery") || text.Contains("bread") || text.Contains("pastry") || text.Contains("cake") || text.Contains("dessert") || text.Contains("donut") || text.Contains("doughnut") || text.Contains("cookie") || text.Contains("waffle") || text.Contains("pancake") || text.Contains("ice cream"))
-            return "bi-cake2";
-
-        // Merchandise / Apparel / Retail
-        if (text.Contains("apparel") || text.Contains("shirt") || text.Contains("clothes") || text.Contains("merch") || text.Contains("wear"))
-            return "bi-tag-fill";
-
-        // Clean Generic Fallback for any new category created by the user
-        return "bi-box-seam";
     }
 
     private (string Pct, string Label, int FillPercent, string IconClass) ParseSugarOption(string name)
@@ -1759,13 +1793,86 @@ else
         }
     }
 
+    private POS.Client.Data.LocalCashDrawerShift? paymentShift;
+    private bool openingShiftModal;
+    private string openingFloatText = string.Empty;
+
+    // Match numeric(18,2) without culture-dependent separators or silent rounding.
+    private static bool TryParseCashAmount(string? text, out decimal amount)
+    {
+        amount = 0m;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var point = text.IndexOf('.');
+        if (point >= 0 && text.Length - point - 1 > 2) return false;
+        return decimal.TryParse(text, System.Globalization.NumberStyles.AllowDecimalPoint,
+            System.Globalization.CultureInfo.InvariantCulture, out amount)
+            && amount >= 0m && amount <= 9999999999999999.99m;
+    }
+    private string? openingError;
+    private bool openingBusy;
+    private string openingId = Guid.NewGuid().ToString("N");
+    private DateTime? openingOpenedAt;
+
+    private async Task<bool> VerifyPaymentShift()
+    {
+        var state = await ConnectivityService.CheckConnectivityAsync();
+        var offline = state != TerminalConnectivityState.OnlineAndHealthy;
+        paymentShift = await POS.Client.Services.ShiftSession.CurrentAsync(Http, Session.Terminal!.TerminalId, offline);
+        if (paymentShift != null && paymentShift.CashierId != Session.Username)
+        {
+            await Swal.FireAsync("Drawer unavailable", "This drawer belongs to another cashier.", SweetAlertIcon.Warning); return false;
+        }
+        if (!offline && paymentShift?.ShiftId < 0)
+        {
+            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto { TerminalId = paymentShift.TerminalId, BranchId = paymentShift.BranchId, OpeningFloat = paymentShift.OpeningFloat, ClientShiftId = paymentShift.ClientShiftId, OpenedAt = paymentShift.OpenedAt }, Session.Username!, false);
+        }
+        if (paymentShift != null && paymentShift.Status != "OPEN")
+            throw new InvalidOperationException("The acknowledged shift is closed. Reconcile the drawer in My Shift before opening a new shift.");
+        if (paymentShift == null || !paymentShift.OpeningConfirmed)
+        {
+            openingFloatText = string.Empty; openingError = null; openingShiftModal = true; return false;
+        }
+        if (paymentShift.CashierId != Session.Username)
+        {
+            await Swal.FireAsync("Drawer unavailable", "This drawer belongs to another cashier. Close that shift before opening your own.", SweetAlertIcon.Warning); return false;
+        }
+        return true;
+    }
+
+    private async Task ConfirmOpeningFloat()
+    {
+        if (openingBusy || isProcessingPayment || !openingShiftModal) return;
+        if (!TryParseCashAmount(openingFloatText, out var amount))
+        {
+            openingError = "Enter opening cash from 0 to 9999999999999999.99 using up to two decimal places.";
+            return;
+        }
+        openingBusy = true;
+        openingOpenedAt ??= DateTime.UtcNow;
+        openingError = null;
+        try
+        {
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto { TerminalId = Session.Terminal!.TerminalId, BranchId = Session.Terminal.BranchId, OpeningFloat = amount, ClientShiftId = openingId, OpenedAt = openingOpenedAt }, Session.Username!, state != TerminalConnectivityState.OnlineAndHealthy);
+            if (paymentShift.Status != "OPEN")
+                throw new InvalidOperationException("This opening acknowledgement is for a closed shift. Reconcile the drawer in My Shift before starting another sale.");
+            openingShiftModal = false;
+            openingId = Guid.NewGuid().ToString("N");
+            openingOpenedAt = null;
+        }
+        catch (Exception ex) { openingError = $"Unable to confirm opening cash. Your cart is preserved. Retry with the original amount or reconcile the drawer in My Shift. {ex.Message}"; }
+        finally { openingBusy = false; }
+        if (!openingShiftModal) await ProceedToPayment();
+    }
+
     private async Task ProceedToPayment()
     {
-        if (isProcessingPayment || !Cart.Items.Any()) return;
+        if (isProcessingPayment || openingBusy || openingShiftModal || isPaymentModalOpen || !Cart.Items.Any()) return;
         isProcessingPayment = true;
         paymentError = null;
         try
         {
+            if (!await VerifyPaymentShift()) return;
             var createDto = new OrderCreateDto
             {
                 BranchId = Session.Terminal?.BranchId ?? 1,
@@ -1790,6 +1897,8 @@ else
                     Quantity = ci.Quantity,
                     BasePrice = ci.BasePrice,
                     TaxName = ci.TaxName ?? "VATable",
+                    IsKitchenItem = ci.IsKitchenItem,
+                    IsBarItem = ci.IsBarItem,
                     Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                     {
                         ModifierOptionId = m.ModifierOptionId,
@@ -1883,7 +1992,8 @@ else
         }
         catch (Exception ex)
         {
-            await Swal.FireAsync("Error", $"Payment error: {ex.Message}", SweetAlertIcon.Error);
+            paymentError = $"Unable to prepare payment. Your cart is preserved. Check the drawer in My Shift and retry. {ex.Message}";
+            await Swal.FireAsync("Payment unavailable", paymentError, SweetAlertIcon.Error);
         }
         finally
         {
@@ -1894,70 +2004,72 @@ else
 
     private async Task ConfirmPayment()
     {
-        if (isProcessingPayment || currentOrderResponse == null) return;
-
-        PaymentProcessDto processDto;
-
-        if (isSplitPaymentMode)
-        {
-            if (!paymentSplits.Any())
-            {
-                paymentError = "Please add at least one payment split.";
-                return;
-            }
-            decimal totalSplits = paymentSplits.Sum(s => s.Amount);
-            if (Math.Abs(totalSplits - currentOrderResponse.TotalAmount) > 0.01m)
-            {
-                paymentError = $"Total split payments (₱{totalSplits:N2}) must equal order total (₱{currentOrderResponse.TotalAmount:N2}).";
-                return;
-            }
-
-            processDto = new PaymentProcessDto
-            {
-                OrderId = currentOrderResponse.OrderId,
-                ProcessedBy = Session.Username ?? "cashier",
-                Splits = paymentSplits,
-                CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
-                CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
-                CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
-                CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim()
-            };
-        }
-        else
-        {
-            if (selectedPaymentMethod == null) return;
-            string methodCode = selectedPaymentMethod.Code;
-            if (methodCode == "CASH" && cashTendered < currentOrderResponse.TotalAmount)
-            {
-                paymentError = $"Amount tendered (₱{cashTendered:N2}) is less than total amount (₱{currentOrderResponse.TotalAmount:N2}).";
-                return;
-            }
-
-            if (selectedPaymentMethod.RequiresReference && string.IsNullOrWhiteSpace(referenceNumber))
-            {
-                paymentError = $"Reference number / approval code is required for {selectedPaymentMethod.Name}.";
-                return;
-            }
-
-            processDto = new PaymentProcessDto
-            {
-                OrderId = currentOrderResponse.OrderId,
-                PaymentMethod = methodCode,
-                Amount = currentOrderResponse.TotalAmount,
-                AmountTendered = methodCode == "CASH" ? cashTendered : currentOrderResponse.TotalAmount,
-                ReferenceNumber = string.IsNullOrWhiteSpace(referenceNumber) ? null : referenceNumber.Trim(),
-                ProcessedBy = Session.Username ?? "cashier",
-                CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
-                CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
-                CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
-                CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim()
-            };
-        }
-
+        if (isProcessingPayment || openingBusy || openingShiftModal || currentOrderResponse == null) return;
         isProcessingPayment = true;
         paymentError = null;
         try
         {
+            if (!await VerifyPaymentShift()) { isPaymentModalOpen = false; return; }
+
+            PaymentProcessDto processDto;
+
+            if (isSplitPaymentMode)
+            {
+                if (!paymentSplits.Any())
+                {
+                    paymentError = "Please add at least one payment split.";
+                    return;
+                }
+                decimal totalSplits = paymentSplits.Sum(s => s.Amount);
+                if (Math.Abs(totalSplits - currentOrderResponse.TotalAmount) > 0.01m)
+                {
+                    paymentError = $"Total split payments (₱{totalSplits:N2}) must equal order total (₱{currentOrderResponse.TotalAmount:N2}).";
+                    return;
+                }
+
+                processDto = new PaymentProcessDto
+                {
+                    OrderId = currentOrderResponse.OrderId,
+                    ProcessedBy = Session.Username ?? "cashier",
+                    Splits = paymentSplits,
+                    CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
+                    CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
+                    CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
+                    CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim()
+                };
+            }
+            else
+            {
+                if (selectedPaymentMethod == null) return;
+                string methodCode = selectedPaymentMethod.Code;
+                if (methodCode == "CASH" && cashTendered < currentOrderResponse.TotalAmount)
+                {
+                    paymentError = $"Amount tendered (₱{cashTendered:N2}) is less than total amount (₱{currentOrderResponse.TotalAmount:N2}).";
+                    return;
+                }
+
+                if (selectedPaymentMethod.RequiresReference && string.IsNullOrWhiteSpace(referenceNumber))
+                {
+                    paymentError = $"Reference number / approval code is required for {selectedPaymentMethod.Name}.";
+                    return;
+                }
+
+                processDto = new PaymentProcessDto
+                {
+                    OrderId = currentOrderResponse.OrderId,
+                    PaymentMethod = methodCode,
+                    Amount = currentOrderResponse.TotalAmount,
+                    AmountTendered = methodCode == "CASH" ? cashTendered : currentOrderResponse.TotalAmount,
+                    ReferenceNumber = string.IsNullOrWhiteSpace(referenceNumber) ? null : referenceNumber.Trim(),
+                    ProcessedBy = Session.Username ?? "cashier",
+                    CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
+                    CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
+                    CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
+                    CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim()
+                };
+            }
+
+            processDto.ShiftId = paymentShift?.ShiftId;
             if (isOffline)
             {
                 // Process offline cash checkout locally
@@ -1969,6 +2081,8 @@ else
 
                 var offlineCreateDto = new OrderCreateDto
                 {
+                    ShiftId = paymentShift?.ShiftId,
+                    ClientShiftId = paymentShift?.ClientShiftId,
                     BranchId = Session.Terminal?.BranchId ?? 1,
                     OutletId = Session.Terminal?.OutletId ?? 1,
                     TerminalId = Session.Terminal?.TerminalId ?? 1,
@@ -1991,6 +2105,8 @@ else
                         Quantity = ci.Quantity,
                         BasePrice = ci.BasePrice,
                         TaxName = ci.TaxName ?? "VATable",
+                        IsKitchenItem = ci.IsKitchenItem,
+                        IsBarItem = ci.IsBarItem,
                         Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                         {
                             ModifierOptionId = m.ModifierOptionId,
@@ -2045,7 +2161,7 @@ else
         }
         catch (Exception ex)
         {
-            paymentError = $"Error: {ex.Message}";
+            paymentError = $"Unable to complete payment. Your cart is preserved. Check the drawer and payment status before retrying. {ex.Message}";
         }
         finally
         {
@@ -2204,18 +2320,5 @@ else
         {
             await Swal.FireAsync("Error", "Hold sale error: " + ex.Message, SweetAlertIcon.Error);
         }
-    }
-
-    private string GetImageUrl(string? rawUrl)
-    {
-        if (string.IsNullOrWhiteSpace(rawUrl)) return string.Empty;
-        if (rawUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-            rawUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        {
-            return rawUrl;
-        }
-
-        var baseUrl = Http.BaseAddress?.ToString().TrimEnd('/') ?? "";
-        return $"{baseUrl}/{rawUrl.TrimStart('/')}";
     }
 }

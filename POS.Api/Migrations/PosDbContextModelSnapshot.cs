@@ -17,7 +17,7 @@ namespace POS.Api.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -307,6 +307,11 @@ namespace POS.Api.Migrations
                         .HasColumnType("character varying(450)")
                         .HasColumnName("CashierId");
 
+                    b.Property<string>("ClientShiftId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("ClientShiftId");
+
                     b.Property<DateTime?>("ClosedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("ClosedAt");
@@ -327,6 +332,10 @@ namespace POS.Api.Migrations
                     b.Property<DateTime>("OpenedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("OpenedAt");
+
+                    b.Property<bool>("OpeningConfirmed")
+                        .HasColumnType("boolean")
+                        .HasColumnName("OpeningConfirmed");
 
                     b.Property<decimal>("OpeningFloat")
                         .HasColumnType("numeric(18,2)")
@@ -366,7 +375,15 @@ namespace POS.Api.Migrations
 
                     b.HasKey("ShiftId");
 
-                    b.HasIndex("TerminalId");
+                    b.HasIndex("ClientShiftId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CashDrawerShifts_ClientShiftId")
+                        .HasFilter("\"ClientShiftId\" IS NOT NULL");
+
+                    b.HasIndex("TerminalId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CashDrawerShifts_OpenTerminal")
+                        .HasFilter("\"Status\" = 'OPEN'");
 
                     b.ToTable("CashDrawerShifts", (string)null);
                 });
@@ -1615,12 +1632,19 @@ namespace POS.Api.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
+                    b.Property<bool>("IsBarItem")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean")
                         .HasColumnName("isDeleted");
 
                     b.Property<bool>("IsKitchenItem")
-                        .HasColumnType("boolean");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("Name")
                         .IsRequired()

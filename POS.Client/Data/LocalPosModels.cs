@@ -35,6 +35,7 @@ public class LocalProduct
 
     public bool IsActive { get; set; }
     public bool IsKitchenItem { get; set; }
+    public bool IsBarItem { get; set; }
 }
 
 public class LocalCategory
@@ -129,6 +130,9 @@ public class LocalTerminalConfig
     public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = "VAT-Registered";
     public string TerminalIdentifier { get; set; } = null!;
+    public string? ReceiptPrinterName { get; set; }
+    public string? KitchenPrinterName { get; set; }
+    public string? BarPrinterName { get; set; }
 }
 
 public class LocalInvoiceSequence
@@ -268,6 +272,8 @@ public class LocalCashMovementCategory
 
 public class LocalCashDrawerShift
 {
+    public bool OpeningConfirmed { get; set; }
+    public string? ClientShiftId { get; set; }
     [Key]
     public long ShiftId { get; set; }
     public int BranchId { get; set; }

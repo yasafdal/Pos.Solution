@@ -22,6 +22,11 @@ public class ReceiptService(PosDbContext context) : IReceiptService
         // Branch/outlet labels are current metadata; monetary and item data are sale snapshots.
         var branch = await context.Branches.AsNoTracking().SingleOrDefaultAsync(b => b.BranchId == order.BranchId);
         var outlet = await context.Terminals.AsNoTracking().Include(t => t.Outlet).SingleOrDefaultAsync(o => o.TerminalId == order.TerminalId);
+        var productIds = order.OrderItems.Select(i => i.ProductId).Distinct().ToList();
+        var productRouting = await context.Products.AsNoTracking()
+            .Where(p => productIds.Contains(p.ProductId))
+            .Select(p => new { p.ProductId, p.IsKitchenItem, p.IsBarItem })
+            .ToDictionaryAsync(p => p.ProductId);
 
         return new ReceiptDto
         {
@@ -69,6 +74,8 @@ public class ReceiptService(PosDbContext context) : IReceiptService
                 ModifierTotal = i.ModifierTotal,
                 UnitPrice = i.UnitPrice,
                 LineTotal = i.LineTotal,
+                IsKitchenItem = productRouting.TryGetValue(i.ProductId, out var pr) && pr.IsKitchenItem,
+                IsBarItem = productRouting.TryGetValue(i.ProductId, out var pr2) && pr2.IsBarItem,
                 Modifiers = i.OrderItemModifiers.OrderBy(m => m.OrderItemModifierId).Select(m => new OrderItemModifierResponseDto
                 {
                     OrderItemModifierId = m.OrderItemModifierId,

@@ -530,6 +530,10 @@ public partial class PosDbContext
             entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.OpeningFloat).HasColumnName("OpeningFloat").HasColumnType("numeric(18,2)");
+            entity.Property(e => e.OpeningConfirmed).HasColumnName("OpeningConfirmed");
+            entity.Property(e => e.ClientShiftId).HasColumnName("ClientShiftId").HasMaxLength(100);
+            entity.HasIndex(e => e.ClientShiftId).IsUnique().HasDatabaseName("UX_CashDrawerShifts_ClientShiftId").HasFilter("\"ClientShiftId\" IS NOT NULL");
+            entity.HasIndex(e => e.TerminalId).IsUnique().HasDatabaseName("UX_CashDrawerShifts_OpenTerminal").HasFilter("\"Status\" = 'OPEN'");
             entity.Property(e => e.TotalCashSales).HasColumnName("TotalCashSales").HasColumnType("numeric(18,2)");
             entity.Property(e => e.TotalCashRefunds).HasColumnName("TotalCashRefunds").HasColumnType("numeric(18,2)");
             entity.Property(e => e.TotalCashIn).HasColumnName("TotalCashIn").HasColumnType("numeric(18,2)");

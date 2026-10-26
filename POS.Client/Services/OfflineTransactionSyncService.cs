@@ -39,6 +39,48 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
 
     public async Task<bool> UploadTransactionAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
     {
+        if (outboxItem.EntityType == "SHIFT_OPEN")
+        {
+            try
+            {
+                var opening = System.Text.Json.JsonSerializer.Deserialize<OpenShiftDto>(outboxItem.PayloadJson)
+                    ?? throw new InvalidOperationException("Missing queued shift opening.");
+                using (var ownerDb = new LocalPosDbContext())
+                {
+                    ownerDb.InitializeDatabase();
+                    var owners = await ownerDb.CashDrawerShifts.AsNoTracking()
+                        .Where(s => s.ClientShiftId == opening.ClientShiftId).ToListAsync();
+                    if (string.IsNullOrWhiteSpace(opening.ClientShiftId) || outboxItem.EntityId != opening.ClientShiftId
+                        || owners.Count == 0 || owners.Any(s => s.TerminalId != opening.TerminalId || s.BranchId != opening.BranchId
+                            || string.IsNullOrWhiteSpace(s.CashierId)) || owners.Select(s => s.CashierId).Distinct().Count() != 1)
+                    {
+                        await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", "Queued opening has no unambiguous local owner.", false, null);
+                        return false;
+                    }
+                    var owner = owners[0].CashierId;
+                    if (!string.IsNullOrWhiteSpace(opening.CashierId) && opening.CashierId != owner)
+                    {
+                        await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", "Queued opening cashier does not match its original owner.", false, null);
+                        return false;
+                    }
+                    opening.CashierId = owner;
+                }
+                var response = await httpClient.PostAsJsonAsync("api/cash-drawer/open-shift", opening);
+                if (!response.IsSuccessStatusCode) { await UpdateOutboxStatusAsync(outboxItem.OutboxId, "RETRY_PENDING", await response.Content.ReadAsStringAsync(), true, DateTime.UtcNow.AddMinutes(1)); return false; }
+                var shift = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                if (shift == null || shift.ClientShiftId != opening.ClientShiftId || shift.TerminalId != opening.TerminalId
+                    || shift.BranchId != opening.BranchId || shift.CashierId != opening.CashierId || shift.ShiftId <= 0
+                    || !shift.OpeningConfirmed || shift.OpeningFloat != Math.Round(opening.OpeningFloat ?? -1, 2))
+                {
+                    await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", "Shift acknowledgement does not match its original opening and owner.", false, null);
+                    return false;
+                }
+                await ShiftSession.CacheAsync(shift);
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "SYNCED", null, false, null);
+                return true;
+            }
+            catch (Exception ex) { await UpdateOutboxStatusAsync(outboxItem.OutboxId, "RETRY_PENDING", ex.Message, true, DateTime.UtcNow.AddMinutes(1)); return false; }
+        }
         if (string.Equals(outboxItem.EntityType, "CASH_MOVEMENT", StringComparison.OrdinalIgnoreCase))
         {
             return await UploadCashMovementAsync(outboxItem, httpClient);
@@ -90,10 +132,21 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                 // Fallback to LocalOrderItems snapshot if payload deserialization fails
             }
 
+            if (!string.IsNullOrEmpty(payloadOrder?.ClientShiftId))
+            {
+                using var dependencyDb = new LocalPosDbContext(); dependencyDb.InitializeDatabase();
+                var pendingOpening = await dependencyDb.SyncOutboxes.AsNoTracking().FirstOrDefaultAsync(o => o.EntityType == "SHIFT_OPEN" && o.EntityId == payloadOrder.ClientShiftId && o.Status != "SYNCED");
+                if (pendingOpening != null && !await UploadTransactionAsync(pendingOpening, httpClient))
+                {
+                    await UpdateOutboxStatusAsync(outboxItem.OutboxId, "RETRY_PENDING", "Waiting for opening shift acknowledgement.", false, DateTime.UtcNow.AddMinutes(1)); return false;
+                }
+            }
             // Build payload mapping exact historical financial snapshots (including modifiers from payloadJson if available)
             var requestDto = new OfflineTransactionSyncRequest
             {
                 LocalTransactionId = localOrder.OrderId,
+                ShiftId = payloadOrder?.ShiftId > 0 ? payloadOrder.ShiftId : null,
+                ClientShiftId = payloadOrder?.ClientShiftId,
                 DeviceIdentifier = deviceIdentifier,
                 BranchId = localOrder.BranchId,
                 TerminalId = localOrder.TerminalId,

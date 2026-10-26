@@ -3,18 +3,23 @@ namespace POS.Shared.Helpers;
 public static class CategoryColor
 {
     public const string Default = "#2563EB";
+    public const string NeutralFallback = "#94A3B8";
 
-    public static string Normalize(string? value)
+    public static string Normalize(string? value, string fallback = Default)
     {
-        if (value is null || value.Length != 7 || value[0] != '#')
-            return Default;
+        if (string.IsNullOrWhiteSpace(value))
+            return fallback;
 
-        for (int i = 1; i < value.Length; i++)
+        var trimmed = value.Trim();
+        if (trimmed.Length != 7 || trimmed[0] != '#')
+            return fallback;
+
+        for (int i = 1; i < trimmed.Length; i++)
         {
-            if (!Uri.IsHexDigit(value[i]))
-                return Default;
+            if (!Uri.IsHexDigit(trimmed[i]))
+                return fallback;
         }
 
-        return value.ToUpperInvariant();
+        return trimmed.ToUpperInvariant();
     }
 }

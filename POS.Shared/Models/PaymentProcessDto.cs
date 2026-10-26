@@ -4,6 +4,7 @@ namespace POS.Shared.Models;
 
 public class PaymentProcessDto
 {
+    public long? ShiftId { get; set; }
     public long OrderId { get; set; }
     public string PaymentMethod { get; set; } = "CASH";
     public decimal Amount { get; set; }

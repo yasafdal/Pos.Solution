@@ -54,6 +54,9 @@ public partial class CashDrawerShift
     [Required]
     [MaxLength(30)]
     public string Status { get; set; } = "OPEN";
+    public bool OpeningConfirmed { get; set; }
+    [MaxLength(100)]
+    public string? ClientShiftId { get; set; }
     public DateTime OpenedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ClosedAt { get; set; }
     [MaxLength(255)]

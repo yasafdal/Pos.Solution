@@ -70,6 +70,9 @@ public class OfflineTerminalConfigDto
     public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = null!;
     public string DeviceIdentifier { get; set; } = null!;
+    public string? ReceiptPrinterName { get; set; }
+    public string? KitchenPrinterName { get; set; }
+    public string? BarPrinterName { get; set; }
 }
 
 public class OfflineProductDto
@@ -98,6 +101,7 @@ public class OfflineProductDto
 
     public bool IsActive { get; set; }
     public bool IsKitchenItem { get; set; }
+    public bool IsBarItem { get; set; }
 }
 
 public class OfflineCategoryDto

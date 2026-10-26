@@ -8,7 +8,11 @@ public class OpenShiftDto
 {
     public int BranchId { get; set; }
     public int TerminalId { get; set; }
-    public decimal OpeningFloat { get; set; }
+    [Required, Range(typeof(decimal), "0", "9999999999999999.99")]
+    public decimal? OpeningFloat { get; set; }
+    public string? ClientShiftId { get; set; }
+    public string? CashierId { get; set; }
+    public DateTime? OpenedAt { get; set; }
     public string? Notes { get; set; }
 }
 
@@ -93,6 +97,10 @@ public class CloseShiftDto
 
 public class CashDrawerShiftDto
 {
+    // IDs included in the same server snapshot as TotalCashSales. Null denotes a legacy response.
+    public List<string>? AcknowledgedLocalTransactionIds { get; set; }
+    public bool OpeningConfirmed { get; set; }
+    public string? ClientShiftId { get; set; }
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
     public int TerminalId { get; set; }

@@ -18,20 +18,36 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
     public async Task PrintAsync(ReceiptDto receipt)
     {
         if (Interlocked.CompareExchange(ref _printing, 1, 0) != 0)
-            throw new InvalidOperationException("A receipt is already being sent to the printer. Wait before printing again.");
+            throw new InvalidOperationException("A receipt or ticket is already being sent to the printer. Wait before printing again.");
 
         try
         {
             var html = ReceiptHtmlFormatter.Format(receipt);
-            await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html));
+            await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html, null, "Print Receipt"));
         }
         finally { Interlocked.Exchange(ref _printing, 0); }
     }
 
-    private static async Task PrintDirectAsync(string html)
+    public async Task PrintPreparationTicketAsync(PreparationTicketDto ticket, string? printerName = null)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+
+        if (Interlocked.CompareExchange(ref _printing, 1, 0) != 0)
+            throw new InvalidOperationException("A receipt or ticket is already being sent to the printer. Wait before printing again.");
+
+        try
+        {
+            var html = PreparationTicketHtmlFormatter.Format(ticket);
+            var targetPrinter = !string.IsNullOrWhiteSpace(printerName) ? printerName : ticket.AssignedPrinterName;
+            await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html, targetPrinter, ticket.Title));
+        }
+        finally { Interlocked.Exchange(ref _printing, 0); }
+    }
+
+    private static async Task PrintDirectAsync(string html, string? targetPrinter = null, string windowTitle = "Print Receipt")
     {
         var webView = new WebView2();
-        var window = new NativeWindow { Title = "Print Receipt" };
+        var window = new NativeWindow { Title = windowTitle };
         var layout = new Microsoft.UI.Xaml.Controls.Grid();
         layout.Children.Add(webView);
         window.Content = layout;
@@ -82,6 +98,10 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
                 settings.MarginLeft = 0;
                 settings.MarginRight = 0;
                 settings.ShouldPrintHeaderAndFooter = false;
+                if (!string.IsNullOrWhiteSpace(targetPrinter))
+                {
+                    settings.PrinterName = targetPrinter;
+                }
                 status = await core.PrintAsync(settings);
             }
             catch

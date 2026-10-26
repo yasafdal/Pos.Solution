@@ -5,6 +5,8 @@ namespace POS.Shared.Models;
 
 public class OfflineTransactionSyncRequest
 {
+    public long? ShiftId { get; set; }
+    public string? ClientShiftId { get; set; }
     public string LocalTransactionId { get; set; } = null!;
     public string DeviceIdentifier { get; set; } = null!;
     public int BranchId { get; set; }

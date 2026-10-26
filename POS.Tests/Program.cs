@@ -88,6 +88,9 @@ public static partial class Program
         await RunTestAsync("37. Deactivation cutoff date preserved against subsequent edits", Test37_DeactivationCutoffPreserved);
         await RunTestAsync("38. Receipt layout, item totals, and syntax integrity", Test38_ReceiptFormattingOutput);
 
+        await RunTestAsync("39. Blank opening float is rejected", Test39_OpeningFloatRequired);
+        await RunTestAsync("40. Bar and Kitchen preparation routing, assigned printers, and ticket formatting", Test40_BarAndKitchenRouting);
+
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
     }
@@ -161,9 +164,10 @@ public static partial class Program
             TerminalId = 1,
             CashierId = "cashier1",
             OpeningFloat = 2000.00m,
+            OpeningConfirmed = true,
             ExpectedBalance = 2000.00m,
             Status = "OPEN",
-            OpenedAt = DateTime.UtcNow
+            OpenedAt = DateTime.UtcNow.AddHours(-1)
         };
 
         db.Branches.Add(branch);

@@ -4,6 +4,7 @@ namespace POS.Shared.Models;
 
 public class OrderCreateDto
 {
+    public string? ClientShiftId { get; set; }
     public int BranchId { get; set; }
     public int OutletId { get; set; }
     public int TerminalId { get; set; }

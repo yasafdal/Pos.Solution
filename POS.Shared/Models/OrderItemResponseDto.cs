@@ -15,5 +15,7 @@ public class OrderItemResponseDto
     public decimal LineTotal { get; set; }
     public string? VatType { get; set; }
     public decimal VatAmount { get; set; }
+    public bool IsKitchenItem { get; set; }
+    public bool IsBarItem { get; set; }
     public List<OrderItemModifierResponseDto> Modifiers { get; set; } = new();
 }

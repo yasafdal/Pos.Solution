@@ -27,6 +27,7 @@ public class ProductDto
     public string? TaxName { get; set; } = "VATable";
     public string ProductType { get; set; } = string.Empty;
 
-    public bool IsActive { get; set; } 
+    public bool IsActive { get; set; }
     public bool IsKitchenItem { get; set; }
+    public bool IsBarItem { get; set; }
 }

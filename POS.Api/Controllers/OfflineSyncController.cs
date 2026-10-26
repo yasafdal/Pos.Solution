@@ -67,7 +67,8 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             });
         }
 
-        using var transaction = await context.Database.BeginTransactionAsync();
+        using var transaction = await context.Database.BeginTransactionAsync(context.Database.IsNpgsql() ? System.Data.IsolationLevel.ReadCommitted : System.Data.IsolationLevel.Serializable);
+        await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(context, request.TerminalId);
         try
         {
             // Verify outlet and branch authorization
@@ -84,6 +85,16 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
 
             var recoveryError = await ValidateHistoricalRecovery(outlet, request.TransactionDate, request.LocalTransactionId, "SALE", recoveryReason);
             if (recoveryError != null) return Conflict(recoveryError);
+            var shiftQuery = context.CashDrawerShifts.Where(s => s.TerminalId == request.TerminalId && s.BranchId == request.BranchId && s.CashierId == request.CashierId && s.OpeningConfirmed);
+            if (!string.IsNullOrEmpty(request.ClientShiftId)) shiftQuery = shiftQuery.Where(s => s.ClientShiftId == request.ClientShiftId);
+            else if (request.ShiftId.HasValue) shiftQuery = shiftQuery.Where(s => s.ShiftId == request.ShiftId);
+            // Legacy pending payloads may resolve only an unambiguous historical interval.
+            var historical = await shiftQuery.Where(s => s.OpenedAt <= request.TransactionDate && (s.ClosedAt == null || request.TransactionDate <= s.ClosedAt)).ToListAsync();
+            if (historical.Count != 1 || request.TransactionDate > DateTime.UtcNow.AddMinutes(1)) return Conflict("Sale has no matching confirmed shift lifecycle.");
+            var saleShift = historical[0];
+            if (saleShift.Status != "OPEN" && saleShift.Status != "CLOSED") return Conflict("Invalid shift lifecycle.");
+            if (request.Payments.Any(p => p.PaidAt.ToUniversalTime() < saleShift.OpenedAt.ToUniversalTime() || (saleShift.ClosedAt.HasValue && p.PaidAt.ToUniversalTime() > saleShift.ClosedAt.Value.ToUniversalTime()))) return Conflict("Payment is outside the shift lifecycle.");
+            if (User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value != request.CashierId && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
             // Generate collision-safe sequential/unique offline order number
             string txSuffix = request.LocalTransactionId.Replace("-", "").ToUpperInvariant();
             if (txSuffix.Length > 6) txSuffix = txSuffix[..6];
@@ -108,6 +119,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             var order = new Order
             {
                 OrderNumber = orderNumber,
+                ShiftId = saleShift.ShiftId,
                 BranchId = request.BranchId,
                 OutletId = outlet.OutletId,
                 TerminalId = request.TerminalId,
@@ -210,8 +222,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             }
 
             // Accumulate cash payment into active drawer shift if available
-            var openShift = await context.CashDrawerShifts
-                .FirstOrDefaultAsync(s => s.TerminalId == request.TerminalId && s.Status == "OPEN");
+            var openShift = saleShift;
 
             if (openShift != null)
             {
@@ -222,7 +233,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 if (cashPaymentTotal > 0)
                 {
                     openShift.TotalCashSales += cashPaymentTotal;
-                    openShift.ExpectedBalance += cashPaymentTotal;
+                    CashDrawerController.RecalculateShiftExpectedBalance(openShift);
+                    if (openShift.Status == "CLOSED" && openShift.ActualCountedBalance.HasValue)
+                        openShift.Discrepancy = openShift.ActualCountedBalance.Value - openShift.ExpectedBalance;
                     
                     var movement = new CashDrawerMovement
                     {

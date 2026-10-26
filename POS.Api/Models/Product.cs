@@ -35,6 +35,8 @@ public partial class Product
 
     public bool IsKitchenItem { get; set; }
 
+    public bool IsBarItem { get; set; }
+
     public bool IsDeleted { get; set; }
 
     public virtual ICollection<BranchInventory> BranchInventories { get; set; } = new List<BranchInventory>();

@@ -11,4 +11,10 @@ public interface IReceiptPrinter
     /// Never creates an order, processes payment, or changes the cart.
     /// </summary>
     Task PrintAsync(ReceiptDto receipt);
+
+    /// <summary>
+    /// Sends a kitchen or bar preparation ticket to the assigned destination printer.
+    /// Never duplicates sales invoices or receipts.
+    /// </summary>
+    Task PrintPreparationTicketAsync(PreparationTicketDto ticket, string? printerName = null);
 }

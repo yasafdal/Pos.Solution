@@ -27,12 +27,19 @@ public class LocalPosDbContext : DbContext
     public DbSet<LocalCashDrawerMovement> CashDrawerMovements => Set<LocalCashDrawerMovement>();
 
     private readonly string _dbPath;
-    private static bool _isInitialized;
+    private static readonly System.Collections.Generic.HashSet<string> InitializedPaths = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object _initLock = new();
     public static readonly System.Threading.SemaphoreSlim WriteLock = new(1, 1);
 
     public LocalPosDbContext()
     {
+        // Explicit process-scoped override for isolated integration hosts; never read from user config.
+        if (AppContext.GetData("POS.LocalDatabasePath") is string overridePath)
+        {
+            _dbPath = Path.GetFullPath(overridePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
+            return;
+        }
         var folder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var posFolder = Path.Combine(folder, "PosSolution");
         Directory.CreateDirectory(posFolder);
@@ -84,10 +91,9 @@ public class LocalPosDbContext : DbContext
 
     public void InitializeDatabase()
     {
-        if (_isInitialized) return;
         lock (_initLock)
         {
-            if (_isInitialized) return;
+            if (InitializedPaths.Contains(_dbPath) && File.Exists(_dbPath)) return;
             try
             {
                 LocalHierarchyUpgrade.Apply(Database.GetDbConnection());
@@ -99,7 +105,8 @@ public class LocalPosDbContext : DbContext
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OrderType TEXT NOT NULL DEFAULT 'DINING';"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN TableNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN HeadCount INTEGER NULL;"); } catch { }
-                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT" })
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalProducts ADD COLUMN IsBarItem INTEGER NOT NULL DEFAULT 0;"); } catch { }
+                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
@@ -204,12 +211,14 @@ public class LocalPosDbContext : DbContext
                     WHERE NOT EXISTS (SELECT 1 FROM LocalCashMovementCategories WHERE CategoryId = 6);
                 ");
 
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningConfirmed INTEGER NOT NULL DEFAULT 0;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClientShiftId TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 // Enable WAL mode and busy_timeout for high concurrency and durability
                 Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
                 Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");
                 Database.ExecuteSqlRaw("PRAGMA busy_timeout=5000;");
                 Database.ExecuteSqlRaw("PRAGMA foreign_keys = OFF;");
-                _isInitialized = true;
+                InitializedPaths.Add(_dbPath);
             }
             catch (Exception ex)
             {

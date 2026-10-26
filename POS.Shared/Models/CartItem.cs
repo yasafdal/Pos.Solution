@@ -17,6 +17,8 @@ namespace POS.Shared.Models
         public string? ImageUrl { get; set; }
         public string? UnitOfMeasure { get; set; }
         public string? TaxName { get; set; } = "VATable";
+        public bool IsKitchenItem { get; set; }
+        public bool IsBarItem { get; set; }
         public decimal LineTotal => UnitPrice * Quantity;
     }
 }

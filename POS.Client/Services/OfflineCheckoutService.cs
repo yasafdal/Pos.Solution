@@ -47,6 +47,12 @@ public class OfflineCheckoutService : IOfflineCheckoutService
 
     public async Task<OfflineCheckoutResultDto> ProcessOfflineCashSaleAsync(OrderCreateDto createDto, decimal cashTendered, string cashierId)
     {
+        if (!_session.IsAuthenticated || !string.Equals(_session.Username, cashierId, StringComparison.Ordinal)
+            || _session.Terminal?.TerminalId != createDto.TerminalId
+            || _session.Terminal?.BranchId != createDto.BranchId
+            || (!string.IsNullOrEmpty(createDto.CashierId) && !string.Equals(createDto.CashierId, cashierId, StringComparison.Ordinal)))
+            return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "Offline checkout requires the authenticated cashier and assigned terminal/branch." };
+
         if (createDto.Items == null || createDto.Items.Count == 0)
         {
             return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "Order must contain at least one item." };
@@ -67,6 +73,11 @@ public class OfflineCheckoutService : IOfflineCheckoutService
             using var transaction = await db.Database.BeginTransactionAsync();
             try
             {
+                var confirmedShift = await db.CashDrawerShifts.SingleOrDefaultAsync(s => s.TerminalId == createDto.TerminalId && s.BranchId == createDto.BranchId && s.CashierId == cashierId && s.Status == "OPEN" && s.OpeningConfirmed);
+                if (confirmedShift == null || (createDto.ShiftId.HasValue && createDto.ShiftId != confirmedShift.ShiftId))
+                    throw new InvalidOperationException("Open a shift and confirm opening float before offline payment.");
+                createDto.ShiftId = confirmedShift.ShiftId;
+                createDto.ClientShiftId = confirmedShift.ClientShiftId;
                 // 1. Fetch outlet config for tax type
                 var outletConfig = await db.TerminalConfigs
                     .AsNoTracking()
@@ -170,6 +181,10 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                         TaxName = itemDto.TaxName ?? "VATable"
                     });
 
+                    var localProd = await db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.ProductId == itemDto.ProductId);
+                    bool isKitchen = localProd?.IsKitchenItem ?? itemDto.IsKitchenItem;
+                    bool isBar = localProd?.IsBarItem ?? itemDto.IsBarItem;
+
                     receiptItems.Add(new OrderItemResponseDto
                     {
                         OrderItemId = idx + 1,
@@ -183,6 +198,8 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                         LineTotal = lineTotal,
                         VatType = calcItem?.VatType ?? "VATABLE",
                         VatAmount = calcItem?.VatAmount ?? 0m,
+                        IsKitchenItem = isKitchen,
+                        IsBarItem = isBar,
                         Modifiers = itemDto.Modifiers?.Select((m, mIdx) => new OrderItemModifierResponseDto
                         {
                             OrderItemModifierId = mIdx + 1,
@@ -207,10 +224,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 });
 
                 // 6b. Update active LocalCashDrawerShift so offline ExpectedBalance reflects offline cash sales immediately
-                var localOpenShift = await db.CashDrawerShifts
-                    .Where(s => s.TerminalId == createDto.TerminalId && s.Status == "OPEN")
-                    .OrderByDescending(s => s.OpenedAt)
-                    .FirstOrDefaultAsync();
+                var localOpenShift = confirmedShift;
                 if (localOpenShift != null)
                 {
                     localOpenShift.TotalCashSales += totalAmount;

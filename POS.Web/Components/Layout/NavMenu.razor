@@ -4,103 +4,149 @@
 
 <nav class="mt-2" aria-label="Main navigation">
     <ul class="nav sidebar-menu flex-column" data-lte-toggle="treeview" role="menu" data-accordion="false">
-        
+
         <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1">Navigation</li>
         <li class="nav-item">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All" title="Dashboard">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All" title="Dashboard" @onclick="HandleNavClick">
                 <i class="nav-icon bi bi-house-door-fill"></i>
                 <p>Dashboard</p>
             </NavLink>
         </li>
-       
+
         <li class="nav-item">
-            <NavLink class="nav-link" href="manage-categories" Match="NavLinkMatch.Prefix" title="Categories">
+            <NavLink class="nav-link" href="manage-categories" Match="NavLinkMatch.Prefix" title="Categories" @onclick="HandleNavClick">
                 <i class="nav-icon bi bi-tags-fill"></i>
                 <p>Categories</p>
             </NavLink>
         </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="manage-products" Match="NavLinkMatch.Prefix" title="Products">
-                <i class="nav-icon bi bi-box-seam-fill"></i>
-                <p>Products</p>
-            </NavLink>
+
+        <!-- Product Management (Collapsible Parent Menu) -->
+        <li class="nav-item @(isProductMenuOpen ? "menu-open" : "")">
+            <button type="button"
+                    class="parent-menu-btn @(IsProductActive() ? "parent-active" : "")"
+                    @onclick="ToggleProductMenu"
+                    aria-expanded="@(isProductMenuOpen ? "true" : "false")"
+                    aria-controls="product-submenu"
+                    title="Product Management">
+                <span class="d-flex align-items-center text-truncate">
+                    <i class="nav-icon bi bi-boxes"></i>
+                    <p class="mb-0">Product Management</p>
+                </span>
+                <i class="bi @(isProductMenuOpen ? "bi-chevron-down" : "bi-chevron-right") menu-arrow ms-auto" aria-hidden="true"></i>
+            </button>
+            <ul id="product-submenu" class="nav nav-treeview flex-column submenu-list @(isProductMenuOpen ? "d-block" : "d-none")" role="group" aria-label="Product Management Submenu">
+                <li class="nav-item">
+                    <NavLink class="nav-link submenu-link" href="manage-products" Match="NavLinkMatch.Prefix" title="Products" @onclick="HandleNavClick">
+                        <i class="nav-icon bi bi-box-seam"></i>
+                        <p class="mb-0">Products</p>
+                    </NavLink>
+                </li>
+                <li class="nav-item">
+                    <NavLink class="nav-link submenu-link" href="modifiers" Match="NavLinkMatch.Prefix" title="Product Modifiers" @onclick="HandleNavClick">
+                        <i class="nav-icon bi bi-ui-checks-grid"></i>
+                        <p class="mb-0">Product Modifiers</p>
+                    </NavLink>
+                </li>
+            </ul>
         </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="modifiers" Match="NavLinkMatch.Prefix" title="Product Modifiers"><i class="nav-icon bi bi-ui-checks-grid"></i><p>Product Modifiers</p></NavLink>
+
+        <!-- Branch Management (Collapsible Parent Menu) -->
+        <li class="nav-item @(isBranchMenuOpen ? "menu-open" : "")">
+            <button type="button"
+                    class="parent-menu-btn @(IsBranchActive() ? "parent-active" : "")"
+                    @onclick="ToggleBranchMenu"
+                    aria-expanded="@(isBranchMenuOpen ? "true" : "false")"
+                    aria-controls="branch-submenu"
+                    title="Branch Management">
+                <span class="d-flex align-items-center text-truncate">
+                    <i class="nav-icon bi bi-diagram-3-fill"></i>
+                    <p class="mb-0">Branch Management</p>
+                </span>
+                <i class="bi @(isBranchMenuOpen ? "bi-chevron-down" : "bi-chevron-right") menu-arrow ms-auto" aria-hidden="true"></i>
+            </button>
+            <ul id="branch-submenu" class="nav nav-treeview flex-column submenu-list @(isBranchMenuOpen ? "d-block" : "d-none")" role="group" aria-label="Branch Management Submenu">
+                <li class="nav-item">
+                    <NavLink class="nav-link submenu-link" href="branches" Match="NavLinkMatch.Prefix" title="Branches" @onclick="HandleNavClick">
+                        <i class="nav-icon bi bi-building"></i>
+                        <p class="mb-0">Branches</p>
+                    </NavLink>
+                </li>
+                <li class="nav-item">
+                    <NavLink class="nav-link submenu-link" href="outlets" Match="NavLinkMatch.Prefix" title="Outlet Management" @onclick="HandleNavClick">
+                        <i class="nav-icon bi bi-shop"></i>
+                        <p class="mb-0">Outlet Management</p>
+                    </NavLink>
+                </li>
+                <li class="nav-item">
+                    <NavLink class="nav-link submenu-link" href="terminals" Match="NavLinkMatch.Prefix" title="Terminal Management" @onclick="HandleNavClick">
+                        <i class="nav-icon bi bi-display"></i>
+                        <p class="mb-0">Terminal Management</p>
+                    </NavLink>
+                </li>
+            </ul>
         </li>
+
         <li class="nav-item">
-            <NavLink class="nav-link" href="branches" Match="NavLinkMatch.Prefix" title="Branch Management">
-                <i class="nav-icon bi bi-building"></i>
-                <p>Branch Management</p>
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="outlets" Match="NavLinkMatch.Prefix" title="Outlet Management">
-                <i class="nav-icon bi bi-shop"></i>
-                <p>Outlet Management</p>
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="terminals" Match="NavLinkMatch.Prefix" title="Terminal Management">
-                <i class="nav-icon bi bi-display"></i>
-                <p>Terminal Management</p>
-            </NavLink>
-        </li>
-        <li class="nav-item">
-            <NavLink class="nav-link" href="inventory" Match="NavLinkMatch.Prefix" title="Inventory & Stock">
+            <NavLink class="nav-link" href="inventory" Match="NavLinkMatch.Prefix" title="Inventory & Stock" @onclick="HandleNavClick">
                 <i class="nav-icon bi bi-box-seam"></i>
                 <p>Inventory & Stock</p>
             </NavLink>
         </li>
 
-        <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Manage & Settings</li>
-         <li class="nav-item">
-             <NavLink class="nav-link" href="sales-history" Match="NavLinkMatch.Prefix" title="Sales History">
-                 <i class="nav-icon bi bi-receipt-cutoff"></i>
-                 <p>Transaction History</p>
-             </NavLink>
-         </li>
-         <li class="nav-item">
-             <NavLink class="nav-link" href="sales-reports" Match="NavLinkMatch.Prefix" title="Sales Reports">
-                 <i class="nav-icon bi bi-bar-chart-fill"></i>
-                 <p>Sales Reports</p>
-             </NavLink>
-         </li>
-         <li class="nav-item">
-             <NavLink class="nav-link" href="held-sales" Match="NavLinkMatch.Prefix" title="Held Sales">
-                 <i class="nav-icon bi bi-pause-circle-fill"></i>
-                 <p>Held Sales</p>
-             </NavLink>
-         </li>
-         <li class="nav-item">
-             <NavLink class="nav-link" href="returns-management" Match="NavLinkMatch.Prefix" title="Returns & Voids">
-                 <i class="nav-icon bi bi-arrow-counterclockwise"></i>
-                 <p>Returns & Voids</p>
-             </NavLink>
-         </li>
-         <li class="nav-item">
-             <NavLink class="nav-link" href="cash-movements" Match="NavLinkMatch.Prefix" title="Petty Cash & Cash Movements">
-                 <i class="nav-icon bi bi-cash-stack"></i>
-                 <p>Petty Cash & Drawer</p>
-             </NavLink>
-         </li>
+        <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Manage &amp; Settings</li>
+        <li class="nav-item">
+            <NavLink class="nav-link" href="sales-history" Match="NavLinkMatch.Prefix" title="Sales History" @onclick="HandleNavClick">
+                <i class="nav-icon bi bi-receipt-cutoff"></i>
+                <p>Transaction History</p>
+            </NavLink>
+        </li>
+        <li class="nav-item">
+            <NavLink class="nav-link" href="sales-reports" Match="NavLinkMatch.Prefix" title="Sales Reports" @onclick="HandleNavClick">
+                <i class="nav-icon bi bi-bar-chart-fill"></i>
+                <p>Sales Reports</p>
+            </NavLink>
+        </li>
+        <li class="nav-item">
+            <NavLink class="nav-link" href="held-sales" Match="NavLinkMatch.Prefix" title="Held Sales" @onclick="HandleNavClick">
+                <i class="nav-icon bi bi-pause-circle-fill"></i>
+                <p>Held Sales</p>
+            </NavLink>
+        </li>
+        <li class="nav-item">
+            <NavLink class="nav-link" href="returns-management" Match="NavLinkMatch.Prefix" title="Returns & Voids" @onclick="HandleNavClick">
+                <i class="nav-icon bi bi-arrow-counterclockwise"></i>
+                <p>Returns & Voids</p>
+            </NavLink>
+        </li>
+        <li class="nav-item">
+            <NavLink class="nav-link" href="cash-movements" Match="NavLinkMatch.Prefix" title="Petty Cash & Cash Movements" @onclick="HandleNavClick">
+                <i class="nav-icon bi bi-cash-stack"></i>
+                <p>Petty Cash & Drawer</p>
+            </NavLink>
+        </li>
+        <li class="nav-item">
+            <NavLink class="nav-link" href="manage-discounts" Match="NavLinkMatch.Prefix" title="Discounts" @onclick="HandleNavClick">
+                <i class="nav-icon bi bi-percent"></i>
+                <p>Discounts</p>
+            </NavLink>
+        </li>
 
         <li class="nav-item">
-            <NavLink class="nav-link" href="uom" Match="NavLinkMatch.Prefix" title="UOM">
+            <NavLink class="nav-link" href="uom" Match="NavLinkMatch.Prefix" title="UOM" @onclick="HandleNavClick">
                 <i class="nav-icon bi bi-rulers"></i>
                 <p>UOM</p>
             </NavLink>
         </li>
 
         <li class="nav-item">
-            <NavLink class="nav-link" href="business-type" Match="NavLinkMatch.Prefix" title="Business Type">
+            <NavLink class="nav-link" href="business-type" Match="NavLinkMatch.Prefix" title="Business Type" @onclick="HandleNavClick">
                 <i class="nav-icon bi bi-briefcase"></i>
                 <p>Business Type</p>
             </NavLink>
         </li>
 
         <li class="nav-item">
-            <NavLink class="nav-link" href="business-mode" Match="NavLinkMatch.Prefix" title="Business Mode">
+            <NavLink class="nav-link" href="business-mode" Match="NavLinkMatch.Prefix" title="Business Mode" @onclick="HandleNavClick">
                 <i class="nav-icon bi bi-gear"></i>
                 <p>Service Mode</p>
             </NavLink>
@@ -110,7 +156,7 @@
             <Authorized>
                 <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Admin</li>
                 <li class="nav-item">
-                    <NavLink class="nav-link" href="users" Match="NavLinkMatch.Prefix" title="Users">
+                    <NavLink class="nav-link" href="users" Match="NavLinkMatch.Prefix" title="Users" @onclick="HandleNavClick">
                         <i class="nav-icon bi bi-people"></i>
                         <p>Users</p>
                     </NavLink>
@@ -121,18 +167,68 @@
 </nav>
 
 @code {
-    private string? currentUrl;
+    [Parameter] public EventCallback OnNavigate { get; set; }
+
+    private string currentUrl = "";
+    private bool isProductMenuOpen;
+    private bool isBranchMenuOpen;
 
     protected override void OnInitialized()
     {
         currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
         NavigationManager.LocationChanged += OnLocationChanged;
+        AutoExpandActiveMenus();
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
         currentUrl = NavigationManager.ToBaseRelativePath(e.Location);
+        AutoExpandActiveMenus();
         StateHasChanged();
+    }
+
+    private void AutoExpandActiveMenus()
+    {
+        if (IsProductRoute(currentUrl))
+        {
+            isProductMenuOpen = true;
+        }
+        if (IsBranchRoute(currentUrl))
+        {
+            isBranchMenuOpen = true;
+        }
+    }
+
+    private bool IsProductRoute(string url) =>
+        url.StartsWith("manage-products", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("modifiers", StringComparison.OrdinalIgnoreCase);
+
+    private bool IsBranchRoute(string url) =>
+        url.StartsWith("branches", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("outlets", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("manage-outlets", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("terminals", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("manage-terminals", StringComparison.OrdinalIgnoreCase);
+
+    private bool IsProductActive() => IsProductRoute(currentUrl);
+    private bool IsBranchActive() => IsBranchRoute(currentUrl);
+
+    private void ToggleProductMenu()
+    {
+        isProductMenuOpen = !isProductMenuOpen;
+    }
+
+    private void ToggleBranchMenu()
+    {
+        isBranchMenuOpen = !isBranchMenuOpen;
+    }
+
+    private async Task HandleNavClick()
+    {
+        if (OnNavigate.HasDelegate)
+        {
+            await OnNavigate.InvokeAsync();
+        }
     }
 
     public void Dispose()

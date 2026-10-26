@@ -1,20 +1,26 @@
 @inherits LayoutComponentBase
+@implements IAsyncDisposable
 @inject NavigationManager NavManager
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
 @using Microsoft.AspNetCore.Components.Authorization
 
 <AuthorizeView>
     <Authorized>
-        <div class="app-wrapper">
+        <div class="app-wrapper @(isMobileSidebarOpen ? "mobile-sidebar-open" : "") @(isDesktopSidebarCollapsed ? "sidebar-collapse" : "")">
             <!-- Header Navbar -->
             <nav class="app-header navbar navbar-expand bg-white border-bottom shadow-sm">
                 <div class="container-fluid">
-                    <!-- Sidebar Toggle -->
+                    <!-- Sidebar Toggle (Accessible on all screens) -->
                     <ul class="navbar-nav align-items-center">
                         <li class="nav-item">
-                            <a class="nav-link text-dark" data-lte-toggle="sidebar" href="#" role="button">
-                                <i class="bi bi-list fs-4"></i>
-                            </a>
+                            <button type="button"
+                                    class="nav-link text-dark btn btn-link p-1 border-0 shadow-none d-flex align-items-center sidebar-toggle-btn"
+                                    @onclick="ToggleSidebar"
+                                    aria-label="Toggle navigation"
+                                    aria-expanded="@(isMobileSidebarOpen ? "true" : "false")">
+                                <i class="bi bi-list fs-3"></i>
+                            </button>
                         </li>
                     </ul>
 
@@ -34,16 +40,29 @@
                 </div>
             </nav>
 
-            <!-- App Sidebar -->
-            <aside class="app-sidebar original-sidebar shadow" data-bs-theme="dark">
-                <div class="sidebar-brand border-bottom border-white border-opacity-10">
-                    <a href="" class="brand-link text-decoration-none d-flex align-items-center">
+            <!-- Semi-transparent backdrop overlay on mobile and tablet -->
+            @if (isMobileSidebarOpen)
+            {
+                <div class="sidebar-backdrop" @onclick="CloseMobileSidebar" aria-hidden="true"></div>
+            }
+
+            <!-- App Sidebar (Off-canvas on mobile/tablet, docked on desktop) -->
+            <aside class="app-sidebar original-sidebar shadow @(isMobileSidebarOpen ? "show-mobile" : "")" data-bs-theme="dark">
+                <div class="sidebar-brand border-bottom border-white border-opacity-10 d-flex align-items-center justify-content-between px-3">
+                    <a href="" class="brand-link text-decoration-none d-flex align-items-center flex-grow-1" @onclick="CloseMobileSidebar">
                         <i class="bi bi-shop text-warning fs-4 brand-icon"></i>
                         <span class="brand-text fw-bold fs-5 text-white ms-2">POS System</span>
                     </a>
+                    <!-- Close (X) button visible only on mobile/tablet -->
+                    <button type="button"
+                            class="btn btn-link text-white text-opacity-75 p-1 close-sidebar-btn"
+                            @onclick="CloseMobileSidebar"
+                            aria-label="Close sidebar">
+                        <i class="bi bi-x-lg fs-5"></i>
+                    </button>
                 </div>
                 <div class="sidebar-wrapper">
-                    <NavMenu />
+                    <NavMenu OnNavigate="CloseMobileSidebar" />
                 </div>
             </aside>
 
@@ -78,10 +97,103 @@
 </div>
 
 @code {
+    private bool isMobileSidebarOpen;
+    private bool isDesktopSidebarCollapsed;
+    private DotNetObjectReference<MainLayout>? dotNetHelper;
+
+    protected override void OnInitialized()
+    {
+        NavManager.LocationChanged += OnLocationChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                dotNetHelper = DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("posSidebar.init", dotNetHelper);
+            }
+            catch { }
+        }
+    }
+
+    private async void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        if (isMobileSidebarOpen)
+        {
+            await CloseMobileSidebar();
+        }
+    }
+
+    private async Task ToggleSidebar()
+    {
+        try
+        {
+            var isDesktop = await JS.InvokeAsync<bool>("posSidebar.isDesktop");
+            if (isDesktop)
+            {
+                isDesktopSidebarCollapsed = !isDesktopSidebarCollapsed;
+            }
+            else
+            {
+                isMobileSidebarOpen = !isMobileSidebarOpen;
+                await UpdateBodyScrollLock();
+            }
+        }
+        catch
+        {
+            isMobileSidebarOpen = !isMobileSidebarOpen;
+            await UpdateBodyScrollLock();
+        }
+    }
+
+    private async Task CloseMobileSidebar()
+    {
+        if (isMobileSidebarOpen)
+        {
+            isMobileSidebarOpen = false;
+            await UpdateBodyScrollLock();
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public async Task CloseFromJs()
+    {
+        if (isMobileSidebarOpen)
+        {
+            isMobileSidebarOpen = false;
+            await UpdateBodyScrollLock();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task UpdateBodyScrollLock()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("posSidebar.setBodyScrollLock", isMobileSidebarOpen);
+        }
+        catch { }
+    }
+
     private async Task Logout()
     {
         var customAuthStateProvider = (POS.Web.Auth.CustomAuthStateProvider)AuthStateProvider;
         await customAuthStateProvider.LogOutAsync();
         NavManager.NavigateTo("/login", true);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        NavManager.LocationChanged -= OnLocationChanged;
+        try
+        {
+            await JS.InvokeVoidAsync("posSidebar.dispose");
+        }
+        catch { }
+        dotNetHelper?.Dispose();
     }
 }

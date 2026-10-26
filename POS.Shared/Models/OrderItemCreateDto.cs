@@ -10,5 +10,7 @@ public class OrderItemCreateDto
     public decimal Quantity { get; set; }
     public decimal BasePrice { get; set; }
     public string? TaxName { get; set; } = "VATable";
+    public bool IsKitchenItem { get; set; }
+    public bool IsBarItem { get; set; }
     public List<OrderItemModifierCreateDto> Modifiers { get; set; } = new();
 }

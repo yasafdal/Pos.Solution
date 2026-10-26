@@ -116,6 +116,19 @@
                     <TemplateColumn Context="product" Title="Product Name" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.Name))" Sortable="true" Align="Align.Left">
                         <div>
                             <span class="d-block fw-semibold text-dark text-truncate" title="@product.Name">@(string.IsNullOrWhiteSpace(product.Name) ? "—" : product.Name)</span>
+                            @if (product.IsKitchenItem || product.IsBarItem)
+                            {
+                                <div class="d-flex gap-1 mt-1">
+                                    @if (product.IsKitchenItem)
+                                    {
+                                        <span class="badge bg-warning bg-opacity-25 text-dark border border-warning-subtle" style="font-size: 0.68rem; font-weight: 600;">Kitchen</span>
+                                    }
+                                    @if (product.IsBarItem)
+                                    {
+                                        <span class="badge bg-info bg-opacity-25 text-dark border border-info-subtle" style="font-size: 0.68rem; font-weight: 600;">Bar</span>
+                                    }
+                                </div>
+                            }
                         </div>
                     </TemplateColumn>
 
@@ -473,12 +486,12 @@
                                 <i class="bi bi-sliders" style="font-size: 0.85rem;"></i>
                             </div>
                             <div>
-                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">POS & Kitchen Settings</h6>
-                                <span class="text-secondary small" style="font-size: 0.78rem;">Configure register visibility and kitchen order routing</span>
+                                <h6 class="fw-bold text-dark mb-0" style="font-size: 0.95rem;">POS &amp; Preparation Settings</h6>
+                                <span class="text-secondary small" style="font-size: 0.78rem;">Configure register visibility and preparation order routing</span>
                             </div>
                         </div>
                         <div class="row g-3">
-                            <div class="col-12 col-md-6">
+                            <div class="col-12 col-md-4">
                                 <div class="p-3 bg-light rounded border h-100 d-flex align-items-center justify-content-between">
                                     <div>
                                         <label class="form-check-label fw-bold text-dark mb-0 d-block" for="activeSwitch">Active in POS</label>
@@ -489,7 +502,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-12 col-md-6">
+                            <div class="col-12 col-md-4">
                                 <div class="p-3 bg-light rounded border h-100 d-flex align-items-center justify-content-between">
                                     <div>
                                         <label class="form-check-label fw-bold text-dark mb-0 d-block" for="kitchenSwitch">Route to Kitchen</label>
@@ -497,6 +510,17 @@
                                     </div>
                                     <div class="form-check form-switch mb-0 fs-5 ms-3">
                                         <InputCheckbox class="form-check-input" id="kitchenSwitch" @bind-Value="currentProduct.IsKitchenItem" />
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="p-3 bg-light rounded border h-100 d-flex align-items-center justify-content-between">
+                                    <div>
+                                        <label class="form-check-label fw-bold text-dark mb-0 d-block" for="barSwitch">Route to Bar</label>
+                                        <small class="text-secondary" style="font-size: 0.78rem;">Auto-print preparation ticket to bar printer</small>
+                                    </div>
+                                    <div class="form-check form-switch mb-0 fs-5 ms-3">
+                                        <InputCheckbox class="form-check-input" id="barSwitch" @bind-Value="currentProduct.IsBarItem" />
                                     </div>
                                 </div>
                             </div>
@@ -778,7 +802,9 @@
             ProductType = "Standard",
             UnitValue = 1,
             UnitOfMeasure = "pc",
-            CategoryId = FilterCategoryId ?? 0
+            CategoryId = FilterCategoryId ?? 0,
+            IsKitchenItem = false,
+            IsBarItem = false
         };
         selectedModifierGroupIds.Clear();
         isModalOpen = true;
@@ -804,7 +830,8 @@
             TaxId = product.TaxId,
             ProductType = string.IsNullOrWhiteSpace(product.ProductType) ? "Standard" : product.ProductType,
             IsActive = product.IsActive,
-            IsKitchenItem = product.IsKitchenItem
+            IsKitchenItem = product.IsKitchenItem,
+            IsBarItem = product.IsBarItem
         };
 
         selectedModifierGroupIds.Clear();

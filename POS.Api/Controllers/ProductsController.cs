@@ -44,7 +44,8 @@ namespace POS.Api.Controllers
                     TaxName = p.Tax != null ? p.Tax.Name : "No Tax",
                     ProductType = p.ProductType,
                     IsActive = p.IsActive,
-                    IsKitchenItem = p.IsKitchenItem
+                    IsKitchenItem = p.IsKitchenItem,
+                    IsBarItem = p.IsBarItem
                 })
                 .ToListAsync();
 
@@ -70,7 +71,8 @@ namespace POS.Api.Controllers
                 TaxId = dto.TaxId,
                 ProductType = dto.ProductType,
                 IsActive = dto.IsActive,
-                IsKitchenItem = dto.IsKitchenItem
+                IsKitchenItem = dto.IsKitchenItem,
+                IsBarItem = dto.IsBarItem
             };
 
             _context.Products.Add(product);
@@ -101,6 +103,7 @@ namespace POS.Api.Controllers
             product.ProductType = dto.ProductType;
             product.IsActive = dto.IsActive;
             product.IsKitchenItem = dto.IsKitchenItem;
+            product.IsBarItem = dto.IsBarItem;
 
             await _context.SaveChangesAsync();
             return NoContent();

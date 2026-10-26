@@ -120,6 +120,8 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.CostPrice).HasPrecision(18, 2);
             entity.Property(e => e.ImageUrl).HasMaxLength(255);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.IsKitchenItem).HasDefaultValue(false);
+            entity.Property(e => e.IsBarItem).HasDefaultValue(false);
             entity.Property(e => e.IsDeleted).HasColumnName("isDeleted");
             entity.Property(e => e.Name).HasMaxLength(100);
             entity.Property(e => e.ShortCode).HasColumnName("ShortCode").HasMaxLength(30);

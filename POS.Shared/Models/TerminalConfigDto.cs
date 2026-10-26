@@ -19,5 +19,8 @@ public class TerminalConfigDto
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
     public string TerminalName { get; set; } = string.Empty;
+    public string? ReceiptPrinterName { get; set; }
+    public string? KitchenPrinterName { get; set; }
+    public string? BarPrinterName { get; set; }
     public string? Token { get; set; }
 }

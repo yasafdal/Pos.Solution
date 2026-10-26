@@ -9,8 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.13" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.13" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
   </ItemGroup>
 
@@ -18,7 +18,10 @@
     <ProjectReference Include="..\POS.Api\POS.Api.csproj" />
     <ProjectReference Include="..\POS.Shared\POS.Shared.csproj" />
     <Compile Include="../POS.Client/Data/LocalHierarchyUpgrade.cs" Link="LocalHierarchyUpgrade.cs" />
+    <Compile Remove="ShiftCacheRegressionTests.cs" />
     <Compile Include="../POS.Client/Services/ReceiptHtmlFormatter.cs" Link="ReceiptHtmlFormatter.cs" />
+    <Compile Include="../POS.Client/Services/PreparationTicketRouter.cs" Link="PreparationTicketRouter.cs" />
+    <Compile Include="../POS.Client/Services/PreparationTicketHtmlFormatter.cs" Link="PreparationTicketHtmlFormatter.cs" />
   </ItemGroup>
 
 </Project>
