@@ -18,7 +18,7 @@
 }
 else
 {
-    <div class="p-4" style="background: var(--pos-bg-root, #0f172a); min-height: 100vh;">
+    <div class="transaction-page p-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
                 <h3 class="fw-bold text-dark mb-1">Transaction History</h3>
@@ -42,7 +42,7 @@ else
         </div>
 
         <!-- Filter Card -->
-        <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-white">
+        <div class="transaction-filter-card card p-3 mb-4">
             <div class="row g-3 align-items-end">
                 <div class="col-md-4">
                     <label class="form-label text-dark fw-semibold small mb-1">Search Invoice / Order #</label>
@@ -69,7 +69,7 @@ else
         </div>
 
         <!-- Transactions Table Card -->
-        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+        <div class="transaction-table-card card">
             @if (transactions == null)
             {
                 <div class="text-center py-5 text-muted">
@@ -86,8 +86,8 @@ else
             }
             else
             {
-                <div class="table-responsive">
-                <table class="table align-middle mb-0">
+                <div class="transaction-table-scroll table-responsive">
+                <table class="transaction-table table align-middle mb-0">
                 <thead class="table-light text-uppercase fs-7 text-secondary">
                     <tr>
                         <th class="py-3 px-4">Date / Time</th>
@@ -103,26 +103,26 @@ else
                     @foreach (var t in transactions)
                     {
                         <tr>
-                            <td class="px-4 text-secondary small">@t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                            <td class="fw-semibold font-monospace">@(t.InvoiceNumber ?? "—")</td>
+                            <td class="transaction-date px-4 small">@t.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")<span>@t.CreatedAt.ToLocalTime().ToString("HH:mm")</span></td>
+                            <td class="transaction-invoice fw-semibold font-monospace">@(t.InvoiceNumber ?? "—")</td>
                             <td>@t.OrderNumber</td>
                             <td>@t.CashierId</td>
                             <td>
                                 @if (t.PaymentStatus == "PAID")
                                 {
-                                    <span class="badge bg-success">PAID</span>
+                                    <span class="transaction-status-badge paid">PAID</span>
                                 }
                                 else if (t.PaymentStatus == "VOIDED" || t.OrderStatus == "VOIDED")
                                 {
-                                    <span class="badge bg-danger">VOIDED</span>
+                                    <span class="transaction-status-badge voided">VOIDED</span>
                                 }
                                 else
                                 {
-                                    <span class="badge bg-warning text-dark">UNPAID</span>
+                                    <span class="transaction-status-badge unpaid">UNPAID</span>
                                 }
                             </td>
-                            <td class="text-end fw-bold text-dark">₱@t.TotalAmount.ToString("N2")</td>
-                            <td class="text-end px-4">
+                            <td class="transaction-total text-end fw-bold">₱@t.TotalAmount.ToString("N2")</td>
+                            <td class="transaction-actions text-end px-4">
                                 <div class="d-flex justify-content-end gap-2">
                                     <button type="button" class="btn btn-sm btn-info text-white rounded-3 px-3" @onclick="() => ViewDetails(t.OrderId)" title="View Details">
                                         <i class="bi bi-eye"></i> View

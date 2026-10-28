@@ -1,0 +1,275 @@
+/* Transaction History — scoped dark POS table styles */
+.transaction-page {
+    min-height: 100vh;
+    background: var(--pos-bg-root, #0f172a);
+    color: var(--pos-text-primary, #f8fafc);
+}
+
+.transaction-page h3,
+.transaction-page h4,
+.transaction-page h5,
+.transaction-page h6,
+.transaction-page .text-dark {
+    color: var(--pos-text-primary, #f8fafc) !important;
+}
+
+.transaction-page .text-secondary,
+.transaction-page .text-muted {
+    color: var(--pos-text-secondary, #94a3b8) !important;
+}
+
+.transaction-page .card {
+    background: var(--pos-bg-card, #1e293b) !important;
+    border: 1px solid var(--pos-border-color, #334155) !important;
+    border-radius: var(--pos-radius-lg, 1rem) !important;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    box-shadow: var(--pos-shadow-sm, 0 4px 6px -1px rgba(0, 0, 0, 0.25)) !important;
+}
+
+.transaction-filter-card {
+    overflow: visible;
+}
+
+.transaction-filter-card .form-label {
+    color: var(--pos-text-secondary, #94a3b8) !important;
+}
+
+.transaction-filter-card .form-control,
+.transaction-filter-card .form-select {
+    min-height: 42px;
+}
+
+.transaction-table-card {
+    overflow: hidden;
+}
+
+.transaction-table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.transaction-table {
+    min-width: 900px;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    background: var(--pos-bg-card, #1e293b) !important;
+    border-color: var(--pos-border-color, #334155) !important;
+}
+
+.transaction-table thead,
+.transaction-table thead tr,
+.transaction-table thead th,
+.transaction-table thead.table-light {
+    background: var(--pos-bg-surface, #0f172a) !important;
+    color: var(--pos-text-secondary, #94a3b8) !important;
+    border-color: var(--pos-border-color, #334155) !important;
+    font-size: 0.72rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.transaction-table thead th {
+    padding-top: 0.9rem !important;
+    padding-bottom: 0.9rem !important;
+}
+
+.transaction-table tbody tr,
+.transaction-table tbody tr:nth-of-type(odd),
+.transaction-table tbody tr:nth-of-type(even) {
+    --transaction-cell-bg: var(--pos-bg-card, #1e293b);
+    --bs-table-color: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-type: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-state: var(--pos-text-primary, #f8fafc);
+    --bs-table-bg: var(--transaction-cell-bg);
+    --bs-table-bg-type: var(--transaction-cell-bg);
+    --bs-table-bg-state: var(--transaction-cell-bg);
+    --bs-table-accent-bg: transparent;
+    background: var(--transaction-cell-bg) !important;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Bootstrap 5 paints each cell with --bs-table-bg plus an inset shadow.
+   Set the variables and the cells explicitly; row background alone is hidden. */
+.transaction-table tbody tr > td,
+.transaction-table tbody tr > th {
+    --bs-table-color: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-type: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-state: var(--pos-text-primary, #f8fafc);
+    --bs-table-bg: var(--transaction-cell-bg, #1e293b);
+    --bs-table-bg-type: var(--transaction-cell-bg, #1e293b);
+    --bs-table-bg-state: var(--transaction-cell-bg, #1e293b);
+    --bs-table-accent-bg: transparent;
+    background-color: var(--transaction-cell-bg, #1e293b) !important;
+    background-image: none;
+    box-shadow: none !important;
+    color: var(--pos-text-primary, #f8fafc) !important;
+}
+
+.transaction-table tbody tr:nth-of-type(odd) {
+    --transaction-cell-bg: #243247;
+}
+
+.transaction-table tbody tr:hover,
+.transaction-table tbody tr:focus-within {
+    --transaction-cell-bg: var(--pos-bg-surface-hover, #334155);
+    --bs-table-color-state: #ffffff;
+    --bs-table-bg-state: var(--transaction-cell-bg);
+    background: var(--transaction-cell-bg) !important;
+    color: #ffffff !important;
+    box-shadow: inset 3px 0 0 var(--pos-primary, #3b82f6);
+}
+
+.transaction-table tbody tr:hover > td,
+.transaction-table tbody tr:focus-within > td {
+    --bs-table-color-state: #ffffff;
+    --bs-table-bg-state: var(--transaction-cell-bg);
+    background-color: var(--transaction-cell-bg) !important;
+    color: #ffffff !important;
+    box-shadow: none !important;
+}
+
+.transaction-table tbody tr.table-active,
+.transaction-table tbody tr.selected {
+    --transaction-cell-bg: rgba(59, 130, 246, 0.22);
+    --bs-table-color-state: #ffffff;
+    --bs-table-bg-state: var(--transaction-cell-bg);
+    background: var(--transaction-cell-bg) !important;
+    color: #ffffff !important;
+}
+
+.transaction-table tbody tr.table-active > td,
+.transaction-table tbody tr.selected > td {
+    background-color: var(--transaction-cell-bg) !important;
+    color: #ffffff !important;
+    box-shadow: none !important;
+}
+
+.transaction-table tbody tr:disabled,
+.transaction-table tbody tr.disabled {
+    opacity: 0.55;
+}
+
+.transaction-table td,
+.transaction-table th {
+    color: inherit !important;
+    border-color: inherit !important;
+    vertical-align: middle;
+}
+
+.transaction-table td {
+    padding-top: 0.85rem !important;
+    padding-bottom: 0.85rem !important;
+    white-space: nowrap;
+}
+
+.transaction-table .transaction-date {
+    color: var(--pos-text-secondary, #94a3b8) !important;
+    line-height: 1.25;
+}
+
+.transaction-date span {
+    display: block;
+    color: var(--pos-text-muted, #64748b);
+    font-size: 0.75rem;
+}
+
+.transaction-table .transaction-invoice {
+    color: var(--pos-primary-light, #60a5fa) !important;
+}
+
+.transaction-table .transaction-total {
+    color: var(--pos-primary-light, #60a5fa) !important;
+    font-variant-numeric: tabular-nums;
+}
+
+.transaction-status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 68px;
+    min-height: 28px;
+    padding: 0.3rem 0.65rem;
+    border-radius: var(--pos-radius-pill, 9999px);
+    border: 1px solid;
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+}
+
+.transaction-status-badge.paid {
+    background: var(--pos-success-bg, rgba(16, 185, 129, 0.15));
+    border-color: var(--pos-success-border, rgba(16, 185, 129, 0.4));
+    color: var(--pos-success-text, #6ee7b7);
+}
+
+.transaction-status-badge.voided {
+    background: var(--pos-danger-bg, rgba(239, 68, 68, 0.15));
+    border-color: var(--pos-danger-border, rgba(239, 68, 68, 0.4));
+    color: var(--pos-danger-text, #fca5a5);
+}
+
+.transaction-status-badge.unpaid {
+    background: var(--pos-warning-bg, rgba(245, 158, 11, 0.15));
+    border-color: var(--pos-warning-border, rgba(245, 158, 11, 0.4));
+    color: var(--pos-warning-text, #fcd34d);
+}
+
+.transaction-actions .btn {
+    min-height: 38px;
+    white-space: nowrap;
+}
+
+.transaction-page .alert,
+.transaction-page .spinner-border {
+    color: var(--pos-text-secondary, #94a3b8);
+}
+
+.transaction-page .btn-info {
+    background: var(--pos-primary-gradient, linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)) !important;
+    border: 0 !important;
+    color: #ffffff !important;
+}
+
+.transaction-page .btn-info:hover {
+    filter: brightness(1.1);
+}
+
+@media (max-width: 768px) {
+    .transaction-page {
+        padding: 1rem !important;
+    }
+
+    .transaction-page > .d-flex:first-child {
+        align-items: flex-start !important;
+        flex-direction: column;
+    }
+
+    .transaction-filter-card .row > [class*="col-"] {
+        width: 100%;
+    }
+
+    .transaction-filter-card .d-flex {
+        flex-wrap: wrap;
+    }
+
+    .transaction-filter-card .d-flex .btn {
+        flex: 1 1 0;
+        min-height: 44px;
+    }
+
+    .transaction-table-scroll {
+        border-radius: 0 0 var(--pos-radius-lg, 1rem) var(--pos-radius-lg, 1rem);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .transaction-table tbody tr {
+        transition: none;
+    }
+}

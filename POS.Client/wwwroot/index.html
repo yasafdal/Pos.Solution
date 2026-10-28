@@ -36,6 +36,16 @@
                 }
             });
         };
+        window.posModal = {
+            setBodyScrollLock: function (locked) {
+                document.body.classList.toggle('pos-modal-open', locked);
+            },
+            focusActive: function () {
+                var modal = document.querySelector('.pos-sale-modal[role="dialog"]');
+                var target = modal && modal.querySelector('button:not([disabled]), input:not([disabled]), [tabindex="0"]');
+                if (target) target.focus();
+            }
+        };
     </script>
 </body>
 

@@ -14,7 +14,7 @@
 }
 else
 {
-    <div class="p-4" style="background: var(--pos-bg-root, #0f172a); min-height: 100vh;">
+    <div class="held-sales-page p-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
                 <h3 class="fw-bold text-dark mb-1">Held Sales (Suspended Transactions)</h3>
@@ -28,7 +28,7 @@ else
         </div>
 
         <!-- Held Sales Table / Grid -->
-        <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white">
+        <div class="held-sales-table-card card">
             @if (heldSales == null)
             {
                 <div class="text-center py-5 text-muted">
@@ -45,8 +45,8 @@ else
             }
             else
             {
-                <div class="table-responsive">
-                    <table class="table align-middle mb-0">
+                <div class="held-sales-table-scroll table-responsive">
+                    <table class="held-sales-table table align-middle mb-0">
                         <thead class="table-light text-uppercase fs-7 text-secondary">
                             <tr>
                                 <th class="py-3 px-4">Hold Reference</th>
@@ -62,7 +62,7 @@ else
                             @foreach (var h in heldSales)
                             {
                                 <tr>
-                                    <td class="px-4 fw-bold font-monospace text-primary">@h.HoldReference</td>
+                                    <td class="held-reference px-4 fw-bold font-monospace">@h.HoldReference</td>
                                     <td>
                                         <strong>@(string.IsNullOrWhiteSpace(h.CustomerName) ? "Walk-in Customer" : h.CustomerName)</strong>
                                         @if (!string.IsNullOrWhiteSpace(h.Notes))
@@ -71,10 +71,10 @@ else
                                         }
                                     </td>
                                     <td>@h.CashierId</td>
-                                    <td class="text-secondary small">@h.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
-                                    <td class="text-center"><span class="badge bg-secondary-subtle text-dark">@h.Items.Sum(i => i.Quantity)</span></td>
-                                    <td class="text-end fw-bold text-dark">₱@h.TotalAmount.ToString("N2")</td>
-                                    <td class="text-end px-4">
+                                    <td class="held-date small">@h.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")<span>@h.CreatedAt.ToLocalTime().ToString("HH:mm")</span></td>
+                                    <td class="text-center"><span class="held-items-badge">@h.Items.Sum(i => i.Quantity)</span></td>
+                                    <td class="held-total text-end fw-bold">₱@h.TotalAmount.ToString("N2")</td>
+                                    <td class="held-actions text-end px-4">
                                         <div class="d-flex justify-content-end gap-2">
                                             <button type="button" class="btn btn-sm btn-success text-white rounded-3 px-3 fw-bold" @onclick="() => ResumeSale(h)" title="Resume Sale">
                                                 <i class="bi bi-play-fill me-1"></i> Resume

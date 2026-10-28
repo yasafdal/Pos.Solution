@@ -747,45 +747,165 @@
    Payment Modal & Customization Modal Overrides
    ========================================================================== */
 
-.pos-payment-modal-dialog {
-    max-width: 860px;
-    width: 95%;
-    margin: 1.5rem auto;
+.pos-sale-modal {
+    --sale-modal-gutter: clamp(0.5rem, 2vw, 1.5rem);
+    --sale-modal-padding: clamp(0.75rem, 2vw, 1.5rem);
+    height: 100vh;
+    height: 100dvh;
+    padding: max(var(--sale-modal-gutter), env(safe-area-inset-top))
+        max(var(--sale-modal-gutter), env(safe-area-inset-right))
+        max(var(--sale-modal-gutter), env(safe-area-inset-bottom))
+        max(var(--sale-modal-gutter), env(safe-area-inset-left));
+    overflow: hidden;
+    color-scheme: dark;
 }
 
-.pos-payment-modal-content {
+.pos-sale-modal .pos-payment-modal-dialog,
+.pos-sale-modal .customization-modal-dialog {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    margin: 0 auto;
+}
+
+.pos-sale-modal .pos-payment-modal-dialog {
+    max-width: 860px;
+}
+
+.pos-sale-modal .customization-modal-dialog {
+    max-width: 720px;
+}
+
+.pos-sale-modal .pos-payment-modal-content,
+.pos-sale-modal .customization-modal-content {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: 100%;
     border-radius: var(--pos-radius-xl, 1.5rem);
     border: 1px solid var(--pos-border-color, #334155);
     background: var(--pos-bg-card, #1e293b);
     color: var(--pos-text-primary, #f8fafc);
-    box-shadow: var(--pos-shadow-card);
+    box-shadow: var(--pos-shadow-card, 0 25px 50px -12px rgba(0, 0, 0, 0.5));
     overflow: hidden;
 }
 
-.pos-payment-header {
-    padding: 1.1rem 1.5rem;
-    background: var(--pos-bg-card, #1e293b);
-    border-bottom: 1px solid var(--pos-border-color, #334155);
+/* app.css makes Bootstrap modal padding important; match it only here. */
+.pos-sale-modal .pos-payment-header,
+.pos-sale-modal .customization-modal-content .modal-header,
+.pos-sale-modal .pos-payment-footer,
+.pos-sale-modal .customization-modal-content .modal-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-}
-
-.pos-payment-body {
-    padding: 1.25rem 1.5rem;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: var(--sale-modal-padding) !important;
     background: var(--pos-bg-card, #1e293b);
-    max-height: calc(88vh - 120px);
-    overflow-y: auto;
 }
 
-.pos-payment-grid {
+.pos-sale-modal .pos-payment-header,
+.pos-sale-modal .customization-modal-content .modal-header {
+    border-bottom: 1px solid var(--pos-border-color, #334155);
+}
+
+.pos-sale-modal .pos-payment-footer,
+.pos-sale-modal .customization-modal-content .modal-footer {
+    border-top: 1px solid var(--pos-border-color, #334155);
+}
+
+.pos-sale-modal .pos-payment-body,
+.pos-sale-modal .customization-modal-content .modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: var(--sale-modal-padding) !important;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+    scroll-padding-block: 1rem;
+    background: var(--pos-bg-card, #1e293b);
+}
+
+.pos-sale-modal .pos-payment-fields {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.pos-sale-modal button,
+.pos-sale-modal input,
+.pos-sale-modal select,
+.pos-sale-modal textarea {
+    min-height: 44px;
+    min-width: 44px;
+    touch-action: manipulation;
+    scroll-margin-block: 1rem;
+}
+
+/* Avoid iOS focus zoom; app.css sets form-control font-size important. */
+.pos-sale-modal .form-control,
+.pos-sale-modal .form-select {
+    font-size: 1rem !important;
+}
+
+.pos-sale-modal button:focus-visible,
+.pos-sale-modal input:focus-visible,
+.pos-sale-modal select:focus-visible,
+.pos-sale-modal textarea:focus-visible {
+    outline: 3px solid var(--pos-primary-light, #60a5fa);
+    outline-offset: 2px;
+}
+
+.pos-sale-modal button:disabled,
+.pos-sale-modal fieldset:disabled button {
+    opacity: 0.55;
+    cursor: not-allowed !important;
+    transform: none !important;
+}
+
+.pos-sale-modal .pos-modal-close-btn,
+.pos-sale-modal .modal-close-btn {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    padding: 0 !important;
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: var(--pos-radius-sm, 8px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--pos-bg-surface, #0f172a);
+    color: var(--pos-text-secondary, #94a3b8);
+    text-decoration: none !important;
+}
+
+.pos-sale-modal .pos-modal-close-btn:hover:not(:disabled),
+.pos-sale-modal .modal-close-btn:hover:not(:disabled) {
+    background: var(--pos-bg-surface-hover, #334155);
+    color: var(--pos-text-primary, #f8fafc) !important;
+}
+
+.pos-sale-modal .modal-title,
+.pos-sale-modal .pos-due-amount,
+.pos-sale-modal .pos-change-val {
+    overflow-wrap: anywhere;
+}
+
+.pos-sale-modal .pos-payment-grid {
     display: grid;
-    grid-template-columns: 1fr 1.15fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
     gap: 1.25rem;
     align-items: start;
 }
 
-.pos-due-card {
+.pos-sale-modal .pos-due-card {
     background: var(--pos-bg-surface, #0f172a);
     border: 1px solid var(--pos-border-color, #334155);
     border-radius: var(--pos-radius-md, 14px);
@@ -794,7 +914,7 @@
     color: #ffffff;
 }
 
-.pos-due-label {
+.pos-sale-modal .pos-due-label {
     font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
@@ -803,7 +923,7 @@
     margin-bottom: 0.25rem;
 }
 
-.pos-due-amount {
+.pos-sale-modal .pos-due-amount {
     font-size: 2.1rem;
     font-weight: 800;
     color: var(--pos-primary-light, #60a5fa);
@@ -811,7 +931,7 @@
     font-variant-numeric: tabular-nums;
 }
 
-.pos-method-card {
+.pos-sale-modal .pos-method-card {
     background: var(--pos-bg-surface, #0f172a);
     border: 1.5px solid var(--pos-border-color, #334155);
     border-radius: var(--pos-radius-md, 12px);
@@ -828,32 +948,32 @@
     color: var(--pos-text-primary, #f8fafc);
 }
 
-.pos-method-card:hover {
+.pos-sale-modal .pos-method-card:hover:not(:disabled) {
     border-color: var(--pos-border-light, #475569);
     background-color: var(--pos-bg-surface-hover, #334155);
     transform: translateY(-1px);
 }
 
-.pos-method-card.selected {
+.pos-sale-modal .pos-method-card.selected {
     border-color: var(--pos-primary, #3b82f6);
     background-color: rgba(59, 130, 246, 0.15);
     box-shadow: 0 0 0 1px var(--pos-primary, #3b82f6);
 }
 
-.pos-method-name {
+.pos-sale-modal .pos-method-name {
     font-size: 0.85rem;
     font-weight: 700;
     color: var(--pos-text-primary, #f8fafc);
 }
 
-.pos-action-panel {
+.pos-sale-modal .pos-action-panel {
     background: var(--pos-bg-card, #1e293b);
     border: 1px solid var(--pos-border-color, #334155);
     border-radius: var(--pos-radius-md, 14px);
     padding: 1.15rem;
 }
 
-.pos-quick-cash-btn {
+.pos-sale-modal .pos-quick-cash-btn {
     background: var(--pos-bg-surface, #0f172a);
     border: 1.5px solid var(--pos-border-color, #334155);
     border-radius: 8px;
@@ -866,13 +986,13 @@
     transition: all 0.15s;
 }
 
-.pos-quick-cash-btn:hover {
+.pos-sale-modal .pos-quick-cash-btn:hover:not(:disabled) {
     border-color: var(--pos-primary, #3b82f6);
     color: var(--pos-primary-light, #60a5fa);
     background: var(--pos-bg-surface-hover, #334155);
 }
 
-.pos-tender-input-wrap {
+.pos-sale-modal .pos-tender-input-wrap {
     display: flex;
     align-items: center;
     background: var(--pos-bg-surface, #0f172a);
@@ -882,23 +1002,23 @@
     transition: all 0.15s;
 }
 
-.pos-tender-input-wrap:focus-within {
+.pos-sale-modal .pos-tender-input-wrap:focus-within {
     border-color: var(--pos-primary, #3b82f6);
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
 }
 
-.pos-tender-input {
+.pos-sale-modal .pos-tender-input {
     border: none;
-    outline: none;
     background: transparent;
     font-size: 1.5rem;
     font-weight: 800;
     color: var(--pos-text-primary, #f8fafc);
     width: 100%;
+    min-width: 0;
     font-variant-numeric: tabular-nums;
 }
 
-.pos-confirm-btn {
+.pos-sale-modal .pos-confirm-btn {
     background: var(--pos-success-gradient, linear-gradient(135deg, #10b981 0%, #059669 100%));
     border: none;
     font-size: 0.95rem;
@@ -914,51 +1034,20 @@
     cursor: pointer;
 }
 
-.pos-confirm-btn:hover:not(:disabled) {
+.pos-sale-modal .pos-confirm-btn:hover:not(:disabled) {
     background: linear-gradient(135deg, #059669 0%, #047857 100%);
     transform: translateY(-1px);
     box-shadow: 0 8px 15px -3px rgba(16, 185, 129, 0.4);
 }
 
 /* Customization Modal Styling */
-.customization-modal-dialog {
-    max-width: 720px;
-    width: 95%;
-    margin: 1.5rem auto;
-}
-
-.customization-modal-content {
-    background: var(--pos-bg-card, #1e293b);
-    border: 1px solid var(--pos-border-color, #334155);
-    border-radius: var(--pos-radius-xl, 1.5rem);
-    color: var(--pos-text-primary, #f8fafc);
-    box-shadow: var(--pos-shadow-card, 0 25px 50px -12px rgba(0, 0, 0, 0.6));
-    overflow: hidden;
-}
-
-.modal-close-btn {
-    width: 38px;
-    height: 38px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none !important;
-    transition: all 0.15s ease;
-}
-
-.modal-close-btn:hover {
-    background: var(--pos-bg-surface-hover, #334155);
-    color: #ffffff !important;
-}
-
-.modifier-group-section {
+.pos-sale-modal .modifier-group-section {
     background: var(--pos-bg-surface, #0f172a) !important;
     border: 1px solid var(--pos-border-color, #334155) !important;
     border-radius: var(--pos-radius-lg, 14px) !important;
 }
 
-.group-icon-pill {
+.pos-sale-modal .group-icon-pill {
     width: 32px;
     height: 32px;
     border-radius: 8px;
@@ -969,7 +1058,7 @@
     background: var(--pos-bg-card, #1e293b);
 }
 
-.modifier-rule-badge {
+.pos-sale-modal .modifier-rule-badge {
     font-size: 0.72rem;
     font-weight: 700;
     padding: 0.22rem 0.65rem;
@@ -977,26 +1066,26 @@
     letter-spacing: 0.02em;
 }
 
-.modifier-rule-badge.required {
+.pos-sale-modal .modifier-rule-badge.required {
     background-color: var(--pos-danger-bg, rgba(239, 68, 68, 0.15));
     color: var(--pos-danger-text, #fca5a5);
     border: 1px solid var(--pos-danger-border, rgba(239, 68, 68, 0.4));
 }
 
-.modifier-rule-badge.optional {
+.pos-sale-modal .modifier-rule-badge.optional {
     background-color: var(--pos-bg-card, #1e293b);
     color: var(--pos-text-secondary, #94a3b8);
     border: 1px solid var(--pos-border-color, #334155);
 }
 
-.modifier-grid {
+.pos-sale-modal .modifier-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
     gap: 0.65rem;
     margin-top: 20px;
 }
 
-.modifier-card {
+.pos-sale-modal .modifier-card {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1014,28 +1103,28 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-.modifier-card:hover:not(.selected) {
+.pos-sale-modal .modifier-card:hover:not(.selected) {
     background-color: var(--pos-bg-surface-hover, #334155);
     border-color: var(--pos-border-light, #475569);
     transform: translateY(-1px);
 }
 
-.modifier-card:active {
+.pos-sale-modal .modifier-card:active {
     transform: scale(0.98);
 }
 
-.modifier-card.selected {
+.pos-sale-modal .modifier-card.selected {
     background-color: rgba(59, 130, 246, 0.15);
     border-color: var(--pos-primary, #3b82f6);
     box-shadow: 0 0 0 1px var(--pos-primary, #3b82f6), 0 4px 12px rgba(59, 130, 246, 0.25);
 }
 
-.modifier-card:focus-visible {
+.pos-sale-modal .modifier-card:focus-visible {
     outline: 2px solid var(--pos-primary, #3b82f6);
     outline-offset: 2px;
 }
 
-.modifier-card-left {
+.pos-sale-modal .modifier-card-left {
     display: flex;
     align-items: center;
     gap: 0.65rem;
@@ -1043,14 +1132,14 @@
     flex: 1;
 }
 
-.modifier-indicator {
+.pos-sale-modal .modifier-indicator {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-.modifier-name {
+.pos-sale-modal .modifier-name {
     font-weight: 700;
     font-size: 0.92rem;
     color: var(--pos-text-primary, #f8fafc);
@@ -1058,15 +1147,15 @@
     word-break: break-word;
 }
 
-.modifier-card.selected .modifier-name {
+.pos-sale-modal .modifier-card.selected .modifier-name {
     color: #ffffff;
 }
 
-.modifier-card-right {
+.pos-sale-modal .modifier-card-right {
     flex-shrink: 0;
 }
 
-.price-badge {
+.pos-sale-modal .price-badge {
     font-size: 0.78rem;
     font-weight: 700;
     padding: 0.2rem 0.55rem;
@@ -1075,25 +1164,25 @@
     white-space: nowrap;
 }
 
-.price-badge.extra {
+.pos-sale-modal .price-badge.extra {
     background-color: rgba(59, 130, 246, 0.2);
     color: var(--pos-primary-light, #60a5fa);
     border: 1px solid rgba(59, 130, 246, 0.35);
 }
 
-.price-badge.free {
+.pos-sale-modal .price-badge.free {
     background-color: var(--pos-bg-surface, #0f172a);
     color: var(--pos-text-secondary, #94a3b8);
     border: 1px solid var(--pos-border-color, #334155);
 }
 
-.price-badge.discount {
+.pos-sale-modal .price-badge.discount {
     background-color: rgba(16, 185, 129, 0.2);
     color: #6ee7b7;
     border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
-.customization-validation-pill {
+.pos-sale-modal .customization-validation-pill {
     background: var(--pos-warning-bg, rgba(245, 158, 11, 0.15));
     border: 1px solid var(--pos-warning-border, rgba(245, 158, 11, 0.4));
     color: var(--pos-warning-text, #fcd34d);
@@ -1101,6 +1190,322 @@
     border-radius: var(--pos-radius-pill, 9999px);
     font-weight: 600;
     font-size: 0.82rem;
+}
+
+.pos-sale-modal .pos-payment-left-col,
+.pos-sale-modal .pos-payment-right-col,
+.pos-sale-modal .pos-payment-header > div,
+.pos-sale-modal .customization-modal-content .modal-header > div {
+    min-width: 0;
+}
+
+.pos-sale-modal .pos-methods-grid,
+.pos-sale-modal .pos-quick-cash-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 100px), 1fr));
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.pos-sale-modal .pos-section-label,
+.pos-sale-modal .pos-change-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--pos-text-secondary, #94a3b8);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.pos-sale-modal .pos-method-icon-wrap,
+.pos-sale-modal .pos-ref-icon-wrap {
+    color: var(--pos-primary-light, #60a5fa);
+    font-size: 1.4rem;
+}
+
+.pos-sale-modal .pos-method-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    overflow-wrap: anywhere;
+}
+
+.pos-sale-modal .pos-method-badge {
+    color: var(--pos-text-secondary, #94a3b8);
+    font-size: 0.7rem;
+}
+
+.pos-sale-modal .pos-method-check {
+    color: var(--pos-primary-light, #60a5fa);
+}
+
+.pos-sale-modal .pos-split-pill-toggle,
+.pos-sale-modal .pos-customer-toggle,
+.pos-sale-modal .pos-input-pill-btn,
+.pos-sale-modal .pos-denom-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: var(--pos-radius-sm, 8px);
+    background: var(--pos-bg-surface, #0f172a);
+    color: var(--pos-text-primary, #f8fafc);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.pos-sale-modal .pos-split-pill-track {
+    width: 32px;
+    height: 20px;
+    padding: 3px;
+    border-radius: 999px;
+    background: var(--pos-border-light, #475569);
+    flex-shrink: 0;
+}
+
+.pos-sale-modal .pos-split-pill-thumb {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--pos-text-primary, #f8fafc);
+    transition: transform 0.15s ease;
+}
+
+.pos-sale-modal .pos-split-pill-toggle.active .pos-split-pill-track {
+    background: var(--pos-primary, #3b82f6);
+}
+
+.pos-sale-modal .pos-split-pill-toggle.active .pos-split-pill-thumb {
+    transform: translateX(12px);
+}
+
+.pos-sale-modal .pos-split-pill-badge {
+    font-size: 0.7rem;
+    color: var(--pos-text-secondary, #94a3b8);
+}
+
+.pos-sale-modal .pos-split-pill-toggle.active,
+.pos-sale-modal .pos-quick-cash-btn.active,
+.pos-sale-modal .pos-quick-cash-btn.exact {
+    border-color: var(--pos-primary, #3b82f6);
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--pos-primary-light, #60a5fa);
+}
+
+.pos-sale-modal .pos-customer-toggle {
+    width: 100%;
+    justify-content: space-between;
+    text-align: left;
+}
+
+.pos-sale-modal .pos-customer-form,
+.pos-sale-modal .pos-split-item {
+    padding: 0.75rem;
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: var(--pos-radius-sm, 8px);
+    background: var(--pos-bg-surface, #0f172a);
+}
+
+.pos-sale-modal .pos-splits-list {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.pos-sale-modal .pos-split-item,
+.pos-sale-modal .pos-change-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    overflow-wrap: anywhere;
+}
+
+.pos-sale-modal .pos-currency-symbol {
+    color: var(--pos-text-secondary, #94a3b8);
+    font-size: 1.25rem;
+    margin-right: 0.5rem;
+}
+
+.pos-sale-modal .pos-input-pill-btn {
+    flex-shrink: 0;
+}
+
+.pos-sale-modal .pos-change-card {
+    padding: 1rem;
+    border: 1px solid;
+    border-radius: var(--pos-radius-md, 12px);
+}
+
+.pos-sale-modal .pos-change-card.success {
+    background: var(--pos-success-bg, rgba(16, 185, 129, 0.15));
+    border-color: var(--pos-success-border, rgba(16, 185, 129, 0.4));
+    color: var(--pos-success-text, #6ee7b7);
+}
+
+.pos-sale-modal .pos-change-card.warning {
+    background: var(--pos-warning-bg, rgba(245, 158, 11, 0.15));
+    border-color: var(--pos-warning-border, rgba(245, 158, 11, 0.4));
+    color: var(--pos-warning-text, #fcd34d);
+}
+
+.pos-sale-modal .pos-change-val {
+    font-size: 1.6rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 768px), (max-height: 540px) {
+    .pos-sale-modal {
+        --sale-modal-gutter: 0.5rem;
+        --sale-modal-padding: 0.75rem;
+    }
+
+    .pos-sale-modal .pos-payment-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .pos-sale-modal .pos-payment-footer > button {
+        flex: 1 1 0;
+        justify-content: center;
+        padding-inline: 0.75rem;
+    }
+
+    .pos-sale-modal .customization-modal-content .modal-footer {
+        gap: 0.5rem !important;
+    }
+
+    .pos-sale-modal .customization-modal-content .modal-footer > .d-flex {
+        width: 100%;
+    }
+
+    .pos-sale-modal .customization-modal-content .modal-footer button {
+        flex: 1 1 0;
+        padding-inline: 0.75rem !important;
+    }
+
+    .pos-sale-modal .customization-validation-pill {
+        border-radius: var(--pos-radius-sm, 8px);
+    }
+}
+
+/* Modal state: keep page content fixed while modal body scrolls */
+body.pos-modal-open {
+    overflow: hidden !important;
+    overscroll-behavior: none;
+}
+
+.pos-sale-modal {
+    overscroll-behavior: contain;
+}
+
+.pos-sale-modal .modal-dialog {
+    max-height: calc(100dvh - 2rem);
+}
+
+.pos-sale-modal .modal-content {
+    max-height: calc(100dvh - 2rem);
+}
+
+.pos-sale-modal .modal-close-btn,
+.pos-sale-modal .pos-modal-close-btn {
+    min-width: 44px !important;
+    min-height: 44px !important;
+}
+
+.pos-sale-modal button:focus-visible,
+.pos-sale-modal input:focus-visible,
+.pos-sale-modal select:focus-visible,
+.pos-sale-modal textarea:focus-visible {
+    outline: 2px solid var(--pos-primary-light, #60a5fa);
+    outline-offset: 2px;
+}
+
+.pos-payment-fields {
+    border: 0;
+    margin: 0;
+    min-width: 0;
+    padding: 0;
+}
+
+.pos-payment-fields:disabled {
+    opacity: 0.8;
+}
+
+.pos-payment-fields > .pos-payment-grid {
+    min-width: 0;
+}
+
+@media (max-width: 768px) {
+    .pos-sale-modal .modal-dialog {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        min-height: 100dvh;
+    }
+
+    .pos-sale-modal .modal-content {
+        min-height: 100dvh;
+        max-height: 100dvh;
+        border-radius: 0 !important;
+    }
+
+    .pos-payment-header,
+    .pos-payment-footer {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .pos-payment-footer {
+        align-items: stretch;
+    }
+
+    .pos-payment-footer > .btn,
+    .pos-payment-footer > .pos-confirm-btn {
+        min-height: 44px;
+    }
+
+    .customization-modal-content .modal-footer {
+        align-items: stretch !important;
+    }
+
+    .customization-modal-content .modal-footer > * {
+        width: 100%;
+    }
+
+    .customization-modal-content .modal-footer .d-flex {
+        margin-left: 0 !important;
+    }
+
+    .customization-modal-content .modal-footer .d-flex .btn {
+        flex: 1 1 0;
+        min-height: 44px;
+    }
+
+    .modifier-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-height: 600px) and (orientation: landscape) {
+    .pos-sale-modal .modal-dialog,
+    .pos-sale-modal .modal-content {
+        max-height: 100dvh;
+    }
+
+    .pos-payment-header,
+    .pos-payment-footer,
+    .customization-modal-content .modal-header,
+    .customization-modal-content .modal-footer {
+        padding-top: 0.6rem !important;
+        padding-bottom: 0.6rem !important;
+    }
 }
 
 @media (max-width: 1024px) {
@@ -1143,8 +1548,4 @@
         min-height: 420px;
     }
 
-    .pos-payment-grid {
-        grid-template-columns: 1fr;
-        gap: 1rem;
-    }
 }

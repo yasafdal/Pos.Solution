@@ -403,7 +403,7 @@ else
     <!-- Customization Modal -->
     @if (isCustomizationOpen && customizingProduct != null)
     {
-        <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(5px); z-index: 1060;" role="dialog" aria-modal="true">
+        <div class="modal fade show d-block pos-sale-modal customization-modal-overlay" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(5px); z-index: 1060;" role="dialog" aria-modal="true" aria-labelledby="customization-modal-title">
             <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg customization-modal-dialog">
                 <div class="modal-content customization-modal-content border-0 rounded-4 shadow-lg overflow-hidden">
                     <!-- Modal Header -->
@@ -411,7 +411,7 @@ else
                         <div class="d-flex align-items-center gap-3">
                             <div>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
-                                    <h4 class="modal-title fw-bold text-white mb-0">@customizingProduct.Name</h4>
+                                    <h4 id="customization-modal-title" class="modal-title fw-bold text-white mb-0">@customizingProduct.Name</h4>
                                     @if (!string.IsNullOrEmpty(customizingProduct.CategoryName))
                                     {
                                         var catColor = GetCategoryColor(customizingProduct.CategoryId);
@@ -594,26 +594,27 @@ else
 
 @if (isPaymentModalOpen && currentOrderResponse != null)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.55); backdrop-filter: blur(4px);" role="dialog" aria-modal="true">
-        <div class="modal-dialog modal-dialog-centered pos-payment-modal-dialog">
+        <div class="modal fade show d-block pos-sale-modal payment-modal-overlay" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.55); backdrop-filter: blur(4px); z-index: 1070;" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title">
+            <div class="modal-dialog modal-dialog-centered pos-payment-modal-dialog">
             <div class="modal-content pos-payment-modal-content">
                 <!-- Modal Header -->
                 <div class="pos-payment-header">
                     <div>
                         <div class="d-flex align-items-center gap-2">
-                            <h5 class="modal-title fw-bold text-dark mb-0">Payment Processing</h5>
+                            <h5 id="payment-modal-title" class="modal-title fw-bold text-white mb-0">Payment</h5>
                             @if (isOffline)
                             {
                                 <span class="badge bg-warning text-dark fw-semibold" style="font-size: 0.7rem;">OFFLINE CASH ONLY</span>
                             }
                         </div>
-                        <span class="text-muted small">Order: <strong class="text-dark">@currentOrderResponse.OrderNumber</strong></span>
+                        <span class="text-secondary small">Order: <strong class="text-white">@currentOrderResponse.OrderNumber</strong></span>
                     </div>
                     <div class="d-flex align-items-center gap-2">
                         <!-- Touch-friendly Split Bill Toggle Pill -->
                         <button type="button"
                                 class="pos-split-pill-toggle @(isSplitPaymentMode ? "active" : "")"
                                 @onclick="() => ToggleSplitPayment(!isSplitPaymentMode)"
+                                disabled="@isProcessingPayment"
                                 role="switch"
                                 aria-checked="@(isSplitPaymentMode ? "true" : "false")"
                                 title="Toggle Split Bill Mode">
@@ -627,7 +628,7 @@ else
                         <div class="vr mx-1" style="height: 26px; opacity: 0.2;"></div>
 
                         <!-- Touch-friendly Close Button -->
-                        <button type="button" class="pos-modal-close-btn" @onclick="ClosePaymentModal" aria-label="Close" title="Close (Cancel)">
+                        <button type="button" class="pos-modal-close-btn" @onclick="ClosePaymentModal" disabled="@isProcessingPayment" aria-label="Close payment" title="Close (Cancel)">
                             <i class="bi bi-x-lg"></i>
                         </button>
                     </div>
@@ -643,6 +644,7 @@ else
                         </div>
                     }
 
+                    <fieldset class="pos-payment-fields" disabled="@isProcessingPayment">
                     <div class="pos-payment-grid">
                         <!-- LEFT COLUMN: Due Card + Payment Methods + Customer Info -->
                         <div class="pos-payment-left-col">
@@ -956,9 +958,8 @@ else
                             }
                         </div>
                     </div>
+                    </fieldset>
                 </div>
-
-                <!-- Modal Footer -->
                 <div class="pos-payment-footer">
                     <button type="button" class="btn btn-outline-secondary px-4 py-2 rounded-3 fw-semibold" @onclick="ClosePaymentModal" disabled="@isProcessingPayment">
                         Cancel
@@ -1063,9 +1064,35 @@ else
     private bool quantityDialogOpen;
     private string? scanError;
     private bool disposed;
+    private bool? bodyScrollLockState;
+    private bool paymentModalWasOpen;
+    private bool customizationModalWasOpen;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        var modalOpen = isPaymentModalOpen || isCustomizationOpen;
+        if (bodyScrollLockState != modalOpen)
+        {
+            bodyScrollLockState = modalOpen;
+            try
+            {
+                await Js.InvokeVoidAsync("posModal.setBodyScrollLock", modalOpen);
+            }
+            catch { }
+        }
+
+        if (modalOpen && !paymentModalWasOpen && !customizationModalWasOpen)
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("posModal.focusActive");
+            }
+            catch { }
+        }
+
+        paymentModalWasOpen = isPaymentModalOpen;
+        customizationModalWasOpen = isCustomizationOpen;
+
         if (restoreSearchFocus && !disposed && Session.IsAuthenticated && IsRetail && !isLoading && !quantityDialogOpen)
         {
             restoreSearchFocus = false;
@@ -1109,6 +1136,11 @@ else
     {
         disposed = true;
         Cart.OnChange -= OnCartChanged;
+        try
+        {
+            _ = Js.InvokeVoidAsync("posModal.setBodyScrollLock", false);
+        }
+        catch { }
     }
 
     private async Task LoadCatalogAsync()

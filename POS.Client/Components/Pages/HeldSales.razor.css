@@ -1,0 +1,175 @@
+/* Held Sales — scoped dark POS table styles */
+.held-sales-page {
+    min-height: 100vh;
+    background: var(--pos-bg-root, #0f172a);
+    color: var(--pos-text-primary, #f8fafc);
+}
+
+.held-sales-page h3,
+.held-sales-page h4,
+.held-sales-page h5,
+.held-sales-page h6,
+.held-sales-page .text-dark {
+    color: var(--pos-text-primary, #f8fafc) !important;
+}
+
+.held-sales-page .text-secondary,
+.held-sales-page .text-muted {
+    color: var(--pos-text-secondary, #94a3b8) !important;
+}
+
+.held-sales-page .card {
+    background: var(--pos-bg-card, #1e293b) !important;
+    border: 1px solid var(--pos-border-color, #334155) !important;
+    border-radius: var(--pos-radius-lg, 1rem) !important;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    box-shadow: var(--pos-shadow-sm, 0 4px 6px -1px rgba(0, 0, 0, 0.25)) !important;
+}
+
+.held-sales-table-card {
+    overflow: hidden;
+}
+
+.held-sales-table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.held-sales-table {
+    min-width: 900px;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    background: var(--pos-bg-card, #1e293b) !important;
+    border-color: var(--pos-border-color, #334155) !important;
+}
+
+.held-sales-table thead,
+.held-sales-table thead tr,
+.held-sales-table thead th,
+.held-sales-table thead.table-light {
+    background: var(--pos-bg-surface, #0f172a) !important;
+    color: var(--pos-text-secondary, #94a3b8) !important;
+    border-color: var(--pos-border-color, #334155) !important;
+    font-size: 0.72rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.held-sales-table tbody tr,
+.held-sales-table tbody tr:nth-of-type(odd),
+.held-sales-table tbody tr:nth-of-type(even) {
+    --held-cell-bg: var(--pos-bg-card, #1e293b);
+    --bs-table-color: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-type: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-state: var(--pos-text-primary, #f8fafc);
+    --bs-table-bg: var(--held-cell-bg);
+    --bs-table-bg-type: var(--held-cell-bg);
+    --bs-table-bg-state: var(--held-cell-bg);
+    --bs-table-accent-bg: transparent;
+    background: var(--held-cell-bg) !important;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.held-sales-table tbody tr:nth-of-type(odd) {
+    --held-cell-bg: #243247;
+}
+
+.held-sales-table tbody tr > td,
+.held-sales-table tbody tr > th {
+    --bs-table-color: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-type: var(--pos-text-primary, #f8fafc);
+    --bs-table-color-state: var(--pos-text-primary, #f8fafc);
+    --bs-table-bg: var(--held-cell-bg, #1e293b);
+    --bs-table-bg-type: var(--held-cell-bg, #1e293b);
+    --bs-table-bg-state: var(--held-cell-bg, #1e293b);
+    --bs-table-accent-bg: transparent;
+    background-color: var(--held-cell-bg, #1e293b) !important;
+    background-image: none;
+    box-shadow: none !important;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.held-sales-table tbody tr:hover,
+.held-sales-table tbody tr:focus-within {
+    --held-cell-bg: var(--pos-bg-surface-hover, #334155);
+    --bs-table-color-state: #ffffff;
+    --bs-table-bg-state: var(--held-cell-bg);
+    background: var(--held-cell-bg) !important;
+    color: #ffffff !important;
+    box-shadow: inset 3px 0 0 var(--pos-primary, #3b82f6);
+}
+
+.held-sales-table tbody tr:hover > td,
+.held-sales-table tbody tr:focus-within > td {
+    background-color: var(--held-cell-bg) !important;
+    color: #ffffff !important;
+    box-shadow: none !important;
+}
+
+.held-reference {
+    color: var(--pos-primary-light, #60a5fa) !important;
+}
+
+.held-date {
+    color: var(--pos-text-secondary, #94a3b8) !important;
+    line-height: 1.25;
+}
+
+.held-date span {
+    display: block;
+    color: var(--pos-text-muted, #64748b);
+    font-size: 0.75rem;
+}
+
+.held-items-badge {
+    display: inline-flex;
+    min-width: 32px;
+    min-height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.55rem;
+    border-radius: var(--pos-radius-pill, 9999px);
+    background: var(--pos-bg-surface, #0f172a);
+    border: 1px solid var(--pos-border-light, #475569);
+    color: var(--pos-text-primary, #f8fafc);
+    font-weight: 700;
+}
+
+.held-total {
+    color: var(--pos-primary-light, #60a5fa) !important;
+    font-variant-numeric: tabular-nums;
+}
+
+.held-actions .btn {
+    min-height: 38px;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .held-sales-page {
+        padding: 1rem !important;
+    }
+
+    .held-sales-page > .d-flex:first-child {
+        align-items: flex-start !important;
+        flex-direction: column;
+    }
+
+    .held-sales-table-scroll {
+        border-radius: 0 0 var(--pos-radius-lg, 1rem) var(--pos-radius-lg, 1rem);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .held-sales-table tbody tr {
+        transition: none;
+    }
+}
