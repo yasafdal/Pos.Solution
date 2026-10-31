@@ -15,7 +15,7 @@ SOURCE = (
 
 class ReceiptPrinterLifecycleTests(unittest.TestCase):
     def test_print_window_is_activated_before_webview_initialization(self):
-        method = SOURCE.split("private static async Task PrintDirectAsync", 1)[1]
+        method = SOURCE.split("private static async Task<bool> PrintDirectAsync", 1)[1]
         initialization = method.index("await webView.EnsureCoreWebView2Async")
         self.assertIn("window.Activate();", method[:initialization])
 

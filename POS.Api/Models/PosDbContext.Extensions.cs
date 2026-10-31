@@ -35,6 +35,7 @@ public partial class PosDbContext
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        ConfigureZReading(modelBuilder);
         modelBuilder.Entity<Category>(entity =>
         {
             entity.Property(e => e.ColorHex)

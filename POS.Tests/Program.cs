@@ -99,6 +99,16 @@ public static partial class Program
         await RunTestAsync("47. Sales report terminal breakdown, payment split isolation, and net refund separation", Test47_SalesReportTerminalBreakdownAndSeparationOfRefunds);
         await RunTestAsync("48. Back-office shift reconciliation, historical denomination fallback, and terminal filtering", Test48_BackOfficeShiftReconciliationAndTerminalFiltering);
 
+        await RunTestAsync("Z01. Fixed Manila business date", TestZReadingBusinessDate);
+        await RunTestAsync("Z02. Immutable idempotent generation", TestZReadingGeneration);
+        await RunTestAsync("Z03. Authoritative adjustment events and detail", TestZReadingEvents);
+        await RunTestAsync("Z04. Append-only honest print audit", TestZReadingPrintAudit);
+        await RunTestAsync("Z05. Supervisor and current-terminal authorization", TestZReadingControllerScope);
+        await RunTestAsync("Z06. Deployment, readiness and serialization fence", TestZReadingPrerequisites);
+        await RunTestAsync("Z07. Unreconciled paid/incomplete orders block", TestZReadingUnreconciledServerEvents);
+
+        await RunTestAsync("Z08. Thermal report detail, HTML escaping and truthful reprint labels", TestZReadingFormatter);
+
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
     }

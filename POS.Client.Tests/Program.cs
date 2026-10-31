@@ -44,6 +44,11 @@ internal static class Program
             try { await POS.Tests.ShiftCacheRegressionTests.RunAsync(); }
             finally { Environment.SetEnvironmentVariable("POS_TEST_LOCAL_DB_PATH", null); }
         });
+        await Run("Z reading refuses pending/conflict outboxes, open local shifts and unsynced movements", async () =>
+        {
+            NewPath(); GuardPath();
+            await ZReadingLocalReadinessTests.RunAsync();
+        });
         await ApiAndSchemaTests.RunAll(Run);
         Console.WriteLine($"RESULT: {passed} passed, {failed} failed");
         SqliteConnection.ClearAllPools(); AppContext.SetData("POS.LocalDatabasePath", null);

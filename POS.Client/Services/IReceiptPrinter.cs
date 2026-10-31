@@ -24,6 +24,9 @@ public interface IReceiptPrinter
     /// </summary>
     Task PrintXReadingAsync(XReadingReportDto report, string? printerName = null);
 
+    /// <summary>Prints a saved Z snapshot. True means driver accepted; false means dialog outcome unknown, not paper confirmation.</summary>
+    Task<bool> PrintZReadingAsync(ZReadingReportDto report, string? printerName = null, bool isReprint = false);
+
     /// <summary>
     /// Sends a Cashier Declaration Acknowledgment (Blind Closing submission) to the receipt printer.
     /// Excludes expected amounts, sales totals, variances, and reconciliation status.

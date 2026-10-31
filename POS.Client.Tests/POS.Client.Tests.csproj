@@ -10,6 +10,7 @@
     <Compile Include="../POS.Client/Data/LocalPosDbContext.cs" Link="Client/LocalPosDbContext.cs" />
     <Compile Include="../POS.Client/Data/LocalPosModels.cs" Link="Client/LocalPosModels.cs" />
     <Compile Include="../POS.Client/Data/LocalHierarchyUpgrade.cs" Link="Client/LocalHierarchyUpgrade.cs" />
+    <Compile Include="../POS.Client/Services/ZReadingLocalReadiness.cs" Link="Client/ZReadingLocalReadiness.cs" />
     <Compile Include="../POS.Client/Services/ShiftSession.cs" Link="Client/ShiftSession.cs" />
     <Compile Include="../POS.Client/Services/PosSessionService.cs" Link="Client/PosSessionService.cs" />
     <Compile Include="../POS.Client/Services/OfflineCheckoutService.cs" Link="Client/OfflineCheckoutService.cs" />

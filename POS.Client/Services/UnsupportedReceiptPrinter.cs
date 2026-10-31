@@ -14,6 +14,9 @@ public sealed class UnsupportedReceiptPrinter : IReceiptPrinter
     public Task PrintXReadingAsync(XReadingReportDto report, string? printerName = null) =>
         Task.FromException(new PlatformNotSupportedException("X-Reading printing is currently supported on Windows only."));
 
+    public Task<bool> PrintZReadingAsync(ZReadingReportDto report, string? printerName = null, bool isReprint = false) =>
+        Task.FromException<bool>(new PlatformNotSupportedException("Z-Reading printing is currently supported on Windows only. The finalized report remains saved."));
+
     public Task PrintCashierDeclarationAsync(CashierDeclarationReportDto declaration, string? printerName = null) =>
         Task.FromException(new PlatformNotSupportedException("Cashier declaration printing is currently supported on Windows only."));
 }

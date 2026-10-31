@@ -74,7 +74,20 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
         finally { Interlocked.Exchange(ref _printing, 0); }
     }
 
-    private static async Task PrintDirectAsync(string html, string? targetPrinter = null, string windowTitle = "Print Receipt")
+    public async Task<bool> PrintZReadingAsync(ZReadingReportDto report, string? printerName = null, bool isReprint = false)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        if (Interlocked.CompareExchange(ref _printing, 1, 0) != 0)
+            throw new InvalidOperationException("A report is already being sent to the printer. Wait before retrying.");
+        try
+        {
+            var html = ZReadingHtmlFormatter.Format(report, isReprint);
+            return await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html, printerName, "Print Z-Reading Report"));
+        }
+        finally { Interlocked.Exchange(ref _printing, 0); }
+    }
+
+    private static async Task<bool> PrintDirectAsync(string html, string? targetPrinter = null, string windowTitle = "Print Receipt")
     {
         var webView = new WebView2();
         var window = new NativeWindow { Title = windowTitle };
@@ -141,7 +154,7 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
 
             if (status == CoreWebView2PrintStatus.Succeeded)
             {
-                return;
+                return true;
             }
 
             // Fallback: if no silent default printer is ready or the default printer requires interactive selection (e.g., Print to PDF),
@@ -157,6 +170,8 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
             window.Activate();
             core.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
             await windowClosed.Task;
+            // Dialog close/cancel has no reliable print acknowledgement.
+            return false;
         }
         catch(Exception ex)
         {

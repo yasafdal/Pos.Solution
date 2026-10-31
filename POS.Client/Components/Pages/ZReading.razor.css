@@ -1,0 +1,60 @@
+.z-reading-page {
+    color: var(--pos-text-primary, #f8fafc);
+    min-width: 0;
+}
+
+.z-reading-page h3 { font-size: 1.5rem; font-weight: 700; }
+.z-reading-page p, .z-reading-page li { overflow-wrap: anywhere; }
+.z-reading-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--pos-bg-card, #1e293b);
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: var(--pos-radius-lg, 1rem);
+}
+.z-reading-controls > *, .z-reading-actions > * { min-width: 0; }
+.z-reading-page label { display: block; margin-bottom: .35rem; }
+.z-reading-page button, .z-reading-page input, .z-reading-page select { min-height: 44px; }
+.z-reading-page :focus-visible {
+    outline: 2px solid var(--pos-primary-light, #60a5fa);
+    outline-offset: 3px;
+}
+.z-reading-notice, .z-reading-checks {
+    padding: 1rem;
+    margin-block: 1rem;
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: var(--pos-radius-md, .75rem);
+    background: var(--pos-bg-card, #1e293b);
+}
+.z-reading-checks ul { padding-left: 1.25rem; margin-bottom: 0; }
+.z-reading-confirm {
+    display: flex !important;
+    align-items: center;
+    gap: .75rem;
+    cursor: pointer;
+    min-height: 44px;
+}
+.z-reading-confirm input { flex: 0 0 22px; width: 22px; height: 22px; min-height: 22px; accent-color: var(--pos-primary, #3b82f6); }
+.z-reading-actions { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-block: 1rem; }
+.z-reading-actions .print-reason { flex: 1 1 240px; }
+.z-reading-preview {
+    display: block;
+    width: 100%;
+    height: 70vh;
+    height: 70dvh;
+    min-height: 300px;
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: var(--pos-radius-md, .75rem);
+    background: #fff;
+}
+.z-reading-audit { margin-block: 1rem; }
+.z-reading-audit summary { cursor: pointer; min-height: 44px; padding-block: .65rem; }
+.z-reading-audit li { padding-block: .4rem; }
+@media (max-width: 767.98px) {
+    .z-reading-controls { grid-template-columns: minmax(0, 1fr); gap: .75rem; }
+    .z-reading-actions > button { flex: 1 1 100%; }
+    .z-reading-preview { min-height: 260px; }
+}

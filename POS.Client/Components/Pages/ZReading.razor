@@ -1,0 +1,253 @@
+@page "/z-reading"
+@using Microsoft.EntityFrameworkCore
+@using System.Globalization
+@using POS.Client.Data
+@inject PosSessionService Session
+@inject HttpClient Http
+@inject IPosConnectivityService Connectivity
+@inject IReceiptPrinter Printer
+
+<PageTitle>Z-Reading — End of Day</PageTitle>
+
+@if (!Session.IsAuthenticated || !ShiftSession.IsSupervisorRole(Session.Role))
+{
+    <div class="alert alert-warning" role="alert">Supervisor authorization is required. No Z-Reading totals are available to a cashier session.</div>
+}
+else
+{
+    <section class="z-reading-page" aria-labelledby="z-title">
+        <h3 id="z-title">Z-Reading — End of Day</h3>
+        <p class="text-secondary">@Session.Terminal?.BranchName / @Session.Terminal?.OutletName — @Session.Terminal?.TerminalName</p>
+        <div class="z-reading-notice">
+            <strong>Finalize on the original terminal only.</strong>
+            Business dates run from 04:00 to next 04:00, Philippine time. X-Reading printing is not a prerequisite.
+            Generation saves an immutable report; printing is a separate step. Invoice sequences are never reset here.
+        </div>
+        @if (error != null) { <div class="alert alert-danger" role="alert">@error</div> }
+        @if (notice != null) { <div class="alert alert-info" role="status">@notice</div> }
+        <div class="z-reading-controls">
+            <div>
+                <label for="z-terminal">Terminal</label>
+                <input id="z-terminal" class="form-control" readonly value="@($"{Session.Terminal?.TerminalCode} — {Session.Terminal?.TerminalName}")" />
+            </div>
+            <div>
+                <label for="z-date">Business date</label>
+                <input id="z-date" class="form-control" type="date" value="@businessDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)" @onchange="ChangeDate" disabled="@busy" />
+            </div>
+            <button type="button" class="btn btn-outline-primary" disabled="@busy" @onclick="RefreshAsync">@(busy ? "Checking..." : "Check readiness / Load saved")</button>
+        </div>
+        @if (readiness != null && report == null)
+        {
+            <div class="z-reading-checks" role="status">
+                <h5>Readiness checks</h5>
+                @if (blockers.Count > 0)
+                {
+                    <ul>@foreach (var blocker in blockers) { <li>@blocker</li> }</ul>
+                }
+                else
+                {
+                    <p class="mb-0">All available checks passed. Complete the confirmation below before finalizing.</p>
+                }
+                @foreach (var warning in readiness.Warnings) { <p class="text-warning mt-2 mb-0">@warning</p> }
+                @if (readiness.NextBusinessDate.HasValue) { <p class="mt-2 mb-0">Next date to finalize: @readiness.NextBusinessDate.Value.ToString("yyyy-MM-dd")</p> }
+            </div>
+            <label class="z-reading-confirm">
+                <input type="checkbox" @bind="confirmed" disabled="@busy" />
+                <span>I have closed the shifts, resolved pending payments/orders, and synchronized every device using this terminal identity. No other device or offline copy has unuploaded transactions. This report cannot be regenerated or edited.</span>
+            </label>
+            <div class="z-reading-actions">
+                <button type="button" class="btn btn-primary" disabled="@(busy || !confirmed || blockers.Count > 0 || !readiness.CanGenerate)" @onclick="GenerateAsync">
+                    @(busy ? "Working..." : "Generate & Finalize Z-Reading")
+                </button>
+            </div>
+        }
+        @if (report != null)
+        {
+            <div class="z-reading-notice" role="status">
+                <strong>Finalized report — Z @report.ZNumber</strong>. Generation is complete. Printing does not create another report.
+                @if (unknownPrint) { <span class="text-warning">A previous print outcome is unknown. Check the printer before requesting another copy.</span> }
+            </div>
+            @if (unknownPrint)
+            {
+                <label class="z-reading-confirm"><input type="checkbox" @bind="pendingPrintAcknowledged" disabled="@busy" /><span>I checked the printer and saved audit. I want a new, explicitly marked reprint despite the unknown previous outcome.</span></label>
+            }
+            <div class="z-reading-actions">
+                <div class="print-reason">
+                    <label for="z-print-reason">Print / reprint reason</label>
+                    <input id="z-print-reason" class="form-control" @bind="printReason" @bind:event="oninput" maxlength="255" disabled="@busy" placeholder="e.g. Original copy, paper jam, supervisor copy" />
+                </div>
+                <button type="button" class="btn btn-primary" disabled="@(busy || string.IsNullOrWhiteSpace(printReason) || (unknownPrint && !pendingPrintAcknowledged))" @onclick="PrintAsync">@(busy ? "Working..." : "Print saved report / Reprint")</button>
+            </div>
+            <details class="z-reading-audit"><summary>Print audit (@printAudit.Count attempts)</summary>
+                <ul>@foreach (var a in printAudit) { <li>@a.StartedAt.ToString("u") — @a.RequestedBy — @a.Status — @(a.IsReprint ? "REPRINT" : "Original attempt") — @a.Reason @a.ErrorMessage</li> }</ul>
+            </details>
+            <iframe class="z-reading-preview" title="Saved Z-Reading report preview" sandbox="" srcdoc="@ZReadingHtmlFormatter.Format(report)"></iframe>
+        }
+    </section>
+}
+
+@code {
+    private DateOnly businessDate = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8).AddHours(-4)).AddDays(-1);
+    private ZReadingReadinessDto? readiness;
+    private ZReadingReportDto? report;
+    private List<string> blockers = new();
+    private bool busy, confirmed, unknownPrint;
+    private string? error, notice;
+    private string printReason = string.Empty;
+    private List<ZReadingPrintAttemptDto> printAudit = new();
+    private bool pendingPrintAcknowledged;
+    private string PrintKey => $"z-reading-print-pending-{report?.Id}";
+    private string OperationKey => $"z-reading-operation-{Session.Terminal?.TerminalId}-{businessDate:yyyy-MM-dd}";
+    private bool Authorized => Session.IsAuthenticated && ShiftSession.IsSupervisorRole(Session.Role);
+    private string Query => $"terminalId={Session.Terminal!.TerminalId}&businessDate={businessDate:yyyy-MM-dd}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Authorized) await RefreshAsync();
+    }
+
+    private async Task ChangeDate(ChangeEventArgs e)
+    {
+        if (busy) return;
+        if (!DateOnly.TryParseExact(e.Value?.ToString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)) return;
+        businessDate = date;
+        confirmed = false;
+        readiness = null;
+        report = null;
+        await RefreshAsync();
+    }
+
+    private async Task RequireOnlineAsync()
+    {
+        if (!Authorized) throw new InvalidOperationException("Supervisor authorization is required.");
+        if (Session.Token == "OFFLINE-SESSION-TOKEN" || await Connectivity.CheckConnectivityAsync() != TerminalConnectivityState.OnlineAndHealthy)
+            throw new InvalidOperationException("Connect to the server to generate, retrieve, or authorize printing a Z-Reading. Pending data is preserved.");
+    }
+
+    private static async Task CheckResponseAsync(HttpResponseMessage response)
+    {
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Server rejected the request ({(int)response.StatusCode}): {await response.Content.ReadAsStringAsync()}");
+    }
+
+    private async Task RefreshCoreAsync()
+    {
+        await RequireOnlineAsync();
+        using var saved = await Http.GetAsync($"api/z-readings/by-date?{Query}");
+        if (saved.IsSuccessStatusCode)
+        {
+            report = await saved.Content.ReadFromJsonAsync<ZReadingReportDto>();
+            await LoadPrintAuditAsync();
+            return;
+        }
+        if (saved.StatusCode != System.Net.HttpStatusCode.NotFound) await CheckResponseAsync(saved);
+        using var response = await Http.GetAsync($"api/z-readings/readiness?{Query}");
+        await CheckResponseAsync(response);
+        readiness = await response.Content.ReadFromJsonAsync<ZReadingReadinessDto>() ?? throw new InvalidOperationException("Readiness response is empty.");
+        blockers = readiness.Blockers.ToList();
+        if (string.IsNullOrWhiteSpace(Session.Terminal?.DeviceIdentifier)) blockers.Add("Device identity is missing. Reconnect and resolve terminal registration before finalizing.");
+        using var db = new LocalPosDbContext(); db.InitializeDatabase();
+        blockers.AddRange(await ZReadingLocalReadiness.GetBlockersAsync(db, Session.Terminal!.TerminalId));
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (busy) return;
+        busy = true; error = null; notice = null; report = null; readiness = null; blockers.Clear(); confirmed = false;
+        printAudit.Clear(); unknownPrint = false; pendingPrintAcknowledged = false;
+        try { await RefreshCoreAsync(); }
+        catch (Exception ex) { error = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task GenerateAsync()
+    {
+        if (busy || !Authorized || !confirmed || readiness?.CanGenerate != true || blockers.Count > 0) return;
+        busy = true; error = null; notice = null;
+        try
+        {
+            await RequireOnlineAsync();
+            // Hold the existing local write gate while checking and finalizing; never clear outboxes.
+            await LocalPosDbContext.WriteLock.WaitAsync();
+            try
+            {
+                using var db = new LocalPosDbContext(); db.InitializeDatabase();
+                var pending = await ZReadingLocalReadiness.GetBlockersAsync(db, Session.Terminal!.TerminalId);
+                if (pending.Count > 0) throw new InvalidOperationException(string.Join(" ", pending));
+                var operationId = Preferences.Default.Get(OperationKey, string.Empty);
+                if (string.IsNullOrEmpty(operationId))
+                {
+                    operationId = Guid.NewGuid().ToString("N");
+                    Preferences.Default.Set(OperationKey, operationId);
+                }
+                using var response = await Http.PostAsJsonAsync("api/z-readings/generate", new GenerateZReadingRequest
+                {
+                    TerminalId = Session.Terminal.TerminalId, BusinessDate = businessDate, ClientOperationId = operationId,
+                    AllLocalOutboxesDrained = true, NoUnresolvedLocalTransactions = true, SoleDeviceCompletenessConfirmed = true,
+                    DeviceIdentifier = Session.Terminal.DeviceIdentifier ?? string.Empty
+                });
+                await CheckResponseAsync(response);
+                report = await response.Content.ReadFromJsonAsync<ZReadingReportDto>() ?? throw new InvalidOperationException("Empty response. Load the saved report before retrying; the operation ID has been retained.");
+                confirmed = false;
+                notice = "Report finalized and saved. Nothing has been printed yet.";
+            }
+            finally { LocalPosDbContext.WriteLock.Release(); }
+            await LoadPrintAuditAsync();
+        }
+        catch (Exception ex) { error = ex.Message + " If the request timed out, load the saved report before retrying. The same operation ID will be reused."; }
+        finally { busy = false; }
+    }
+
+    private async Task LoadPrintAuditAsync()
+    {
+        if (report == null) return;
+        printAudit = await Http.GetFromJsonAsync<List<ZReadingPrintAttemptDto>>($"api/z-readings/{report.Id}/print-attempts")
+            ?? throw new InvalidOperationException("Print audit response is empty.");
+        unknownPrint = printAudit.Any(x => x.Status is "STARTED" or "UNKNOWN") || Preferences.Default.ContainsKey(PrintKey);
+        pendingPrintAcknowledged = false;
+    }
+
+    private async Task PrintAsync()
+    {
+        if (busy || !Authorized || report == null || string.IsNullOrWhiteSpace(printReason) || (unknownPrint && !pendingPrintAcknowledged)) return;
+        busy = true; error = null; notice = null;
+        try
+        {
+            await RequireOnlineAsync();
+            var operationId = Guid.NewGuid().ToString("N");
+            // Persist before HTTP: restart never resumes an uncertain printer submission automatically.
+            Preferences.Default.Set(PrintKey, operationId);
+            using var started = await Http.PostAsJsonAsync($"api/z-readings/{report.Id}/print-attempts", new StartZReadingPrintRequest
+            {
+                ClientOperationId = operationId, Reason = printReason.Trim(), PrinterName = Session.Terminal?.ReceiptPrinterName
+            });
+            await CheckResponseAsync(started);
+            var attempt = await started.Content.ReadFromJsonAsync<ZReadingPrintAttemptDto>() ?? throw new InvalidOperationException("Print authorization was not acknowledged. No print was requested.");
+            if (attempt.ClientOperationId != operationId || attempt.ZReadingId != report.Id || attempt.Status != "STARTED")
+                throw new InvalidOperationException("Print authorization does not match this new attempt. No print was requested.");
+            await LoadPrintAuditAsync();
+            if (!printAudit.Any(x => x.Id == attempt.Id && x.Status == "STARTED" && x.ClientOperationId == operationId))
+                throw new InvalidOperationException("Saved print authorization could not be verified. No print was requested.");
+            string outcome, detail;
+            try
+            {
+                var accepted = await Printer.PrintZReadingAsync(attempt.Report, attempt.PrinterName, attempt.IsReprint);
+                outcome = accepted ? "ACCEPTED" : "UNKNOWN";
+                detail = accepted ? "Driver accepted the job; physical paper output is not verified." : "Print dialog closed; printed/cancelled outcome cannot be verified.";
+            }
+            catch (Exception ex) { outcome = "UNKNOWN"; detail = "Printer operation threw; acceptance is unverified. " + ex.Message; }
+            if (detail.Length > 2000) detail = detail[..2000];
+            using var completed = await Http.PostAsJsonAsync($"api/z-readings/{report.Id}/print-attempts/{attempt.Id}/complete", new CompleteZReadingPrintRequest { Status = outcome, ErrorMessage = detail });
+            await CheckResponseAsync(completed);
+            await LoadPrintAuditAsync();
+            if (!printAudit.Any(x => x.Id == attempt.Id && x.Status == outcome))
+                throw new InvalidOperationException("Print completion could not be verified. Check the saved audit before requesting another copy.");
+            Preferences.Default.Remove(PrintKey);
+            unknownPrint = printAudit.Any(x => x.Status is "STARTED" or "UNKNOWN");
+            printReason = string.Empty;
+            notice = $"{outcome}: {detail} The finalized report is unchanged.";
+        }
+        catch (Exception ex) { unknownPrint = true; pendingPrintAcknowledged = false; error = ex.Message + " Check the printer and saved print audit before retrying; report generation is not repeated."; }
+        finally { busy = false; }
+    }
+}
