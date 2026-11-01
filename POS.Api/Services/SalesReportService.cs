@@ -17,6 +17,7 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
         var query = context.Orders.AsNoTracking()
             .AsSingleQuery()
             .Include(o => o.Payments)
+            .Include(o => o.OrderItems)
             .Where(o => o.OrderStatus != "CANCELLED");
 
         if (request.DateFrom.HasValue)
@@ -269,6 +270,20 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
                     OutputVat = g.Sum(o => o.VatAmount)
                 }).OrderBy(x => x.Key).ToList(),
 
+            "YEARLY" => paidOrders
+                .GroupBy(o => o.CreatedAt.ToString("yyyy"))
+                .Select(g => new SalesReportGroupItemDto
+                {
+                    Key = g.Key,
+                    Label = "Year " + g.Key,
+                    TransactionCount = g.Count(),
+                    GrossSales = g.Sum(o => o.Subtotal),
+                    TotalDiscounts = g.Sum(o => o.DiscountAmount),
+                    TotalRefunds = g.Sum(o => refundByOrderId.GetValueOrDefault(o.OrderId, 0m)),
+                    NetSales = g.Sum(o => o.TotalAmount),
+                    OutputVat = g.Sum(o => o.VatAmount)
+                }).OrderBy(x => x.Key).ToList(),
+
             "CASHIER" => paidOrders
                 .GroupBy(o => o.CashierId)
                 .Select(g => new SalesReportGroupItemDto
@@ -381,6 +396,196 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
                 }).OrderBy(x => x.Key).ToList()
         };
 
+        // Top selling products per category
+        var productsWithCat = await context.Products.AsNoTracking()
+            .Include(p => p.Category)
+            .ToDictionaryAsync(p => p.ProductId, cancellationToken);
+
+        var itemsGrouped = paidOrders.SelectMany(o => o.OrderItems)
+            .GroupBy(i => i.ProductId)
+            .Select(g =>
+            {
+                var first = g.First();
+                productsWithCat.TryGetValue(first.ProductId, out var prod);
+                var catId = prod?.CategoryId ?? 0;
+                var catName = prod?.Category?.Name ?? "Uncategorized";
+                var catColor = prod?.Category?.ColorHex;
+                return new
+                {
+                    CategoryId = catId,
+                    CategoryName = catName,
+                    CategoryColorHex = catColor,
+                    ProductId = first.ProductId,
+                    ProductName = first.ProductName,
+                    ProductShortCode = first.ProductShortCode,
+                    QuantitySold = g.Sum(x => x.Quantity),
+                    TotalRevenue = g.Sum(x => x.LineTotal),
+                    OrderCount = g.Count()
+                };
+            })
+            .ToList();
+
+        response.CategoryTopProducts = itemsGrouped
+            .GroupBy(x => (x.CategoryId, x.CategoryName, x.CategoryColorHex))
+            .Select(cg => new CategoryTopProductDto
+            {
+                CategoryId = cg.Key.CategoryId,
+                CategoryName = cg.Key.CategoryName,
+                CategoryColorHex = cg.Key.CategoryColorHex,
+                TopProducts = cg.OrderByDescending(p => p.QuantitySold)
+                    .ThenByDescending(p => p.TotalRevenue)
+                    .Take(5)
+                    .Select(p => new TopProductItemDto
+                    {
+                        ProductId = p.ProductId,
+                        ProductName = p.ProductName,
+                        ProductShortCode = p.ProductShortCode,
+                        QuantitySold = p.QuantitySold,
+                        TotalRevenue = Math.Round(p.TotalRevenue, 2, MidpointRounding.AwayFromZero),
+                        OrderCount = p.OrderCount
+                    })
+                    .ToList()
+            })
+            .OrderBy(c => c.CategoryName)
+            .ToList();
+
         return response;
+    }
+
+    public async Task<DashboardSalesSummaryDto> GetDashboardSummaryAsync(int? branchId = null, CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        var startOfToday = DateTime.UtcNow.Date; // UTC floor for today
+        var startOfMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var startOfYear = new DateTime(now.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var ordersQuery = context.Orders.AsNoTracking()
+            .Include(o => o.OrderItems)
+            .Where(o => o.OrderStatus != "CANCELLED" && o.PaymentStatus == "PAID" && o.OrderStatus != "VOIDED");
+
+        if (branchId.HasValue)
+            ordersQuery = ordersQuery.Where(o => o.BranchId == branchId.Value);
+
+        var orders = await ordersQuery.ToListAsync(cancellationToken);
+
+        var todayOrders = orders.Where(o => o.CreatedAt >= startOfToday).ToList();
+        var monthOrders = orders.Where(o => o.CreatedAt >= startOfMonth).ToList();
+        var yearOrders = orders.Where(o => o.CreatedAt >= startOfYear).ToList();
+
+        var productsCount = await context.Products.CountAsync(p => !p.IsDeleted && p.IsActive, cancellationToken);
+        var categoriesCount = await context.Categories.CountAsync(c => !c.IsDeleted && c.IsActive, cancellationToken);
+
+        // Daily Trend (last 7 days)
+        var sevenDaysAgo = now.Date.AddDays(-6);
+        var dailyTrend = orders
+            .Where(o => o.CreatedAt >= sevenDaysAgo)
+            .GroupBy(o => o.CreatedAt.ToString("yyyy-MM-dd"))
+            .Select(g => new SalesReportGroupItemDto
+            {
+                Key = g.Key,
+                Label = DateTime.Parse(g.Key).ToString("ddd, MMM dd"),
+                TransactionCount = g.Count(),
+                GrossSales = Math.Round(g.Sum(o => o.Subtotal), 2, MidpointRounding.AwayFromZero),
+                NetSales = Math.Round(g.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero)
+            })
+            .OrderBy(x => x.Key)
+            .ToList();
+
+        // Monthly Trend (current year months)
+        var monthlyTrend = yearOrders
+            .GroupBy(o => o.CreatedAt.ToString("yyyy-MM"))
+            .Select(g => new SalesReportGroupItemDto
+            {
+                Key = g.Key,
+                Label = DateTime.Parse(g.Key + "-01").ToString("MMM yyyy"),
+                TransactionCount = g.Count(),
+                GrossSales = Math.Round(g.Sum(o => o.Subtotal), 2, MidpointRounding.AwayFromZero),
+                NetSales = Math.Round(g.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero)
+            })
+            .OrderBy(x => x.Key)
+            .ToList();
+
+        // Yearly Trend (past 5 years)
+        var fiveYearsAgo = new DateTime(now.Year - 4, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var yearlyTrend = orders
+            .Where(o => o.CreatedAt >= fiveYearsAgo)
+            .GroupBy(o => o.CreatedAt.ToString("yyyy"))
+            .Select(g => new SalesReportGroupItemDto
+            {
+                Key = g.Key,
+                Label = g.Key,
+                TransactionCount = g.Count(),
+                GrossSales = Math.Round(g.Sum(o => o.Subtotal), 2, MidpointRounding.AwayFromZero),
+                NetSales = Math.Round(g.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero)
+            })
+            .OrderBy(x => x.Key)
+            .ToList();
+
+        // Top selling products per category (from all paid orders)
+        var productsWithCat = await context.Products.AsNoTracking()
+            .Include(p => p.Category)
+            .ToDictionaryAsync(p => p.ProductId, cancellationToken);
+
+        var topPerCat = orders.SelectMany(o => o.OrderItems)
+            .GroupBy(i => i.ProductId)
+            .Select(g =>
+            {
+                var first = g.First();
+                productsWithCat.TryGetValue(first.ProductId, out var prod);
+                var catId = prod?.CategoryId ?? 0;
+                var catName = prod?.Category?.Name ?? "Uncategorized";
+                var catColor = prod?.Category?.ColorHex;
+                return new
+                {
+                    CategoryId = catId,
+                    CategoryName = catName,
+                    CategoryColorHex = catColor,
+                    ProductId = first.ProductId,
+                    ProductName = first.ProductName,
+                    ProductShortCode = first.ProductShortCode,
+                    QuantitySold = g.Sum(x => x.Quantity),
+                    TotalRevenue = g.Sum(x => x.LineTotal),
+                    OrderCount = g.Count()
+                };
+            })
+            .GroupBy(x => (x.CategoryId, x.CategoryName, x.CategoryColorHex))
+            .Select(cg => new CategoryTopProductDto
+            {
+                CategoryId = cg.Key.CategoryId,
+                CategoryName = cg.Key.CategoryName,
+                CategoryColorHex = cg.Key.CategoryColorHex,
+                TopProducts = cg.OrderByDescending(p => p.QuantitySold)
+                    .ThenByDescending(p => p.TotalRevenue)
+                    .Take(5)
+                    .Select(p => new TopProductItemDto
+                    {
+                        ProductId = p.ProductId,
+                        ProductName = p.ProductName,
+                        ProductShortCode = p.ProductShortCode,
+                        QuantitySold = p.QuantitySold,
+                        TotalRevenue = Math.Round(p.TotalRevenue, 2, MidpointRounding.AwayFromZero),
+                        OrderCount = p.OrderCount
+                    })
+                    .ToList()
+            })
+            .OrderBy(c => c.CategoryName)
+            .ToList();
+
+        return new DashboardSalesSummaryDto
+        {
+            TodaySales = Math.Round(todayOrders.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero),
+            TodayOrdersCount = todayOrders.Count,
+            ThisMonthSales = Math.Round(monthOrders.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero),
+            ThisMonthOrdersCount = monthOrders.Count,
+            ThisYearSales = Math.Round(yearOrders.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero),
+            ThisYearOrdersCount = yearOrders.Count,
+            AverageOrderValue = orders.Count > 0 ? Math.Round(orders.Sum(o => o.TotalAmount) / orders.Count, 2, MidpointRounding.AwayFromZero) : 0m,
+            ActiveProductsCount = productsCount,
+            ActiveCategoriesCount = categoriesCount,
+            DailySalesTrend = dailyTrend,
+            MonthlySalesTrend = monthlyTrend,
+            YearlySalesTrend = yearlyTrend,
+            TopSellingProductsPerCategory = topPerCat
+        };
     }
 }

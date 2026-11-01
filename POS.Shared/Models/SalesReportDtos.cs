@@ -40,6 +40,7 @@ public class SalesReportResponseDto
     public List<SalesReportGroupItemDto> Breakdown { get; set; } = new();
     public List<SalesReportPaymentBreakdownDto> PaymentBreakdown { get; set; } = new();
     public List<SalesReportTerminalBreakdownDto> TerminalBreakdown { get; set; } = new();
+    public List<CategoryTopProductDto> CategoryTopProducts { get; set; } = new();
 }
 
 public class SalesReportGroupItemDto
@@ -91,4 +92,39 @@ public class SalesReportTerminalBreakdownDto
     public decimal NetSales { get; set; }
     public decimal NetSalesAfterRefunds => Math.Round(NetSales - TotalRefunds, 2, MidpointRounding.AwayFromZero);
     public decimal OutputVat { get; set; }
+}
+
+public class CategoryTopProductDto
+{
+    public int CategoryId { get; set; }
+    public string CategoryName { get; set; } = string.Empty;
+    public string? CategoryColorHex { get; set; }
+    public List<TopProductItemDto> TopProducts { get; set; } = new();
+}
+
+public class TopProductItemDto
+{
+    public int ProductId { get; set; }
+    public string ProductName { get; set; } = string.Empty;
+    public string? ProductShortCode { get; set; }
+    public decimal QuantitySold { get; set; }
+    public decimal TotalRevenue { get; set; }
+    public int OrderCount { get; set; }
+}
+
+public class DashboardSalesSummaryDto
+{
+    public decimal TodaySales { get; set; }
+    public int TodayOrdersCount { get; set; }
+    public decimal ThisMonthSales { get; set; }
+    public int ThisMonthOrdersCount { get; set; }
+    public decimal ThisYearSales { get; set; }
+    public int ThisYearOrdersCount { get; set; }
+    public decimal AverageOrderValue { get; set; }
+    public int ActiveProductsCount { get; set; }
+    public int ActiveCategoriesCount { get; set; }
+    public List<SalesReportGroupItemDto> DailySalesTrend { get; set; } = new();
+    public List<SalesReportGroupItemDto> MonthlySalesTrend { get; set; } = new();
+    public List<SalesReportGroupItemDto> YearlySalesTrend { get; set; } = new();
+    public List<CategoryTopProductDto> TopSellingProductsPerCategory { get; set; } = new();
 }

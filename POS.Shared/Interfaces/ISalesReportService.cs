@@ -7,4 +7,5 @@ namespace POS.Shared.Interfaces;
 public interface ISalesReportService
 {
     Task<SalesReportResponseDto> GenerateReportAsync(SalesReportRequestDto request, CancellationToken cancellationToken = default);
+    Task<DashboardSalesSummaryDto> GetDashboardSummaryAsync(int? branchId = null, CancellationToken cancellationToken = default);
 }

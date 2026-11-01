@@ -102,4 +102,10 @@ public class SalesReportApiService(HttpClient http) : ISalesReportService
 
         return await http.GetFromJsonAsync<SalesReportResponseDto>(url, cancellationToken) ?? new();
     }
+
+    public async Task<DashboardSalesSummaryDto> GetDashboardSummaryAsync(int? branchId = null, System.Threading.CancellationToken cancellationToken = default)
+    {
+        var url = branchId.HasValue ? $"api/sales-reports/dashboard-summary?branchId={branchId.Value}" : "api/sales-reports/dashboard-summary";
+        return await http.GetFromJsonAsync<DashboardSalesSummaryDto>(url, cancellationToken) ?? new();
+    }
 }

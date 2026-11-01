@@ -54,4 +54,20 @@ public class SalesReportsController(ISalesReportService salesReportService) : Co
         var report = await salesReportService.GenerateReportAsync(request, cancellationToken);
         return Ok(report);
     }
+
+    [HttpGet("dashboard-summary")]
+    public async Task<ActionResult<DashboardSalesSummaryDto>> GetDashboardSummary(
+        [FromQuery] int? branchId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != claimBranchId)
+                return Forbid();
+            branchId = claimBranchId;
+        }
+
+        var summary = await salesReportService.GetDashboardSummaryAsync(branchId, cancellationToken);
+        return Ok(summary);
+    }
 }
