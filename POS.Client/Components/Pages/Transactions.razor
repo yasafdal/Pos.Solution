@@ -192,7 +192,7 @@ else
                             }
                             @if (selectedOrder.DiscountAmount > 0)
                             {
-                                <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(selectedOrder.DiscountCode) ? $"({selectedOrder.DiscountCode})" : "")</span><span>-₱@selectedOrder.DiscountAmount.ToString("N2")</span></div>
+                                <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(selectedOrder.DiscountCode) ? $"({selectedOrder.DiscountCode})" : "")</span><span>₱-@selectedOrder.DiscountAmount.ToString("N2")</span></div>
                             }
                             <div class="d-flex justify-content-between fw-bold fs-5 mt-2 pt-2 border-top"><span>Total Paid</span><span>₱@selectedOrder.TotalAmount.ToString("N2")</span></div>
                         </div>

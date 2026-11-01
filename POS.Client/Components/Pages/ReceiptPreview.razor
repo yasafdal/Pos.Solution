@@ -127,7 +127,7 @@
                         }
                         @if (receipt.DiscountAmount > 0)
                         {
-                            <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(receipt.DiscountCode) ? $"({receipt.DiscountCode})" : "")</span><span>-₱@receipt.DiscountAmount.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(receipt.DiscountCode) ? $"({receipt.DiscountCode})" : "")</span><span>₱-@receipt.DiscountAmount.ToString("N2")</span></div>
                         }
                         <div class="d-flex justify-content-between fw-bold fs-6 mt-1 pt-1 border-top"><span>Total</span><span>₱@receipt.TotalAmount.ToString("N2")</span></div>
                         @foreach (var payment in receipt.Payments)

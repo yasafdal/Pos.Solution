@@ -1383,7 +1383,7 @@
                             <div class="d-flex justify-content-between"><span>Beg. Invoice:</span><span>@(selectedXReading.BeginningInvoiceNumber ?? "N/A")</span></div>
                             <div class="d-flex justify-content-between"><span>End. Invoice:</span><span>@(selectedXReading.EndingInvoiceNumber ?? "N/A")</span></div>
                             <div class="d-flex justify-content-between"><span>Gross Sales:</span><span>₱@selectedXReading.GrossSales.ToString("N2")</span></div>
-                            <div class="d-flex justify-content-between"><span>Discounts:</span><span>-₱@selectedXReading.TotalDiscounts.ToString("N2")</span></div>
+                            <div class="d-flex justify-content-between"><span>Discounts:</span><span>₱-@selectedXReading.TotalDiscounts.ToString("N2")</span></div>
                             <div class="d-flex justify-content-between"><span>Refunds/Voids:</span><span>-₱@selectedXReading.TotalRefundsAndVoids.ToString("N2")</span></div>
                             <div class="d-flex justify-content-between fw-bold"><span>Net Sales (Period):</span><span>₱@selectedXReading.NetSales.ToString("N2")</span></div>
                         </div>

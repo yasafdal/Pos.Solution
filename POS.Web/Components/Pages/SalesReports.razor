@@ -275,7 +275,7 @@
                                         <td class="px-4 fw-bold text-dark">@item.Label</td>
                                         <td class="text-center"><span class="badge bg-secondary-subtle text-dark">@item.TransactionCount</span></td>
                                         <td class="text-end">₱@item.GrossSales.ToString("N2")</td>
-                                        <td class="text-end text-danger">-₱@item.TotalDiscounts.ToString("N2")</td>
+                                        <td class="text-end text-danger">₱-@item.TotalDiscounts.ToString("N2")</td>
                                         <td class="text-end text-danger">-₱@item.TotalRefunds.ToString("N2")</td>
                                         <td class="text-end">₱@item.OutputVat.ToString("N2")</td>
                                         <td class="text-end fw-semibold">₱@item.NetSales.ToString("N2")</td>
@@ -286,7 +286,7 @@
                                     <td class="px-4">TOTAL</td>
                                     <td class="text-center">@report.Breakdown.Sum(x => x.TransactionCount)</td>
                                     <td class="text-end">₱@report.Breakdown.Sum(x => x.GrossSales).ToString("N2")</td>
-                                    <td class="text-end text-danger">-₱@report.Breakdown.Sum(x => x.TotalDiscounts).ToString("N2")</td>
+                                    <td class="text-end text-danger">₱-@report.Breakdown.Sum(x => x.TotalDiscounts).ToString("N2")</td>
                                     <td class="text-end text-danger">-₱@report.Breakdown.Sum(x => x.TotalRefunds).ToString("N2")</td>
                                     <td class="text-end">₱@report.Breakdown.Sum(x => x.OutputVat).ToString("N2")</td>
                                     <td class="text-end">₱@report.Breakdown.Sum(x => x.NetSales).ToString("N2")</td>
@@ -357,7 +357,7 @@
                                                 }
                                             </td>
                                             <td class="text-end">₱@t.GrossSales.ToString("N2")</td>
-                                            <td class="text-end text-danger">-₱@t.TotalDiscounts.ToString("N2")</td>
+                                            <td class="text-end text-danger">₱-@t.TotalDiscounts.ToString("N2")</td>
                                             <td class="text-end text-danger">-₱@t.TotalRefunds.ToString("N2")</td>
                                             <td class="text-end">₱@t.OutputVat.ToString("N2")</td>
                                             <td class="text-end px-4 fw-bold text-success">₱@t.NetSalesAfterRefunds.ToString("N2")</td>
@@ -367,7 +367,7 @@
                                         <td colspan="3" class="px-4">Subtotal — @branchGroup.Key.BranchName</td>
                                         <td class="text-center">@branchGroup.Sum(x => x.TransactionCount)</td>
                                         <td class="text-end">₱@branchGroup.Sum(x => x.GrossSales).ToString("N2")</td>
-                                        <td class="text-end text-danger">-₱@branchGroup.Sum(x => x.TotalDiscounts).ToString("N2")</td>
+                                        <td class="text-end text-danger">₱-@branchGroup.Sum(x => x.TotalDiscounts).ToString("N2")</td>
                                         <td class="text-end text-danger">-₱@branchGroup.Sum(x => x.TotalRefunds).ToString("N2")</td>
                                         <td class="text-end">₱@branchGroup.Sum(x => x.OutputVat).ToString("N2")</td>
                                         <td class="text-end px-4 text-dark fw-bold">₱@branchGroup.Sum(x => x.NetSalesAfterRefunds).ToString("N2")</td>

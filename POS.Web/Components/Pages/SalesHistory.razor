@@ -447,7 +447,7 @@
                         {
                             <div class="d-flex justify-content-between text-success mb-1">
                                 <span>Discount @(!string.IsNullOrWhiteSpace(selectedOrder.DiscountCode) ? $"({selectedOrder.DiscountCode})" : "")</span>
-                                <span class="fw-semibold">-₱@selectedOrder.DiscountAmount.ToString("N2")</span>
+                                <span class="fw-semibold">₱-@selectedOrder.DiscountAmount.ToString("N2")</span>
                             </div>
                         }
 
