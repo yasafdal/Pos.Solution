@@ -36,13 +36,13 @@ class ReceiptPrinterLifecycleTests(unittest.TestCase):
             self.assertNotIn("savingPdf", text, relative)
             self.assertNotIn("savedPdfPath", text, relative)
 
-    def test_receipt_paper_is_80_by_200_mm(self):
+    def test_receipt_paper_is_80mm_roll_with_dynamic_height(self):
         self.assertIn("settings.PageWidth = 80d / 25.4d;", SOURCE)
-        self.assertIn("settings.PageHeight = 200d / 25.4d;", SOURCE)
+        self.assertIn("settings.PageHeight = pageHeightMm / 25.4d;", SOURCE)
         self.assertIn("settings.MediaSize = CoreWebView2PrintMediaSize.Custom;", SOURCE)
         self.assertIn("core.PrintAsync(settings)", SOURCE)
         formatter = (Path(__file__).resolve().parents[1] / "POS.Client/Services/ReceiptHtmlFormatter.cs").read_text()
-        self.assertIn("size: 80mm 200mm", formatter)
+        self.assertIn("size: 80mm auto", formatter)
 
     def test_print_rejects_an_uninitialized_core_explicitly(self):
         assignments = SOURCE.split("var core = webView.CoreWebView2")[1:]

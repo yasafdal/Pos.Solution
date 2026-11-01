@@ -16,26 +16,62 @@ public static class ZReadingHtmlFormatter
             <meta name="viewport" content="width=device-width,initial-scale=1">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
             <title>Z-Reading report</title><style>
-            @page { size: 80mm 200mm; margin: 0; }
-            * { box-sizing: border-box; } body { max-width:80mm; margin:0 auto; padding:3mm; font:10.5px/1.3 Consolas,'Courier New',monospace; color:#000; background:#fff; overflow-wrap:anywhere; }
-            h1 {font-size:14px;margin:0;text-align:center;} h2 {font-size:12px;margin:3mm 0 1mm;border-top:1px dashed #000;padding-top:1.5mm;} p {margin: .6mm 0;} .center {text-align:center;} .row {display:flex;justify-content:space-between;gap:2mm;margin:.5mm 0;} .row span:last-child {text-align:right;font-variant-numeric:tabular-nums;} .total {font-weight:bold;font-size:12px;} table {width:100%;border-collapse:collapse;table-layout:fixed;} th,td {padding:1mm .5mm;text-align:left;vertical-align:top;} th {border-bottom:1px dashed #000;} td:not(:first-child),th:not(:first-child) {text-align:right;} td:first-child,th:first-child {width:48%;} .note {font-size:9px;} .copy {font-weight:bold;text-align:center;border:1px dashed #000;padding:1mm;} tr {break-inside:avoid;} button {display:none;}
+            @page {
+                size: 80mm auto;
+                margin: 0;
+            }
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            html, body { width: 100%; margin: 0; padding: 0; background: #fff; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            body { font-family: 'Consolas', 'Courier New', 'Lucida Console', monospace; font-size: 10px; line-height: 1.25; letter-spacing: -0.2px; }
+            .receipt-container { width: 64mm; max-width: 64mm; margin-left: 2mm; margin-right: auto; padding: 1.5mm 0.5mm 0 0.5mm; background: #fff; color: #000; }
+            h1 { font-size: 13px; font-weight: 600; margin: 0 0 0.6mm; text-align: center; text-transform: uppercase; word-break: break-word; }
+            h2 { font-size: 10.5px; font-weight: 600; margin: 1.2mm 0 0.6mm; border-top: 1px dashed #555; padding-top: 1mm; text-align: center; text-transform: uppercase; }
+            p { margin: 0.3mm 0; font-size: 9.5px; }
+            .center { text-align: center; }
+            .meta-info { font-size: 9.5px; line-height: 1.35; margin: 0.6mm 0; }
+            .meta-row { display: flex; gap: 1.5mm; margin: 0.2mm 0; }
+            .meta-label { color: #222; white-space: nowrap; flex: 0 0 24mm; font-weight: normal; }
+            .meta-val { flex: 1 1 auto; word-break: break-word; font-weight: normal; }
+            .row { display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; margin: 0.3mm 0; font-size: 9.5px; }
+            .row span:first-child { flex: 1 1 auto; text-align: left; word-break: break-word; }
+            .row span:last-child { flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+            .total { font-weight: 600; font-size: 11px; margin: 0.6mm 0; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0.8mm 0; }
+            th, td { padding: 0.6mm 0.4mm; text-align: left; vertical-align: top; font-size: 9px; }
+            th { border-bottom: 1px dashed #555; font-weight: 600; }
+            td:not(:first-child), th:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+            td:first-child, th:first-child { width: 50%; word-break: break-word; }
+            td:nth-child(2), th:nth-child(2) { width: 18%; }
+            td:nth-child(3), th:nth-child(3) { width: 32%; }
+            .note { font-size: 8.5px; color: #444; }
+            .copy { font-weight: 600; text-align: center; border: 1px dashed #555; padding: 1mm; margin: 1mm 0; }
+            tr { break-inside: avoid; }
+            .cut-feed { height: 12mm; break-inside: avoid; page-break-inside: avoid; }
+            button { display: none; }
             </style></head><body>
+            <div class="receipt-container">
             """);
         h.Append("<h1>").Append(E(report.BusinessName ?? report.BranchName)).Append("</h1>");
-        Line("Branch: " + report.BranchName); Line("Outlet: " + report.OutletName);
+        h.Append("<div class=\"meta-info\">");
+        Meta("Branch:", report.BranchName);
+        Meta("Outlet:", report.OutletName);
         if (!string.IsNullOrWhiteSpace(report.Address)) Line(report.Address);
-        Line("TIN: " + (report.Tin ?? "Not configured — verify registration"));
-        Line("Terminal: " + report.TerminalCode + " / " + report.TerminalName);
-        Line("MIN: " + (report.MachineIdentificationNumber ?? "Not configured"));
-        Line("S/N: " + (report.SerialNumber ?? "Not configured"));
-        Line("PTU: " + (report.PermitToUseNumber ?? "Not configured"));
+        Meta("TIN:", report.Tin ?? "Not configured — verify registration");
+        Meta("Terminal:", report.TerminalCode + " / " + report.TerminalName);
+        Meta("MIN:", report.MachineIdentificationNumber ?? "Not configured");
+        Meta("S/N:", report.SerialNumber ?? "Not configured");
+        Meta("PTU:", report.PermitToUseNumber ?? "Not configured");
+        h.Append("</div>");
         h.Append("<h2 class=\"center\">Z-READING REPORT</h2>");
         if (isReprint) h.Append("<p class=\"copy\">REPRINT — SAME FINALIZED REPORT</p>");
-        Line($"Business date: {report.BusinessDate:yyyy-MM-dd}");
-        Line("Period start: " + Stamp(report.PeriodStartUtc));
-        Line("Period end (exclusive): " + Stamp(report.PeriodEndUtc));
-        Line("Generated: " + Stamp(report.GeneratedAt)); Line("Generated by: " + report.GeneratedBy);
-        Line("Report ID: " + report.Id);
+        h.Append("<div class=\"meta-info\">");
+        Meta("Business date:", $"{report.BusinessDate:yyyy-MM-dd}");
+        Meta("Period start:", Stamp(report.PeriodStartUtc));
+        Meta("Period end:", Stamp(report.PeriodEndUtc) + " (exclusive)");
+        Meta("Generated:", Stamp(report.GeneratedAt));
+        Meta("Generated by:", report.GeneratedBy);
+        Meta("Report ID:", report.Id.ToString());
+        h.Append("</div>");
         Row("Beginning invoice", report.FirstInvoiceNumber ?? "N/A");
         Row("Ending invoice", report.LastInvoiceNumber ?? "N/A");
         foreach (var kind in new[] { "RETURN", "VOID" })
@@ -103,10 +139,12 @@ public static class ZReadingHtmlFormatter
         Heading("Report notes");
         foreach (var warning in report.Warnings) Line(warning);
         Line("FINALIZED SNAPSHOT — NOT A SALES INVOICE. Internal numbering does not establish BIR accreditation. Reset and cumulative configuration require operator/RDO review.");
-        h.Append("</body></html>");
+        h.Append("<div class=\"cut-feed\"></div>");
+        h.Append("</div></body></html>");
         return h.ToString();
 
         void Line(string text) => h.Append("<p>").Append(E(text)).Append("</p>");
+        void Meta(string label, string? value) => h.Append("<div class=\"meta-row\"><span class=\"meta-label\">").Append(E(label)).Append("</span><span class=\"meta-val\">").Append(E(value ?? string.Empty)).Append("</span></div>");
         void Heading(string text) => h.Append("<h2>").Append(E(text)).Append("</h2>");
         void Row(string label, string value, bool total = false) => h.Append(total ? "<div class=\"row total\"><span>" : "<div class=\"row\"><span>").Append(E(label)).Append("</span><span>").Append(E(value)).Append("</span></div>");
         void Products(string title, List<ZReadingProductDto> products, bool negative)

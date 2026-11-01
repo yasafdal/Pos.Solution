@@ -23,33 +23,137 @@ public static class PreparationTicketHtmlFormatter
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
             <title>Preparation ticket</title>
             <style>
-            @page { size: 80mm 200mm; margin: 0; }
-            * { box-sizing: border-box; margin: 0; padding: 0; }
-            html, body { margin: 0; padding: 0; background: #fff; color: #000; }
-            body {
+            @page {
+                size: 80mm auto;
+                margin: 0;
+            }
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+            html, body {
                 width: 100%;
-                max-width: 80mm;
-                margin: 0 auto;
-                padding: 3mm 3.5mm;
+                margin: 0;
+                padding: 0;
+                background: #fff;
+                color: #000;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            body {
                 font-family: 'Consolas', 'Courier New', 'Lucida Console', monospace;
-                font-size: 12px;
+                font-size: 10px;
                 line-height: 1.25;
                 letter-spacing: -0.2px;
-                overflow-wrap: anywhere;
             }
-            .header, .footer { text-align: center; }
-            .station-title { font-size: 17px; font-weight: 800; text-transform: uppercase; margin: 1mm 0; border: 2px solid #000; padding: 1.5mm; }
-            .order-meta { font-size: 11px; margin: 1mm 0; line-height: 1.3; }
-            .table-callout { font-size: 15px; font-weight: 800; margin: 1.5mm 0; text-align: center; background: #000; color: #fff; padding: 1.5mm; }
-            hr.dash { border: 0; border-top: 1px dashed #000; margin: 2mm 0; }
-            hr.double { border: 0; border-top: 2px solid #000; margin: 2mm 0; }
-            .item-row { margin: 2mm 0; break-inside: avoid; }
-            .item-main { display: flex; justify-content: space-between; font-size: 13px; font-weight: 800; }
-            .item-qty { min-width: 8mm; }
-            .item-name { flex-grow: 1; }
-            .modifier-line { font-size: 10.5px; padding-left: 5mm; color: #111; font-weight: 600; margin-top: 0.5mm; }
-            .footer { margin-top: 3mm; font-size: 9.5px; color: #333; }
+            .ticket-container {
+                width: 64mm;
+                max-width: 64mm;
+                margin-left: 2mm;
+                margin-right: auto;
+                padding: 1.5mm 0.5mm 0 0.5mm;
+                background: #fff;
+                color: #000;
+            }
+            .header, .footer {
+                text-align: center;
+            }
+            .station-title {
+                font-size: 13.5px;
+                font-weight: 600;
+                letter-spacing: 0.5px;
+                text-align: center;
+                margin: 0.8mm 0;
+                text-transform: uppercase;
+            }
+            .table-callout {
+                font-size: 11.5px;
+                font-weight: 600;
+                text-align: center;
+                letter-spacing: 0.3px;
+                padding: 1mm 0;
+                border-top: 1px dashed #555;
+                border-bottom: 1px dashed #555;
+                margin: 1mm 0;
+            }
+            hr.dash {
+                border: 0;
+                border-top: 1px dashed #555;
+                margin: 1.2mm 0;
+            }
+            .order-meta {
+                font-size: 9.5px;
+                line-height: 1.35;
+                margin: 0.8mm 0;
+            }
+            .meta-row {
+                display: flex;
+                gap: 1.5mm;
+                margin: 0.2mm 0;
+            }
+            .meta-label {
+                color: #222;
+                white-space: nowrap;
+                flex: 0 0 18mm;
+                font-weight: normal;
+            }
+            .meta-val {
+                flex: 1 1 auto;
+                word-break: break-word;
+                font-weight: normal;
+            }
+            .items-section {
+                margin: 1mm 0;
+            }
+            .item-row {
+                margin-bottom: 1.6mm;
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+            .item-main {
+                display: flex;
+                align-items: flex-start;
+                gap: 2mm;
+                font-size: 11px;
+                line-height: 1.25;
+            }
+            .item-qty {
+                flex: 0 0 7mm;
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+                font-weight: 600;
+            }
+            .item-name {
+                flex: 1 1 auto;
+                min-width: 0;
+                word-break: break-word;
+                text-align: left;
+                font-weight: 600;
+            }
+            .modifier-line {
+                font-size: 9px;
+                padding-left: 9mm;
+                color: #333;
+                margin-top: 0.3mm;
+                font-weight: normal;
+            }
+            .footer {
+                margin-top: 1.5mm;
+                font-size: 8.5px;
+                color: #444;
+                line-height: 1.3;
+                text-align: center;
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+            .cut-feed {
+                height: 12mm;
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
             </style></head><body>
+            <div class="ticket-container">
             """);
 
         // Station Header
@@ -72,18 +176,18 @@ public static class PreparationTicketHtmlFormatter
             html.Append("<div class=\"table-callout\">").Append(Encode(mode)).Append("</div>");
         }
 
-        // Meta Info
+        // Meta Info (aligned tabular columns with clean regular font)
         html.Append("<div class=\"order-meta\">");
-        html.Append("<div><strong>Order #: </strong>").Append(Encode(ticket.OrderNumber)).Append("</div>");
+        MetaRow(html, "Order #:", ticket.OrderNumber);
         if (!string.IsNullOrWhiteSpace(ticket.InvoiceNumber))
         {
-            html.Append("<div><strong>Invoice #: </strong>").Append(Encode(ticket.InvoiceNumber)).Append("</div>");
+            MetaRow(html, "Invoice #:", ticket.InvoiceNumber);
         }
-        html.Append("<div><strong>Terminal: </strong>").Append(Encode(ticket.TerminalName)).Append("</div>");
-        html.Append("<div><strong>Server: </strong>").Append(Encode(ticket.CashierId)).Append("</div>");
-        html.Append("<div><strong>Time: </strong>").Append(ticket.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)).Append("</div>");
+        MetaRow(html, "Terminal:", ticket.TerminalName);
+        MetaRow(html, "Server:", ticket.CashierId);
+        MetaRow(html, "Time:", ticket.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
         html.Append("</div>");
-        html.Append("<hr class=\"double\">");
+        html.Append("<hr class=\"dash\">");
 
         // Items Section
         html.Append("<div class=\"items-section\">");
@@ -114,15 +218,24 @@ public static class PreparationTicketHtmlFormatter
         html.Append("</div>");
 
         // Footer
-        html.Append("<hr class=\"double\">");
+        html.Append("<hr class=\"dash\">");
         html.Append("<div class=\"footer\">");
         html.Append("PREPARATION TICKET — NOT A BIR TAX INVOICE<br>");
         html.Append("Station: ").Append(Encode(stationName));
         html.Append("</div>");
+        html.Append("<div class=\"cut-feed\"></div>");
 
-        html.Append("</body></html>");
+        html.Append("</div></body></html>");
         return html.ToString();
     }
 
     private static string Encode(string? text) => WebUtility.HtmlEncode(text ?? string.Empty);
+
+    private static void MetaRow(StringBuilder html, string label, string? value)
+    {
+        html.Append("<div class=\"meta-row\">")
+            .Append("<span class=\"meta-label\">").Append(Encode(label)).Append("</span>")
+            .Append("<span class=\"meta-val\">").Append(Encode(value ?? string.Empty)).Append("</span>")
+            .Append("</div>");
+    }
 }

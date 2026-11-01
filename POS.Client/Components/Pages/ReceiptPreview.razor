@@ -66,150 +66,33 @@
 
                 @if (activeTab == "receipt" && receipt != null)
                 {
-                    <article class="border rounded p-3 bg-white text-dark receipt-document">
-                        <h5 class="text-center">@receipt.BranchName</h5>
-                        <p class="text-center mb-2">@receipt.BranchAddress<br />@receipt.BranchPhone</p>
-                        <div>Branch: @receipt.BranchCode</div>
-                        <div>Terminal: @receipt.TerminalName</div>
-                        <div>Order: @receipt.OrderNumber</div>
-                        @if (!string.IsNullOrWhiteSpace(receipt.InvoiceNumber))
-                        {
-                            <div>Invoice: @receipt.InvoiceNumber</div>
-                        }
-                        <div>Cashier: @receipt.CashierId</div>
-                        <div>Paid: @receipt.PaidAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
-                        @if (!string.IsNullOrWhiteSpace(receipt.CustomerName) || !string.IsNullOrWhiteSpace(receipt.CustomerTin))
-                        {
-                            <div class="mt-2 pt-2 border-top">
-                                <strong>Customer Info:</strong><br />
-                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerName)) { <span>Name: @receipt.CustomerName</span><br /> }
-                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerAddress)) { <span>Address: @receipt.CustomerAddress</span><br /> }
-                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerTin)) { <span>TIN: @receipt.CustomerTin</span><br /> }
-                                @if (!string.IsNullOrWhiteSpace(receipt.CustomerBusinessStyle)) { <span>Bus. Style: @receipt.CustomerBusinessStyle</span> }
-                            </div>
-                        }
-                        <hr />
-                        @foreach (var item in receipt.Items)
-                        {
-                            <div class="mb-2" @key="item.OrderItemId">
-                                <div class="d-flex justify-content-between gap-3">
-                                    <span>
-                                        <strong>@item.ProductName</strong>
-                                        @if (item.IsKitchenItem) { <span class="badge bg-warning bg-opacity-25 text-dark ms-1" style="font-size:0.65rem;">Kitchen</span> }
-                                        @if (item.IsBarItem) { <span class="badge bg-info bg-opacity-25 text-dark ms-1" style="font-size:0.65rem;">Bar</span> }
-                                    </span>
-                                    <span>₱@item.LineTotal.ToString("N2")</span>
-                                </div>
-                                <small>@item.Quantity.ToString("0.###") × ₱@item.UnitPrice.ToString("N2")</small>
-                                @foreach (var modifier in item.Modifiers)
-                                {
-                                    <div class="small ps-2">+ @modifier.ModifierName (₱@modifier.AdditionalPrice.ToString("N2") each)</div>
-                                }
-                            </div>
-                        }
-                        <hr />
-                        <div class="d-flex justify-content-between"><span>Subtotal</span><span>₱@receipt.Subtotal.ToString("N2")</span></div>
-                        @if (receipt.VatableSales > 0 || receipt.VatExemptSales > 0 || receipt.VatAmount > 0)
-                        {
-                            @if (receipt.VatableSales > 0)
-                            {
-                                <div class="d-flex justify-content-between text-muted small"><span>Vatable Sales</span><span>₱@receipt.VatableSales.ToString("N2")</span></div>
-                            }
-                            @if (receipt.VatExemptSales > 0)
-                            {
-                                <div class="d-flex justify-content-between text-muted small"><span>VAT-Exempt Sales</span><span>₱@receipt.VatExemptSales.ToString("N2")</span></div>
-                            }
-                            @if (receipt.ZeroRatedSales > 0)
-                            {
-                                <div class="d-flex justify-content-between text-muted small"><span>Zero-Rated Sales</span><span>₱@receipt.ZeroRatedSales.ToString("N2")</span></div>
-                            }
-                            <div class="d-flex justify-content-between text-muted small"><span>VAT (12%)</span><span>₱@receipt.VatAmount.ToString("N2")</span></div>
-                        }
-                        @if (receipt.DiscountAmount > 0)
-                        {
-                            <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(receipt.DiscountCode) ? $"({receipt.DiscountCode})" : "")</span><span>₱-@receipt.DiscountAmount.ToString("N2")</span></div>
-                        }
-                        <div class="d-flex justify-content-between fw-bold fs-6 mt-1 pt-1 border-top"><span>Total</span><span>₱@receipt.TotalAmount.ToString("N2")</span></div>
-                        @foreach (var payment in receipt.Payments)
-                        {
-                            <hr />
-                            <div>@payment.PaymentMethod — ₱@payment.Amount.ToString("N2")</div>
-                            <div>Tendered: ₱@payment.AmountTendered.ToString("N2")</div>
-                            <div class="fw-bold">Change: ₱@payment.ChangeAmount.ToString("N2")</div>
-                        }
-                        <hr />
-                        <small>Transaction receipt preview — not a BIR-compliant official invoice.</small>
-                    </article>
+                    <div class="d-flex justify-content-center bg-light p-3 rounded border">
+                        <iframe class="receipt-preview-frame shadow-sm"
+                                title="Thermal Receipt Preview"
+                                sandbox=""
+                                srcdoc="@ReceiptHtmlFormatter.Format(receipt)">
+                        </iframe>
+                    </div>
                 }
                 else if (activeTab == "kitchen" && kitchenTicket != null)
                 {
-                    <article class="border rounded p-3 bg-white text-dark ticket-document">
-                        <div class="text-center p-2 mb-2 border border-2 border-dark rounded fw-bold fs-5">
-                            *** KITCHEN ORDER ***
-                        </div>
-                        <div class="p-2 mb-2 bg-dark text-white rounded text-center fw-bold">
-                            @(!string.IsNullOrWhiteSpace(kitchenTicket.TableNumber) ? $"TABLE: {kitchenTicket.TableNumber}" : "")
-                            @(kitchenTicket.HeadCount.HasValue && kitchenTicket.HeadCount > 0 ? $"({kitchenTicket.HeadCount} Guests)" : "")
-                            · @(kitchenTicket.OrderType ?? "DINING")
-                        </div>
-                        <div class="small">
-                            <div><strong>Order #: </strong>@kitchenTicket.OrderNumber</div>
-                            <div><strong>Server: </strong>@kitchenTicket.CashierId · <strong>Terminal: </strong>@kitchenTicket.TerminalName</div>
-                            <div><strong>Time: </strong>@kitchenTicket.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
-                            @if (!string.IsNullOrWhiteSpace(kitchenPrinterName))
-                            {
-                                <div><strong>Assigned Printer: </strong>@kitchenPrinterName</div>
-                            }
-                        </div>
-                        <hr class="border-2 border-dark" />
-                        @foreach (var item in kitchenTicket.Items)
-                        {
-                            <div class="mb-2">
-                                <div class="fs-6 fw-bold">@item.Quantity.ToString("0.###")x @item.ProductName</div>
-                                @foreach (var mod in item.Modifiers)
-                                {
-                                    <div class="small ps-3 fw-bold text-secondary">+ @mod</div>
-                                }
-                            </div>
-                        }
-                        <hr class="border-2 border-dark" />
-                        <div class="text-center small text-muted">PREPARATION TICKET — NOT A BIR TAX INVOICE</div>
-                    </article>
+                    <div class="d-flex justify-content-center bg-light p-3 rounded border">
+                        <iframe class="receipt-preview-frame shadow-sm"
+                                title="Kitchen Ticket Preview"
+                                sandbox=""
+                                srcdoc="@PreparationTicketHtmlFormatter.Format(kitchenTicket)">
+                        </iframe>
+                    </div>
                 }
                 else if (activeTab == "bar" && barTicket != null)
                 {
-                    <article class="border rounded p-3 bg-white text-dark ticket-document">
-                        <div class="text-center p-2 mb-2 border border-2 border-primary rounded fw-bold fs-5 text-primary">
-                            *** BAR ORDER ***
-                        </div>
-                        <div class="p-2 mb-2 bg-primary text-white rounded text-center fw-bold">
-                            @(!string.IsNullOrWhiteSpace(barTicket.TableNumber) ? $"TABLE: {barTicket.TableNumber}" : "")
-                            @(barTicket.HeadCount.HasValue && barTicket.HeadCount > 0 ? $"({barTicket.HeadCount} Guests)" : "")
-                            · @(barTicket.OrderType ?? "DINING")
-                        </div>
-                        <div class="small">
-                            <div><strong>Order #: </strong>@barTicket.OrderNumber</div>
-                            <div><strong>Server: </strong>@barTicket.CashierId · <strong>Terminal: </strong>@barTicket.TerminalName</div>
-                            <div><strong>Time: </strong>@barTicket.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</div>
-                            @if (!string.IsNullOrWhiteSpace(barPrinterName))
-                            {
-                                <div><strong>Assigned Printer: </strong>@barPrinterName</div>
-                            }
-                        </div>
-                        <hr class="border-2 border-dark" />
-                        @foreach (var item in barTicket.Items)
-                        {
-                            <div class="mb-2">
-                                <div class="fs-6 fw-bold">@item.Quantity.ToString("0.###")x @item.ProductName</div>
-                                @foreach (var mod in item.Modifiers)
-                                {
-                                    <div class="small ps-3 fw-bold text-secondary">+ @mod</div>
-                                }
-                            </div>
-                        }
-                        <hr class="border-2 border-dark" />
-                        <div class="text-center small text-muted">PREPARATION TICKET — NOT A BIR TAX INVOICE</div>
-                    </article>
+                    <div class="d-flex justify-content-center bg-light p-3 rounded border">
+                        <iframe class="receipt-preview-frame shadow-sm"
+                                title="Bar Ticket Preview"
+                                sandbox=""
+                                srcdoc="@PreparationTicketHtmlFormatter.Format(barTicket)">
+                        </iframe>
+                    </div>
                 }
                 else if (activeTab == "settings")
                 {
@@ -266,6 +149,18 @@
         </div>
     </div>
 </div>
+
+<style>
+    .receipt-preview-frame {
+        width: 80mm;
+        min-height: 520px;
+        height: 60vh;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
+        display: block;
+    }
+</style>
 
 @code {
     [Parameter] public long OrderId { get; set; }
@@ -472,12 +367,14 @@
         // 2. Print kitchen ticket if available and not printed yet
         if (kitchenTicket != null && !kitchenSentToPrinter)
         {
+            await Task.Delay(800);
             await PrintKitchenTicket();
         }
 
         // 3. Print bar ticket if available and not printed yet
         if (barTicket != null && !barSentToPrinter)
         {
+            await Task.Delay(800);
             await PrintBarTicket();
         }
     }

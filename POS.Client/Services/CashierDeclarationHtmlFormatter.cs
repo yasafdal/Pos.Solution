@@ -22,44 +22,156 @@ public static class CashierDeclarationHtmlFormatter
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
             <title>Cashier Declaration Acknowledgment</title>
             <style>
-            @page { size: 80mm 200mm; margin: 0; }
+            @page {
+                size: 80mm auto;
+                margin: 0;
+            }
             * { box-sizing: border-box; margin: 0; padding: 0; }
-            html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+            html, body { width: 100%; margin: 0; padding: 0; background: #fff; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             body {
-                width: 100%;
-                max-width: 80mm;
-                margin: 0 auto;
-                padding: 3mm 3.5mm;
                 font-family: 'Consolas', 'Courier New', 'Lucida Console', monospace;
-                font-size: 10.5px;
+                font-size: 10px;
                 line-height: 1.25;
                 letter-spacing: -0.2px;
-                overflow-wrap: anywhere;
+            }
+            .receipt-container {
+                width: 64mm;
+                max-width: 64mm;
+                margin-left: 2mm;
+                margin-right: auto;
+                padding: 1.5mm 0.5mm 0 0.5mm;
+                background: #fff;
+                color: #000;
             }
             .header, .footer { text-align: center; }
-            .header h1 { font-size: 14px; font-weight: 700; margin-bottom: 0.8mm; line-height: 1.2; text-transform: uppercase; }
-            .header p { font-size: 10px; margin: 0.4mm 0; line-height: 1.2; }
-            .doc-title { font-size: 11.5px; font-weight: 700; letter-spacing: 0.5px; margin: 1mm 0 0.5mm; }
-            .section-title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; margin: 1.2mm 0 0.6mm; }
-            hr.dash { border: 0; border-top: 1px dashed #000; margin: 1.6mm 0; }
-            hr.double-dash { border: 0; border-top: 2px dashed #000; margin: 1.8mm 0; }
-            .row { display: flex; justify-content: space-between; gap: 2mm; font-size: 10px; margin: 0.4mm 0; }
-            .row.bold { font-weight: 700; font-size: 10.5px; }
-            .row.total { font-size: 12px; font-weight: 800; margin: 1mm 0; }
-            .amount { white-space: nowrap; text-align: right; }
-            .badge-notice { text-align: center; font-weight: 700; font-size: 11px; margin: 0.8mm 0; }
-            .sub-note { font-size: 9.5px; color: #222; margin: 0.4mm 0; }
-            .footer { margin-top: 3mm; font-size: 9.5px; line-height: 1.3; }
+            .header h1 {
+                font-size: 13px;
+                font-weight: 600;
+                margin-bottom: 0.6mm;
+                line-height: 1.2;
+                text-transform: uppercase;
+                word-break: break-word;
+            }
+            .header p {
+                font-size: 9.5px;
+                margin: 0.3mm 0;
+                line-height: 1.25;
+            }
+            .doc-title {
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.5px;
+                margin: 0.8mm 0 0.3mm;
+                text-align: center;
+            }
+            .section-title {
+                font-size: 10px;
+                font-weight: 600;
+                text-transform: uppercase;
+                margin: 1mm 0 0.4mm;
+                letter-spacing: 0.3px;
+            }
+            hr.dash {
+                border: 0;
+                border-top: 1px dashed #555;
+                margin: 1.2mm 0;
+            }
+            hr.double-dash {
+                border: 0;
+                border-top: 1px dashed #555;
+                border-bottom: 1px dashed #555;
+                height: 3px;
+                margin: 1.4mm 0;
+            }
+            .meta-info {
+                font-size: 9.5px;
+                line-height: 1.35;
+                margin: 0.6mm 0;
+            }
+            .meta-row {
+                display: flex;
+                gap: 1.5mm;
+                margin: 0.2mm 0;
+            }
+            .meta-label {
+                color: #222;
+                white-space: nowrap;
+                flex: 0 0 22mm;
+                font-weight: normal;
+            }
+            .meta-val {
+                flex: 1 1 auto;
+                word-break: break-word;
+                font-weight: normal;
+            }
+            .row {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                gap: 1.5mm;
+                font-size: 9.5px;
+                margin: 0.3mm 0;
+            }
+            .row .label {
+                flex: 1 1 auto;
+                min-width: 0;
+                text-align: left;
+                word-break: break-word;
+            }
+            .row.bold {
+                font-weight: 600;
+                font-size: 9.5px;
+            }
+            .row.total {
+                font-size: 11.5px;
+                font-weight: 600;
+                margin: 0.8mm 0;
+            }
+            .amount {
+                flex: 0 0 auto;
+                white-space: nowrap;
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+            .badge-notice {
+                text-align: center;
+                font-weight: 600;
+                font-size: 10px;
+                margin: 0.6mm 0;
+            }
+            .sub-note {
+                font-size: 9px;
+                color: #333;
+                margin: 0.3mm 0;
+                text-align: center;
+            }
+            .footer {
+                margin-top: 2.5mm;
+                font-size: 9px;
+                line-height: 1.3;
+                text-align: center;
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+            .cut-feed {
+                height: 12mm;
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
             </style></head><body>
+            <div class="receipt-container">
             """);
 
         html.Append("<div class=\"header\">");
         html.Append("<h1>").Append(Encode(report.BranchName)).Append("</h1>");
-        OptionalLine(html, report.BranchCode);
+        if (!string.IsNullOrWhiteSpace(report.BranchCode))
+        {
+            html.Append("<p>Branch Code: ").Append(Encode(report.BranchCode)).Append("</p>");
+        }
         OptionalLine(html, report.BranchAddress);
         OptionalLine(html, report.BranchPhone);
         OptionalLine(html, string.IsNullOrWhiteSpace(report.OutletName) ? null : "Outlet: " + report.OutletName);
-        Line(html, "Terminal: " + report.TerminalName);
+        OptionalLine(html, "Terminal: " + report.TerminalName);
         OptionalLine(html, string.IsNullOrWhiteSpace(report.PTUNumber) ? null : "PTU: " + report.PTUNumber);
         OptionalLine(html, string.IsNullOrWhiteSpace(report.MINNumber) ? null : "MIN: " + report.MINNumber);
         OptionalLine(html, string.IsNullOrWhiteSpace(report.SerialNumber) ? null : "S/N: " + report.SerialNumber);
@@ -73,11 +185,13 @@ public static class CashierDeclarationHtmlFormatter
         }
 
         html.Append("<hr class=\"dash\">");
-        Line(html, $"Shift ID: #{report.ShiftId}");
-        Line(html, "Cashier: " + report.CashierId);
-        Line(html, "Shift Open: " + Timestamp(report.OpenedAt));
-        Line(html, "Shift Close: " + (report.ClosedAt.HasValue ? Timestamp(report.ClosedAt.Value) : Timestamp(report.SubmittedAt)));
-        Line(html, "Submitted At: " + Timestamp(report.SubmittedAt));
+        html.Append("<div class=\"meta-info\">");
+        MetaRow(html, "Shift ID:", $"#{report.ShiftId}");
+        MetaRow(html, "Cashier:", report.CashierId);
+        MetaRow(html, "Shift Open:", Timestamp(report.OpenedAt));
+        MetaRow(html, "Shift Close:", report.ClosedAt.HasValue ? Timestamp(report.ClosedAt.Value) : Timestamp(report.SubmittedAt));
+        MetaRow(html, "Submitted At:", Timestamp(report.SubmittedAt));
+        html.Append("</div>");
 
         html.Append("<hr class=\"dash\">");
         html.Append("<div class=\"section-title\">Cash Denomination Count</div>");
@@ -143,7 +257,8 @@ public static class CashierDeclarationHtmlFormatter
         html.Append("Received By (Supervisor): _____________<br><br>");
         html.Append("BLIND CLOSING DECLARATION ACKNOWLEDGMENT");
         html.Append("</div>");
-        html.Append("</body></html>");
+        html.Append("<div class=\"cut-feed\"></div>");
+        html.Append("</div></body></html>");
 
         return html.ToString();
     }
@@ -165,11 +280,19 @@ public static class CashierDeclarationHtmlFormatter
         if (!string.IsNullOrWhiteSpace(text)) Line(html, text);
     }
 
+    private static void MetaRow(StringBuilder html, string label, string? value)
+    {
+        html.Append("<div class=\"meta-row\">")
+            .Append("<span class=\"meta-label\">").Append(Encode(label)).Append("</span>")
+            .Append("<span class=\"meta-val\">").Append(Encode(value ?? string.Empty)).Append("</span>")
+            .Append("</div>");
+    }
+
     private static void Row(StringBuilder html, string label, string amount) =>
-        html.Append("<div class=\"row\"><span>").Append(Encode(label))
+        html.Append("<div class=\"row\"><span class=\"label\">").Append(Encode(label))
             .Append("</span><span class=\"amount\">").Append(Encode(amount)).Append("</span></div>");
 
     private static void RowClass(StringBuilder html, string label, string amount, string cssClass) =>
-        html.Append("<div class=\"row ").Append(Encode(cssClass)).Append("\"><span>").Append(Encode(label))
+        html.Append("<div class=\"row ").Append(Encode(cssClass)).Append("\"><span class=\"label\">").Append(Encode(label))
             .Append("</span><span class=\"amount\">").Append(Encode(amount)).Append("</span></div>");
 }

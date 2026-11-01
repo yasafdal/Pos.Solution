@@ -127,20 +127,39 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
             core.NavigateToString(html);
             await loaded.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-            // First try the OS default printer with 80 x 200 mm receipt paper; the driver must support this medium.
+            // Dynamic roll page height measurement: fits entire receipt without clipping customer info or footer
+            double measuredHeightMm = 0;
+            try
+            {
+                var rawHeight = await core.ExecuteScriptAsync(
+                    "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.body.offsetHeight, document.documentElement.offsetHeight)"
+                );
+                if (!string.IsNullOrWhiteSpace(rawHeight) && double.TryParse(rawHeight, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var pxHeight) && pxHeight > 0)
+                {
+                    measuredHeightMm = (pxHeight * 25.4d) / 96d;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to measure receipt height in WebView2: {ex.Message}");
+            }
+
+            double pageHeightMm = measuredHeightMm > 0 ? (measuredHeightMm + 4d) : Math.Max(180d, EstimateReceiptHeightMm(html));
+
+            // Configure custom 80 mm roll paper with dynamic content height to print all sections before cutting
             CoreWebView2PrintStatus status = CoreWebView2PrintStatus.OtherError;
             try
             {
                 var settings = core.Environment.CreatePrintSettings();
                 settings.MediaSize = CoreWebView2PrintMediaSize.Custom;
                 settings.PageWidth = 80d / 25.4d;
-                // shortcut: fixed 200 mm pages, configure roll length when the physical printer is selected.
-                settings.PageHeight = 200d / 25.4d;
+                settings.PageHeight = pageHeightMm / 25.4d;
                 settings.MarginTop = 0;
                 settings.MarginBottom = 0;
                 settings.MarginLeft = 0;
                 settings.MarginRight = 0;
                 settings.ShouldPrintHeaderAndFooter = false;
+                settings.PageRanges = "1";
                 if (!string.IsNullOrWhiteSpace(targetPrinter))
                 {
                     settings.PrinterName = targetPrinter;
@@ -187,5 +206,29 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
                 finally { window.Close(); }
             }
         }
+    }
+
+    private static double EstimateReceiptHeightMm(string html)
+    {
+        double height = 150d;
+        int itemCount = CountOccurrences(html, "class=\"item-block\"");
+        height += itemCount * 12d;
+        int modCount = CountOccurrences(html, "class=\"modifier-line\"");
+        height += modCount * 5d;
+        int payCount = CountOccurrences(html, "Payment:");
+        height += payCount * 8d;
+        return height;
+    }
+
+    private static int CountOccurrences(string source, string match)
+    {
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(match)) return 0;
+        int count = 0, idx = 0;
+        while ((idx = source.IndexOf(match, idx, StringComparison.OrdinalIgnoreCase)) != -1)
+        {
+            count++;
+            idx += match.Length;
+        }
+        return count;
     }
 }
