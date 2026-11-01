@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using POS.Api.Models;
 using POS.Shared.Models;
@@ -11,6 +12,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [EnableRateLimiting("auth-limit")]
     public class AuthController : ControllerBase
     {
         private readonly PosDbContext _context;

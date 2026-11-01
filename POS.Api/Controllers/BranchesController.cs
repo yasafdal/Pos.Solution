@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
 using POS.Shared.Models;
@@ -7,7 +8,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Manager")]
+    [Authorize(Roles = "Admin,Manager")]
     public class BranchesController : ControllerBase
     {
         private readonly PosDbContext _context;
@@ -20,9 +21,16 @@ namespace POS.Api.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<BranchDto>>> GetBranches()
         {
-            var entities = await _context.Branches.AsNoTracking()
+            var query = _context.Branches.AsNoTracking()
                 .Include(b => b.BusinessType).Include(b => b.ServiceMode)
-                .Include(b => b.Outlets).ThenInclude(o => o.Terminals).ToListAsync();
+                .Include(b => b.Outlets).ThenInclude(o => o.Terminals).AsQueryable();
+
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+            {
+                query = query.Where(b => b.BranchId == supBranchId);
+            }
+
+            var entities = await query.ToListAsync();
             var branches = entities.Select(b => new BranchDto
             {
                 BranchId = b.BranchId, BusinessTypeId = b.BusinessTypeId, BusinessTypeName = b.BusinessType?.Type,
@@ -39,12 +47,16 @@ namespace POS.Api.Controllers
         [HttpGet("{id:int}")]
         public async Task<ActionResult<BranchDto>> GetBranch(int id)
         {
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && id != supBranchId)
+                return Forbid();
+
             var response = await GetBranches();
             var branch = ((OkObjectResult)response.Result!).Value is List<BranchDto> all ? all.SingleOrDefault(b => b.BranchId == id) : null;
             return branch == null ? NotFound() : Ok(branch);
         }
 
         [HttpPost]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<BranchDto>> CreateBranch(BranchDto dto)
         {
             if (dto.BusinessTypeId.HasValue && !await _context.BusinessTypes.AnyAsync(x => x.Id == dto.BusinessTypeId))
@@ -72,6 +84,9 @@ namespace POS.Api.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateBranch(int id, BranchDto dto)
         {
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && (id != supBranchId || dto.BranchId != supBranchId))
+                return Forbid();
+
             var branch = await _context.Branches.FindAsync(id);
             if (branch == null) return NotFound();
 
@@ -94,6 +109,7 @@ namespace POS.Api.Controllers
         }
 
         [HttpDelete("{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteBranch(int id)
         {
             var branch = await _context.Branches.FindAsync(id);

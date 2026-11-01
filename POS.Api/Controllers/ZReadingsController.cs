@@ -61,6 +61,50 @@ public sealed class ZReadingsController(PosDbContext db, IConfiguration configur
         catch (ZReadingException ex) { return StatusCode(ex.StatusCode, ex.Message); }
     }
 
+    [HttpGet("history")]
+    public async Task<IActionResult> History(
+        [FromQuery] int? branchId,
+        [FromQuery] int? terminalId,
+        [FromQuery] DateOnly? fromDate,
+        [FromQuery] DateOnly? toDate,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        if (!Supervisor) return Forbid();
+        if (!Service.Enabled) return Conflict("Z-Reading is disabled.");
+
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
+            branchId = supBranchId;
+        }
+
+        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && int.TryParse(User.FindFirst("terminal_id")?.Value, out var claimTerminalId))
+        {
+            if (terminalId.HasValue && terminalId.Value != claimTerminalId) return Forbid();
+            terminalId = claimTerminalId;
+        }
+
+        try { return Ok(await Service.HistoryAsync(branchId, terminalId, fromDate, toDate, page, pageSize, ct)); }
+        catch (ZReadingException ex) { return StatusCode(ex.StatusCode, ex.Message); }
+    }
+
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> GetById(Guid id, CancellationToken ct = default)
+    {
+        if (!Supervisor) return Forbid();
+        if (!Service.Enabled) return Conflict("Z-Reading is disabled.");
+
+        var row = await db.ZReadings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct);
+        if (row == null) return NotFound();
+
+        if (!await Allowed(row.TerminalId, false, ct)) return Forbid();
+
+        try { return Ok(ZReadingService.ReadSnapshot(row)); }
+        catch (ZReadingException ex) { return StatusCode(ex.StatusCode, ex.Message); }
+    }
+
     [HttpPost("generate")]
     public async Task<IActionResult> Generate([FromBody] GenerateZReadingRequest request, CancellationToken ct = default)
     {

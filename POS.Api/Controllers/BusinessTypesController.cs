@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class BusinessTypesController(PosDbContext context) : ControllerBase
 {
     [HttpGet]
@@ -15,6 +17,7 @@ public class BusinessTypesController(PosDbContext context) : ControllerBase
             .Select(x => new BusinessTypeDto { Id = x.Id, Type = x.Type, Description = x.Description }).ToListAsync());
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> UpdateBusinessType(int id, BusinessTypeDto dto)
     {
         var item = await context.BusinessTypes.FindAsync(id);
@@ -31,6 +34,7 @@ public class BusinessTypesController(PosDbContext context) : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteBusinessType(int id)
     {
         var item = await context.BusinessTypes.FindAsync(id);
@@ -52,6 +56,7 @@ public class BusinessTypesController(PosDbContext context) : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<BusinessTypeDto>> CreateBusinessType(BusinessTypeDto dto)
     {
         var item = new BusinessType { Type = dto.Type.Trim().ToUpperInvariant(), Description = dto.Description.Trim() };

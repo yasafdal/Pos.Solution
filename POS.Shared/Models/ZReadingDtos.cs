@@ -207,3 +207,33 @@ public sealed class ZReadingPrintAttemptDto
     public string SnapshotSha256 { get; set; } = "";
     public ZReadingReportDto Report { get; set; } = new();
 }
+
+public sealed class ZReadingHistoryItemDto
+{
+    public Guid Id { get; set; }
+    public int TerminalId { get; set; }
+    public string TerminalCode { get; set; } = "";
+    public string TerminalName { get; set; } = "";
+    public int BranchId { get; set; }
+    public string BranchName { get; set; } = "";
+    public int OutletId { get; set; }
+    public string OutletName { get; set; } = "";
+    public DateOnly BusinessDate { get; set; }
+    public long ZNumber { get; set; }
+    public DateTime GeneratedAt { get; set; }
+    public string GeneratedBy { get; set; } = "";
+    public decimal GrossSales { get; set; }
+    public decimal NetSales { get; set; }
+    public int SaleCount { get; set; }
+    public string? FirstInvoiceNumber { get; set; }
+    public string? LastInvoiceNumber { get; set; }
+    public string SnapshotSha256 { get; set; } = "";
+}
+
+public sealed class ZReadingHistoryResponseDto
+{
+    public int TotalCount { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public List<ZReadingHistoryItemDto> Items { get; set; } = [];
+}

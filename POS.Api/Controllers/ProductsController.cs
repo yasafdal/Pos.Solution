@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
 using POS.Shared.Models;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class ProductsController : ControllerBase
     {
         private readonly PosDbContext _context;
@@ -54,6 +56,7 @@ namespace POS.Api.Controllers
 
         // POST: api/Products/create-product
         [HttpPost("create-product")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<ActionResult<ProductDto>> CreateProduct(ProductDto dto)
         {
             var product = new Product
@@ -84,6 +87,7 @@ namespace POS.Api.Controllers
 
         // PUT: api/Products/update-product/5
         [HttpPut("update-product/{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> UpdateProduct(int id, ProductDto dto)
         {
             var product = await _context.Products.FindAsync(id);
@@ -111,6 +115,7 @@ namespace POS.Api.Controllers
 
         // DELETE: api/Products/remove-product/5
         [HttpDelete("remove-product/{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> DeleteProduct(int id)
         {
             var product = await _context.Products.FindAsync(id);
@@ -126,10 +131,14 @@ namespace POS.Api.Controllers
 
         // POST: api/Products/upload-image
         [HttpPost("upload-image")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> UploadImage(IFormFile file)
         {
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded.");
+
+            if (file.Length > 5 * 1024 * 1024)
+                return BadRequest("Image file size exceeds the 5MB limit.");
 
             // Validate extension
             var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };

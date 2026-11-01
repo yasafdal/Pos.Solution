@@ -14,6 +14,9 @@ public class InvoiceSequencesController(PosDbContext context) : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<InvoiceSequence>>> GetInvoiceSequences(int terminalId)
     {
+        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && User.FindFirst("terminal_id")?.Value != terminalId.ToString())
+            return Forbid();
+
         var list = await context.InvoiceSequences
             .AsNoTracking()
             .Where(s => s.TerminalId == terminalId)
@@ -25,6 +28,9 @@ public class InvoiceSequencesController(PosDbContext context) : ControllerBase
     [HttpGet("active")]
     public async Task<ActionResult<InvoiceSequence>> GetActiveInvoiceSequence(int terminalId)
     {
+        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && User.FindFirst("terminal_id")?.Value != terminalId.ToString())
+            return Forbid();
+
         var seq = await context.InvoiceSequences
             .AsNoTracking()
             .SingleOrDefaultAsync(s => s.TerminalId == terminalId && s.IsActive);

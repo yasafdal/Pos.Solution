@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers;
 
 [ApiController]
 [Route("api/Products")]
+[Authorize]
 public class ProductModifiersController(PosDbContext context) : ControllerBase
 {
     [HttpGet("{productId:int}/modifiers")]
@@ -54,6 +56,7 @@ public class ProductModifiersController(PosDbContext context) : ControllerBase
     }
 
     [HttpPost("{productId:int}/modifiers")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> AssignModifierGroup(int productId, [FromBody] AssignModifierDto dto)
     {
         if (!await context.Products.AnyAsync(p => p.ProductId == productId))
@@ -78,6 +81,7 @@ public class ProductModifiersController(PosDbContext context) : ControllerBase
     }
 
     [HttpDelete("{productId:int}/modifiers/{modifierGroupId:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> RemoveModifierGroup(int productId, int modifierGroupId)
     {
         var pmg = await context.ProductModifierGroups

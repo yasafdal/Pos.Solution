@@ -110,6 +110,12 @@ namespace POS.Api.Controllers
         [HttpGet]
         public async Task<ActionResult<List<TerminalDto>>> GetTerminals([FromQuery] int? outletId, [FromQuery] int? branchId)
         {
+            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+            {
+                if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
+                branchId = supBranchId;
+            }
+
             var query = _context.Terminals.AsNoTracking().Include(t => t.Outlet).Include(t => t.Branch).AsQueryable();
             if (outletId.HasValue) query = query.Where(t => t.OutletId == outletId);
             if (branchId.HasValue) query = query.Where(t => t.BranchId == branchId);
@@ -121,13 +127,18 @@ namespace POS.Api.Controllers
         public async Task<ActionResult<TerminalDto>> GetTerminal(int id)
         {
             var terminal = await _context.Terminals.AsNoTracking().Include(t => t.Outlet).Include(t => t.Branch).SingleOrDefaultAsync(t => t.TerminalId == id);
-            return terminal == null ? NotFound() : Ok(HierarchyMapping.ToDto(terminal));
+            if (terminal == null) return NotFound();
+            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
+                return Forbid();
+            return Ok(HierarchyMapping.ToDto(terminal));
         }
 
         [Authorize(Roles = "Admin,Manager")]
         [HttpPost]
         public async Task<ActionResult<TerminalDto>> CreateTerminal(TerminalDto dto)
         {
+            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && dto.BranchId != supBranchId)
+                return Forbid();
             var error = await ValidateTerminal(dto, 0);
             if (error != null) return BadRequest(error);
             var terminal = new Terminal { CreatedAt = DateTime.UtcNow };
@@ -144,6 +155,8 @@ namespace POS.Api.Controllers
         {
             var terminal = await _context.Terminals.FindAsync(id);
             if (terminal == null) return NotFound();
+            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && (terminal.BranchId != supBranchId || dto.BranchId != supBranchId))
+                return Forbid();
             var error = await ValidateTerminal(dto, id);
             if (error != null) return BadRequest(error);
             if ((terminal.OutletId != dto.OutletId || terminal.BranchId != dto.BranchId) && await HasHistory(id))
@@ -160,6 +173,8 @@ namespace POS.Api.Controllers
         {
             var terminal = await _context.Terminals.FindAsync(id);
             if (terminal == null) return NotFound();
+            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
+                return Forbid();
             if (await HasHistory(id)) return Conflict("Terminal has historical records or invoice series. Deactivate it instead.");
             _context.Terminals.Remove(terminal);
             try { await _context.SaveChangesAsync(); }

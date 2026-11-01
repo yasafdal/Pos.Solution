@@ -1,0 +1,776 @@
+@page "/z-reading-audit"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Manager,SeniorCashier")]
+@using System.Security.Claims
+@using POS.Shared.Models
+@using POS.Shared.Interfaces
+@using POS.Shared.Services
+@inject IZReadingAuditService ZReadingService
+@inject IBranchService BranchService
+@inject ITerminalService TerminalService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
+
+<PageTitle>Z-Reading Audit Archive — POS Admin</PageTitle>
+
+<div class="container-fluid py-3">
+    <!-- Header Toolbar -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">
+                <i class="bi bi-file-earmark-lock-fill text-primary me-2"></i>Z-Reading Audit Archive
+            </h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">
+                Read-only historical audit archive of finalized end-of-day reports per terminal
+            </span>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-primary rounded px-3 py-2 fw-semibold shadow-sm text-nowrap" @onclick="LoadHistoryAsync" disabled="@loading">
+                <i class="bi bi-arrow-repeat me-1 @(loading ? "spin" : "")"></i> Refresh Archive
+            </button>
+        </div>
+    </div>
+
+    <!-- Read-Only Notice Banner -->
+    <div class="alert alert-info border rounded-4 py-2 px-3 mb-3 small d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+            <i class="bi bi-shield-check text-primary me-1"></i>
+            <strong>Read-Only Audit Archive:</strong> Z-Reading finalization and physical receipt printing are strictly performed on the assigned physical POS terminal. This back-office view provides tamper-proof historical audits and SHA-256 verification.
+        </div>
+        <span class="badge bg-dark-subtle text-dark border">Total Finalized Reports: @totalCount</span>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-white">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label text-dark fw-semibold small mb-1">Branch</label>
+                <select class="form-select form-select-sm rounded-3" value="@(filterBranchId?.ToString() ?? "")" @onchange="OnBranchChanged" disabled="@(lockedBranchId.HasValue)">
+                    @if (!lockedBranchId.HasValue)
+                    {
+                        <option value="">All Authorized Branches</option>
+                    }
+                    @foreach (var b in branches)
+                    {
+                        <option value="@b.BranchId">@b.Name (@b.Code)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label text-dark fw-semibold small mb-1">Terminal</label>
+                <select class="form-select form-select-sm rounded-3" value="@(filterTerminalId?.ToString() ?? "")" @onchange="OnTerminalChanged">
+                    <option value="">All Terminals</option>
+                    @foreach (var t in filteredTerminals)
+                    {
+                        <option value="@t.TerminalId">@t.TerminalCode — @t.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Date From</label>
+                <input type="date" class="form-control form-control-sm rounded-3" @bind="fromDate" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label text-dark fw-semibold small mb-1">Date To</label>
+                <input type="date" class="form-control form-control-sm rounded-3" @bind="toDate" />
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button class="btn btn-primary btn-sm rounded-3 w-100 fw-semibold" @onclick="SearchAsync" disabled="@loading">
+                    <i class="bi bi-search me-1"></i> Filter
+                </button>
+                <button class="btn btn-outline-secondary btn-sm rounded-3" @onclick="ResetFiltersAsync" disabled="@loading" title="Reset Filters">
+                    <i class="bi bi-x-circle"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (error != null)
+    {
+        <div class="alert alert-danger rounded-4 py-2 px-3 mb-3" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i> @error
+        </div>
+    }
+
+    <!-- Historical Reports Table -->
+    <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white mb-4">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-4">Z #</th>
+                        <th>Business Date</th>
+                        <th>Branch & Terminal</th>
+                        <th>Invoices</th>
+                        <th class="text-center">Sales Qty</th>
+                        <th class="text-end">Gross Sales</th>
+                        <th class="text-end">Net Sales</th>
+                        <th>Finalized By</th>
+                        <th class="text-end pe-4">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (loading)
+                    {
+                        <tr>
+                            <td colspan="9" class="text-center py-5 text-secondary">
+                                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                                Loading Z-Reading audit records...
+                            </td>
+                        </tr>
+                    }
+                    else if (historyItems.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="9" class="text-center py-5 text-secondary">
+                                <i class="bi bi-inbox fs-2 d-block mb-2 text-muted"></i>
+                                No finalized Z-Reading reports found for the selected criteria.
+                            </td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (var item in historyItems)
+                        {
+                            <tr>
+                                <td class="ps-4">
+                                    <span class="badge bg-primary-subtle text-primary border px-2 py-1 fw-bold fs-6">
+                                        Z-@item.ZNumber
+                                    </span>
+                                </td>
+                                <td class="fw-semibold">
+                                    @item.BusinessDate.ToString("yyyy-MM-dd")
+                                </td>
+                                <td>
+                                    <div><strong>@item.BranchName</strong></div>
+                                    <span class="text-muted small">@item.TerminalCode — @item.TerminalName</span>
+                                </td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(item.FirstInvoiceNumber))
+                                    {
+                                        <span class="small font-monospace">@item.FirstInvoiceNumber</span>
+                                        <span class="text-muted"> → </span>
+                                        <span class="small font-monospace">@item.LastInvoiceNumber</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">None (Zero-Sales Day)</span>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge bg-light text-dark border">@item.SaleCount</span>
+                                </td>
+                                <td class="text-end font-monospace">
+                                    @item.GrossSales.ToString("C2")
+                                </td>
+                                <td class="text-end font-monospace fw-bold text-success">
+                                    @item.NetSales.ToString("C2")
+                                </td>
+                                <td>
+                                    <div>@item.GeneratedBy</div>
+                                    <span class="text-muted small">@item.GeneratedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                </td>
+                                <td class="text-end pe-4">
+                                    <button class="btn btn-sm btn-outline-primary rounded-pill px-3 shadow-sm" @onclick="() => ViewSnapshotAsync(item.Id)">
+                                        <i class="bi bi-eye-fill me-1"></i> Audit Snapshot
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Footer -->
+        @if (totalPages > 1)
+        {
+            <div class="card-footer bg-white border-0 py-3 px-4 d-flex justify-content-between align-items-center">
+                <span class="text-muted small">
+                    Showing @(((currentPage - 1) * pageSize) + 1) to @(Math.Min(currentPage * pageSize, totalCount)) of @totalCount entries
+                </span>
+                <nav aria-label="Page navigation">
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item @(currentPage == 1 ? "disabled" : "")">
+                            <button class="page-link" @onclick="() => ChangePageAsync(currentPage - 1)">Previous</button>
+                        </li>
+                        @for (int i = 1; i <= totalPages; i++)
+                        {
+                            var pageNum = i;
+                            <li class="page-item @(currentPage == pageNum ? "active" : "")">
+                                <button class="page-link" @onclick="() => ChangePageAsync(pageNum)">@pageNum</button>
+                            </li>
+                        }
+                        <li class="page-item @(currentPage == totalPages ? "disabled" : "")">
+                            <button class="page-link" @onclick="() => ChangePageAsync(currentPage + 1)">Next</button>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Read-Only Detailed Snapshot Modal -->
+@if (selectedReport != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.6);" role="dialog">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content rounded-4 border-0 shadow-lg">
+                <div class="modal-header border-bottom py-3 px-4 bg-light">
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="badge bg-primary fs-5 px-3 py-2">Z-@selectedReport.ZNumber</span>
+                        <div>
+                            <h5 class="modal-title fw-bold text-dark mb-0">
+                                Finalized Z-Reading — @selectedReport.BusinessDate.ToString("yyyy-MM-dd")
+                            </h5>
+                            <span class="text-muted small">
+                                @selectedReport.BranchName / @selectedReport.TerminalCode (@selectedReport.TerminalName) — Report ID: @selectedReport.Id
+                            </span>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseModal" aria-label="Close"></button>
+                </div>
+
+                <div class="modal-body p-4">
+                    <!-- Nav Tabs -->
+                    <ul class="nav nav-pills mb-4 gap-2" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "summary" ? "active" : "") rounded-pill px-3" @onclick='() => activeTab = "summary"'>
+                                <i class="bi bi-card-checklist me-1"></i> Overview & Totals
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "products" ? "active" : "") rounded-pill px-3" @onclick='() => activeTab = "products"'>
+                                <i class="bi bi-box-seam me-1"></i> Products Breakdown (@selectedReport.Products.Count)
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "cashiers" ? "active" : "") rounded-pill px-3" @onclick='() => activeTab = "cashiers"'>
+                                <i class="bi bi-people me-1"></i> Cashiers & Shifts (@selectedReport.Shifts.Count)
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "taxes" ? "active" : "") rounded-pill px-3" @onclick='() => activeTab = "taxes"'>
+                                <i class="bi bi-receipt me-1"></i> Tax & Payments
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "audit" ? "active" : "") rounded-pill px-3" @onclick='() => activeTab = "audit"'>
+                                <i class="bi bi-clock-history me-1"></i> Print Audit Trail (@printAttempts.Count)
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link @(activeTab == "thermal" ? "active" : "") rounded-pill px-3" @onclick='() => activeTab = "thermal"'>
+                                <i class="bi bi-printer me-1"></i> Thermal Tape Preview
+                            </button>
+                        </li>
+                    </ul>
+
+                    @if (activeTab == "summary")
+                    {
+                        <!-- Accumulated Sales Cards -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <div class="card border rounded-3 p-3 bg-light">
+                                    <span class="text-muted small fw-semibold">Previous Accumulated Sales</span>
+                                    <h4 class="fw-bold text-dark mb-0 font-monospace">@selectedReport.PreviousAccumulatedSales.ToString("C2")</h4>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card border border-primary-subtle rounded-3 p-3 bg-primary-subtle">
+                                    <span class="text-primary small fw-semibold">Gross Sales for Day</span>
+                                    <h4 class="fw-bold text-primary mb-0 font-monospace">@selectedReport.GrossSales.ToString("C2")</h4>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card border border-success-subtle rounded-3 p-3 bg-success-subtle">
+                                    <span class="text-success small fw-semibold">Present Accumulated Sales</span>
+                                    <h4 class="fw-bold text-success mb-0 font-monospace">@selectedReport.PresentAccumulatedSales.ToString("C2")</h4>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Revenue Breakdown Grid -->
+                        <div class="row g-4">
+                            <div class="col-md-6">
+                                <div class="card border rounded-3 p-3">
+                                    <h6 class="fw-bold mb-3 border-bottom pb-2">Sales Summary</h6>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Gross Sales:</span>
+                                        <strong class="font-monospace">@selectedReport.GrossSales.ToString("C2")</strong>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Less Total Discounts:</span>
+                                        <span class="font-monospace text-danger">-@selectedReport.Discounts.ToString("C2")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Less Returns / Refunds:</span>
+                                        <span class="font-monospace text-danger">-@selectedReport.Returns.ToString("C2")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Less Void Adjustments:</span>
+                                        <span class="font-monospace text-danger">-@selectedReport.Voids.ToString("C2")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-2 mt-2 bg-light px-2 rounded">
+                                        <strong class="text-dark">Net Sales:</strong>
+                                        <strong class="font-monospace text-success fs-5">@selectedReport.NetSales.ToString("C2")</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="card border rounded-3 p-3">
+                                    <h6 class="fw-bold mb-3 border-bottom pb-2">Fiscal & Terminal Identifiers</h6>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Beginning Invoice:</span>
+                                        <span class="font-monospace">@(selectedReport.FirstInvoiceNumber ?? "N/A")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Ending Invoice:</span>
+                                        <span class="font-monospace">@(selectedReport.LastInvoiceNumber ?? "N/A")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Machine Identification # (MIN):</span>
+                                        <span>@(selectedReport.MachineIdentificationNumber ?? "Not configured")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Permit to Use # (PTU):</span>
+                                        <span>@(selectedReport.PermitToUseNumber ?? "Not configured")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Serial Number (S/N):</span>
+                                        <span>@(selectedReport.SerialNumber ?? "Not configured")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1">
+                                        <span class="text-secondary">Reset Counter:</span>
+                                        <span>@(selectedReport.ResetCounter?.ToString() ?? "Not configured")</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SHA-256 Integrity Verification Box -->
+                        <div class="alert alert-secondary border rounded-3 p-3 mt-4 mb-0">
+                            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                                <div>
+                                    <strong class="small text-uppercase"><i class="bi bi-hash"></i> Snapshot SHA-256 Integrity Hash:</strong>
+                                    <div class="font-monospace small text-break mt-1">@selectedHistoryItem?.SnapshotSha256</div>
+                                </div>
+                                <span class="badge bg-success"><i class="bi bi-check-circle-fill me-1"></i> Verified Immutable</span>
+                            </div>
+                        </div>
+                    }
+                    else if (activeTab == "products")
+                    {
+                        <h6 class="fw-bold mb-3">Product Sales (Gross Line Value)</h6>
+                        <div class="table-responsive mb-4">
+                            <table class="table table-sm table-bordered align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Product Name</th>
+                                        <th>VAT Type</th>
+                                        <th class="text-center">Qty</th>
+                                        <th class="text-end">Discounts</th>
+                                        <th class="text-end">Line Value</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @if (selectedReport.Products.Count == 0)
+                                    {
+                                        <tr><td colspan="5" class="text-center text-muted py-3">No product sales recorded in this period.</td></tr>
+                                    }
+                                    @foreach (var prod in selectedReport.Products)
+                                    {
+                                        <tr>
+                                            <td class="fw-semibold">@prod.ProductName</td>
+                                            <td><span class="badge bg-light text-dark border">@prod.VatType</span></td>
+                                            <td class="text-center font-monospace">@prod.Quantity.ToString("0.###")</td>
+                                            <td class="text-end font-monospace text-danger">@prod.Discounts.ToString("C2")</td>
+                                            <td class="text-end font-monospace fw-bold">@prod.Value.ToString("C2")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        @if (selectedReport.ReturnProducts.Count > 0)
+                        {
+                            <h6 class="fw-bold mb-3 text-danger">Returned Products</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered align-middle">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Product Name</th>
+                                            <th class="text-center">Qty</th>
+                                            <th class="text-end">Refund Value</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var ret in selectedReport.ReturnProducts)
+                                        {
+                                            <tr>
+                                                <td>@ret.ProductName</td>
+                                                <td class="text-center font-monospace">@ret.Quantity.ToString("0.###")</td>
+                                                <td class="text-end font-monospace text-danger">-@ret.Value.ToString("C2")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    }
+                    else if (activeTab == "cashiers")
+                    {
+                        <h6 class="fw-bold mb-3">Cashier Sales Attribution</h6>
+                        <div class="table-responsive mb-4">
+                            <table class="table table-sm table-bordered align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Cashier Name</th>
+                                        <th class="text-center">Items Sold</th>
+                                        <th class="text-center">Sales / Returns / Voids</th>
+                                        <th class="text-end">Gross Sales</th>
+                                        <th class="text-end">Discounts</th>
+                                        <th class="text-end">Net Sales</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var cash in selectedReport.Cashiers)
+                                    {
+                                        <tr>
+                                            <td class="fw-semibold">@cash.CashierName</td>
+                                            <td class="text-center font-monospace">@cash.ItemQuantity.ToString("0.###")</td>
+                                            <td class="text-center">@cash.SaleCount / @cash.ReturnCount / @cash.VoidCount</td>
+                                            <td class="text-end font-monospace">@cash.GrossSales.ToString("C2")</td>
+                                            <td class="text-end font-monospace text-danger">-@cash.Discounts.ToString("C2")</td>
+                                            <td class="text-end font-monospace fw-bold text-success">@cash.NetSales.ToString("C2")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h6 class="fw-bold mb-3">Cash Drawer by Shift</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Shift #</th>
+                                        <th>Cashier</th>
+                                        <th>Shift Interval</th>
+                                        <th class="text-end">Opening Float</th>
+                                        <th class="text-end">Cash Sales</th>
+                                        <th class="text-end">Expected Drawer</th>
+                                        <th class="text-end">Counted Drawer</th>
+                                        <th class="text-end">Over / Short</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var s in selectedReport.Shifts)
+                                    {
+                                        <tr>
+                                            <td class="fw-bold">#@s.ShiftId</td>
+                                            <td>@s.CashierId</td>
+                                            <td class="small">@s.OpenedAt.ToLocalTime().ToString("HH:mm") to @(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToLocalTime().ToString("HH:mm") : "OPEN")</td>
+                                            <td class="text-end font-monospace">@s.OpeningFloat.ToString("C2")</td>
+                                            <td class="text-end font-monospace">@s.CashSales.ToString("C2")</td>
+                                            <td class="text-end font-monospace">@s.ExpectedBalance.ToString("C2")</td>
+                                            <td class="text-end font-monospace fw-bold">@(s.ActualCountedBalance.HasValue ? s.ActualCountedBalance.Value.ToString("C2") : "Not Recorded")</td>
+                                            <td class="text-end font-monospace @(s.Discrepancy < 0 ? "text-danger fw-bold" : (s.Discrepancy > 0 ? "text-success fw-bold" : ""))">
+                                                @(s.Discrepancy.HasValue ? s.Discrepancy.Value.ToString("C2") : "N/A")
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else if (activeTab == "taxes")
+                    {
+                        <div class="row g-4">
+                            <div class="col-md-6">
+                                <div class="card border rounded-3 p-3">
+                                    <h6 class="fw-bold mb-3 border-bottom pb-2">Tax Totals</h6>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">VATable Sales:</span>
+                                        <strong class="font-monospace">@selectedReport.VatableSales.ToString("C2")</strong>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">VAT Amount (12%):</span>
+                                        <strong class="font-monospace">@selectedReport.VatAmount.ToString("C2")</strong>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">VAT-Exempt Sales:</span>
+                                        <span class="font-monospace">@selectedReport.VatExemptSales.ToString("C2")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-1 border-bottom">
+                                        <span class="text-secondary">Zero-Rated Sales:</span>
+                                        <span class="font-monospace">@selectedReport.ZeroRatedSales.ToString("C2")</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between py-2 mt-2 bg-light px-2 rounded">
+                                        <strong class="text-dark">Net VAT:</strong>
+                                        <strong class="font-monospace text-primary">@selectedReport.NetVatAmount.ToString("C2")</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="card border rounded-3 p-3">
+                                    <h6 class="fw-bold mb-3 border-bottom pb-2">Payment Collections by Method</h6>
+                                    @foreach (var p in selectedReport.Payments)
+                                    {
+                                        <div class="d-flex justify-content-between py-1 border-bottom">
+                                            <span>
+                                                <strong>@p.PaymentMethod</strong>
+                                                <span class="text-muted small">(@p.PaymentCount entries)</span>
+                                            </span>
+                                            <span class="font-monospace fw-bold">@p.NetCollections.ToString("C2")</span>
+                                        </div>
+                                    }
+                                    <div class="d-flex justify-content-between py-2 mt-2 bg-light px-2 rounded">
+                                        <strong class="text-dark">Total Net Collections:</strong>
+                                        <strong class="font-monospace text-success fs-5">@selectedReport.Payments.Sum(p => p.NetCollections).ToString("C2")</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    else if (activeTab == "audit")
+                    {
+                        <h6 class="fw-bold mb-3">Terminal Print & Reprint Audit History</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Attempt Time</th>
+                                        <th>Operator</th>
+                                        <th>Reason</th>
+                                        <th>Type</th>
+                                        <th>Assigned Printer</th>
+                                        <th>Outcome</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @if (printAttempts.Count == 0)
+                                    {
+                                        <tr><td colspan="7" class="text-center text-muted py-3">No print or reprint attempts recorded for this report.</td></tr>
+                                    }
+                                    @foreach (var att in printAttempts)
+                                    {
+                                        <tr>
+                                            <td class="small">@att.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                            <td class="fw-semibold">@att.RequestedBy</td>
+                                            <td>@att.Reason</td>
+                                            <td>
+                                                <span class="badge @(att.IsReprint ? "bg-warning-subtle text-warning border" : "bg-info-subtle text-info border")">
+                                                    @(att.IsReprint ? "Reprint" : "Original")
+                                                </span>
+                                            </td>
+                                            <td class="small font-monospace">@(att.PrinterName ?? "Default")</td>
+                                            <td>
+                                                <span class="badge @(att.Status == "ACCEPTED" ? "bg-success" : (att.Status == "FAILED" ? "bg-danger" : "bg-secondary"))">
+                                                    @att.Status
+                                                </span>
+                                            </td>
+                                            <td class="small text-muted">@att.ErrorMessage</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else if (activeTab == "thermal")
+                    {
+                        <div class="d-flex justify-content-center">
+                            <iframe class="border rounded-3 shadow-sm bg-white"
+                                    style="width: 380px; height: 600px; border: 1px solid #ccc;"
+                                    title="Thermal Tape Preview"
+                                    sandbox=""
+                                    srcdoc="@ZReadingHtmlFormatter.Format(selectedReport)">
+                            </iframe>
+                        </div>
+                    }
+                </div>
+
+                <div class="modal-footer border-top py-2 px-4 bg-light d-flex justify-content-between">
+                    <span class="text-muted small">
+                        <i class="bi bi-info-circle me-1"></i> Read-only audit viewer. Generation and printing are performed on the terminal.
+                    </span>
+                    <button type="button" class="btn btn-secondary rounded-pill px-4" @onclick="CloseModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ZReadingHistoryItemDto> historyItems = [];
+    private List<BranchDto> branches = [];
+    private List<TerminalDto> allTerminals = [];
+    private List<TerminalDto> filteredTerminals = [];
+
+    private int? filterBranchId;
+    private int? filterTerminalId;
+    private int? lockedBranchId;
+    private DateOnly? fromDate;
+    private DateOnly? toDate;
+
+    private int currentPage = 1;
+    private int pageSize = 15;
+    private int totalCount = 0;
+    private int totalPages => Math.Max(1, (int)Math.Ceiling((double)totalCount / pageSize));
+
+    private bool loading = false;
+    private string? error;
+
+    private ZReadingReportDto? selectedReport;
+    private ZReadingHistoryItemDto? selectedHistoryItem;
+    private List<ZReadingPrintAttemptDto> printAttempts = [];
+    private string activeTab = "summary";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (!user.IsInRole("Admin") && int.TryParse(user.FindFirst("branch_id")?.Value, out var bId))
+        {
+            lockedBranchId = bId;
+            filterBranchId = bId;
+        }
+
+        await LoadMetadataAsync();
+        await LoadHistoryAsync();
+    }
+
+    private async Task LoadMetadataAsync()
+    {
+        try
+        {
+            branches = await BranchService.GetBranchesAsync();
+            if (lockedBranchId.HasValue)
+            {
+                branches = branches.Where(b => b.BranchId == lockedBranchId.Value).ToList();
+            }
+            allTerminals = await TerminalService.GetTerminalsAsync(branchId: filterBranchId);
+            UpdateFilteredTerminals();
+        }
+        catch (Exception ex)
+        {
+            error = "Failed to load branches and terminals: " + ex.Message;
+        }
+    }
+
+    private void UpdateFilteredTerminals()
+    {
+        if (filterBranchId.HasValue)
+        {
+            filteredTerminals = allTerminals.Where(t => t.BranchId == filterBranchId.Value).ToList();
+        }
+        else
+        {
+            filteredTerminals = allTerminals.ToList();
+        }
+
+        if (filterTerminalId.HasValue && !filteredTerminals.Any(t => t.TerminalId == filterTerminalId.Value))
+        {
+            filterTerminalId = null;
+        }
+    }
+
+    private void OnBranchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var bId))
+        {
+            filterBranchId = bId;
+        }
+        else
+        {
+            filterBranchId = null;
+        }
+        UpdateFilteredTerminals();
+    }
+
+    private void OnTerminalChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var tId))
+        {
+            filterTerminalId = tId;
+        }
+        else
+        {
+            filterTerminalId = null;
+        }
+    }
+
+    private async Task SearchAsync()
+    {
+        currentPage = 1;
+        await LoadHistoryAsync();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        if (!lockedBranchId.HasValue) filterBranchId = null;
+        filterTerminalId = null;
+        fromDate = null;
+        toDate = null;
+        currentPage = 1;
+        UpdateFilteredTerminals();
+        await LoadHistoryAsync();
+    }
+
+    private async Task ChangePageAsync(int page)
+    {
+        if (page < 1 || page > totalPages || page == currentPage) return;
+        currentPage = page;
+        await LoadHistoryAsync();
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        loading = true;
+        error = null;
+        try
+        {
+            var res = await ZReadingService.GetHistoryAsync(filterBranchId, filterTerminalId, fromDate, toDate, currentPage, pageSize);
+            historyItems = res.Items;
+            totalCount = res.TotalCount;
+        }
+        catch (Exception ex)
+        {
+            error = "Error fetching Z-Reading records: " + ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task ViewSnapshotAsync(Guid id)
+    {
+        error = null;
+        try
+        {
+            selectedHistoryItem = historyItems.FirstOrDefault(x => x.Id == id);
+            selectedReport = await ZReadingService.GetReportByIdAsync(id);
+            if (selectedReport != null)
+            {
+                printAttempts = await ZReadingService.GetPrintAttemptsAsync(id);
+                activeTab = "summary";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = "Failed to load report snapshot: " + ex.Message;
+        }
+    }
+
+    private void CloseModal()
+    {
+        selectedReport = null;
+        selectedHistoryItem = null;
+        printAttempts.Clear();
+    }
+}

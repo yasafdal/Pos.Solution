@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ServiceModesController(PosDbContext context) : ControllerBase
 {
     [HttpGet]
@@ -22,6 +24,7 @@ public class ServiceModesController(PosDbContext context) : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<ServiceModeDto>> CreateServiceMode(ServiceModeDto dto)
     {
         var item = new ServiceMode { Type = dto.Type.Trim().ToUpperInvariant(), Description = dto.Description.Trim() };
@@ -35,6 +38,7 @@ public class ServiceModesController(PosDbContext context) : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> UpdateServiceMode(int id, ServiceModeDto dto)
     {
         var item = await context.ServiceModes.FindAsync(id);
@@ -51,6 +55,7 @@ public class ServiceModesController(PosDbContext context) : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteServiceMode(int id)
     {
         var item = await context.ServiceModes.FindAsync(id);

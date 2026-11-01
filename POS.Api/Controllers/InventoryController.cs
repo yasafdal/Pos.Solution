@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
 using POS.Shared.Models;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class InventoryController : ControllerBase
     {
         private readonly PosDbContext _context;
@@ -20,6 +22,8 @@ namespace POS.Api.Controllers
         [HttpGet("branch/{branchId}")]
         public async Task<ActionResult<IEnumerable<BranchInventoryDto>>> GetBranchInventory(int branchId)
         {
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) && branchId != claimBranchId)
+                return Forbid();
             // Ensure all products exist in BranchInventory for this branch
             var existingProductIds = await _context.BranchInventories
                 .Where(bi => bi.BranchId == branchId)
@@ -71,8 +75,14 @@ namespace POS.Api.Controllers
 
         // POST: api/Inventory/adjust
         [HttpPost("adjust")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> AdjustStock([FromBody] StockAdjustmentDto dto)
         {
+            if (dto == null) return BadRequest("Invalid adjustment payload.");
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) && dto.BranchId != claimBranchId)
+                return Forbid();
+            if (dto.Quantity < 0) return BadRequest("Adjustment quantity must be non-negative.");
+
             var item = await _context.BranchInventories
                 .FirstOrDefaultAsync(bi => bi.BranchId == dto.BranchId && bi.ProductId == dto.ProductId);
 

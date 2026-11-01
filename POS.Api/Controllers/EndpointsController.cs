@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Reflection;
 
@@ -5,6 +6,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/endpoints")]
 [ApiController]
+[Authorize(Roles = "Admin")]
 public class EndpointsController : ControllerBase
 {
     [HttpGet]

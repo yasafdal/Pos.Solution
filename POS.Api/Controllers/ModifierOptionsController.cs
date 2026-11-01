@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
@@ -7,9 +8,11 @@ namespace POS.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ModifierOptionsController(PosDbContext context) : ControllerBase
 {
     [HttpPost]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<ModifierOptionDto>> CreateOption(ModifierOptionDto dto)
     {
         if (!await context.ModifierGroups.AnyAsync(x => x.ModifierGroupId == dto.ModifierGroupId))
@@ -32,6 +35,7 @@ public class ModifierOptionsController(PosDbContext context) : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> UpdateOption(int id, ModifierOptionDto dto)
     {
         var option = await context.ModifierOptions.FindAsync(id);
@@ -47,6 +51,7 @@ public class ModifierOptionsController(PosDbContext context) : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteOption(int id)
     {
         var option = await context.ModifierOptions.FindAsync(id);

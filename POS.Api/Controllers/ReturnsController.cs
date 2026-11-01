@@ -31,6 +31,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                 .SingleOrDefaultAsync(o => o.OrderId == dto.OriginalOrderId, cancellationToken);
 
             if (order == null) return NotFound("Original order not found.");
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && order.BranchId != callerBranchId)
+                return Forbid();
             if (order.OrderStatus == "VOIDED") return BadRequest("Transaction is already voided.");
 
             // Verify supervisor authorization strictly by PIN code
@@ -369,6 +371,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                 .SingleOrDefaultAsync(o => o.OrderId == dto.OriginalOrderId, cancellationToken);
 
             if (order == null) return NotFound("Original order not found.");
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && order.BranchId != callerBranchId)
+                return Forbid();
             if (order.PaymentStatus != "PAID") return BadRequest("Only paid orders can be processed for returns/refunds.");
 
             // Verify supervisor authorization strictly by PIN code

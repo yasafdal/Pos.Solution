@@ -87,6 +87,7 @@ builder.Services.AddScoped<ISalesReportService, SalesReportApiService>();
 builder.Services.AddScoped<ITransactionService, TransactionService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDiscountService, DiscountService>();
+builder.Services.AddScoped<IZReadingAuditService, ZReadingAuditService>();
 
 var app = builder.Build();
 

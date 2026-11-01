@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -11,6 +12,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
+[Authorize]
 public class DiscountsController(PosDbContext context, IDiscountCalculationService calculationService) : ControllerBase
 {
     // GET: api/discounts
@@ -33,6 +35,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
 
     // POST: api/discounts/create-discount
     [HttpPost("create-discount")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<DiscountType>> CreateDiscount(DiscountType dto)
     {
         context.DiscountTypes.Add(dto);
@@ -42,6 +45,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
 
     // PUT: api/discounts/update-discount/5
     [HttpPut("update-discount/{id}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> UpdateDiscount(int id, DiscountType dto)
     {
         if (id != dto.DiscountTypeId) return BadRequest("ID mismatch");
@@ -61,6 +65,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
 
     // DELETE: api/discounts/remove-discount/5
     [HttpDelete("remove-discount/{id}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteDiscount(int id)
     {
         var discount = await context.DiscountTypes.FindAsync(id);

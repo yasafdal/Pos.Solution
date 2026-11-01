@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using POS.Api.Models;
 using POS.Shared.Models;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class UomsController : ControllerBase
     {
         private readonly PosDbContext _context;
@@ -51,6 +53,7 @@ namespace POS.Api.Controllers
 
         // POST: api/Uoms
         [HttpPost]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<ActionResult<UomDto>> CreateUom(UomDto dto)
         {
             var uom = new UnitOfMeasure
@@ -69,6 +72,7 @@ namespace POS.Api.Controllers
 
         // PUT: api/Uoms/5
         [HttpPut("{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> UpdateUom(int id, UomDto dto)
         {
             var uom = await _context.UnitOfMeasures.FindAsync(id);
@@ -84,6 +88,7 @@ namespace POS.Api.Controllers
 
         // DELETE: api/Uoms/5
         [HttpDelete("{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> DeleteUom(int id)
         {
             var uom = await _context.UnitOfMeasures.FindAsync(id);

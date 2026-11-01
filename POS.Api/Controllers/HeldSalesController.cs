@@ -192,6 +192,11 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
 
             if (heldSale == null) return NotFound();
 
+            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && heldSale.BranchId != callerBranchId)
+                return Forbid();
+            if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && int.TryParse(User.FindFirst("terminal_id")?.Value, out int callerTerminalId) && heldSale.TerminalId != callerTerminalId)
+                return Forbid();
+
             // Enforce exact status and concurrency state check
             if (heldSale.Status != "HELD")
                 return Conflict("This held sale has already been resumed, cancelled, or processed by another terminal.");
@@ -231,6 +236,8 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
     {
         var heldSale = await context.HeldSales.FindAsync([id], cancellationToken);
         if (heldSale == null) return NotFound();
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && heldSale.BranchId != callerBranchId)
+            return Forbid();
         if (heldSale.Status != "HELD") return BadRequest("Only active held sales can be cancelled.");
 
         heldSale.Status = "CANCELLED";

@@ -14,6 +14,12 @@ public class OutletsController(PosDbContext context) : ControllerBase
     [HttpGet]
     public async Task<ActionResult<List<OutletDto>>> GetOutlets([FromQuery] int? branchId)
     {
+        if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+        {
+            if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
+            branchId = supBranchId;
+        }
+
         var query = context.Outlets.AsNoTracking().Include(o => o.Terminals).AsQueryable();
         if (branchId.HasValue) query = query.Where(o => o.BranchId == branchId);
         return Ok((await query.OrderBy(o => o.OutletCode).ToListAsync()).Select(HierarchyMapping.ToDto).ToList());
@@ -23,12 +29,17 @@ public class OutletsController(PosDbContext context) : ControllerBase
     public async Task<ActionResult<OutletDto>> GetOutlet(int id)
     {
         var outlet = await context.Outlets.AsNoTracking().Include(o => o.Terminals).SingleOrDefaultAsync(o => o.OutletId == id);
-        return outlet == null ? NotFound() : Ok(HierarchyMapping.ToDto(outlet));
+        if (outlet == null) return NotFound();
+        if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && outlet.BranchId != supBranchId)
+            return Forbid();
+        return Ok(HierarchyMapping.ToDto(outlet));
     }
 
     [HttpPost]
     public async Task<ActionResult<OutletDto>> CreateOutlet(OutletDto dto)
     {
+        if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && dto.BranchId != supBranchId)
+            return Forbid();
         var error = await Validate(dto, 0);
         if (error != null) return BadRequest(error);
         var outlet = new Outlet { BranchId = dto.BranchId, CreatedAt = DateTime.UtcNow };
@@ -44,6 +55,8 @@ public class OutletsController(PosDbContext context) : ControllerBase
     {
         var outlet = await context.Outlets.FindAsync(id);
         if (outlet == null) return NotFound();
+        if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && (outlet.BranchId != supBranchId || dto.BranchId != supBranchId))
+            return Forbid();
         if (dto.BranchId != outlet.BranchId) return BadRequest("An outlet cannot be moved to another branch.");
         var error = await Validate(dto, id);
         if (error != null) return BadRequest(error);
@@ -60,6 +73,8 @@ public class OutletsController(PosDbContext context) : ControllerBase
     {
         var outlet = await context.Outlets.FindAsync(id);
         if (outlet == null) return NotFound();
+        if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && outlet.BranchId != supBranchId)
+            return Forbid();
         if (await context.Terminals.AnyAsync(t => t.OutletId == id))
             return Conflict("This outlet has terminals. Deactivate it instead of deleting history.");
         context.Outlets.Remove(outlet);

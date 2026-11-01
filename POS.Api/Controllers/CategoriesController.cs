@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
 using POS.Shared.Models;
@@ -8,6 +9,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class CategoriesController : ControllerBase
     {
         private readonly PosDbContext _context;
@@ -64,6 +66,7 @@ namespace POS.Api.Controllers
 
         // POST: api/categories
         [HttpPost("create-category")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<ActionResult<CategoryDto>> CreateCategory(CategoryDto categoryDto)
         {
             var category = new Category
@@ -86,6 +89,7 @@ namespace POS.Api.Controllers
 
         // PUT: api/categories/5
         [HttpPut("update-category/{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> UpdateCategory(int id, CategoryDto categoryDto)
         {
             if (id != categoryDto.CategoryId)
@@ -113,6 +117,7 @@ namespace POS.Api.Controllers
         // DELETE: api/categories/5
         // Soft delete: Hides the category but keeps it in the DB for historical receipts
         [HttpDelete("remove-category/{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> DeleteCategory(int id)
         {
             var category = await _context.Categories.FindAsync(id);

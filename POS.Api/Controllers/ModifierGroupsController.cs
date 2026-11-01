@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ModifierGroupsController(PosDbContext context) : ControllerBase
 {
     [HttpGet]
@@ -47,6 +49,7 @@ public class ModifierGroupsController(PosDbContext context) : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<ModifierGroupDto>> CreateModifierGroup(ModifierGroupDto dto)
     {
         var mg = new ModifierGroup
@@ -67,6 +70,7 @@ public class ModifierGroupsController(PosDbContext context) : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> UpdateModifierGroup(int id, ModifierGroupDto dto)
     {
         var mg = await context.ModifierGroups.FindAsync(id);
@@ -84,6 +88,7 @@ public class ModifierGroupsController(PosDbContext context) : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteModifierGroup(int id)
     {
         var mg = await context.ModifierGroups.FindAsync(id);

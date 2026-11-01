@@ -11,6 +11,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/payment-methods")]
 [ApiController]
+[Authorize]
 public class PaymentMethodsController(PosDbContext context) : ControllerBase
 {
     [HttpGet]

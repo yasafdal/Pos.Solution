@@ -24,6 +24,7 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
         if (order == null)
             return NotFound("Order not found.");
 
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && order.BranchId != callerBranchId) return Forbid();
         if (User.FindFirst("terminal_id")?.Value != order.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
         if (order.PaymentStatus == "PAID")
             return Conflict("Order is already paid. Duplicate payment prevented.");
@@ -173,7 +174,8 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
         catch (Exception ex)
         {
             await transaction.RollbackAsync();
-            return StatusCode(500, $"Internal server error while processing payment: {ex.Message}");
+            Console.WriteLine($"Error processing payment: {ex}");
+            return StatusCode(500, "Internal server error while processing payment.");
         }
     }
 }

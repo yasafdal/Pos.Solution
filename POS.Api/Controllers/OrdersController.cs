@@ -20,10 +20,15 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         if (dto.Items == null || dto.Items.Count == 0)
             return BadRequest("Order must contain at least one item.");
 
+        if (dto.Items.Any(i => i.Quantity <= 0 || i.BasePrice < 0 || (i.Modifiers != null && i.Modifiers.Any(m => m.AdditionalPrice < 0))))
+            return BadRequest("Item quantities must be positive and prices cannot be negative.");
+
         var terminal = await context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
             .SingleOrDefaultAsync(t => t.TerminalId == dto.TerminalId);
         if (terminal == null || terminal.BranchId != dto.BranchId || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive)
             return BadRequest("Invalid or inactive Branch / Outlet / Terminal ownership.");
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && dto.BranchId != callerBranchId)
+            return Forbid();
         if (User.FindFirst("terminal_id")?.Value != dto.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
         using var transaction = await context.Database.BeginTransactionAsync();
         try
@@ -153,7 +158,8 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         catch (Exception ex)
         {
             await transaction.RollbackAsync();
-            return StatusCode(500, $"Internal server error while creating order: {ex.Message}");
+            Console.WriteLine($"Error creating order: {ex}");
+            return StatusCode(500, "Internal server error while creating order.");
         }
     }
 
@@ -166,6 +172,11 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             .FirstOrDefaultAsync(o => o.OrderId == id);
 
         if (order == null) return NotFound();
+
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && order.BranchId != callerBranchId)
+            return Forbid();
+        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && int.TryParse(User.FindFirst("terminal_id")?.Value, out int callerTerminalId) && order.TerminalId != callerTerminalId)
+            return Forbid();
 
         return Ok(MapToDto(order));
     }

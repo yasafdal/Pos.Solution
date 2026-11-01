@@ -109,6 +109,14 @@ public static partial class Program
 
         await RunTestAsync("Z08. Thermal report detail, HTML escaping and truthful reprint labels", TestZReadingFormatter);
 
+        await RunTestAsync("SEC01. Controller authorization and deny-by-default endpoints", TestSecurity_ControllerAuthorizationAttributes);
+        await RunTestAsync("SEC02. Privilege escalation prevention (Manager cannot create/delete Admin)", TestSecurity_PrivilegeEscalationPrevented);
+        await RunTestAsync("SEC03. Sensitive data masking (non-admin PIN redaction)", TestSecurity_SensitiveDataMasking);
+        await RunTestAsync("SEC04. Cart item price and quantity tampering prevention", TestSecurity_CartPriceAndQuantityTampering);
+        await RunTestAsync("SEC05. BOLA / IDOR cross-branch order, void and return protection", TestSecurity_BOLA_CrossBranchOrderAndReturnProtection);
+        await RunTestAsync("SEC06. BOLA / IDOR manager cross-branch terminal/outlet hierarchy protection", TestSecurity_BOLA_ManagerCrossBranchHierarchyProtection);
+        await RunTestAsync("SEC07. File upload size bounding (5MB max)", TestSecurity_FileUploadSizeValidation);
+
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
     }

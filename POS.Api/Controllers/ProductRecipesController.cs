@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
 using POS.Shared.Models;
@@ -7,6 +8,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class ProductRecipesController : ControllerBase
     {
         private readonly PosDbContext _context;
@@ -41,6 +43,7 @@ namespace POS.Api.Controllers
 
         // POST: api/ProductRecipes
         [HttpPost]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<ActionResult<ProductRecipeDto>> AddIngredientToRecipe(ProductRecipeDto dto)
         {
             var recipeItem = new ProductRecipe
@@ -68,6 +71,7 @@ namespace POS.Api.Controllers
 
         // PUT: api/ProductRecipes/5
         [HttpPut("{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> UpdateIngredientQuantity(int id, ProductRecipeDto dto)
         {
             var recipeItem = await _context.ProductRecipes.FindAsync(id);
@@ -82,6 +86,7 @@ namespace POS.Api.Controllers
 
         // DELETE: api/ProductRecipes/5
         [HttpDelete("{id}")]
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> RemoveIngredientFromRecipe(int id)
         {
             var recipeItem = await _context.ProductRecipes.FindAsync(id);

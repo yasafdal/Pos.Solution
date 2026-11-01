@@ -82,7 +82,87 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
         return row == null ? null : ReadSnapshot(row);
     }
 
-    private static ZReadingReportDto ReadSnapshot(ZReading row)
+    public async Task<ZReadingReportDto?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    {
+        RequireEnabled();
+        var row = await db.ZReadings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct);
+        return row == null ? null : ReadSnapshot(row);
+    }
+
+    public async Task<ZReadingHistoryResponseDto> HistoryAsync(
+        int? branchId,
+        int? terminalId,
+        DateOnly? fromDate,
+        DateOnly? toDate,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        RequireEnabled();
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var query = db.ZReadings.AsNoTracking().AsQueryable();
+
+        if (branchId.HasValue) query = query.Where(x => x.BranchId == branchId.Value);
+        if (terminalId.HasValue) query = query.Where(x => x.TerminalId == terminalId.Value);
+        if (fromDate.HasValue) query = query.Where(x => x.BusinessDate >= fromDate.Value);
+        if (toDate.HasValue) query = query.Where(x => x.BusinessDate <= toDate.Value);
+
+        var total = await query.CountAsync(ct);
+
+        var rows = await query
+            .OrderByDescending(x => x.BusinessDate)
+            .ThenByDescending(x => x.ZNumber)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        var termIds = rows.Select(x => x.TerminalId).Distinct().ToList();
+        var terminals = await db.Terminals.AsNoTracking()
+            .Include(t => t.Outlet)
+            .Include(t => t.Branch)
+            .Where(t => termIds.Contains(t.TerminalId))
+            .ToDictionaryAsync(t => t.TerminalId, ct);
+
+        var items = new List<ZReadingHistoryItemDto>();
+        foreach (var r in rows)
+        {
+            terminals.TryGetValue(r.TerminalId, out var term);
+            var report = ReadSnapshot(r);
+            items.Add(new ZReadingHistoryItemDto
+            {
+                Id = r.Id,
+                TerminalId = r.TerminalId,
+                TerminalCode = term?.TerminalCode ?? report.TerminalCode,
+                TerminalName = term?.Name ?? report.TerminalName,
+                BranchId = r.BranchId,
+                BranchName = term?.Branch?.Name ?? report.BranchName,
+                OutletId = r.OutletId,
+                OutletName = term?.Outlet?.Name ?? report.OutletName,
+                BusinessDate = r.BusinessDate,
+                ZNumber = r.ZNumber,
+                GeneratedAt = r.GeneratedAt,
+                GeneratedBy = r.GeneratedBy,
+                GrossSales = report.GrossSales,
+                NetSales = report.NetSales,
+                SaleCount = report.SaleCount,
+                FirstInvoiceNumber = report.FirstInvoiceNumber,
+                LastInvoiceNumber = report.LastInvoiceNumber,
+                SnapshotSha256 = r.SnapshotSha256
+            });
+        }
+
+        return new ZReadingHistoryResponseDto
+        {
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize,
+            Items = items
+        };
+    }
+
+    internal static ZReadingReportDto ReadSnapshot(ZReading row)
     {
         if (Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(row.SnapshotJson))) != row.SnapshotSha256)
             throw new ZReadingException(409, "Stored snapshot integrity check failed.");

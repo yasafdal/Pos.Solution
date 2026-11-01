@@ -83,6 +83,9 @@ namespace POS.Api.Controllers
         [HttpGet("current")]
         public async Task<ActionResult<CashierSessionDto>> GetCurrentSession([FromQuery] int terminalId)
         {
+            if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && User.FindFirst("terminal_id")?.Value != terminalId.ToString())
+                return Forbid();
+
             var session = await _context.CashierSessions
                 .AsNoTracking()
                 .Where(s => s.TerminalId == terminalId && s.Status == "ACTIVE")
@@ -116,6 +119,10 @@ namespace POS.Api.Controllers
             {
                 return NotFound("Active session not found.");
             }
+
+            var cashierId = User.FindFirstValue(ClaimTypes.Name) ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && session.CashierId != cashierId && User.FindFirst("terminal_id")?.Value != session.TerminalId.ToString())
+                return Forbid();
 
             session.Status = "LOGGED_OUT";
             session.LogoutAt = DateTime.UtcNow;
