@@ -53,6 +53,7 @@ public class OfflineProductModifierMappingDto
 
 public class OfflineTerminalConfigDto
 {
+    public MenuDisplayMode MenuDisplayMode { get; set; } = MenuDisplayMode.TextOnly;
     public int TerminalId { get; set; }
     public int OutletId { get; set; }
     public string OutletName { get; set; } = string.Empty;

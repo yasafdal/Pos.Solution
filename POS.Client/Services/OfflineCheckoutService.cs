@@ -10,6 +10,7 @@ public interface IOfflineCheckoutService
 {
     Task<bool> IsReadyForOfflineCheckoutAsync(int terminalId);
     Task<OfflineCheckoutResultDto> ProcessOfflineCashSaleAsync(OrderCreateDto createDto, decimal cashTendered, string cashierId);
+    Task<OfflineCheckoutResultDto> ProcessSaleAsync(OrderCreateDto createDto, decimal amountTendered, string paymentMethod, string? referenceNumber, string cashierId);
     Task<List<LocalOrder>> GetPendingSyncOrdersAsync();
 }
 
@@ -45,22 +46,28 @@ public class OfflineCheckoutService : IOfflineCheckoutService
             && await db.InvoiceSequences.AnyAsync(s => s.TerminalId == terminalId && s.IsActive && s.LastIssuedNumber < s.EndingNumber);
     }
 
-    public async Task<OfflineCheckoutResultDto> ProcessOfflineCashSaleAsync(OrderCreateDto createDto, decimal cashTendered, string cashierId)
+    public Task<OfflineCheckoutResultDto> ProcessOfflineCashSaleAsync(OrderCreateDto createDto, decimal cashTendered, string cashierId)
     {
+        return ProcessSaleAsync(createDto, cashTendered, "CASH", null, cashierId);
+    }
+
+    public async Task<OfflineCheckoutResultDto> ProcessSaleAsync(OrderCreateDto createDto, decimal amountTendered, string paymentMethod, string? referenceNumber, string cashierId)
+    {
+        paymentMethod = string.IsNullOrWhiteSpace(paymentMethod) ? "CASH" : paymentMethod.Trim().ToUpperInvariant();
         if (!_session.IsAuthenticated || !string.Equals(_session.Username, cashierId, StringComparison.Ordinal)
             || _session.Terminal?.TerminalId != createDto.TerminalId
             || _session.Terminal?.BranchId != createDto.BranchId
             || (!string.IsNullOrEmpty(createDto.CashierId) && !string.Equals(createDto.CashierId, cashierId, StringComparison.Ordinal)))
-            return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "Offline checkout requires the authenticated cashier and assigned terminal/branch." };
+            return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "Checkout requires the authenticated cashier and assigned terminal/branch." };
 
         if (createDto.Items == null || createDto.Items.Count == 0)
         {
             return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "Order must contain at least one item." };
         }
 
-        if (cashTendered <= 0m)
+        if (paymentMethod == "CASH" && amountTendered <= 0m)
         {
-            return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "A valid cash tendered amount is required for offline checkout." };
+            return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "A valid cash tendered amount is required for checkout." };
         }
 
         await LocalPosDbContext.WriteLock.WaitAsync();
@@ -109,13 +116,14 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 decimal subtotal = calcRes.Subtotal;
                 decimal totalAmount = calcRes.TotalAmount;
 
-                if (cashTendered < totalAmount)
+                decimal tendered = paymentMethod == "CASH" ? amountTendered : totalAmount;
+                if (paymentMethod == "CASH" && tendered < totalAmount)
                 {
                     await transaction.RollbackAsync();
                     return new OfflineCheckoutResultDto { Success = false, ErrorMessage = $"Insufficient cash tendered. Total payable: ₱{totalAmount:N2}" };
                 }
 
-                decimal changeAmount = cashTendered - totalAmount;
+                decimal changeAmount = paymentMethod == "CASH" ? tendered - totalAmount : 0m;
 
                 // 3. Acquire and increment invoice sequence atomically inside the SQLite transaction
                 var sequence = await db.InvoiceSequences
@@ -153,7 +161,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     ZeroRatedSales = calcRes.ZeroRatedSales,
                     VatAmount = calcRes.VatAmount,
                     TotalAmount = totalAmount,
-                    PaymentStatus = "SUCCESS",
+                    PaymentStatus = "PAID",
                     OrderStatus = "COMPLETED",
                     CreatedAt = DateTime.UtcNow
                 };
@@ -172,20 +180,26 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                         : calcRes.CalculatedItems.FirstOrDefault(ci => ci.ProductId == itemDto.ProductId);
                     decimal lineTotal = calcItem != null ? calcItem.LineTotal : Math.Round(itemEffPrice * itemDto.Quantity, 2);
 
+                    var localProd = await db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.ProductId == itemDto.ProductId);
+                    bool isKitchen = localProd?.IsKitchenItem ?? itemDto.IsKitchenItem;
+                    bool isBar = localProd?.IsBarItem ?? itemDto.IsBarItem;
+
                     db.OrderItems.Add(new LocalOrderItem
                     {
                         OrderId = localTransactionId,
                         ProductId = itemDto.ProductId,
                         ProductName = itemDto.ProductName ?? "Product",
+                        ProductShortCode = itemDto.ProductShortCode,
                         Quantity = (int)itemDto.Quantity,
                         UnitPrice = itemEffPrice,
                         LineTotal = lineTotal,
-                        TaxName = itemDto.TaxName ?? "VATable"
+                        TaxName = itemDto.TaxName ?? "VATable",
+                        IsKitchenItem = isKitchen,
+                        IsBarItem = isBar,
+                        ModifiersJson = itemDto.Modifiers != null && itemDto.Modifiers.Count > 0
+                            ? System.Text.Json.JsonSerializer.Serialize(itemDto.Modifiers)
+                            : null
                     });
-
-                    var localProd = await db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.ProductId == itemDto.ProductId);
-                    bool isKitchen = localProd?.IsKitchenItem ?? itemDto.IsKitchenItem;
-                    bool isBar = localProd?.IsBarItem ?? itemDto.IsBarItem;
 
                     receiptItems.Add(new OrderItemResponseDto
                     {
@@ -218,16 +232,16 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 {
                     OrderId = localTransactionId,
                     Amount = totalAmount,
-                    TenderedAmount = cashTendered,
+                    TenderedAmount = tendered,
                     ChangeAmount = changeAmount,
-                    PaymentMethod = "CASH",
-                    PaymentStatus = "SUCCESS",
+                    PaymentMethod = paymentMethod,
+                    PaymentStatus = "PAID",
                     PaidAt = paidAt
                 });
 
-                // 6b. Update active LocalCashDrawerShift so offline ExpectedBalance reflects offline cash sales immediately
+                // 6b. Update active LocalCashDrawerShift so offline ExpectedBalance reflects cash sales immediately
                 var localOpenShift = confirmedShift;
-                if (localOpenShift != null)
+                if (localOpenShift != null && paymentMethod == "CASH")
                 {
                     localOpenShift.TotalCashSales += totalAmount;
                     localOpenShift.ExpectedBalance = localOpenShift.OpeningFloat
@@ -310,11 +324,11 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     {
                         new()
                         {
-                            PaymentMethod = "CASH",
+                            PaymentMethod = paymentMethod,
                             Amount = totalAmount,
-                            AmountTendered = cashTendered,
+                            AmountTendered = tendered,
                             ChangeAmount = changeAmount,
-                            PaymentStatus = "SUCCESS",
+                            PaymentStatus = "PAID",
                             ProcessedBy = cashierId,
                             PaidAt = paidAt
                         }

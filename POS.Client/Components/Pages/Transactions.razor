@@ -108,7 +108,7 @@ else
                             <td>@t.OrderNumber</td>
                             <td>@t.CashierId</td>
                             <td>
-                                @if (t.PaymentStatus == "PAID")
+                                @if (t.PaymentStatus == "PAID" || t.PaymentStatus == "SUCCESS")
                                 {
                                     <span class="transaction-status-badge paid">PAID</span>
                                 }
@@ -127,7 +127,7 @@ else
                                     <button type="button" class="btn btn-sm btn-info text-white rounded-3 px-3" @onclick="() => ViewDetails(t.OrderId)" title="View Details">
                                         <i class="bi bi-eye"></i> View
                                     </button>
-                                    @if (t.PaymentStatus == "PAID")
+                                    @if (t.PaymentStatus == "PAID" || t.PaymentStatus == "SUCCESS")
                                     {
                                         <button type="button" class="btn btn-sm btn-secondary text-white rounded-3 px-3" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint">
                                             <i class="bi bi-printer"></i> Reprint
@@ -460,14 +460,27 @@ else
                     ZeroRatedSales = lo.ZeroRatedSales,
                     VatAmount = lo.VatAmount,
                     CreatedAt = lo.CreatedAt,
-                    Items = localItems.Where(i => i.OrderId == lo.OrderId).Select(i => new OrderItemResponseDto
+                    Items = localItems.Where(i => i.OrderId == lo.OrderId).Select(i =>
                     {
-                        OrderItemId = i.OrderItemId,
-                        ProductId = i.ProductId,
-                        ProductName = i.ProductName,
-                        Quantity = i.Quantity,
-                        UnitPrice = i.UnitPrice,
-                        LineTotal = i.LineTotal
+                        List<OrderItemModifierResponseDto> mods = new();
+                        if (!string.IsNullOrWhiteSpace(i.ModifiersJson))
+                        {
+                            try { mods = System.Text.Json.JsonSerializer.Deserialize<List<OrderItemModifierResponseDto>>(i.ModifiersJson) ?? new(); }
+                            catch { mods = new(); }
+                        }
+                        return new OrderItemResponseDto
+                        {
+                            OrderItemId = i.OrderItemId,
+                            ProductId = i.ProductId,
+                            ProductName = i.ProductName,
+                            ProductShortCode = i.ProductShortCode,
+                            Quantity = i.Quantity,
+                            UnitPrice = i.UnitPrice,
+                            LineTotal = i.LineTotal,
+                            IsKitchenItem = i.IsKitchenItem,
+                            IsBarItem = i.IsBarItem,
+                            Modifiers = mods
+                        };
                     }).ToList(),
                     Payments = localPayments.Where(p => p.OrderId == lo.OrderId).Select(p => new PaymentResponseDto
                     {

@@ -46,7 +46,7 @@ namespace POS.Api.Controllers
             var outlets = await _context.Terminals.AsNoTracking()
                 .Where(o => o.DeviceIdentifier != null || o.IpAddress != null)
                 .Select(o => new { o.TerminalId, o.BranchId, o.OutletId, o.TerminalCode, o.IpAddress, o.Ptunumber, o.Minnumber, o.SerialNumber, OutletName = o.Outlet.Name, OutletActive = o.Outlet.IsActive, o.Name, o.DeviceIdentifier,
-                    o.IsActive, BranchActive = o.Branch.IsActive,
+                    o.IsActive, o.MenuDisplayMode, BranchActive = o.Branch.IsActive,
                     BranchName = o.Branch.Name, o.Branch.Code,
                     BranchAddress = o.Branch.Address, BranchPhone = o.Branch.Phone,
                     o.Branch.BusinessTypeId,
@@ -90,7 +90,7 @@ namespace POS.Api.Controllers
 
             return Ok(new TerminalConfigDto
             {
-                TerminalId = outlet.TerminalId,
+                TerminalId = outlet.TerminalId, MenuDisplayMode = outlet.MenuDisplayMode,
                 OutletId = outlet.OutletId, OutletName = outlet.OutletName, TerminalCode = outlet.TerminalCode,
                 DeviceIdentifier = outlet.DeviceIdentifier, IpAddress = outlet.IpAddress,
                 PTUNumber = outlet.Ptunumber, MINNumber = outlet.Minnumber, SerialNumber = outlet.SerialNumber,
@@ -198,6 +198,7 @@ namespace POS.Api.Controllers
 
         private async Task<string?> ValidateTerminal(TerminalDto dto, int id)
         {
+            if (!Enum.IsDefined(dto.MenuDisplayMode)) return "Unsupported menu display mode. Use TextOnly (0) or ImageAndText (1).";
             dto.Name = dto.Name.Trim();
             dto.TerminalCode = dto.TerminalCode.Trim().ToUpperInvariant();
             if (dto.Name.Length is < 1 or > 100 || dto.TerminalCode.Length is < 1 or > 30)
@@ -241,6 +242,7 @@ namespace POS.Api.Controllers
         {
             t.OutletId = dto.OutletId; t.BranchId = dto.BranchId; t.TerminalCode = dto.TerminalCode;
             t.Name = dto.Name; t.DeviceIdentifier = dto.DeviceIdentifier; t.IpAddress = dto.IpAddress;
+            t.MenuDisplayMode = dto.MenuDisplayMode;
             t.Ptunumber = dto.PTUNumber; t.Minnumber = dto.MINNumber; t.SerialNumber = dto.SerialNumber;
             if (t.IsActive && !dto.IsActive)
             {

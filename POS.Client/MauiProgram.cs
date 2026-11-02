@@ -25,11 +25,21 @@ namespace POS.Client
     		builder.Logging.AddDebug();
 #endif
 
-            //Configure the HttpClient to point to your running API (Update the port to match yours)
+            // Configure the HttpClient to point to UAT API (configurable via Preferences, defaults to UAT HTTPS endpoint)
             builder.Services.AddSingleton<PosSessionService>();
-            builder.Services.AddScoped(sp => new HttpClient
+            builder.Services.AddScoped(sp =>
             {
-                BaseAddress = new Uri("http://localhost:5032/")
+                var defaultUrl = "https://dev-uat.agressolutions.com/";
+                var configuredUrl = Microsoft.Maui.Storage.Preferences.Default.Get("UAT_ApiBaseUrl", defaultUrl);
+                if (string.IsNullOrWhiteSpace(configuredUrl)) configuredUrl = defaultUrl;
+                if (!configuredUrl.EndsWith("/")) configuredUrl += "/";
+                var client = new HttpClient
+                {
+                    BaseAddress = new Uri(configuredUrl),
+                    Timeout = TimeSpan.FromSeconds(30)
+                };
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("POS.Client/1.0 (UAT)");
+                return client;
             });
 
             //plugins

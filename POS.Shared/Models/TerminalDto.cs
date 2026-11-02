@@ -7,6 +7,8 @@ namespace POS.Shared.Models;
 public class TerminalDto
 {
     public int TerminalId { get; set; }
+    [System.ComponentModel.DataAnnotations.EnumDataType(typeof(MenuDisplayMode))]
+    public MenuDisplayMode MenuDisplayMode { get; set; } = MenuDisplayMode.TextOnly;
     public int BranchId { get; set; }
     [System.ComponentModel.DataAnnotations.Range(1, int.MaxValue)] public int OutletId { get; set; }
     [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.StringLength(30)]

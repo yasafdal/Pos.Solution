@@ -31,6 +31,12 @@ internal static class Program
             Check(await db.SyncOutboxes.CountAsync() == 2, "Fresh process lost opening/order outboxes.");
             Console.WriteLine("Fresh process recovered SQLite opening, sale and outboxes."); return 0;
         }
+        if (args.Contains("--menu-cache-only"))
+        {
+            await MenuDisplayModeCacheTests.RunAll(Run);
+            Console.WriteLine($"RESULT: {passed} passed, {failed} failed");
+            return failed == 0 ? 0 : 1;
+        }
         await Run("Scratch path seam cannot access user SQLite", () => { NewPath(); GuardPath(); return Task.CompletedTask; });
         if (failed > 0) return 1; // Never initialize the default user database if the seam is absent.
         await Run("Real local opening, offline checkout, retry and process restart", LocalLifecycle);
@@ -50,6 +56,9 @@ internal static class Program
             await ZReadingLocalReadinessTests.RunAsync();
         });
         await ApiAndSchemaTests.RunAll(Run);
+        await MenuDisplayModeCacheTests.RunAll(Run);
+        await OfflineEnhancementTests.RunAll(Run);
+        await Run("Product menu actual Razor rendering", ProductMenuCardTests.RunAsync);
         Console.WriteLine($"RESULT: {passed} passed, {failed} failed");
         SqliteConnection.ClearAllPools(); AppContext.SetData("POS.LocalDatabasePath", null);
         try { Directory.Delete(Root, true); } catch (IOException) { }

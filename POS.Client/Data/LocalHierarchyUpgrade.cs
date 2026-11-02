@@ -58,6 +58,26 @@ public static class LocalHierarchyUpgrade
                     if (!Columns("LocalTerminalConfigs").Contains(definition.Split(' ')[0]))
                         Execute($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {definition}");
                 }
+                if (!Columns("LocalTerminalConfigs").Contains("MenuDisplayMode"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN MenuDisplayMode INTEGER NOT NULL DEFAULT 0");
+                if (!Columns("LocalTerminalConfigs").Contains("IsInitialized"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN IsInitialized INTEGER NOT NULL DEFAULT 0");
+                if (!Columns("LocalTerminalConfigs").Contains("LastSyncVersion"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastSyncVersion TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("LastSyncAt"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastSyncAt TEXT NULL");
+            }
+            if (TableExists("LocalOrderItems"))
+            {
+                var itemCols = Columns("LocalOrderItems");
+                if (!itemCols.Contains("ProductShortCode"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN ProductShortCode TEXT NULL");
+                if (!itemCols.Contains("IsKitchenItem"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN IsKitchenItem INTEGER NOT NULL DEFAULT 0");
+                if (!itemCols.Contains("IsBarItem"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN IsBarItem INTEGER NOT NULL DEFAULT 0");
+                if (!itemCols.Contains("ModifiersJson"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN ModifiersJson TEXT NULL");
             }
             transaction.Commit();
         }

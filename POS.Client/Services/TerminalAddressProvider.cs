@@ -50,7 +50,11 @@ public class TerminalAddressProvider(HttpClient http) : ITerminalAddressProvider
             catch (SocketException) { /* Another DNS destination may have a usable route. */ }
         }
         if (addresses.Count != 1)
+        {
+            var ipv4 = addresses.Where(a => a.AddressFamily == AddressFamily.InterNetwork).ToList();
+            if (ipv4.Count == 1) return ipv4.Single().ToString();
             throw new InvalidOperationException("Cannot determine a unique LAN IP for this terminal. Configure the POS API with a reachable LAN address (not localhost) and check the network route.");
+        }
         return addresses.Single().ToString();
     }
 

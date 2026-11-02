@@ -24,6 +24,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         var physicalOutlet = await context.Outlets.AsNoTracking().SingleAsync(o => o.OutletId == outlet.OutletId);
         if (!outlet.IsActive || !physicalOutlet.IsActive || !outlet.Branch.IsActive) return Conflict("Terminal, outlet or branch is inactive.");
         if (User.FindFirst("terminal_id")?.Value != terminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
+        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var branchId) && branchId != outlet.BranchId) return Forbid();
 
         var categories = await context.Categories
         .AsNoTracking()
@@ -218,7 +219,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             ServerTimestamp = DateTime.UtcNow,
             Terminal = new OfflineTerminalConfigDto
             {
-                TerminalId = outlet.TerminalId,
+                TerminalId = outlet.TerminalId, MenuDisplayMode = outlet.MenuDisplayMode,
                 OutletId = outlet.OutletId, OutletName = physicalOutlet.Name, TerminalCode = outlet.TerminalCode,
                 IpAddress = outlet.IpAddress, PTUNumber = outlet.Ptunumber, MINNumber = outlet.Minnumber, SerialNumber = outlet.SerialNumber,
                 BranchId = outlet.BranchId,

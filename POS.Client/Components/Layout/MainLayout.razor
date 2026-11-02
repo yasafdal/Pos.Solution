@@ -6,6 +6,8 @@
 @inject IPosConnectivityService ConnectivityService
 @inject POS.Shared.Interfaces.IUserService UserService
 @inject POS.Client.Data.LocalPosDbContext LocalDb
+@inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
+@inject POS.Client.Services.IReferenceDataSyncService ReferenceDataSync
 @using Microsoft.EntityFrameworkCore
 @implements IDisposable
 
@@ -19,6 +21,50 @@
                 </button>
                 <span class="terminal-identity">@Session.Terminal!.BranchCode • @Session.Terminal.TerminalName</span>
             </div>
+
+            <!-- Compact Sync Status Widget -->
+            <div class="sync-status-widget d-flex align-items-center gap-2">
+                @if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy)
+                {
+                    <span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-50 d-inline-flex align-items-center gap-1 py-1 px-2" title="Central API reachable">
+                        <i class="bi bi-wifi"></i> <span class="d-none d-sm-inline">Online</span>
+                    </span>
+                }
+                else
+                {
+                    <span class="badge bg-warning bg-opacity-25 text-warning border border-warning border-opacity-50 d-inline-flex align-items-center gap-1 py-1 px-2" title="Offline mode active">
+                        <i class="bi bi-wifi-off"></i> <span class="d-none d-sm-inline">Offline</span>
+                    </span>
+                }
+
+                @if (_pendingCount > 0)
+                {
+                    <span class="badge bg-primary text-white d-inline-flex align-items-center gap-1 py-1 px-2" title="@_pendingCount transaction(s) pending sync">
+                        <i class="bi bi-arrow-repeat @(_isSyncing ? "spinner-border spinner-border-sm" : "")"></i> @_pendingCount pending
+                    </span>
+                }
+                else if (_failedCount > 0)
+                {
+                    <span class="badge bg-danger text-white d-inline-flex align-items-center gap-1 py-1 px-2" title="@_failedCount sync failure(s)">
+                        <i class="bi bi-exclamation-octagon"></i> @_failedCount failed
+                    </span>
+                }
+                else
+                {
+                    <span class="badge bg-secondary bg-opacity-25 text-secondary border d-inline-flex align-items-center gap-1 py-1 px-2" title="All transactions synchronized">
+                        <i class="bi bi-check2-all text-success"></i> <span class="d-none d-sm-inline">Synced</span>
+                    </span>
+                }
+
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 d-inline-flex align-items-center gap-1 text-white border-secondary"
+                        disabled="@(_isSyncing || _connectivityState != TerminalConnectivityState.OnlineAndHealthy)"
+                        @onclick="TriggerSyncNowAsync"
+                        title="Synchronize pending transactions immediately">
+                    <i class="bi bi-arrow-clockwise @(_isSyncing ? "spinner-border spinner-border-sm" : "")"></i>
+                    <span class="d-none d-md-inline">Sync Now</span>
+                </button>
+            </div>
+
             <div class="d-flex align-items-center gap-2">
                 <button type="button" class="header-action-btn header-btn-switch" @onclick="SwitchCashier">
                     <i class="bi bi-arrow-left-right me-1"></i>Switch Cashier
@@ -64,10 +110,31 @@
     private bool isNavVisible = false;
     private TerminalConnectivityState _connectivityState = TerminalConnectivityState.OnlineAndHealthy;
     private int _pendingCount = 0;
+    private int _failedCount = 0;
+    private bool _isSyncing = false;
+    private DateTime? _lastSyncTime;
     private System.Threading.Timer? _statusTimer;
 
     public TerminalConnectivityState ConnectivityState => _connectivityState;
     public int PendingCount => _pendingCount;
+
+    private async Task TriggerSyncNowAsync()
+    {
+        if (_isSyncing) return;
+        _isSyncing = true;
+        StateHasChanged();
+        try
+        {
+            await BackgroundSyncService.TriggerManualSyncAsync();
+            await CheckStatusAsync();
+        }
+        catch { }
+        finally
+        {
+            _isSyncing = false;
+            StateHasChanged();
+        }
+    }
 
     private bool IsNewSalePage => Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("new-sale", StringComparison.OrdinalIgnoreCase);
 
@@ -116,6 +183,8 @@
             using var db = new POS.Client.Data.LocalPosDbContext();
             db.InitializeDatabase();
             _pendingCount = db.SyncOutboxes.Count(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING");
+            _failedCount = db.SyncOutboxes.Count(o => o.Status == "FAILED" || o.Status == "NEEDS_ATTENTION");
+            _lastSyncTime = await ReferenceDataSync.GetLastSuccessfulSyncAsync();
             if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy && db.Cashiers.Count() <= 1)
             {
                 await EnsureCashiersCachedAsync();
@@ -197,6 +266,8 @@
                         BranchId = outlet.BranchId,
                         BusinessTypeId = outlet.BusinessTypeId ?? 1,
                         BusinessType = outlet.BusinessType ?? "FNB",
+                        MenuDisplayMode = outlet.MenuDisplayMode == POS.Shared.Models.MenuDisplayMode.ImageAndText
+                            ? POS.Shared.Models.MenuDisplayMode.ImageAndText : POS.Shared.Models.MenuDisplayMode.TextOnly,
                         BranchName = outlet.BranchName,
                         BranchCode = outlet.BranchCode,
                         BranchAddress = outlet.BranchAddress,

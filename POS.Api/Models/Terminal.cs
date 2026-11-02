@@ -6,6 +6,7 @@ namespace POS.Api.Models;
 public partial class Terminal
 {
     public int TerminalId { get; set; }
+    public POS.Shared.Models.MenuDisplayMode MenuDisplayMode { get; set; } = POS.Shared.Models.MenuDisplayMode.TextOnly;
 
     // Retained during migration; composite ownership constraint prevents branch/outlet mismatch.
     public int BranchId { get; set; }

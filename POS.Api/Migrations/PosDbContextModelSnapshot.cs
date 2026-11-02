@@ -2158,6 +2158,11 @@ namespace POS.Api.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
+                    b.Property<int>("MenuDisplayMode")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("Minnumber")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
@@ -2207,7 +2212,10 @@ namespace POS.Api.Migrations
                         .IsUnique()
                         .HasDatabaseName("UX_Terminals_Outlet_Code");
 
-                    b.ToTable("Terminals", (string)null);
+                    b.ToTable("Terminals", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Terminals_MenuDisplayMode", "\"MenuDisplayMode\" IN (0, 1)");
+                        });
                 });
 
             modelBuilder.Entity("POS.Api.Models.TerminalRecoveryLog", b =>

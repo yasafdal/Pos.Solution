@@ -3,6 +3,7 @@ namespace POS.Shared.Models;
 public class TerminalConfigDto
 {
     public int TerminalId { get; set; }
+    public MenuDisplayMode MenuDisplayMode { get; set; } = MenuDisplayMode.TextOnly;
     public int OutletId { get; set; }
     public string OutletName { get; set; } = string.Empty;
     public string TerminalCode { get; set; } = string.Empty;
@@ -22,5 +23,6 @@ public class TerminalConfigDto
     public string? ReceiptPrinterName { get; set; }
     public string? KitchenPrinterName { get; set; }
     public string? BarPrinterName { get; set; }
+    public bool IsInitialized { get; set; } = false;
     public string? Token { get; set; }
 }

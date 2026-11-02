@@ -1,5 +1,5 @@
 param(
-    [string]$ApiUrl = "http://localhost:5032/"
+    [string]$ApiUrl = "https://dev-uat.agressolutions.com/"
 )
 
 $ErrorActionPreference = "Stop"

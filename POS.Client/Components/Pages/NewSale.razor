@@ -3,6 +3,7 @@
 @inject NavigationManager Navigation
 @using Microsoft.EntityFrameworkCore
 @using POS.Shared.Helpers
+@using POS.Client.Components.Shared
 @inject ICategoryService CategoryService
 @inject IProductService ProductService
 @inject IModifierService ModifierService
@@ -15,6 +16,7 @@
 @inject POS.Client.Data.LocalPosDbContext LocalDb
 @inject IPosConnectivityService ConnectivityService
 @inject POS.Client.Services.IOfflineCheckoutService OfflineCheckoutService
+@inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
 @inject IJSRuntime Js
 @implements IDisposable
 
@@ -182,17 +184,10 @@ else
                                     {
                                         var cartQty = inCart.GetValueOrDefault(product.ProductId);
                                         var catColor = group.ColorHex;
-                                        <button type="button" @key="product.ProductId"
-                                                class="product-card @(cartQty > 0 ? "in-cart" : "")"
-                                                style="--category-color: @catColor;"
-                                                title="@product.Name"
-                                                @onclick="() => AddToCart(product)">
-                                            @if (cartQty > 0)
-                                            {
-                                                <span class="product-qty" aria-label="@cartQty in order">@cartQty</span>
-                                            }
-                                            <span class="product-name">@product.Name</span>
-                                        </button>
+                                        <ProductMenuCard @key="product.ProductId" Product="@product" CartQuantity="@cartQty"
+                                                         CategoryColor="@catColor" ApiBaseAddress="@Http.BaseAddress"
+                                                         DisplayMode="@(Session.Terminal?.MenuDisplayMode ?? MenuDisplayMode.TextOnly)"
+                                                         OnSelect="() => AddToCart(product)" />
                                     }
                                 </div>
                             </section>
@@ -206,17 +201,10 @@ else
                             {
                                 var cartQty = inCart.GetValueOrDefault(product.ProductId);
                                 var catColor = GetCategoryColor(product.CategoryId);
-                                <button type="button" @key="product.ProductId"
-                                        class="product-card @(cartQty > 0 ? "in-cart" : "")"
-                                        style="--category-color: @catColor;"
-                                        title="@product.Name"
-                                        @onclick="() => AddToCart(product)">
-                                    @if (cartQty > 0)
-                                    {
-                                        <span class="product-qty" aria-label="@cartQty in order">@cartQty</span>
-                                    }
-                                    <span class="product-name">@product.Name</span>
-                                </button>
+                                <ProductMenuCard @key="product.ProductId" Product="@product" CartQuantity="@cartQty"
+                                                 CategoryColor="@catColor" ApiBaseAddress="@Http.BaseAddress"
+                                                 DisplayMode="@(Session.Terminal?.MenuDisplayMode ?? MenuDisplayMode.TextOnly)"
+                                                 OnSelect="() => AddToCart(product)" />
                             }
                         </div>
                     }
@@ -1106,6 +1094,18 @@ else
         {
             Navigation.NavigateTo("/login");
             return;
+        }
+
+        using (var db = new POS.Client.Data.LocalPosDbContext())
+        {
+            db.InitializeDatabase();
+            var terminalId = Session.Terminal?.TerminalId ?? 1;
+            var termCfg = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == terminalId);
+            if (termCfg == null || !termCfg.IsInitialized)
+            {
+                Navigation.NavigateTo("/initialization");
+                return;
+            }
         }
 
         Cart.OnChange += OnCartChanged;
@@ -2203,86 +2203,65 @@ else
                 };
             }
 
-            processDto.ShiftId = paymentShift?.ShiftId;
-            if (isOffline)
+            var saleMethod = selectedPaymentMethod?.Code ?? "CASH";
+            if (isOffline && saleMethod != "CASH")
             {
-                // Process offline cash checkout locally
-                if (selectedPaymentMethod?.Code != "CASH")
-                {
-                    paymentError = "Only Cash payments are allowed in Offline Mode.";
-                    return;
-                }
+                paymentError = "Only Cash payments are allowed in Offline Mode.";
+                return;
+            }
 
-                var offlineCreateDto = new OrderCreateDto
+            var saleCreateDto = new OrderCreateDto
+            {
+                ShiftId = paymentShift?.ShiftId,
+                ClientShiftId = paymentShift?.ClientShiftId,
+                BranchId = Session.Terminal?.BranchId ?? 1,
+                OutletId = Session.Terminal?.OutletId ?? 1,
+                TerminalId = Session.Terminal?.TerminalId ?? 1,
+                CashierId = Session.Username ?? "cashier",
+                OrderType = IsRetail ? "RETAIL" : selectedServiceMode,
+                TableNumber = string.IsNullOrWhiteSpace(tableNumber) ? null : tableNumber.Trim(),
+                HeadCount = headCount > 0 ? headCount : (int?)null,
+                DiscountAmount = Cart.ActiveDiscountAmount,
+                DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
+                CustomerCardNumber = Cart.CustomerCardNumber,
+                CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
+                CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
+                CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
+                CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim(),
+                Items = Cart.Items.Select(ci => new OrderItemCreateDto
                 {
-                    ShiftId = paymentShift?.ShiftId,
-                    ClientShiftId = paymentShift?.ClientShiftId,
-                    BranchId = Session.Terminal?.BranchId ?? 1,
-                    OutletId = Session.Terminal?.OutletId ?? 1,
-                    TerminalId = Session.Terminal?.TerminalId ?? 1,
-                    CashierId = Session.Username ?? "cashier",
-                    OrderType = IsRetail ? "RETAIL" : selectedServiceMode,
-                    TableNumber = string.IsNullOrWhiteSpace(tableNumber) ? null : tableNumber.Trim(),
-                    HeadCount = headCount > 0 ? headCount : (int?)null,
-                    DiscountAmount = Cart.ActiveDiscountAmount,
-                    DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
-                    CustomerCardNumber = Cart.CustomerCardNumber,
-                    CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
-                    CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
-                    CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
-                    CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim(),
-                    Items = Cart.Items.Select(ci => new OrderItemCreateDto
+                    ProductId = ci.ProductId,
+                    ProductName = ci.ProductName,
+                    ProductShortCode = ci.ProductShortCode,
+                    Quantity = ci.Quantity,
+                    BasePrice = ci.BasePrice,
+                    TaxName = ci.TaxName ?? "VATable",
+                    IsKitchenItem = ci.IsKitchenItem,
+                    IsBarItem = ci.IsBarItem,
+                    Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                     {
-                        ProductId = ci.ProductId,
-                        ProductName = ci.ProductName,
-                        ProductShortCode = ci.ProductShortCode,
-                        Quantity = ci.Quantity,
-                        BasePrice = ci.BasePrice,
-                        TaxName = ci.TaxName ?? "VATable",
-                        IsKitchenItem = ci.IsKitchenItem,
-                        IsBarItem = ci.IsBarItem,
-                        Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
-                        {
-                            ModifierOptionId = m.ModifierOptionId,
-                            ModifierName = m.Name,
-                            AdditionalPrice = m.Price
-                        }).ToList() ?? new()
-                    }).ToList()
-                };
+                        ModifierOptionId = m.ModifierOptionId,
+                        ModifierName = m.Name,
+                        AdditionalPrice = m.Price
+                    }).ToList() ?? new()
+                }).ToList()
+            };
 
-                var offlineResult = await OfflineCheckoutService.ProcessOfflineCashSaleAsync(
-                    offlineCreateDto,
-                    cashTendered,
-                    Session.Username ?? "cashier");
+            decimal tenderAmount = saleMethod == "CASH" ? cashTendered : currentOrderResponse.TotalAmount;
+            var checkoutResult = await OfflineCheckoutService.ProcessSaleAsync(
+                saleCreateDto,
+                tenderAmount,
+                saleMethod,
+                referenceNumber,
+                Session.Username ?? "cashier");
 
-                if (!offlineResult.Success)
-                {
-                    paymentError = offlineResult.ErrorMessage ?? "Offline checkout failed.";
-                    return;
-                }
-
-                // Close payment modal, clear cart, and open ReceiptPreview for offline printing/PDF
-                isPaymentModalOpen = false;
-                currentOrderResponse = null;
-                isSplitPaymentMode = false;
-                paymentSplits.Clear();
-                Cart.Clear();
-                tableNumber = string.Empty;
-                headCount = 1;
-                selectedServiceMode = "DINING";
-                customerName = customerAddress = customerTin = customerBusinessStyle = string.Empty;
-                paidOfflineReceipt = offlineResult.Receipt;
-                return;
-            }
-
-            var payment = await PaymentService.ProcessPaymentAsync(processDto);
-            if (payment == null || payment.PaymentStatus != "SUCCESS")
+            if (!checkoutResult.Success)
             {
-                paymentError = "Payment processing failed on server.";
+                paymentError = checkoutResult.ErrorMessage ?? "Checkout failed.";
                 return;
             }
 
-            var paidOrderId = currentOrderResponse.OrderId;
+            // Close payment modal, clear cart, and open ReceiptPreview for printing/PDF
             isPaymentModalOpen = false;
             currentOrderResponse = null;
             isSplitPaymentMode = false;
@@ -2291,7 +2270,21 @@ else
             tableNumber = string.Empty;
             headCount = 1;
             selectedServiceMode = "DINING";
-            paidReceiptOrderId = paidOrderId;
+            customerName = customerAddress = customerTin = customerBusinessStyle = string.Empty;
+            paidOfflineReceipt = checkoutResult.Receipt;
+
+            // Trigger background upload immediately if online
+            if (!isOffline)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await BackgroundSyncService.TriggerManualSyncAsync();
+                    }
+                    catch { }
+                });
+            }
         }
         catch (Exception ex)
         {

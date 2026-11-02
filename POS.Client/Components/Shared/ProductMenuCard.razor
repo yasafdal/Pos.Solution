@@ -1,0 +1,58 @@
+@namespace POS.Client.Components.Shared
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using POS.Shared.Models
+
+<button type="button"
+        class="product-card @(CartQuantity > 0 ? "in-cart" : "") @(ShowImage ? "has-image" : "")"
+        style="--category-color: @CategoryColor;"
+        title="@Product.Name"
+        @onclick="OnSelect">
+    @if (ShowImage)
+    {
+        <span class="product-image-frame" aria-hidden="true">
+            @if (imageSource != null && !imageFailed)
+            {
+                <img src="@imageSource" alt="" width="240" height="160" loading="lazy" decoding="async" @onerror="() => imageFailed = true" />
+            }
+            else
+            {
+                <span class="product-image-placeholder"><i class="bi bi-image"></i></span>
+            }
+        </span>
+    }
+    @if (CartQuantity > 0)
+    {
+        <span class="product-qty" aria-label="@CartQuantity in order">@CartQuantity</span>
+    }
+    <span class="product-name">@Product.Name</span>
+</button>
+
+@code {
+    [Parameter, EditorRequired] public ProductDto Product { get; set; } = null!;
+    [Parameter] public MenuDisplayMode DisplayMode { get; set; }
+    [Parameter] public string CategoryColor { get; set; } = "#334155";
+    [Parameter] public decimal CartQuantity { get; set; }
+    [Parameter] public Uri? ApiBaseAddress { get; set; }
+    [Parameter] public EventCallback OnSelect { get; set; }
+    private bool ShowImage => DisplayMode == MenuDisplayMode.ImageAndText;
+    private string? imageSource;
+    private bool imageFailed;
+
+    protected override void OnParametersSet()
+    {
+        string? source = null;
+        if (ShowImage && !string.IsNullOrWhiteSpace(Product.ImageUrl))
+        {
+            Uri? uri;
+            if (ApiBaseAddress != null
+                ? Uri.TryCreate(ApiBaseAddress, Product.ImageUrl, out uri)
+                : Uri.TryCreate(Product.ImageUrl, UriKind.Absolute, out uri))
+            {
+                if (uri?.Scheme is "http" or "https") source = uri.AbsoluteUri;
+            }
+        }
+        if (source != imageSource) imageFailed = false;
+        imageSource = source;
+    }
+}

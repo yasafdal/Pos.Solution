@@ -50,7 +50,8 @@ public partial class PosDbContext
         });
         modelBuilder.Entity<Terminal>(e =>
         {
-            e.ToTable("Terminals");
+            e.ToTable("Terminals", table => table.HasCheckConstraint("CK_Terminals_MenuDisplayMode", "\"MenuDisplayMode\" IN (0, 1)"));
+            e.Property(x => x.MenuDisplayMode).HasConversion<int>().HasColumnType("integer").HasDefaultValue(POS.Shared.Models.MenuDisplayMode.TextOnly);
             e.Property(x => x.TerminalCode).HasMaxLength(30).IsRequired();
             e.Property(x => x.IpAddress).HasMaxLength(45);
             e.Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");

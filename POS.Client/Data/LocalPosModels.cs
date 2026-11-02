@@ -144,6 +144,10 @@ public class LocalTerminalConfig
     public string? ReceiptPrinterName { get; set; }
     public string? KitchenPrinterName { get; set; }
     public string? BarPrinterName { get; set; }
+    public POS.Shared.Models.MenuDisplayMode MenuDisplayMode { get; set; } = POS.Shared.Models.MenuDisplayMode.TextOnly;
+    public bool IsInitialized { get; set; } = false;
+    public string? LastSyncVersion { get; set; }
+    public DateTime? LastSyncAt { get; set; }
 }
 
 public class LocalInvoiceSequence
@@ -207,6 +211,10 @@ public class LocalOrderItem
     [Column(TypeName = "decimal(18,2)")]
     public decimal LineTotal { get; set; }
     public string TaxName { get; set; } = "VATable";
+    public string? ProductShortCode { get; set; }
+    public bool IsKitchenItem { get; set; }
+    public bool IsBarItem { get; set; }
+    public string? ModifiersJson { get; set; }
 }
 
 public class LocalPayment

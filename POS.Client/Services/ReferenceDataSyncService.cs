@@ -10,6 +10,7 @@ namespace POS.Client.Services;
 public interface IReferenceDataSyncService
 {
     Task<bool> SyncReferenceDataAsync(int terminalId, HttpClient httpClient);
+    Task<bool> CheckAndSyncIncrementalAsync(int terminalId, HttpClient httpClient);
     Task<DateTime?> GetLastSuccessfulSyncAsync();
     Task<bool> ValidateCacheAsync();
 }
@@ -32,7 +33,11 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
             if (!response.IsSuccessStatusCode) return false;
 
             var data = await response.Content.ReadFromJsonAsync<OfflineReferenceDataResponseDto>();
-            if (data == null || data.Terminal.TerminalId != terminalId || data.Terminal.OutletId <= 0) return false;
+            if (data?.Terminal == null || data.Terminal.TerminalId != terminalId
+                || data.Terminal.OutletId <= 0 || data.Terminal.BranchId <= 0
+                || data.Products == null || data.Categories == null || data.Taxes == null
+                || data.Discounts == null || data.ModifierGroups == null || data.ProductModifierMappings == null)
+                return false;
 
             // Fallback: if server did not include Cashiers in reference-data, fetch from api/Users
             if (data.Cashiers == null || data.Cashiers.Count == 0)
@@ -69,6 +74,9 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                 using var transaction = await db.Database.BeginTransactionAsync();
                 try
                 {
+                    var priorConfig = await db.TerminalConfigs.AsNoTracking()
+                        .FirstOrDefaultAsync(t => t.TerminalId == terminalId);
+
                     // Clear existing reference tables via SQL and reset ChangeTracker to prevent duplicate PK tracking exceptions
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalProductModifierGroups;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalModifierOptions;");
@@ -93,13 +101,21 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         BranchId = data.Terminal.BranchId,
                         BusinessTypeId = data.Terminal.BusinessTypeId ?? 1,
                         BusinessType = data.Terminal.BusinessType ?? "FNB",
+                        MenuDisplayMode = data.Terminal.MenuDisplayMode == MenuDisplayMode.ImageAndText
+                            ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
                         BranchName = data.Terminal.BranchName,
                         BranchCode = data.Terminal.BranchCode,
                         BranchAddress = data.Terminal.BranchAddress,
                         BranchPhone = data.Terminal.BranchPhone,
                         TerminalName = data.Terminal.TerminalName,
                         BranchTaxType = data.Terminal.BranchTaxType,
-                        TerminalIdentifier = data.Terminal.DeviceIdentifier
+                        TerminalIdentifier = data.Terminal.DeviceIdentifier,
+                        ReceiptPrinterName = priorConfig?.ReceiptPrinterName,
+                        KitchenPrinterName = priorConfig?.KitchenPrinterName,
+                        BarPrinterName = priorConfig?.BarPrinterName,
+                        IsInitialized = priorConfig?.IsInitialized ?? false,
+                        LastSyncVersion = data.Version,
+                        LastSyncAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow
                     });
 
                     if (data.Cashiers != null)
@@ -318,6 +334,34 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
     public Task<DateTime?> GetLastSuccessfulSyncAsync()
     {
         return Task.FromResult(_lastSyncTime);
+    }
+
+    public async Task<bool> CheckAndSyncIncrementalAsync(int terminalId, HttpClient httpClient)
+    {
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var cfg = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == terminalId);
+            bool isDbValid = await ValidateCacheAsync();
+
+            // If local DB is valid and initialized, check if full sync can be skipped
+            if (cfg != null && cfg.IsInitialized && isDbValid && !string.IsNullOrEmpty(cfg.LastSyncVersion))
+            {
+                // If recently synced (within 15 minutes) and DB is healthy, keep operating without blocking
+                if (cfg.LastSyncAt.HasValue && DateTime.UtcNow - cfg.LastSyncAt.Value < TimeSpan.FromMinutes(15))
+                {
+                    _lastSyncTime = cfg.LastSyncAt.Value;
+                    return true;
+                }
+            }
+
+            return await SyncReferenceDataAsync(terminalId, httpClient);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public async Task<bool> ValidateCacheAsync()

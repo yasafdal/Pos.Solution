@@ -86,6 +86,11 @@
         {
             <div class="helper-text">Tap keypad or use physical numpad</div>
         }
+        <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
+            <small class="text-secondary font-monospace" style="font-size: 0.72rem;">
+                UAT Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "https://dev-uat.agressolutions.com")
+            </small>
+        </div>
     </div>
 </div>
 
@@ -393,7 +398,7 @@
                         db.Database, "DELETE FROM LocalCashiers;");
                     db.ChangeTracker.Clear();
 
-                    foreach (var u in allUsers.Where(u => !string.IsNullOrWhiteSpace(u.PinCode)))
+                    foreach (var u in allUsers.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****"))
                     {
                         db.Cashiers.Add(new POS.Client.Data.LocalCashier
                         {
@@ -455,6 +460,8 @@
                         BranchId = outlet.BranchId,
                         BusinessTypeId = outlet.BusinessTypeId ?? 1,
                         BusinessType = outlet.BusinessType ?? "FNB",
+                        MenuDisplayMode = outlet.MenuDisplayMode == MenuDisplayMode.ImageAndText
+                            ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
                         BranchName = outlet.BranchName,
                         BranchCode = outlet.BranchCode,
                         BranchAddress = outlet.BranchAddress,
@@ -499,6 +506,8 @@
                 BranchId = localOutlet.BranchId,
                 BusinessTypeId = localOutlet.BusinessTypeId ?? 1,
                 BusinessType = localOutlet.BusinessType ?? "FNB",
+                MenuDisplayMode = localOutlet.MenuDisplayMode == MenuDisplayMode.ImageAndText
+                    ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
                 BranchName = localOutlet.BranchName ?? localOutlet.TerminalName,
                 BranchCode = localOutlet.BranchCode ?? $"BR-{localOutlet.BranchId:D2}",
                 BranchAddress = localOutlet.BranchAddress,
@@ -577,6 +586,22 @@
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[Login] ReferenceDataSync exception: {ex.Message}");
+                }
+
+                // Use the committed cache even when the reference request failed; never use an uncommitted response.
+                await Session.RefreshCachedMenuDisplayModeAsync();
+
+                // Check first-time initialization completion
+                using (var db = new POS.Client.Data.LocalPosDbContext())
+                {
+                    db.InitializeDatabase();
+                    var termConfig = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                        db.TerminalConfigs, t => t.TerminalId == outlet.TerminalId);
+                    if (termConfig?.IsInitialized != true)
+                    {
+                        Navigation.NavigateTo("/initialization");
+                        return;
+                    }
                 }
 
                 // Navigate to main POS dashboard

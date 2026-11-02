@@ -77,10 +77,20 @@ public class LocalPosDbContext : DbContext
         modelBuilder.Entity<LocalTax>().ToTable("LocalTaxes");
         modelBuilder.Entity<LocalDiscount>().ToTable("LocalDiscounts");
         modelBuilder.Entity<LocalPaymentMethod>().ToTable("LocalPaymentMethods");
-        modelBuilder.Entity<LocalTerminalConfig>().ToTable("LocalTerminalConfigs");
+        modelBuilder.Entity<LocalTerminalConfig>(entity =>
+        {
+            entity.ToTable("LocalTerminalConfigs");
+            entity.Property(e => e.IsInitialized).HasDefaultValue(false);
+            entity.Property(e => e.MenuDisplayMode).HasDefaultValue(POS.Shared.Models.MenuDisplayMode.TextOnly);
+        });
         modelBuilder.Entity<LocalInvoiceSequence>().ToTable("LocalInvoiceSequences");
         modelBuilder.Entity<LocalOrder>().ToTable("LocalOrders");
-        modelBuilder.Entity<LocalOrderItem>().ToTable("LocalOrderItems");
+        modelBuilder.Entity<LocalOrderItem>(entity =>
+        {
+            entity.ToTable("LocalOrderItems");
+            entity.Property(e => e.IsKitchenItem).HasDefaultValue(false);
+            entity.Property(e => e.IsBarItem).HasDefaultValue(false);
+        });
         modelBuilder.Entity<LocalPayment>().ToTable("LocalPayments");
         modelBuilder.Entity<LocalSyncOutbox>().ToTable("LocalSyncOutboxes");
         modelBuilder.Entity<LocalSyncAuditLog>().ToTable("LocalSyncAuditLogs");
@@ -110,9 +120,14 @@ public class LocalPosDbContext : DbContext
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN TableNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN HeadCount INTEGER NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalProducts ADD COLUMN IsBarItem INTEGER NOT NULL DEFAULT 0;"); } catch { }
-                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT" })
+                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }
+                    catch { /* Column already exists */ }
+                }
+                foreach (var col in new[] { "ProductShortCode TEXT", "IsKitchenItem INTEGER NOT NULL DEFAULT 0", "IsBarItem INTEGER NOT NULL DEFAULT 0", "ModifiersJson TEXT" })
+                {
+                    try { Database.ExecuteSqlRaw($"ALTER TABLE LocalOrderItems ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
                 }
 
@@ -266,8 +281,24 @@ public class LocalPosDbContext : DbContext
     {
         try
         {
-            var result = Database.SqlQueryRaw<string>("PRAGMA integrity_check;").FirstOrDefault();
-            return result?.Equals("ok", StringComparison.OrdinalIgnoreCase) ?? false;
+            var conn = Database.GetDbConnection();
+            bool close = false;
+            if (conn.State != System.Data.ConnectionState.Open)
+            {
+                conn.Open();
+                close = true;
+            }
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "PRAGMA integrity_check;";
+                var result = cmd.ExecuteScalar()?.ToString();
+                return string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                if (close) conn.Close();
+            }
         }
         catch
         {

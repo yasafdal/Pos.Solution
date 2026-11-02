@@ -1,0 +1,484 @@
+@page "/initialization"
+@page "/setup"
+@using POS.Client.Data
+@using POS.Client.Services
+@using POS.Shared.Interfaces
+@using POS.Shared.Models
+@using Microsoft.EntityFrameworkCore
+@inject PosSessionService Session
+@inject NavigationManager Navigation
+@inject HttpClient Http
+@inject IReferenceDataSyncService ReferenceDataSync
+@inject IOfflineCheckoutService OfflineCheckout
+@inject IPosConnectivityService ConnectivityService
+@inject ITerminalAddressProvider TerminalAddress
+@inject ITerminalService TerminalService
+@inject IUserService UserService
+@inject LocalPosDbContext LocalDb
+
+<PageTitle>POS Terminal Setup &amp; Initialization</PageTitle>
+
+<div class="init-page-container">
+    <div class="init-card shadow-lg">
+        <!-- Header -->
+        <header class="init-header">
+            <div class="init-icon-badge">
+                <i class="bi bi-shield-check"></i>
+            </div>
+            <div>
+                <h3 class="init-title">POS Terminal Provisioning</h3>
+                <p class="init-subtitle">Hardware verification, local-first database setup, and master catalog synchronization</p>
+            </div>
+        </header>
+
+        <!-- Progress Overview -->
+        <div class="init-progress-bar-wrap">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="small fw-semibold text-secondary">Initialization Progress</span>
+                <span class="small fw-bold text-primary">@ProgressPercentage%</span>
+            </div>
+            <div class="progress" style="height: 8px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                     role="progressbar"
+                     style="width: @ProgressPercentage%;"
+                     aria-valuenow="@ProgressPercentage"
+                     aria-valuemin="0"
+                     aria-valuemax="100"></div>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(overallError))
+        {
+            <div class="alert alert-danger d-flex align-items-center gap-2 small mb-3 py-2 px-3 rounded-3" role="alert">
+                <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+                <div class="flex-grow-1">@overallError</div>
+            </div>
+        }
+
+        <!-- Checklist Steps Table -->
+        <div class="checklist-table-wrap">
+            <ul class="checklist-items">
+                @foreach (var step in Steps)
+                {
+                    <li class="checklist-item @GetStepClass(step)">
+                        <div class="step-status-icon">
+                            @if (step.Status == StepStatus.Completed)
+                            {
+                                <i class="bi bi-check-circle-fill text-success fs-5"></i>
+                            }
+                            else if (step.Status == StepStatus.InProgress)
+                            {
+                                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                            }
+                            else if (step.Status == StepStatus.Failed)
+                            {
+                                <i class="bi bi-x-circle-fill text-danger fs-5"></i>
+                            }
+                            else
+                            {
+                                <i class="bi bi-circle text-muted fs-5"></i>
+                            }
+                        </div>
+                        <div class="step-content">
+                            <div class="d-flex justify-content-between align-items-baseline">
+                                <span class="step-title">@step.Title</span>
+                                <span class="step-status-badge @step.Status.ToString().ToLowerInvariant()">@step.StatusText</span>
+                            </div>
+                            <p class="step-desc">@step.Description</p>
+                            @if (!string.IsNullOrEmpty(step.DetailMessage))
+                            {
+                                <div class="step-detail-msg @(step.Status == StepStatus.Failed ? "text-danger" : "text-muted")">
+                                    @step.DetailMessage
+                                </div>
+                            }
+                        </div>
+                    </li>
+                }
+            </ul>
+        </div>
+
+        <!-- Action Footer -->
+        <footer class="init-footer d-flex justify-content-between align-items-center pt-3 border-top">
+            <div class="text-secondary small">
+                @if (IsAllCompleted)
+                {
+                    <span class="text-success fw-bold"><i class="bi bi-check-all me-1"></i>All provisioning checks passed. POS is ready for operation.</span>
+                }
+                else if (isInitializing)
+                {
+                    <span>Running provisioning step @(currentStepIndex + 1) of @Steps.Count...</span>
+                }
+                else
+                {
+                    <span>Click Start Initialization to begin device provisioning.</span>
+                }
+            </div>
+
+            <div class="d-flex gap-2">
+                @if (!IsAllCompleted)
+                {
+                    <button type="button" class="btn btn-primary px-4 py-2 fw-bold rounded-3 shadow-sm"
+                            disabled="@isInitializing"
+                            @onclick="RunInitializationAsync">
+                        @if (isInitializing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            <span>Initializing...</span>
+                        }
+                        else if (hasFailures)
+                        {
+                            <i class="bi bi-arrow-clockwise me-1"></i>
+                            <span>Retry Failed Steps</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-play-circle-fill me-1"></i>
+                            <span>Start Initialization</span>
+                        }
+                    </button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-success px-4 py-2 fw-bold rounded-3 shadow-sm"
+                            @onclick="ProceedToPos">
+                        <i class="bi bi-box-arrow-in-right me-1"></i>
+                        <span>Proceed to POS</span>
+                    </button>
+                }
+            </div>
+        </footer>
+    </div>
+</div>
+
+@code {
+    public enum StepStatus { Pending, InProgress, Completed, Failed }
+
+    public class SetupStep
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public StepStatus Status { get; set; } = StepStatus.Pending;
+        public string StatusText => Status switch
+        {
+            StepStatus.Pending => "Pending",
+            StepStatus.InProgress => "In Progress",
+            StepStatus.Completed => "Completed",
+            StepStatus.Failed => "Failed",
+            _ => "Pending"
+        };
+        public string? DetailMessage { get; set; }
+    }
+
+    private List<SetupStep> Steps = new()
+    {
+        new() { Id = 1, Title = "1. Local SQLite Database & WAL Engine", Description = "Verify local SQLite storage, WAL journaling mode, and table schema integrity." },
+        new() { Id = 2, Title = "2. Terminal Identification & Server Connectivity", Description = "Verify terminal network address, device identifier, and active backend registration." },
+        new() { Id = 3, Title = "3. Staff & Cashier Credentials Security Cache", Description = "Download and cryptographically cache authorized cashier credentials and PIN hashes." },
+        new() { Id = 4, Title = "4. Master Catalog, Categories & Modifiers", Description = "Download products, categories, pricing, modifier groups, and options into SQLite." },
+        new() { Id = 5, Title = "5. Taxes, Discounts & Payment Methods", Description = "Provision statutory discount rules, VAT settings, and payment method configurations." },
+        new() { Id = 6, Title = "6. Fiscal Invoice Sequence Allocation", Description = "Verify pre-allocated invoice series range and local sequence numbering state." },
+        new() { Id = 7, Title = "7. Operational Readiness Sign-Off", Description = "Execute final offline readiness validation and record durable initialization checkpoint." }
+    };
+
+    private bool isInitializing = false;
+    private int currentStepIndex = 0;
+    private string? overallError;
+    private bool hasFailures => Steps.Any(s => s.Status == StepStatus.Failed);
+    private bool IsAllCompleted => Steps.All(s => s.Status == StepStatus.Completed);
+    private int ProgressPercentage => (int)Math.Round((double)Steps.Count(s => s.Status == StepStatus.Completed) / Steps.Count * 100);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        // Check if already completed previously
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+        var cfg = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == (Session.Terminal != null ? Session.Terminal.TerminalId : 1));
+        if (cfg?.IsInitialized == true && await OfflineCheckout.IsReadyForOfflineCheckoutAsync(cfg.TerminalId))
+        {
+            foreach (var step in Steps)
+            {
+                step.Status = StepStatus.Completed;
+                step.DetailMessage = "Previously verified and recorded in local checkpoint.";
+            }
+        }
+    }
+
+    private string GetStepClass(SetupStep step) => step.Status switch
+    {
+        StepStatus.Completed => "step-completed",
+        StepStatus.InProgress => "step-in-progress",
+        StepStatus.Failed => "step-failed",
+        _ => "step-pending"
+    };
+
+    private async Task RunInitializationAsync()
+    {
+        if (isInitializing) return;
+        isInitializing = true;
+        overallError = null;
+
+        try
+        {
+            int terminalId = Session.Terminal?.TerminalId ?? 1;
+
+            // Step 1: Database & Integrity
+            currentStepIndex = 0;
+            var step1 = Steps[0];
+            step1.Status = StepStatus.InProgress;
+            StateHasChanged();
+            await Task.Delay(200);
+
+            try
+            {
+                LocalDb.InitializeDatabase();
+                if (!LocalDb.VerifyIntegrity())
+                    throw new InvalidOperationException("SQLite PRAGMA integrity_check failed. Local database is corrupted.");
+                step1.Status = StepStatus.Completed;
+                step1.DetailMessage = "SQLite initialized with WAL mode, busy_timeout=5000, and schema verified.";
+            }
+            catch (Exception ex)
+            {
+                step1.Status = StepStatus.Failed;
+                step1.DetailMessage = ex.Message;
+                throw;
+            }
+            StateHasChanged();
+
+            // Step 2: Connectivity & Terminal
+            currentStepIndex = 1;
+            var step2 = Steps[1];
+            step2.Status = StepStatus.InProgress;
+            StateHasChanged();
+            await Task.Delay(200);
+
+            try
+            {
+                var conn = await ConnectivityService.CheckConnectivityAsync();
+                if (conn != TerminalConnectivityState.OnlineAndHealthy)
+                    throw new InvalidOperationException("Backend API is currently unreachable. First-time setup requires an active network connection to the server.");
+
+                if (Session.Terminal == null || Session.Terminal.TerminalId <= 0)
+                    throw new InvalidOperationException("Terminal is not registered or resolved. Log in online to assign terminal identity.");
+
+                step2.Status = StepStatus.Completed;
+                step2.DetailMessage = $"Terminal #{Session.Terminal.TerminalId} ({Session.Terminal.TerminalCode}) connected to Branch #{Session.Terminal.BranchId}.";
+            }
+            catch (Exception ex)
+            {
+                step2.Status = StepStatus.Failed;
+                step2.DetailMessage = ex.Message;
+                throw;
+            }
+            StateHasChanged();
+
+            // Step 3: Cashier Credentials
+            currentStepIndex = 2;
+            var step3 = Steps[2];
+            step3.Status = StepStatus.InProgress;
+            StateHasChanged();
+            await Task.Delay(200);
+
+            try
+            {
+                using var db = new LocalPosDbContext();
+                db.InitializeDatabase();
+                var users = await UserService.GetUsersAsync();
+                var validUsers = users?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****").ToList();
+                if (validUsers != null && validUsers.Count > 0)
+                {
+                    await LocalPosDbContext.WriteLock.WaitAsync();
+                    try
+                    {
+                        await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
+                        db.ChangeTracker.Clear();
+                        foreach (var u in validUsers)
+                        {
+                            var pinHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(u.PinCode!.Trim())));
+                            db.Cashiers.Add(new LocalCashier
+                            {
+                                UserId = u.UserId,
+                                Username = u.Username,
+                                Role = u.Role ?? "Cashier",
+                                PinHash = pinHash
+                            });
+                        }
+                        await db.SaveChangesAsync();
+                    }
+                    finally
+                    {
+                        LocalPosDbContext.WriteLock.Release();
+                    }
+                }
+                var cashierCount = await db.Cashiers.CountAsync();
+                step3.Status = StepStatus.Completed;
+                step3.DetailMessage = $"{cashierCount} staff account(s) securely cached with SHA-256 PIN hashes for offline sign-in.";
+            }
+            catch (Exception ex)
+            {
+                step3.Status = StepStatus.Failed;
+                step3.DetailMessage = ex.Message;
+                throw;
+            }
+            StateHasChanged();
+
+            // Step 4: Master Catalog & Modifiers
+            currentStepIndex = 3;
+            var step4 = Steps[3];
+            step4.Status = StepStatus.InProgress;
+            StateHasChanged();
+            await Task.Delay(200);
+
+            try
+            {
+                bool syncOk = await ReferenceDataSync.SyncReferenceDataAsync(terminalId, Http);
+                if (!syncOk)
+                    throw new InvalidOperationException("Reference data synchronization failed. Verify API connection and terminal permissions.");
+
+                using var db = new LocalPosDbContext();
+                db.InitializeDatabase();
+                int prodCount = await db.Products.CountAsync();
+                int catCount = await db.Categories.CountAsync();
+                int modCount = await db.ModifierGroups.CountAsync();
+
+                if (prodCount == 0)
+                    throw new InvalidOperationException("Server catalog returned 0 active products. Add products in POS.Web before operating.");
+
+                step4.Status = StepStatus.Completed;
+                step4.DetailMessage = $"{prodCount} products across {catCount} categories and {modCount} modifier groups downloaded and verified.";
+            }
+            catch (Exception ex)
+            {
+                step4.Status = StepStatus.Failed;
+                step4.DetailMessage = ex.Message;
+                throw;
+            }
+            StateHasChanged();
+
+            // Step 5: Taxes, Discounts & Payment Methods
+            currentStepIndex = 4;
+            var step5 = Steps[4];
+            step5.Status = StepStatus.InProgress;
+            StateHasChanged();
+            await Task.Delay(200);
+
+            try
+            {
+                using var db = new LocalPosDbContext();
+                db.InitializeDatabase();
+                int taxCount = await db.Taxes.CountAsync();
+                int discCount = await db.Discounts.CountAsync();
+                int pmCount = await db.PaymentMethods.CountAsync();
+                int cmcCount = await db.CashMovementCategories.CountAsync();
+
+                step5.Status = StepStatus.Completed;
+                step5.DetailMessage = $"{taxCount} tax rates, {discCount} discounts, {pmCount} payment tenders, and {cmcCount} cash categories ready.";
+            }
+            catch (Exception ex)
+            {
+                step5.Status = StepStatus.Failed;
+                step5.DetailMessage = ex.Message;
+                throw;
+            }
+            StateHasChanged();
+
+            // Step 6: Invoice Sequence
+            currentStepIndex = 5;
+            var step6 = Steps[5];
+            step6.Status = StepStatus.InProgress;
+            StateHasChanged();
+            await Task.Delay(200);
+
+            try
+            {
+                using var db = new LocalPosDbContext();
+                db.InitializeDatabase();
+                var seq = await db.InvoiceSequences.FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.IsActive);
+                if (seq == null)
+                    throw new InvalidOperationException("No active invoice sequence allocated for this terminal. Configure an invoice series in POS.Web.");
+                if (seq.LastIssuedNumber >= seq.EndingNumber)
+                    throw new InvalidOperationException($"Allocated invoice series '{seq.SeriesCode}' is exhausted ({seq.LastIssuedNumber}/{seq.EndingNumber}). Allocate a new series in POS.Web.");
+
+                long remaining = seq.EndingNumber - seq.LastIssuedNumber;
+                step6.Status = StepStatus.Completed;
+                step6.DetailMessage = $"Active series '{seq.SeriesCode}' verified. Range: {seq.StartingNumber}–{seq.EndingNumber} ({remaining} invoice numbers available).";
+            }
+            catch (Exception ex)
+            {
+                step6.Status = StepStatus.Failed;
+                step6.DetailMessage = ex.Message;
+                throw;
+            }
+            StateHasChanged();
+
+            // Step 7: Final Operational Readiness
+            currentStepIndex = 6;
+            var step7 = Steps[6];
+            step7.Status = StepStatus.InProgress;
+            StateHasChanged();
+            await Task.Delay(200);
+
+            try
+            {
+                bool ready = await OfflineCheckout.IsReadyForOfflineCheckoutAsync(terminalId);
+                if (!ready)
+                    throw new InvalidOperationException("Offline checkout readiness pre-check failed. Verify catalog, sequences, and local database tables.");
+
+                // Mark initialized in SQLite checkpoint
+                await LocalPosDbContext.WriteLock.WaitAsync();
+                try
+                {
+                    using var db = new LocalPosDbContext();
+                    db.InitializeDatabase();
+                    var cfg = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId);
+                    if (cfg != null)
+                    {
+                        cfg.IsInitialized = true;
+                        cfg.LastSyncAt = DateTime.UtcNow;
+                        await db.SaveChangesAsync();
+                    }
+                }
+                finally
+                {
+                    LocalPosDbContext.WriteLock.Release();
+                }
+
+                if (Session.Terminal != null)
+                {
+                    Session.Terminal.IsInitialized = true;
+                }
+
+                step7.Status = StepStatus.Completed;
+                step7.DetailMessage = "Initialization checkpoint recorded. POS terminal is certified ready for online and offline operations.";
+            }
+            catch (Exception ex)
+            {
+                step7.Status = StepStatus.Failed;
+                step7.DetailMessage = ex.Message;
+                throw;
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            overallError = "Initialization interrupted: " + ex.Message;
+        }
+        finally
+        {
+            isInitializing = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ProceedToPos()
+    {
+        if (!IsAllCompleted) return;
+        Navigation.NavigateTo("/new-sale");
+    }
+}

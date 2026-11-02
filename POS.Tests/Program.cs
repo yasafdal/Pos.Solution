@@ -117,6 +117,12 @@ public static partial class Program
         await RunTestAsync("SEC06. BOLA / IDOR manager cross-branch terminal/outlet hierarchy protection", TestSecurity_BOLA_ManagerCrossBranchHierarchyProtection);
         await RunTestAsync("SEC07. File upload size bounding (5MB max)", TestSecurity_FileUploadSizeValidation);
 
+        await RunTestAsync("MENU01. Stable terminal menu display contracts and validation", TestMenuDisplayModeContracts);
+        await RunTestAsync("MENU02. Per-terminal CRUD, resolution and offline reference round trip", TestMenuDisplayModeRoundTrip);
+        await RunTestAsync("MENU03. Unsupported menu modes rejected without mutation", TestMenuDisplayModeInvalidServerValues);
+        await RunTestAsync("MENU04. Supervisor attributes, manager branch isolation and cashier terminal isolation", TestMenuDisplayModeAuthorization);
+        await RunTestAsync("MENU05. PostgreSQL integer default, allowed values and discoverable migration", TestMenuDisplayModeDatabaseModel);
+
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
     }

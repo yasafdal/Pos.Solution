@@ -6,7 +6,7 @@ internal static class HierarchyMapping
 {
     internal static TerminalDto ToDto(Terminal t) => new()
     {
-        TerminalId = t.TerminalId, OutletId = t.OutletId, BranchId = t.BranchId,
+        TerminalId = t.TerminalId, MenuDisplayMode = t.MenuDisplayMode, OutletId = t.OutletId, BranchId = t.BranchId,
         BranchName = t.Branch?.Name ?? string.Empty, OutletName = t.Outlet?.Name ?? string.Empty,
         TerminalCode = t.TerminalCode, Name = t.Name, DeviceIdentifier = t.DeviceIdentifier,
         IpAddress = t.IpAddress, PTUNumber = t.Ptunumber, MINNumber = t.Minnumber,

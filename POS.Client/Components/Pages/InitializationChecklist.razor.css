@@ -1,0 +1,168 @@
+.init-page-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100vh - 80px);
+    padding: 1.5rem 1rem;
+    background-color: var(--pos-bg-root, #0f172a);
+}
+
+.init-card {
+    width: 100%;
+    max-width: 760px;
+    background-color: var(--pos-bg-card, #1e293b);
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: 16px;
+    padding: 2rem;
+    color: var(--pos-text-primary, #f8fafc);
+}
+
+.init-header {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.init-icon-badge {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6rem;
+    color: #ffffff;
+    box-shadow: 0 8px 16px rgba(59, 130, 246, 0.35);
+    flex-shrink: 0;
+}
+
+.init-title {
+    font-weight: 800;
+    font-size: 1.4rem;
+    margin: 0;
+    color: #ffffff;
+    letter-spacing: -0.02em;
+}
+
+.init-subtitle {
+    font-size: 0.9rem;
+    color: var(--pos-text-secondary, #94a3b8);
+    margin: 0.25rem 0 0 0;
+}
+
+.init-progress-bar-wrap {
+    background-color: #0f172a;
+    border: 1px solid var(--pos-border-color, #334155);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.checklist-table-wrap {
+    margin-bottom: 1.5rem;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.checklist-items {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.checklist-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+    background-color: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    transition: all 0.15s ease;
+}
+
+.step-status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    padding-top: 0.1rem;
+    flex-shrink: 0;
+}
+
+.step-content {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.step-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #f8fafc;
+}
+
+.step-desc {
+    font-size: 0.82rem;
+    color: #94a3b8;
+    margin: 0.2rem 0 0 0;
+    line-height: 1.35;
+}
+
+.step-detail-msg {
+    font-size: 0.8rem;
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+    font-family: 'Consolas', monospace;
+}
+
+.step-status-badge {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.step-status-badge.pending {
+    background-color: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+}
+
+.step-status-badge.inprogress {
+    background-color: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.step-status-badge.completed {
+    background-color: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.step-status-badge.failed {
+    background-color: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.checklist-item.step-completed {
+    border-color: rgba(34, 197, 94, 0.3);
+}
+
+.checklist-item.step-in-progress {
+    border-color: rgba(59, 130, 246, 0.5);
+    background-color: rgba(15, 23, 42, 0.8);
+}
+
+.checklist-item.step-failed {
+    border-color: rgba(239, 68, 68, 0.4);
+}

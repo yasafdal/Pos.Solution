@@ -276,6 +276,19 @@
                                 <InputText @bind-Value="currentTerminal.IpAddress" class="form-control rounded-3 font-monospace" placeholder="e.g. 192.168.1.100" />
                             </div>
 
+                            <div class="col-12">
+                                <div class="p-3 bg-light rounded-3 border">
+                                    <h6 class="fw-bold text-dark small mb-2">POS Display Settings</h6>
+                                    <label for="menuDisplayMode" class="form-label text-dark fw-semibold small">Product Menu Display Mode</label>
+                                    <InputSelect id="menuDisplayMode" @bind-Value="currentTerminal.MenuDisplayMode" class="form-select rounded-3" aria-describedby="menuDisplayModeHelp">
+                                        <option value="@MenuDisplayMode.TextOnly">Text Only — Recommended for cashier terminals.</option>
+                                        <option value="@MenuDisplayMode.ImageAndText">Image &amp; Text — Recommended for visual ordering and self-service terminals.</option>
+                                    </InputSelect>
+                                    <ValidationMessage For="@(() => currentTerminal.MenuDisplayMode)" class="text-danger small" />
+                                    <div id="menuDisplayModeHelp" class="form-text">Applies to this terminal after its next online sign-in and reference-data refresh. Saved locally for offline use.</div>
+                                </div>
+                            </div>
+
                             <!-- BIR Fields Section -->
                             <div class="col-12">
                                 <div class="p-3 bg-light rounded-3 border">
@@ -704,6 +717,7 @@
             PTUNumber = terminal.PTUNumber,
             MINNumber = terminal.MINNumber,
             SerialNumber = terminal.SerialNumber,
+            MenuDisplayMode = terminal.MenuDisplayMode,
             IsActive = terminal.IsActive
         };
         isEditingTerminal = true;
@@ -813,6 +827,7 @@
                 PTUNumber = terminal.PTUNumber,
                 MINNumber = terminal.MINNumber,
                 SerialNumber = terminal.SerialNumber,
+                MenuDisplayMode = terminal.MenuDisplayMode,
                 IsActive = !terminal.IsActive
             };
 
