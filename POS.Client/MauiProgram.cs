@@ -68,6 +68,8 @@ namespace POS.Client
             builder.Services.AddScoped<IHeldSaleService, ClientHeldSaleService>();
 #if WINDOWS
             builder.Services.AddSingleton<IReceiptPrinter, POS.Client.Platforms.Windows.WindowsReceiptPrinter>();
+#elif ANDROID
+            builder.Services.AddSingleton<IReceiptPrinter, POS.Client.Platforms.Android.AndroidReceiptPrinter>();
 #else
             builder.Services.AddSingleton<IReceiptPrinter, UnsupportedReceiptPrinter>();
 #endif
