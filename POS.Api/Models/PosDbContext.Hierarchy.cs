@@ -57,6 +57,12 @@ public partial class PosDbContext
             e.Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
             e.Property(x => x.UpdatedAt).HasColumnType("timestamp without time zone");
             e.Property(x => x.DeactivatedAt).HasColumnType("timestamp without time zone");
+            e.Property(x => x.Uuid).HasMaxLength(36);
+            e.Property(x => x.ActivationCode).HasMaxLength(10);
+            e.Property(x => x.IsActivationCodeUsed).HasDefaultValue(false);
+            e.Property(x => x.AllowSync).HasDefaultValue(true);
+            e.HasIndex(x => x.Uuid).IsUnique().HasDatabaseName("UX_Terminals_Uuid");
+            e.HasIndex(x => x.ActivationCode).HasDatabaseName("IX_Terminals_ActivationCode");
             e.HasIndex(x => new { x.OutletId, x.TerminalCode }).IsUnique().HasDatabaseName("UX_Terminals_Outlet_Code");
             e.HasIndex(x => x.DeviceIdentifier).IsUnique().HasDatabaseName("UX_Terminals_DeviceIdentifier");
             e.HasIndex(x => x.IpAddress).IsUnique().HasDatabaseName("UX_Terminals_IpAddress");

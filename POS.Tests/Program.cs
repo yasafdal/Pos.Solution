@@ -98,6 +98,7 @@ public static partial class Program
         await RunTestAsync("46. Supervisor recount preserves original declaration and appends immutable recount audit trail", Test46_SupervisorRecountPreservesOriginalDeclarationAndAuditTrail);
         await RunTestAsync("47. Sales report terminal breakdown, payment split isolation, and net refund separation", Test47_SalesReportTerminalBreakdownAndSeparationOfRefunds);
         await RunTestAsync("48. Back-office shift reconciliation, historical denomination fallback, and terminal filtering", Test48_BackOfficeShiftReconciliationAndTerminalFiltering);
+        await RunTestAsync("49. Local-First terminal activation, UUIDv4, pairing code lifecycle, and sync toggle", Test49_TerminalLocalFirstActivation);
 
         await RunTestAsync("Z01. Fixed Manila business date", TestZReadingBusinessDate);
         await RunTestAsync("Z02. Immutable idempotent generation", TestZReadingGeneration);

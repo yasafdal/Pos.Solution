@@ -114,6 +114,10 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         KitchenPrinterName = priorConfig?.KitchenPrinterName,
                         BarPrinterName = priorConfig?.BarPrinterName,
                         IsInitialized = priorConfig?.IsInitialized ?? false,
+                        DeviceUuid = priorConfig?.DeviceUuid,
+                        IsActivated = priorConfig?.IsActivated ?? true,
+                        AllowSync = priorConfig?.AllowSync ?? true,
+                        ActivatedAt = priorConfig?.ActivatedAt,
                         LastSyncVersion = data.Version,
                         LastSyncAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow
                     });

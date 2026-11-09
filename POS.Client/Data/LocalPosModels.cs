@@ -148,6 +148,10 @@ public class LocalTerminalConfig
     public bool IsInitialized { get; set; } = false;
     public string? LastSyncVersion { get; set; }
     public DateTime? LastSyncAt { get; set; }
+    public string? DeviceUuid { get; set; }
+    public bool IsActivated { get; set; } = false;
+    public bool AllowSync { get; set; } = true;
+    public DateTime? ActivatedAt { get; set; }
 }
 
 public class LocalInvoiceSequence

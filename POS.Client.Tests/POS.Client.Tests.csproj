@@ -21,6 +21,7 @@
     <Compile Include="../POS.Client/Services/OfflineRetryPolicy.cs" Link="Client/OfflineRetryPolicy.cs" />
     <Compile Include="../POS.Client/Services/OfflineTransactionSyncService.cs" Link="Client/OfflineTransactionSyncService.cs" />
     <Compile Include="../POS.Client/Services/ReferenceDataSyncService.cs" Link="Client/ReferenceDataSyncService.cs" />
+    <Compile Include="../POS.Client/Services/DeviceActivationService.cs" Link="Client/DeviceActivationService.cs" />
     <Compile Include="../POS.Tests/ShiftCacheRegressionTests.cs" Link="ShiftCacheRegressionTests.cs" />
   </ItemGroup>
 </Project>

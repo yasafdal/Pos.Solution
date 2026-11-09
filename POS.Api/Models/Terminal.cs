@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace POS.Api.Models;
@@ -30,4 +30,10 @@ public partial class Terminal
     public string? SerialNumber { get; set; }
     public DateTime? DeactivatedAt { get; set; }
     public virtual Branch Branch { get; set; } = null!;
+
+    // Local-First POS architecture fields
+    public string? Uuid { get; set; }
+    public string? ActivationCode { get; set; }
+    public bool IsActivationCodeUsed { get; set; } = false;
+    public bool AllowSync { get; set; } = true;
 }

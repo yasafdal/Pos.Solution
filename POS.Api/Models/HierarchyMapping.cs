@@ -10,7 +10,8 @@ internal static class HierarchyMapping
         BranchName = t.Branch?.Name ?? string.Empty, OutletName = t.Outlet?.Name ?? string.Empty,
         TerminalCode = t.TerminalCode, Name = t.Name, DeviceIdentifier = t.DeviceIdentifier,
         IpAddress = t.IpAddress, PTUNumber = t.Ptunumber, MINNumber = t.Minnumber,
-        SerialNumber = t.SerialNumber, IsActive = t.IsActive, CreatedAt = t.CreatedAt, UpdatedAt = t.UpdatedAt
+        SerialNumber = t.SerialNumber, IsActive = t.IsActive, CreatedAt = t.CreatedAt, UpdatedAt = t.UpdatedAt,
+        Uuid = t.Uuid, ActivationCode = t.ActivationCode, IsActivationCodeUsed = t.IsActivationCodeUsed, AllowSync = t.AllowSync
     };
 
     internal static OutletDto ToDto(Outlet o) => new()

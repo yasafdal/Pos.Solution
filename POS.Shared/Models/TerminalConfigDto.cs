@@ -25,4 +25,6 @@ public class TerminalConfigDto
     public string? BarPrinterName { get; set; }
     public bool IsInitialized { get; set; } = false;
     public string? Token { get; set; }
+    public string? Uuid { get; set; }
+    public bool AllowSync { get; set; } = true;
 }

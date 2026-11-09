@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Net;
 using POS.Api.Models;
 using POS.Shared.Models;
+using System.Security.Cryptography;
 
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -29,33 +30,47 @@ namespace POS.Api.Controllers
         // the terminal; it is not an authentication or authorization credential.
         [Authorize]
         [HttpGet("resolve-terminal")]
-        public async Task<IActionResult> ResolveTerminal([FromQuery] string ipAddress)
+        public async Task<IActionResult> ResolveTerminal([FromQuery] string? ipAddress = null, [FromQuery] string? deviceUuid = null)
         {
-            if (!IPAddress.TryParse(ipAddress, out var address) || IPAddress.IsLoopback(address)
-                || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
-                return BadRequest("A valid non-loopback terminal IP address is required.");
-
-            if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-            if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any)
-                || address.Equals(IPAddress.Broadcast) || address.IsIPv6Multicast
-                || (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
-                    && address.GetAddressBytes()[0] >= 224))
-                return BadRequest("A unicast terminal IP address is required.");
-            // Parse both sides so equivalent IPv6 spellings cannot hide duplicates.
-            // This is a read-only lookup; no schema or stored identifier is changed.
-            var outlets = await _context.Terminals.AsNoTracking()
-                .Where(o => o.DeviceIdentifier != null || o.IpAddress != null)
+            var query = _context.Terminals.AsNoTracking()
                 .Select(o => new { o.TerminalId, o.BranchId, o.OutletId, o.TerminalCode, o.IpAddress, o.Ptunumber, o.Minnumber, o.SerialNumber, OutletName = o.Outlet.Name, OutletActive = o.Outlet.IsActive, o.Name, o.DeviceIdentifier,
                     o.IsActive, o.MenuDisplayMode, BranchActive = o.Branch.IsActive,
                     BranchName = o.Branch.Name, o.Branch.Code,
                     BranchAddress = o.Branch.Address, BranchPhone = o.Branch.Phone,
                     o.Branch.BusinessTypeId,
-                    BusinessType = o.Branch.BusinessType == null ? null : o.Branch.BusinessType.Type })
-                .ToListAsync();
-            var matches = outlets.Where(o => MatchesIp(o.IpAddress, NormalizeIp(address)) || MatchesIp(o.DeviceIdentifier, NormalizeIp(address))).ToList();
-            if (matches.Count == 0) return NotFound("This IP address is not listed");
-            if (matches.Count != 1) return Conflict("This IP address is assigned to multiple terminals. Contact an administrator.");
-            var outlet = matches[0];
+                    BusinessType = o.Branch.BusinessType == null ? null : o.Branch.BusinessType.Type,
+                    o.Uuid, o.AllowSync });
+
+            var matchedByUuid = !string.IsNullOrWhiteSpace(deviceUuid)
+                ? await query.Where(o => o.Uuid == deviceUuid.Trim()).ToListAsync()
+                : new();
+
+            if (matchedByUuid.Count == 0)
+            {
+                if (!string.IsNullOrWhiteSpace(deviceUuid) && string.IsNullOrWhiteSpace(ipAddress))
+                    return NotFound("This device UUID is not paired to an active terminal.");
+
+                if (!IPAddress.TryParse(ipAddress, out var address) || IPAddress.IsLoopback(address)
+                    || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
+                    return BadRequest("A valid non-loopback terminal IP address is required.");
+
+                if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+                if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any)
+                    || address.Equals(IPAddress.Broadcast) || address.IsIPv6Multicast
+                    || (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+                        && address.GetAddressBytes()[0] >= 224))
+                    return BadRequest("A unicast terminal IP address is required.");
+                // Parse both sides so equivalent IPv6 spellings cannot hide duplicates.
+                // This is a read-only lookup; no schema or stored identifier is changed.
+                var outlets = await query
+                    .Where(o => o.DeviceIdentifier != null || o.IpAddress != null)
+                    .ToListAsync();
+                matchedByUuid = outlets.Where(o => MatchesIp(o.IpAddress, NormalizeIp(address)) || MatchesIp(o.DeviceIdentifier, NormalizeIp(address))).ToList();
+                if (matchedByUuid.Count == 0) return NotFound("This IP address is not listed");
+                if (matchedByUuid.Count != 1) return Conflict("This IP address is assigned to multiple terminals. Contact an administrator.");
+            }
+
+            var outlet = matchedByUuid[0];
             if (!outlet.IsActive || !outlet.OutletActive || !outlet.BranchActive)
                 return Conflict("This terminal, outlet or branch is inactive. Contact an administrator.");
             if (string.IsNullOrWhiteSpace(outlet.Code))
@@ -71,7 +86,8 @@ namespace POS.Api.Controllers
                     new Claim(ClaimTypes.Role, User.FindFirst(ClaimTypes.Role)?.Value ?? "Cashier"),
                     new Claim("branch_id", outlet.BranchId.ToString()),
                     new Claim("terminal_id", outlet.TerminalId.ToString()),
-                    new Claim("outlet_id", outlet.OutletId.ToString())
+                    new Claim("outlet_id", outlet.OutletId.ToString()),
+                    new Claim("terminal_uuid", outlet.Uuid ?? string.Empty)
                 };
 
                 var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
@@ -102,7 +118,9 @@ namespace POS.Api.Controllers
                 TerminalName = outlet.Name,
                 BusinessTypeId = outlet.BusinessTypeId,
                 BusinessType = outlet.BusinessType,
-                Token = token
+                Token = token,
+                Uuid = outlet.Uuid,
+                AllowSync = outlet.AllowSync
             });
         }
 
@@ -141,8 +159,23 @@ namespace POS.Api.Controllers
                 return Forbid();
             var error = await ValidateTerminal(dto, 0);
             if (error != null) return BadRequest(error);
-            var terminal = new Terminal { CreatedAt = DateTime.UtcNow };
+
+            string generatedActivationCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+
+            var terminal = new Terminal
+            {
+                CreatedAt = DateTime.UtcNow,
+                Uuid = null,
+                ActivationCode = generatedActivationCode,
+                IsActivationCodeUsed = false,
+                AllowSync = dto.AllowSync
+            };
             ApplyTerminal(terminal, dto);
+            terminal.Uuid = null;
+            terminal.ActivationCode = generatedActivationCode;
+            terminal.IsActivationCodeUsed = false;
+            terminal.AllowSync = dto.AllowSync;
+
             _context.Terminals.Add(terminal);
             try { await _context.SaveChangesAsync(); }
             catch (DbUpdateException) { return Conflict("Terminal code, device identifier or IP address is already registered. Refresh before retrying."); }
@@ -180,6 +213,144 @@ namespace POS.Api.Controllers
             try { await _context.SaveChangesAsync(); }
             catch (DbUpdateException) { return Conflict("Terminal has related records and cannot be deleted."); }
             return NoContent();
+        }
+
+        [AllowAnonymous]
+        [HttpPost("activate")]
+        public async Task<ActionResult<TerminalActivationResponseDto>> ActivateTerminal([FromBody] TerminalActivationRequestDto request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.ActivationCode))
+                return BadRequest(new TerminalActivationResponseDto { Success = false, Message = "A valid 6-digit activation code is required." });
+
+            string? clientUuid = !string.IsNullOrWhiteSpace(request.DeviceUuid)
+                ? request.DeviceUuid.Trim()
+                : request.DeviceIdentifier?.Trim();
+            if (string.IsNullOrWhiteSpace(clientUuid))
+                return BadRequest(new TerminalActivationResponseDto { Success = false, Message = "A client-generated Device UUID is required." });
+
+            string code = request.ActivationCode.Trim();
+            var terminal = await _context.Terminals
+                .Include(t => t.Outlet)
+                .Include(t => t.Branch)
+                .SingleOrDefaultAsync(t => t.ActivationCode == code);
+
+            if (terminal == null)
+                return NotFound(new TerminalActivationResponseDto { Success = false, Message = "Invalid activation code. Please check the code and try again." });
+
+            if (terminal.IsActivationCodeUsed)
+                return Conflict(new TerminalActivationResponseDto { Success = false, Message = "This activation code has already been used." });
+
+            if (!terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Branch.IsActive)
+                return Conflict(new TerminalActivationResponseDto { Success = false, Message = "This terminal, outlet, or branch is inactive. Contact an administrator." });
+
+            // Detach client UUID from any previous terminal before binding to this terminal
+            var existingUuidOwners = await _context.Terminals
+                .Where(t => t.TerminalId != terminal.TerminalId && t.Uuid == clientUuid)
+                .ToListAsync();
+            foreach (var old in existingUuidOwners)
+            {
+                old.Uuid = null;
+            }
+
+            // Bind client-generated UUID (overwriting any previous UUID on this terminal)
+            terminal.Uuid = clientUuid;
+
+            if (!string.IsNullOrWhiteSpace(request.DeviceIdentifier))
+            {
+                string devId = request.DeviceIdentifier.Trim().ToLowerInvariant();
+                if (IPAddress.TryParse(devId, out var devIp)) devId = NormalizeIp(devIp);
+
+                var duplicateDev = await _context.Terminals.AsNoTracking()
+                    .AnyAsync(t => t.TerminalId != terminal.TerminalId && t.DeviceIdentifier == devId);
+                if (duplicateDev)
+                    return Conflict(new TerminalActivationResponseDto { Success = false, Message = "Device identifier is already registered to another terminal." });
+
+                terminal.DeviceIdentifier = devId;
+            }
+
+            terminal.IsActivationCodeUsed = true;
+            terminal.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            string? token = null;
+            var jwtKey = _configuration["Jwt:Key"];
+            if (!string.IsNullOrEmpty(jwtKey))
+            {
+                var claims = new List<Claim>
+                {
+                    new Claim(ClaimTypes.NameIdentifier, terminal.TerminalId.ToString()),
+                    new Claim(ClaimTypes.Name, terminal.TerminalCode),
+                    new Claim(ClaimTypes.Role, "Terminal"),
+                    new Claim("branch_id", terminal.BranchId.ToString()),
+                    new Claim("terminal_id", terminal.TerminalId.ToString()),
+                    new Claim("outlet_id", terminal.OutletId.ToString()),
+                    new Claim("terminal_uuid", terminal.Uuid ?? string.Empty)
+                };
+
+                var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+                var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+                var jwt = new JwtSecurityToken(
+                    issuer: _configuration["Jwt:Issuer"],
+                    audience: _configuration["Jwt:Audience"],
+                    claims: claims,
+                    expires: DateTime.UtcNow.AddYears(1),
+                    signingCredentials: creds
+                );
+
+                token = new JwtSecurityTokenHandler().WriteToken(jwt);
+            }
+
+            var config = new TerminalConfigDto
+            {
+                TerminalId = terminal.TerminalId,
+                MenuDisplayMode = terminal.MenuDisplayMode,
+                OutletId = terminal.OutletId,
+                OutletName = terminal.Outlet?.Name ?? string.Empty,
+                TerminalCode = terminal.TerminalCode,
+                DeviceIdentifier = terminal.DeviceIdentifier,
+                IpAddress = terminal.IpAddress,
+                PTUNumber = terminal.Ptunumber,
+                MINNumber = terminal.Minnumber,
+                SerialNumber = terminal.SerialNumber,
+                BranchId = terminal.BranchId,
+                BranchName = terminal.Branch?.Name ?? string.Empty,
+                BranchCode = terminal.Branch?.Code ?? string.Empty,
+                BranchAddress = terminal.Branch?.Address,
+                BranchPhone = terminal.Branch?.Phone,
+                TerminalName = terminal.Name,
+                BusinessTypeId = terminal.Branch?.BusinessTypeId,
+                BusinessType = terminal.Branch?.BusinessType?.Type,
+                Token = token,
+                Uuid = terminal.Uuid,
+                AllowSync = terminal.AllowSync
+            };
+
+            return Ok(new TerminalActivationResponseDto
+            {
+                Success = true,
+                Message = "Terminal successfully activated and paired.",
+                Token = token,
+                Terminal = HierarchyMapping.ToDto(terminal),
+                Config = config
+            });
+        }
+
+        [Authorize(Roles = "Admin,Manager")]
+        [HttpPost("{id:int}/regenerate-activation-code")]
+        public async Task<ActionResult<TerminalDto>> RegenerateActivationCode(int id)
+        {
+            var terminal = await _context.Terminals.Include(t => t.Outlet).Include(t => t.Branch).FirstOrDefaultAsync(t => t.TerminalId == id);
+            if (terminal == null) return NotFound();
+            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
+                return Forbid();
+
+            terminal.ActivationCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+            terminal.IsActivationCodeUsed = false;
+            terminal.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return Ok(HierarchyMapping.ToDto(terminal));
         }
 
         private async Task<bool> HasHistory(int id) =>
@@ -244,6 +415,11 @@ namespace POS.Api.Controllers
             t.Name = dto.Name; t.DeviceIdentifier = dto.DeviceIdentifier; t.IpAddress = dto.IpAddress;
             t.MenuDisplayMode = dto.MenuDisplayMode;
             t.Ptunumber = dto.PTUNumber; t.Minnumber = dto.MINNumber; t.SerialNumber = dto.SerialNumber;
+            t.AllowSync = dto.AllowSync;
+            if (string.IsNullOrWhiteSpace(t.Uuid))
+            {
+                t.Uuid = string.IsNullOrWhiteSpace(dto.Uuid) ? Guid.NewGuid().ToString() : dto.Uuid;
+            }
             if (t.IsActive && !dto.IsActive)
             {
                 t.DeactivatedAt ??= DateTime.UtcNow;
@@ -256,4 +432,3 @@ namespace POS.Api.Controllers
         }
     }
 }
-

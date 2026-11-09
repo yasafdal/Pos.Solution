@@ -127,6 +127,30 @@
                             <span class="text-muted">—</span>
                         }
                     </TemplateColumn>
+                    <TemplateColumn Title="Sync & Pairing" Context="t" Align="Align.Center">
+                        <div class="d-flex flex-column gap-1 align-items-center">
+                            @if (t.AllowSync)
+                            {
+                                <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 0.75rem;">Sync On</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle" style="font-size: 0.75rem;">Sync Off</span>
+                            }
+                            @if (t.IsActivationCodeUsed)
+                            {
+                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.72rem;" title="Paired to Device">
+                                    <i class="bi bi-phone me-1"></i>Paired
+                                </span>
+                            }
+                            else if (!string.IsNullOrEmpty(t.ActivationCode))
+                            {
+                                <span class="badge bg-warning-subtle text-dark border border-warning-subtle font-monospace" style="font-size: 0.72rem;" title="One-time Activation Code">
+                                    <i class="bi bi-key me-1"></i>@t.ActivationCode
+                                </span>
+                            }
+                        </div>
+                    </TemplateColumn>
                     <TemplateColumn Title="Status" Context="t" Align="Align.Center">
                         @if (t.IsActive)
                         {
@@ -145,6 +169,9 @@
                         </HeaderTemplate>
                         <ChildContent>
                             <div class="actions-cell-wrap d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-info text-dark" @onclick="() => ShowActivationCodeModal(t)" title="Device Pairing & Activation Code" aria-label="Activation Code">
+                                    <i class="bi bi-key-fill"></i>
+                                </button>
                                 <button type="button" class="btn btn-sm btn-primary text-white" @onclick="() => OpenInvoiceSequencesModal(t)" title="Invoice Sequences" aria-label="Invoice Sequences">
                                     <i class="bi bi-receipt"></i>
                                 </button>
@@ -266,13 +293,39 @@
                                 <ValidationMessage For="@(() => currentTerminal.Name)" class="text-danger small" />
                             </div>
 
+                            @if (isEditingTerminal)
+                            {
+                                <div class="col-12">
+                                    <div class="p-3 bg-light rounded-3 border">
+                                        <span class="fw-bold text-dark small d-flex align-items-center gap-1.5 mb-2">
+                                            <i class="bi bi-cpu text-primary"></i> Local-First Device Pairing Info
+                                        </span>
+                                        <div class="row g-2">
+                                            <div class="col-12 col-md-6">
+                                                <label class="form-label text-muted small mb-1">Client Device UUID</label>
+                                                <input type="text" class="form-control form-control-sm font-monospace bg-white" readonly value="@(string.IsNullOrEmpty(currentTerminal.Uuid) ? "(Bound upon client activation)" : currentTerminal.Uuid)" />
+                                            </div>
+                                            <div class="col-12 col-md-6">
+                                                <label class="form-label text-muted small mb-1">Activation Code</label>
+                                                <div class="d-flex gap-2">
+                                                    <input type="text" class="form-control form-control-sm font-monospace fw-bold bg-white" readonly value="@currentTerminal.ActivationCode" />
+                                                    <span class="badge @(currentTerminal.IsActivationCodeUsed ? "bg-success" : "bg-warning text-dark") align-self-center px-2 py-2">
+                                                        @(currentTerminal.IsActivationCodeUsed ? "Paired" : "Pending")
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+
                             <div class="col-12 col-md-6">
-                                <label class="form-label text-dark fw-semibold small mb-1">Device Identifier</label>
+                                <label class="form-label text-dark fw-semibold small mb-1">Device Identifier <span class="text-muted fw-normal">(Optional)</span></label>
                                 <InputText @bind-Value="currentTerminal.DeviceIdentifier" class="form-control rounded-3 font-monospace" placeholder="Unique machine ID or MAC" />
                             </div>
 
                             <div class="col-12 col-md-6">
-                                <label class="form-label text-dark fw-semibold small mb-1">IP Address</label>
+                                <label class="form-label text-dark fw-semibold small mb-1">IP Address <span class="text-muted fw-normal">(Optional)</span></label>
                                 <InputText @bind-Value="currentTerminal.IpAddress" class="form-control rounded-3 font-monospace" placeholder="e.g. 192.168.1.100" />
                             </div>
 
@@ -312,10 +365,23 @@
                                 </div>
                             </div>
 
-                            <div class="col-12">
-                                <div class="form-check form-switch p-3 bg-light rounded-3 border d-flex align-items-center">
+                            <div class="col-12 col-md-6">
+                                <div class="form-check form-switch p-3 bg-light rounded-3 border d-flex align-items-center h-100">
+                                    <InputCheckbox class="form-check-input ms-0 me-3" id="terminalAllowSync" @bind-Value="currentTerminal.AllowSync" />
+                                    <div>
+                                        <label class="form-check-label fw-semibold text-dark mb-0 d-block" for="terminalAllowSync">Allow Online Sync</label>
+                                        <small class="text-muted" style="font-size: 0.75rem;">Enable cloud &amp; back-office synchronization</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 col-md-6">
+                                <div class="form-check form-switch p-3 bg-light rounded-3 border d-flex align-items-center h-100">
                                     <InputCheckbox class="form-check-input ms-0 me-3" id="terminalActive" @bind-Value="currentTerminal.IsActive" />
-                                    <label class="form-check-label fw-semibold text-dark mb-0" for="terminalActive">Active Terminal</label>
+                                    <div>
+                                        <label class="form-check-label fw-semibold text-dark mb-0 d-block" for="terminalActive">Active Terminal</label>
+                                        <small class="text-muted" style="font-size: 0.75rem;">Enable terminal for cashier sessions</small>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -683,7 +749,8 @@
         {
             BranchId = modalSelectedBranchId,
             OutletId = selectedOutletFilter > 0 ? selectedOutletFilter : 0,
-            IsActive = true
+            IsActive = true,
+            AllowSync = true
         };
 
         if (modalSelectedBranchId > 0)
@@ -718,7 +785,11 @@
             MINNumber = terminal.MINNumber,
             SerialNumber = terminal.SerialNumber,
             MenuDisplayMode = terminal.MenuDisplayMode,
-            IsActive = terminal.IsActive
+            IsActive = terminal.IsActive,
+            Uuid = terminal.Uuid,
+            ActivationCode = terminal.ActivationCode,
+            IsActivationCodeUsed = terminal.IsActivationCodeUsed,
+            AllowSync = terminal.AllowSync
         };
         isEditingTerminal = true;
         isTerminalModalOpen = true;
@@ -757,32 +828,55 @@
             currentTerminal.TerminalCode = currentTerminal.TerminalCode.Trim().ToUpperInvariant();
             currentTerminal.Name = currentTerminal.Name.Trim();
 
-            bool success;
             if (isEditingTerminal)
             {
-                success = await TerminalService.UpdateTerminalAsync(currentTerminal.TerminalId, currentTerminal);
-            }
-            else
-            {
-                success = await TerminalService.CreateTerminalAsync(currentTerminal);
-            }
-
-            if (success)
-            {
-                isTerminalModalOpen = false;
-                await LoadData();
-                await Swal.FireAsync(new SweetAlertOptions
+                var success = await TerminalService.UpdateTerminalAsync(currentTerminal.TerminalId, currentTerminal);
+                if (success)
                 {
-                    Title = isEditingTerminal ? "Terminal Updated!" : "Terminal Registered!",
-                    Text = isEditingTerminal ? "Terminal register updated successfully." : "Terminal registered successfully.",
-                    Icon = SweetAlertIcon.Success,
-                    ConfirmButtonText = "OK",
-                    ConfirmButtonColor = "#2563eb"
-                });
+                    isTerminalModalOpen = false;
+                    await LoadData();
+                    await Swal.FireAsync(new SweetAlertOptions
+                    {
+                        Title = "Terminal Updated!",
+                        Text = "Terminal register updated successfully.",
+                        Icon = SweetAlertIcon.Success,
+                        ConfirmButtonText = "OK",
+                        ConfirmButtonColor = "#2563eb"
+                    });
+                }
+                else
+                {
+                    modalError = "Failed to update terminal. Ensure terminal code is unique.";
+                }
             }
             else
             {
-                modalError = "Failed to save terminal. Ensure terminal code, device identifier and IP are unique.";
+                var created = await TerminalService.CreateTerminalAsync(currentTerminal);
+                if (created != null)
+                {
+                    isTerminalModalOpen = false;
+                    await LoadData();
+                    var code = created.ActivationCode ?? "(none)";
+                    await Swal.FireAsync(new SweetAlertOptions
+                    {
+                        Title = "Terminal Registered!",
+                        Html = $@"<div class=""text-start"">
+                                    <p class=""text-secondary mb-2"">Terminal registered successfully.</p>
+                                    <div class=""p-3 bg-light rounded-3 border text-center my-3"">
+                                        <div class=""text-muted small mb-1"">6-Digit One-Time Activation Code</div>
+                                        <div class=""display-6 fw-bold font-monospace text-primary"">{code}</div>
+                                    </div>
+                                    <div class=""small text-muted"">Enter this 6-digit code on the POS client during one-time device activation to bind its hardware UUID.</div>
+                                  </div>",
+                        Icon = SweetAlertIcon.Success,
+                        ConfirmButtonText = "Done",
+                        ConfirmButtonColor = "#2563eb"
+                    });
+                }
+                else
+                {
+                    modalError = "Failed to register terminal. Ensure terminal code is unique.";
+                }
             }
         }
         catch (Exception ex)
@@ -828,7 +922,11 @@
                 MINNumber = terminal.MINNumber,
                 SerialNumber = terminal.SerialNumber,
                 MenuDisplayMode = terminal.MenuDisplayMode,
-                IsActive = !terminal.IsActive
+                IsActive = !terminal.IsActive,
+                Uuid = terminal.Uuid,
+                ActivationCode = terminal.ActivationCode,
+                IsActivationCodeUsed = terminal.IsActivationCodeUsed,
+                AllowSync = terminal.AllowSync
             };
 
             var success = await TerminalService.UpdateTerminalAsync(terminal.TerminalId, updateDto);
@@ -1006,6 +1104,95 @@
         catch (Exception ex)
         {
             await Swal.FireAsync(new SweetAlertOptions { Title = "Error", Text = ex.Message, Icon = SweetAlertIcon.Error });
+        }
+    }
+
+    private async Task ShowActivationCodeModal(TerminalDto terminal)
+    {
+        var statusBadge = terminal.IsActivationCodeUsed
+            ? "<span class='badge bg-success'>Paired / In Use</span>"
+            : "<span class='badge bg-warning text-dark'>Pending Pairing</span>";
+        var devText = string.IsNullOrEmpty(terminal.DeviceIdentifier) ? "<em>Not yet bound</em>" : $"<code>{terminal.DeviceIdentifier}</code>";
+        var uuidText = string.IsNullOrEmpty(terminal.Uuid) ? "<em>Not yet bound (awaiting client activation)</em>" : $"<code class='text-dark'>{terminal.Uuid}</code>";
+
+        var actionResult = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = $"Pairing: {terminal.Name}",
+            Html = $@"<div class=""text-start"">
+                        <div class=""mb-2""><strong>Pairing Status:</strong> {statusBadge}</div>
+                        <div class=""p-3 bg-light rounded-3 border text-center my-3"">
+                            <span class=""text-secondary small d-block mb-1"">6-Digit Activation Code</span>
+                            <span class=""display-6 fw-bold font-monospace text-primary tracking-widest"">{(terminal.ActivationCode ?? "------")}</span>
+                        </div>
+                        <div class=""small text-muted mb-1""><strong>Client Device UUID:</strong> {uuidText}</div>
+                        <div class=""small text-muted mb-1""><strong>Bound Device:</strong> {devText}</div>
+                        <div class=""small text-muted""><strong>Online Sync:</strong> {(terminal.AllowSync ? "Enabled" : "Disabled")}</div>
+                      </div>",
+            Icon = SweetAlertIcon.Info,
+            ShowCancelButton = true,
+            CancelButtonText = "Close",
+            ConfirmButtonText = "Regenerate Code",
+            ConfirmButtonColor = "#f59e0b"
+        });
+
+        if (actionResult.IsConfirmed)
+        {
+            await RegenerateActivationCode(terminal);
+        }
+    }
+
+    private async Task RegenerateActivationCode(TerminalDto terminal)
+    {
+        var confirm = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Regenerate Activation Code?",
+            Text = $"This will generate a new 6-digit code for '{terminal.Name}' and reset device pairing. Proceed?",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonText = "Yes, Regenerate",
+            ConfirmButtonColor = "#f59e0b",
+            CancelButtonText = "Cancel"
+        });
+
+        if (!confirm.IsConfirmed) return;
+
+        try
+        {
+            var updated = await TerminalService.RegenerateActivationCodeAsync(terminal.TerminalId);
+            if (updated != null)
+            {
+                await LoadData();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Code Regenerated!",
+                    Html = $@"<div class=""text-center"">
+                                <p class=""text-secondary mb-2"">New 6-Digit One-Time Activation Code:</p>
+                                <div class=""display-6 fw-bold font-monospace text-primary tracking-widest my-2"">{updated.ActivationCode}</div>
+                                <small class=""text-muted"">Enter this code on the register to complete device pairing.</small>
+                              </div>",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonText = "Done",
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Action Failed",
+                    Text = "Could not regenerate activation code.",
+                    Icon = SweetAlertIcon.Error
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = ex.Message,
+                Icon = SweetAlertIcon.Error
+            });
         }
     }
 }

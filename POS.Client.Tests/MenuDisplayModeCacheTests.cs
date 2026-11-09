@@ -25,6 +25,7 @@ internal static class MenuDisplayModeCacheTests
             await run("Menu mode: additive old-schema upgrade preserves config and fiscal rows", OldSchema);
             await run("Menu mode: failed HTTP, malformed/invalid payload and rollback retain committed cache", FailedSyncs);
             await run("Menu mode: text/unknown refreshes default to text without image downloads", TextAndUnknown);
+            await run("Device activation: generates client UUID, posts code, saves BIR details and marks SQLite provisioned", ClientDeviceActivation);
         }
         finally
         {
@@ -182,6 +183,47 @@ internal static class MenuDisplayModeCacheTests
             Program.Check((await verify.TerminalConfigs.AsNoTracking().SingleAsync()).MenuDisplayMode == MenuDisplayMode.TextOnly, "Unknown/default setting did not fail closed.");
             Program.Check((await verify.Products.SingleAsync()).ImageUrl == "https://invalid.example/item.png" && handler.Requests.Count == 1, "Image metadata must be cached without downloading files.");
         }
+    }
+
+    private static async Task ClientDeviceActivation()
+    {
+        using var db = NewDatabase();
+        var handler = new ResponseHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent.Create(new TerminalActivationResponseDto
+            {
+                Success = true,
+                Message = "Activated",
+                Config = new TerminalConfigDto
+                {
+                    TerminalId = 5,
+                    OutletId = 2,
+                    OutletName = "Main Dining",
+                    BranchId = 1,
+                    BranchName = "HQ",
+                    BranchCode = "HQ01",
+                    TerminalCode = "POS-05",
+                    TerminalName = "Register 5",
+                    PTUNumber = "PTU-999",
+                    MINNumber = "MIN-888",
+                    SerialNumber = "SN-777",
+                    AllowSync = true
+                }
+            })
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://invalid.example/") };
+        var terminalService = new POS.Shared.Services.TerminalService(http);
+        var activationService = new DeviceActivationService(terminalService);
+
+        Program.Check(!await activationService.IsDeviceProvisionedAsync(), "Fresh SQLite database must report unprovisioned.");
+        var result = await activationService.ActivateDeviceAsync("654321");
+        Program.Check(result.Success, "Activation should succeed.");
+        Program.Check(await activationService.IsDeviceProvisionedAsync(), "Activated SQLite database must report provisioned.");
+
+        var saved = await activationService.GetProvisionedTerminalAsync();
+        Program.Check(saved != null && saved.IsActivated, "LocalTerminalConfig must be marked IsActivated.");
+        Program.Check(!string.IsNullOrEmpty(saved!.DeviceUuid) && Guid.TryParse(saved.DeviceUuid, out _), "LocalTerminalConfig must store generated client UUID.");
+        Program.Check(saved.TerminalCode == "POS-05" && saved.PTUNumber == "PTU-999" && saved.MINNumber == "MIN-888" && saved.SerialNumber == "SN-777", "BIR registration details and TerminalCode must be persisted in SQLite.");
     }
 
     private sealed class ResponseHandler(Func<HttpResponseMessage> response) : HttpMessageHandler

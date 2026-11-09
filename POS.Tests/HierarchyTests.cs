@@ -421,4 +421,93 @@ public static partial class Program
         return Task.CompletedTask;
     }
 
+    private static async Task Test49_TerminalLocalFirstActivation()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        await using var cleanup = conn;
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Jwt:Key"] = "SuperSecretPosJwtKeyForTestingPurposes1234567890!",
+            ["Jwt:Issuer"] = "POS.Api",
+            ["Jwt:Audience"] = "POS.Client"
+        }).Build();
+
+        var terminalApi = new TerminalsController(db, config);
+
+        // 1. Create terminal with BIR details (server generates ONLY 6-digit ActivationCode; Uuid is initially null)
+        var createResult = await terminalApi.CreateTerminal(new TerminalDto
+        {
+            OutletId = 1,
+            TerminalCode = "LFT-01",
+            Name = "Local First Terminal 1",
+            PTUNumber = "PTU-2026-001",
+            MINNumber = "MIN-2026-001",
+            SerialNumber = "SN-2026-001",
+            DeviceIdentifier = null,
+            IpAddress = null,
+            AllowSync = true
+        });
+        Assert(createResult.Result is CreatedAtActionResult, "Terminal with null DeviceIdentifier and IpAddress must be created.");
+        var created = (TerminalDto)((CreatedAtActionResult)createResult.Result!).Value!;
+
+        // Verify server does NOT generate UUID on creation, only 6-digit activation code
+        Assert(string.IsNullOrEmpty(created.Uuid), "Server must not generate UUID on terminal creation; Uuid must initially be null.");
+        Assert(!string.IsNullOrEmpty(created.ActivationCode) && created.ActivationCode.Length == 6 && int.TryParse(created.ActivationCode, out _), "A 6-digit numeric activation code must be generated.");
+        Assert(!created.IsActivationCodeUsed, "Activation code must be marked unused initially.");
+        Assert(created.AllowSync, "AllowSync must default to true.");
+
+        string clientUuid1 = Guid.NewGuid().ToString();
+
+        // 2. Reject activation with invalid code
+        var badActivate = await terminalApi.ActivateTerminal(new TerminalActivationRequestDto
+        {
+            ActivationCode = "000000",
+            DeviceUuid = clientUuid1
+        });
+        Assert(badActivate.Result is NotFoundObjectResult, "Invalid activation code must return 404 NotFound.");
+
+        // 3. Successful activation with valid code + Client-Generated DeviceUuid
+        var goodActivate = await terminalApi.ActivateTerminal(new TerminalActivationRequestDto
+        {
+            ActivationCode = created.ActivationCode!,
+            DeviceUuid = clientUuid1
+        });
+        Assert(goodActivate.Result is OkObjectResult, "Valid activation code must return 200 OK.");
+        var activationResponse = (TerminalActivationResponseDto)((OkObjectResult)goodActivate.Result!).Value!;
+        Assert(!string.IsNullOrEmpty(activationResponse.Token), "Activation response must return JWT authentication token.");
+        Assert(activationResponse.Config != null && activationResponse.Config.Uuid == clientUuid1, "Activation response must return bound client-generated UUID.");
+        Assert(activationResponse.Config!.PTUNumber == "PTU-2026-001" && activationResponse.Config.MINNumber == "MIN-2026-001" && activationResponse.Config.SerialNumber == "SN-2026-001", "Activation response must return BIR registration details.");
+
+        // Verify database state after activation
+        var dbTerminal = await db.Terminals.SingleAsync(t => t.TerminalId == created.TerminalId);
+        Assert(dbTerminal.IsActivationCodeUsed, "Activation code must be marked used after pairing.");
+        Assert(dbTerminal.Uuid == clientUuid1, "Client-generated DeviceUuid must be bound to terminal on activation.");
+
+        // 4. Reject re-use of consumed activation code
+        var reuseActivate = await terminalApi.ActivateTerminal(new TerminalActivationRequestDto
+        {
+            ActivationCode = created.ActivationCode!,
+            DeviceUuid = Guid.NewGuid().ToString()
+        });
+        Assert(reuseActivate.Result is ConflictObjectResult, "Consumed activation code must be rejected with 409 Conflict.");
+
+        // 5. Regenerate activation code and bind a new client-generated UUID (overwriting old UUID)
+        var regenResult = await terminalApi.RegenerateActivationCode(created.TerminalId);
+        Assert(regenResult.Result is OkObjectResult, "Supervisor/admin can regenerate activation code.");
+        var regenerated = (TerminalDto)((OkObjectResult)regenResult.Result!).Value!;
+        Assert(!string.IsNullOrEmpty(regenerated.ActivationCode) && regenerated.ActivationCode.Length == 6, "New 6-digit code must be generated.");
+        Assert(!regenerated.IsActivationCodeUsed, "Regenerated activation code must reset consumed flag to false.");
+
+        // 6. Activation with new regenerated code overwrites old UUID with new client UUID
+        string clientUuid2 = Guid.NewGuid().ToString();
+        var reactivateResult = await terminalApi.ActivateTerminal(new TerminalActivationRequestDto
+        {
+            ActivationCode = regenerated.ActivationCode!,
+            DeviceUuid = clientUuid2
+        });
+        Assert(reactivateResult.Result is OkObjectResult, "Activation with regenerated code must succeed.");
+        db.ChangeTracker.Clear();
+        var reboundTerminal = await db.Terminals.SingleAsync(t => t.TerminalId == created.TerminalId);
+        Assert(reboundTerminal.Uuid == clientUuid2 && reboundTerminal.IsActivationCodeUsed, "New client UUID must overwrite previous UUID upon re-activation.");
+    }
 }

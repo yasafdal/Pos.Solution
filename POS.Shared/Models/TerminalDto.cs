@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -26,4 +26,8 @@ public class TerminalDto
     public string? MINNumber { get; set; }      // Machine Identification Number
     public string? SerialNumber { get; set; }   // Machine Serial Number
     public bool IsActive { get; set; } = true;
+    public string? Uuid { get; set; }
+    public string? ActivationCode { get; set; }
+    public bool IsActivationCodeUsed { get; set; } = false;
+    public bool AllowSync { get; set; } = true;
 }

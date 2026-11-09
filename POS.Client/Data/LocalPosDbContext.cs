@@ -81,6 +81,8 @@ public class LocalPosDbContext : DbContext
         {
             entity.ToTable("LocalTerminalConfigs");
             entity.Property(e => e.IsInitialized).HasDefaultValue(false);
+            entity.Property(e => e.IsActivated).HasDefaultValue(false);
+            entity.Property(e => e.AllowSync).HasDefaultValue(true);
             entity.Property(e => e.MenuDisplayMode).HasDefaultValue(POS.Shared.Models.MenuDisplayMode.TextOnly);
         });
         modelBuilder.Entity<LocalInvoiceSequence>().ToTable("LocalInvoiceSequences");
@@ -120,7 +122,7 @@ public class LocalPosDbContext : DbContext
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN TableNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN HeadCount INTEGER NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalProducts ADD COLUMN IsBarItem INTEGER NOT NULL DEFAULT 0;"); } catch { }
-                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT" })
+                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT", "DeviceUuid TEXT", "IsActivated INTEGER NOT NULL DEFAULT 0", "AllowSync INTEGER NOT NULL DEFAULT 1", "ActivatedAt TEXT" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }

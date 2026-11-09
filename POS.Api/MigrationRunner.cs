@@ -142,6 +142,23 @@ public class MigrationRunner
             schemaCmd.ExecuteNonQuery();
         }
 
+        string terminalLocalFirstSql = @"
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""Uuid"" VARCHAR(36) NULL;
+            ALTER TABLE ""Terminals"" ALTER COLUMN ""Uuid"" DROP NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS ""UX_Terminals_Uuid"" ON ""Terminals"" (""Uuid"");
+
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ActivationCode"" VARCHAR(10) NULL;
+            CREATE INDEX IF NOT EXISTS ""IX_Terminals_ActivationCode"" ON ""Terminals"" (""ActivationCode"") WHERE ""ActivationCode"" IS NOT NULL;
+
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""IsActivationCodeUsed"" BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""AllowSync"" BOOLEAN NOT NULL DEFAULT TRUE;
+        ";
+
+        using (var terminalCmd = new NpgsqlCommand(terminalLocalFirstSql, conn))
+        {
+            terminalCmd.ExecuteNonQuery();
+        }
+
         Console.WriteLine("All migration scripts applied successfully to pos_db!");
     }
 }

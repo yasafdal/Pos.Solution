@@ -66,6 +66,14 @@ public static class LocalHierarchyUpgrade
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastSyncVersion TEXT NULL");
                 if (!Columns("LocalTerminalConfigs").Contains("LastSyncAt"))
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastSyncAt TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("DeviceUuid"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN DeviceUuid TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("IsActivated"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN IsActivated INTEGER NOT NULL DEFAULT 0");
+                if (!Columns("LocalTerminalConfigs").Contains("AllowSync"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN AllowSync INTEGER NOT NULL DEFAULT 1");
+                if (!Columns("LocalTerminalConfigs").Contains("ActivatedAt"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ActivatedAt TEXT NULL");
             }
             if (TableExists("LocalOrderItems"))
             {

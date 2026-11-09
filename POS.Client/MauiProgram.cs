@@ -57,6 +57,7 @@ namespace POS.Client
             builder.Services.AddScoped<CartService>();
             builder.Services.AddScoped<IUserService, UserService>();
             builder.Services.AddScoped<ITerminalService, TerminalService>();
+            builder.Services.AddScoped<IDeviceActivationService, DeviceActivationService>();
             builder.Services.AddScoped<ICategoryService, CategoryService>();
             builder.Services.AddScoped<IProductService, ProductService>();
             builder.Services.AddScoped<IModifierService, ModifierService>();
