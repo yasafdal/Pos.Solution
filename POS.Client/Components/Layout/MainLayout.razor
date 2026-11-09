@@ -180,6 +180,10 @@
         try
         {
             _connectivityState = await ConnectivityService.CheckConnectivityAsync();
+            if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy && Session.IsAuthenticated)
+            {
+                await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+            }
             using var db = new POS.Client.Data.LocalPosDbContext();
             db.InitializeDatabase();
             _pendingCount = db.SyncOutboxes.Count(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING");
@@ -210,7 +214,7 @@
         try
         {
             var users = await UserService.GetUsersAsync();
-            var validUsers = users?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode)).ToList();
+            var validUsers = users?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****").ToList();
             if (validUsers == null || validUsers.Count == 0) return;
 
             await POS.Client.Data.LocalPosDbContext.WriteLock.WaitAsync();

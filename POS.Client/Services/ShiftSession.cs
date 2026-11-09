@@ -579,7 +579,7 @@ public static class ShiftSession
         if (!string.IsNullOrWhiteSpace(dto.ClientShiftId))
         {
             closedLocalPlaceholder = await db.CashDrawerShifts
-                .FirstOrDefaultAsync(s => s.TerminalId == dto.TerminalId && s.ShiftId < 0 && s.ClientShiftId == dto.ClientShiftId && s.Status == "CLOSED");
+                .FirstOrDefaultAsync(s => s.TerminalId == dto.TerminalId && s.ShiftId < 0 && s.ClientShiftId == dto.ClientShiftId && s.Status == "CLOSED" && !string.IsNullOrWhiteSpace(s.ClientCloseId));
         }
         foreach (var old in await db.CashDrawerShifts.Where(s => s.TerminalId == dto.TerminalId && s.ShiftId != dto.ShiftId && s.Status == "OPEN").ToListAsync())
             if ((old.ShiftId < 0 && !string.IsNullOrWhiteSpace(dto.ClientShiftId) && old.ClientShiftId == dto.ClientShiftId)

@@ -444,7 +444,7 @@ else
                 var dto = new OrderResponseDto
                 {
                     OrderId = syntheticId++,
-                    OrderNumber = lo.InvoiceNumber,
+                    OrderNumber = !string.IsNullOrWhiteSpace(lo.OrderNumber) ? lo.OrderNumber : lo.InvoiceNumber,
                     InvoiceNumber = lo.InvoiceNumber,
                     BranchId = lo.BranchId,
                     TerminalId = lo.TerminalId,

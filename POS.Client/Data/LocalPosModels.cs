@@ -168,10 +168,19 @@ public class LocalInvoiceSequence
     public bool IsActive { get; set; } = true;
 }
 
+public class LocalOrderSequence
+{
+    [Key]
+    public int TerminalId { get; set; }
+    public long LastIssuedNumber { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class LocalOrder
 {
     [Key]
     public string OrderId { get; set; } = Guid.NewGuid().ToString();
+    public string? OrderNumber { get; set; }
     public string InvoiceNumber { get; set; } = null!;
     public int BranchId { get; set; }
     public int OutletId { get; set; }

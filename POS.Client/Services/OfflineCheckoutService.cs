@@ -35,6 +35,16 @@ public class OfflineCheckoutService : IOfflineCheckoutService
         _session = session;
     }
 
+    public static string FormatOrderNumber(string? terminalName, int terminalId, long sequenceNumber)
+    {
+        string codePrefix = !string.IsNullOrWhiteSpace(terminalName)
+            ? terminalName.Replace(" ", "").ToUpperInvariant()
+            : $"POS{terminalId}";
+        if (codePrefix.StartsWith("POS", StringComparison.Ordinal) && codePrefix.Length == 4 && char.IsDigit(codePrefix[3]))
+            codePrefix = "POS0" + codePrefix[3];
+        return $"{codePrefix}-{sequenceNumber:D6}";
+    }
+
     public async Task<bool> IsReadyForOfflineCheckoutAsync(int terminalId)
     {
         using var db = new LocalPosDbContext();
@@ -125,7 +135,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
 
                 decimal changeAmount = paymentMethod == "CASH" ? tendered - totalAmount : 0m;
 
-                // 3. Acquire and increment invoice sequence atomically inside the SQLite transaction
+                // 3. Acquire and increment invoice sequence and order sequence atomically inside the SQLite transaction
                 var sequence = await db.InvoiceSequences
                     .FirstOrDefaultAsync(s => s.TerminalId == createDto.TerminalId && s.IsActive);
 
@@ -138,11 +148,28 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 string prefix = string.IsNullOrWhiteSpace(sequence.Prefix) ? $"INV{createDto.TerminalId:D2}-" : sequence.Prefix;
                 string invoiceNumber = $"{prefix}{nextNum.ToString().PadLeft(padLen, '0')}";
 
+                var orderSeq = await db.OrderSequences
+                    .FirstOrDefaultAsync(s => s.TerminalId == createDto.TerminalId);
+                if (orderSeq == null)
+                {
+                    orderSeq = new LocalOrderSequence
+                    {
+                        TerminalId = createDto.TerminalId,
+                        LastIssuedNumber = 0,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    db.OrderSequences.Add(orderSeq);
+                }
+                orderSeq.LastIssuedNumber++;
+                orderSeq.UpdatedAt = DateTime.UtcNow;
+                string orderNumber = FormatOrderNumber(outletConfig.TerminalName, createDto.TerminalId, orderSeq.LastIssuedNumber);
+
                 // 4. Persist Local Order
                 string localTransactionId = Guid.NewGuid().ToString();
                 var localOrder = new LocalOrder
                 {
                     OrderId = localTransactionId,
+                    OrderNumber = orderNumber,
                     InvoiceNumber = invoiceNumber,
                     BranchId = createDto.BranchId,
                     OutletId = createDto.OutletId > 0 ? createDto.OutletId : outletConfig.OutletId,
@@ -253,6 +280,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 }
 
                 // 7. Persist Sync Outbox Entry
+                createDto.OfflineOrderNumber = orderNumber;
                 createDto.OfflineInvoiceNumber = invoiceNumber;
                 var outboxPayload = System.Text.Json.JsonSerializer.Serialize(createDto);
                 db.SyncOutboxes.Add(new LocalSyncOutbox
@@ -288,7 +316,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 var offlineReceipt = new ReceiptDto
                 {
                     OrderId = 0,
-                    OrderNumber = $"OFF-{localTransactionId[..8].ToUpperInvariant()}",
+                    OrderNumber = orderNumber,
                     BranchId = createDto.BranchId,
                     BranchName = branchName,
                     BranchCode = branchCode,

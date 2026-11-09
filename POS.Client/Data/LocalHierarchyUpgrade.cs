@@ -87,6 +87,12 @@ public static class LocalHierarchyUpgrade
                 if (!itemCols.Contains("ModifiersJson"))
                     Execute("ALTER TABLE LocalOrderItems ADD COLUMN ModifiersJson TEXT NULL");
             }
+            if (TableExists("LocalOrders"))
+            {
+                var orderCols = Columns("LocalOrders");
+                if (!orderCols.Contains("OrderNumber"))
+                    Execute("ALTER TABLE LocalOrders ADD COLUMN OrderNumber TEXT NULL");
+            }
             transaction.Commit();
         }
         finally { if (close) connection.Close(); }

@@ -211,12 +211,15 @@ internal static class OfflineEnhancementTests
         Program.Check(cashResult.Success, "Cash checkout must succeed.");
         Program.Check(cashResult.ChangeAmount == 20m, "Change amount must be 20.");
         Program.Check(cashResult.InvoiceNumber == "INV-0000011", "Invoice number must increment to INV-0000011.");
+        Program.Check(cashResult.Receipt?.OrderNumber == "REGISTER1-000001", "Offline order number must use sequential terminal format without OFF- prefix.");
+        Program.Check(OfflineCheckoutService.FormatOrderNumber("POS 1", 1, 155) == "POS01-000155", "FormatOrderNumber must replicate online POS01-000155 formatting.");
 
         // Verify SQLite state
         using (var verifyDb = new LocalPosDbContext())
         {
             verifyDb.InitializeDatabase();
             var order = await verifyDb.Orders.SingleAsync(o => o.OrderId == cashResult.LocalTransactionId);
+            Program.Check(order.OrderNumber == "REGISTER1-000001", "LocalOrder.OrderNumber must persist the sequential order number.");
             Program.Check(order.PaymentStatus == "PAID", "Order PaymentStatus must be PAID.");
             Program.Check(order.OrderStatus == "COMPLETED", "Order OrderStatus must be COMPLETED.");
             Program.Check(order.TotalAmount == 230m, "Order TotalAmount must be 230.");

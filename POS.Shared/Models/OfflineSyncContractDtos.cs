@@ -12,6 +12,7 @@ public class OfflineTransactionSyncRequest
     public int BranchId { get; set; }
     public int TerminalId { get; set; }
     public string CashierId { get; set; } = null!;
+    public string? OrderNumber { get; set; }
     public string InvoiceNumber { get; set; } = null!;
     public string? OrderType { get; set; }
     public string? TableNumber { get; set; }

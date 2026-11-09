@@ -95,10 +95,43 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             if (saleShift.Status != "OPEN" && saleShift.Status != "CLOSED") return Conflict("Invalid shift lifecycle.");
             if (request.Payments.Any(p => p.PaidAt.ToUniversalTime() < saleShift.OpenedAt.ToUniversalTime() || (saleShift.ClosedAt.HasValue && p.PaidAt.ToUniversalTime() > saleShift.ClosedAt.Value.ToUniversalTime()))) return Conflict("Payment is outside the shift lifecycle.");
             if (User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value != request.CashierId && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
-            // Generate collision-safe sequential/unique offline order number
-            string txSuffix = request.LocalTransactionId.Replace("-", "").ToUpperInvariant();
-            if (txSuffix.Length > 6) txSuffix = txSuffix[..6];
-            string orderNumber = $"OFF-{DateTime.UtcNow:yyMMddHHmmss}-{txSuffix}";
+            // Strictly retain the client-generated sequential order number and advance server OrderSequences counter.
+            var orderSequence = context.Database.IsNpgsql()
+                ? await context.OrderSequences.FromSqlInterpolated($"SELECT * FROM \"OrderSequences\" WHERE \"terminal_id\" = {request.TerminalId} FOR UPDATE").SingleOrDefaultAsync()
+                : await context.OrderSequences.SingleOrDefaultAsync(s => s.TerminalId == request.TerminalId);
+
+            if (orderSequence == null)
+            {
+                orderSequence = new OrderSequence
+                {
+                    TerminalId = request.TerminalId,
+                    LastIssuedNumber = 0,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                context.OrderSequences.Add(orderSequence);
+            }
+
+            string orderNumber;
+            if (!string.IsNullOrWhiteSpace(request.OrderNumber))
+            {
+                orderNumber = request.OrderNumber.Trim();
+                int dashIndex = orderNumber.LastIndexOf('-');
+                if (dashIndex >= 0 && long.TryParse(orderNumber[(dashIndex + 1)..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var clientOrderNum))
+                {
+                    orderSequence.LastIssuedNumber = Math.Max(orderSequence.LastIssuedNumber, clientOrderNum);
+                    orderSequence.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                orderSequence.LastIssuedNumber++;
+                orderSequence.UpdatedAt = DateTime.UtcNow;
+                string codePrefix = outlet?.Name != null ? outlet.Name.Replace(" ", "").ToUpperInvariant() : $"POS{request.TerminalId}";
+                if (codePrefix.StartsWith("POS", StringComparison.Ordinal) && codePrefix.Length == 4 && char.IsDigit(codePrefix[3]))
+                    codePrefix = "POS0" + codePrefix[3];
+                orderNumber = $"{codePrefix}-{orderSequence.LastIssuedNumber:D6}";
+            }
 
             // Lock the terminal's numbering state; never renumber an offline invoice during upload.
             var sequences = context.Database.IsNpgsql()

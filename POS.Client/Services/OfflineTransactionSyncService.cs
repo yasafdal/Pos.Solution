@@ -155,6 +155,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                 BranchId = localOrder.BranchId,
                 TerminalId = localOrder.TerminalId,
                 CashierId = localOrder.CashierId,
+                OrderNumber = !string.IsNullOrWhiteSpace(localOrder.OrderNumber) ? localOrder.OrderNumber : payloadOrder?.OfflineOrderNumber,
                 InvoiceNumber = localOrder.InvoiceNumber,
                 OrderType = localOrder.OrderType,
                 TableNumber = localOrder.TableNumber,

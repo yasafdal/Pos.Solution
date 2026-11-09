@@ -42,6 +42,18 @@ namespace POS.Client
                 return client;
             });
 
+            //builder.Services.AddScoped(sp =>
+            //{
+            //    var configuredUrl = "http://localhost:5032/";
+            //    var client = new HttpClient
+            //    {
+            //        BaseAddress = new Uri(configuredUrl),
+            //        Timeout = TimeSpan.FromSeconds(30)
+            //    };
+            //    client.DefaultRequestHeaders.UserAgent.ParseAdd("POS.Client/1.0 (UAT)");
+            //    return client;
+            //});
+
             //plugins
             builder.Services.AddSweetAlert2();
 

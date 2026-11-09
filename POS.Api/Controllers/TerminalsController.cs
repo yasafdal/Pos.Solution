@@ -326,14 +326,85 @@ namespace POS.Api.Controllers
                 AllowSync = terminal.AllowSync
             };
 
+            var usersWithPins = await _context.Users
+                .AsNoTracking()
+                .Where(u => u.PinCode != null && u.PinCode != "")
+                .ToListAsync();
+
+            var cashiers = usersWithPins
+                .Select(u => new OfflineCashierDto
+                {
+                    UserId = u.UserId,
+                    Username = u.Username,
+                    Role = u.Role,
+                    PinHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(u.PinCode!.Trim())))
+                })
+                .ToList();
+
             return Ok(new TerminalActivationResponseDto
             {
                 Success = true,
                 Message = "Terminal successfully activated and paired.",
                 Token = token,
                 Terminal = HierarchyMapping.ToDto(terminal),
-                Config = config
+                Config = config,
+                Cashiers = cashiers
             });
+        }
+
+        [AllowAnonymous]
+        [HttpPost("session-token")]
+        public async Task<ActionResult<TerminalSessionTokenResponseDto>> IssueSessionToken([FromBody] TerminalSessionTokenRequestDto request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.DeviceUuid))
+                return BadRequest(new TerminalSessionTokenResponseDto { Success = false, Message = "DeviceUuid is required." });
+
+            string uuid = request.DeviceUuid.Trim();
+            var terminal = await _context.Terminals
+                .AsNoTracking()
+                .Include(t => t.Outlet)
+                .Include(t => t.Branch)
+                .FirstOrDefaultAsync(t =>
+                    (request.TerminalId <= 0 || t.TerminalId == request.TerminalId) &&
+                    (t.Uuid == uuid || t.DeviceIdentifier == uuid));
+
+            if (terminal == null || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Branch.IsActive)
+                return Unauthorized(new TerminalSessionTokenResponseDto { Success = false, Message = "Unpaired or inactive terminal." });
+
+            var jwtKey = _configuration["Jwt:Key"];
+            if (string.IsNullOrEmpty(jwtKey))
+                return StatusCode(500, new TerminalSessionTokenResponseDto { Success = false, Message = "JWT key not configured." });
+
+            User? user = null;
+            if (!string.IsNullOrWhiteSpace(request.CashierUsername))
+            {
+                string uname = request.CashierUsername.Trim();
+                user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Username == uname);
+            }
+
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.NameIdentifier, user?.UserId.ToString() ?? terminal.TerminalId.ToString()),
+                new Claim(ClaimTypes.Name, user?.Username ?? (!string.IsNullOrWhiteSpace(request.CashierUsername) ? request.CashierUsername.Trim() : terminal.TerminalCode)),
+                new Claim(ClaimTypes.Role, user?.Role ?? "Cashier"),
+                new Claim("branch_id", terminal.BranchId.ToString()),
+                new Claim("terminal_id", terminal.TerminalId.ToString()),
+                new Claim("outlet_id", terminal.OutletId.ToString()),
+                new Claim("terminal_uuid", terminal.Uuid ?? uuid)
+            };
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var jwt = new JwtSecurityToken(
+                issuer: _configuration["Jwt:Issuer"],
+                audience: _configuration["Jwt:Audience"],
+                claims: claims,
+                expires: DateTime.UtcNow.AddDays(30),
+                signingCredentials: creds
+            );
+
+            string token = new JwtSecurityTokenHandler().WriteToken(jwt);
+            return Ok(new TerminalSessionTokenResponseDto { Success = true, Token = token });
         }
 
         [Authorize(Roles = "Admin,Manager")]

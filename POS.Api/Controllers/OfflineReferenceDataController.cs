@@ -213,6 +213,10 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             CashDrawerController.RedactForCashier(activeShiftDto);
         }
 
+        var orderSequence = await context.OrderSequences
+            .AsNoTracking()
+            .SingleOrDefaultAsync(s => s.TerminalId == terminalId);
+
         var response = new OfflineReferenceDataResponseDto
         {
             Version = DateTime.UtcNow.Ticks.ToString(),
@@ -231,7 +235,8 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                 BranchPhone = outlet.Branch?.Phone,
                 TerminalName = outlet.Name,
                 BranchTaxType = outlet.Branch?.TaxType ?? "VAT-Registered",
-                DeviceIdentifier = outlet.DeviceIdentifier ?? string.Empty
+                DeviceIdentifier = outlet.DeviceIdentifier ?? string.Empty,
+                LastIssuedOrderNumber = orderSequence?.LastIssuedNumber ?? 0
             },
             Products = products,
             Categories = categories,

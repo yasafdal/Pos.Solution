@@ -100,6 +100,7 @@ public static class ShiftCacheRegressionTests
         Check(cached.TotalCashSales == 175, $"Server 150 plus pending CASH 25 expected, actual {cached.TotalCashSales}; not max, cards, other shifts, or lost ACK.");
         Check(cached.ExpectedBalance == 225, "Expected balance includes opening float plus exact merged sales.");
         cached = await ShiftSession.CacheAsync(dto);
+        Check(cached.Status == "OPEN", "Repeated snapshot must not mark an open shift CLOSED after retiring its negative placeholder.");
         Check(cached.TotalCashSales == 175, "Repeated snapshot must not add offline sale twice.");
         using (var acknowledgedAfterSnapshot = new LocalPosDbContext())
         {

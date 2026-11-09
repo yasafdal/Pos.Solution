@@ -400,13 +400,14 @@
                 using var db = new POS.Client.Data.LocalPosDbContext();
                 db.InitializeDatabase();
 
-                if (allUsers != null && allUsers.Count > 0)
+                var validPinUsers = allUsers?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****").ToList();
+                if (validPinUsers != null && validPinUsers.Count > 0)
                 {
                     await Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRawAsync(
                         db.Database, "DELETE FROM LocalCashiers;");
                     db.ChangeTracker.Clear();
 
-                    foreach (var u in allUsers.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****"))
+                    foreach (var u in validPinUsers)
                     {
                         db.Cashiers.Add(new POS.Client.Data.LocalCashier
                         {
@@ -523,8 +524,33 @@
                 TerminalName = localOutlet.TerminalName
             };
 
-            Session.SetSession("OFFLINE-SESSION-TOKEN", localCashier.Username, localCashier.Role, outletDto);
-            Http.DefaultRequestHeaders.Authorization = null;
+            var activeBearer = Http.DefaultRequestHeaders.Authorization?.Parameter;
+            if (string.IsNullOrWhiteSpace(activeBearer) && !string.IsNullOrWhiteSpace(POS.Client.Services.DeviceActivationService.ActiveTerminalToken))
+            {
+                activeBearer = POS.Client.Services.DeviceActivationService.ActiveTerminalToken;
+                Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", activeBearer);
+            }
+
+            var sessionToken = !string.IsNullOrWhiteSpace(activeBearer) ? activeBearer : "OFFLINE-SESSION-TOKEN";
+            Session.SetSession(sessionToken, localCashier.Username, localCashier.Role, outletDto);
+
+            if (await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session))
+            {
+                try
+                {
+                    await ReferenceDataSync.SyncReferenceDataAsync(localOutlet.TerminalId, Http);
+                }
+                catch { }
+            }
+
+            await Session.RefreshCachedMenuDisplayModeAsync();
+
+            if (!localOutlet.IsInitialized)
+            {
+                Navigation.NavigateTo("/initialization");
+                return true;
+            }
+
             Navigation.NavigateTo("/");
             return true;
         }
@@ -543,6 +569,12 @@
 
         try
         {
+            // Local-First: Always authenticate against local SQLite cache first (zero network dependency).
+            if (await TryOfflinePinLoginAsync(pin))
+            {
+                return;
+            }
+
             (string Token, string Username, string Role)? authResult = null;
             bool isNetworkError = false;
             try

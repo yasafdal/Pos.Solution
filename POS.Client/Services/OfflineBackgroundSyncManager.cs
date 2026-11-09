@@ -51,10 +51,10 @@ namespace POS.Client.Workers
 
         public async Task TriggerManualSyncAsync(CancellationToken cancellationToken = default)
         {
-            await RunSyncCycleAsync(cancellationToken);
+            await RunSyncCycleAsync(cancellationToken, includeReferenceSync: true);
         }
 
-        private async Task RunSyncCycleAsync(CancellationToken cancellationToken)
+        private async Task RunSyncCycleAsync(CancellationToken cancellationToken, bool includeReferenceSync = false)
         {
             if (!await _syncLock.WaitAsync(0, cancellationToken))
             {
@@ -76,8 +76,7 @@ namespace POS.Client.Workers
                 var coordinator = scope.ServiceProvider.GetRequiredService<IOfflineSyncCoordinator>();
                 var httpClient = scope.ServiceProvider.GetRequiredService<HttpClient>();
                 var session = scope.ServiceProvider.GetRequiredService<PosSessionService>();
-                if (string.IsNullOrWhiteSpace(session.Token) || session.Token == "OFFLINE-SESSION-TOKEN") return;
-                httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session.Token);
+                if (!await DeviceActivationService.EnsureOnlineBearerTokenAsync(httpClient, session)) return;
 
                 var pendingItems = await syncService.GetPendingOutboxItemsAsync();
                 foreach (var item in pendingItems)
@@ -94,6 +93,15 @@ namespace POS.Client.Workers
                     catch
                     {
                         // Log or suppress individual sync failure to continue batch
+                    }
+                }
+
+                if (includeReferenceSync && session.Terminal?.TerminalId > 0)
+                {
+                    var refSync = scope.ServiceProvider.GetService<IReferenceDataSyncService>();
+                    if (refSync != null)
+                    {
+                        await refSync.SyncReferenceDataAsync(session.Terminal.TerminalId, httpClient);
                     }
                 }
             }

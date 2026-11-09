@@ -208,7 +208,17 @@ internal static class MenuDisplayModeCacheTests
                     MINNumber = "MIN-888",
                     SerialNumber = "SN-777",
                     AllowSync = true
-                }
+                },
+                Cashiers =
+                [
+                    new OfflineCashierDto
+                    {
+                        UserId = 10,
+                        Username = "cashier1",
+                        Role = "Cashier",
+                        PinHash = "1234HASH"
+                    }
+                ]
             })
         });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("https://invalid.example/") };
@@ -224,6 +234,9 @@ internal static class MenuDisplayModeCacheTests
         Program.Check(saved != null && saved.IsActivated, "LocalTerminalConfig must be marked IsActivated.");
         Program.Check(!string.IsNullOrEmpty(saved!.DeviceUuid) && Guid.TryParse(saved.DeviceUuid, out _), "LocalTerminalConfig must store generated client UUID.");
         Program.Check(saved.TerminalCode == "POS-05" && saved.PTUNumber == "PTU-999" && saved.MINNumber == "MIN-888" && saved.SerialNumber == "SN-777", "BIR registration details and TerminalCode must be persisted in SQLite.");
+        using var verifyDb = new LocalPosDbContext();
+        var cachedCashier = await verifyDb.Cashiers.AsNoTracking().SingleOrDefaultAsync(c => c.Username == "cashier1");
+        Program.Check(cachedCashier != null && cachedCashier.PinHash == "1234HASH", "Activation must seed LocalCashiers in SQLite for offline PIN login.");
     }
 
     private sealed class ResponseHandler(Func<HttpResponseMessage> response) : HttpMessageHandler

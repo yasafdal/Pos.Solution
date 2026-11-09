@@ -1,4 +1,4 @@
-﻿@page "/new-sale"
+@page "/new-sale"
 @inject PosSessionService Session
 @inject NavigationManager Navigation
 @using Microsoft.EntityFrameworkCore
@@ -592,7 +592,7 @@ else
                             <h5 id="payment-modal-title" class="modal-title fw-bold text-white mb-0">Payment</h5>
                             @if (isOffline)
                             {
-                                <span class="badge bg-warning text-dark fw-semibold" style="font-size: 0.7rem;">OFFLINE CASH ONLY</span>
+                                <span class="badge bg-warning text-dark fw-semibold" style="font-size: 0.7rem;">OFFLINE MODE</span>
                             }
                         </div>
                         <span class="text-secondary small">Order: <strong class="text-white">@currentOrderResponse.OrderNumber</strong></span>
@@ -1150,18 +1150,28 @@ else
         {
             var connectivityState = await ConnectivityService.CheckConnectivityAsync();
             isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
-            if (!isOffline)
+            bool loadedOnline = false;
+            if (!isOffline && await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session))
             {
-                var catTask = CategoryService.GetCategoriesAsync();
-                var prodTask = ProductService.GetProductsAsync();
-                var pmTask = PaymentService.GetPaymentMethodsAsync();
-                await Task.WhenAll(catTask, prodTask, pmTask);
+                try
+                {
+                    var catTask = CategoryService.GetCategoriesAsync();
+                    var prodTask = ProductService.GetProductsAsync();
+                    var pmTask = PaymentService.GetPaymentMethodsAsync();
+                    await Task.WhenAll(catTask, prodTask, pmTask);
 
-                categories = (await catTask).Where(c => !c.IsDeleted && c.IsActive).ToList();
-                products = (await prodTask).Where(p => p.IsActive && p.ProductType != "RawMaterial").ToList();
-                paymentMethods = await pmTask;
+                    categories = (await catTask).Where(c => !c.IsDeleted && c.IsActive).ToList();
+                    products = (await prodTask).Where(p => p.IsActive && p.ProductType != "RawMaterial").ToList();
+                    paymentMethods = await pmTask;
+                    loadedOnline = true;
+                }
+                catch
+                {
+                    loadedOnline = false;
+                }
             }
-            else
+
+            if (!loadedOnline)
             {
                 // OFFLINE FALLBACK: Read from isolated local SQLite database instance
                 using var db = new POS.Client.Data.LocalPosDbContext();
@@ -1196,10 +1206,31 @@ else
                     })
                     .ToList();
 
-                paymentMethods = new List<PaymentMethodDto>
+                paymentMethods = db.PaymentMethods
+                    .AsNoTracking()
+                    .Where(pm => pm.IsActive)
+                    .OrderBy(pm => pm.DisplayOrder)
+                    .Select(pm => new PaymentMethodDto
+                    {
+                        PaymentMethodId = pm.PaymentMethodId,
+                        Code = pm.Code,
+                        Name = pm.Name,
+                        RequiresReference = pm.RequiresReference,
+                        IsActive = pm.IsActive,
+                        DisplayOrder = pm.DisplayOrder
+                    })
+                    .ToList();
+
+                if (!paymentMethods.Any())
                 {
-                    new PaymentMethodDto { Code = "CASH", Name = "Cash", IsActive = true }
-                };
+                    paymentMethods = new List<PaymentMethodDto>
+                    {
+                        new PaymentMethodDto { PaymentMethodId = 1, Code = "CASH", Name = "Cash", RequiresReference = false, IsActive = true, DisplayOrder = 1 },
+                        new PaymentMethodDto { PaymentMethodId = 2, Code = "GCASH", Name = "GCash", RequiresReference = true, IsActive = true, DisplayOrder = 2 },
+                        new PaymentMethodDto { PaymentMethodId = 3, Code = "MAYA", Name = "Maya", RequiresReference = true, IsActive = true, DisplayOrder = 3 },
+                        new PaymentMethodDto { PaymentMethodId = 4, Code = "CARD", Name = "Credit / Debit Card", RequiresReference = true, IsActive = true, DisplayOrder = 4 }
+                    };
+                }
             }
 
             if (paymentMethods.Any())
@@ -1477,12 +1508,22 @@ else
             isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
             List<ProductModifierGroupDto> groups = new();
 
-            if (!isOffline)
+            bool loadedModifiersOnline = false;
+            if (!isOffline && await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session))
             {
-                var groupsTask = ModifierService.GetProductModifierGroupsAsync(product.ProductId);
-                groups = await groupsTask;
+                try
+                {
+                    var groupsTask = ModifierService.GetProductModifierGroupsAsync(product.ProductId);
+                    groups = await groupsTask;
+                    loadedModifiersOnline = true;
+                }
+                catch
+                {
+                    loadedModifiersOnline = false;
+                }
             }
-            else
+
+            if (!loadedModifiersOnline)
             {
                 // OFFLINE FALLBACK: Read exact product-modifier mapping from isolated local SQLite database
                 using var db = new POS.Client.Data.LocalPosDbContext();
@@ -1951,6 +1992,10 @@ else
     {
         var state = await ConnectivityService.CheckConnectivityAsync();
         var offline = state != TerminalConnectivityState.OnlineAndHealthy;
+        if (!offline)
+        {
+            await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+        }
         paymentShift = await POS.Client.Services.ShiftSession.CurrentAsync(Http, Session.Terminal!.TerminalId, offline);
         if (paymentShift != null && paymentShift.CashierId != Session.Username)
         {
@@ -1987,7 +2032,12 @@ else
         try
         {
             var state = await ConnectivityService.CheckConnectivityAsync();
-            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto { TerminalId = Session.Terminal!.TerminalId, BranchId = Session.Terminal.BranchId, OpeningFloat = amount, ClientShiftId = openingId, OpenedAt = openingOpenedAt }, Session.Username!, state != TerminalConnectivityState.OnlineAndHealthy);
+            var offline = state != TerminalConnectivityState.OnlineAndHealthy;
+            if (!offline)
+            {
+                await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+            }
+            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto { TerminalId = Session.Terminal!.TerminalId, BranchId = Session.Terminal.BranchId, OpeningFloat = amount, ClientShiftId = openingId, OpenedAt = openingOpenedAt }, Session.Username!, offline);
             if (paymentShift.Status != "OPEN")
                 throw new InvalidOperationException("This opening acknowledgement is for a closed shift. Reconcile the drawer in My Shift before starting another sale.");
             openingShiftModal = false;
@@ -2045,65 +2095,71 @@ else
             var connectivityState = await ConnectivityService.CheckConnectivityAsync();
             isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
 
-            OrderResponseDto? order = null;
-            if (!isOffline)
+            // Local-First: Always prepare payment preview locally without creating an unpaid server order first.
+            var calcReq = new OrderCalculationRequestDto
             {
-                try
+                BranchTaxType = "VAT-Registered",
+                DiscountCode = createDto.DiscountCode ?? "NONE",
+                Items = createDto.Items.Select(i => new CartItemCalculationDto
                 {
-                    order = await OrderService.CreateOrderAsync(createDto);
-                }
-                catch
-                {
-                    // If order creation fails due to sudden network drop, fall back to offline checkout
-                    isOffline = true;
-                }
-            }
+                    ProductId = i.ProductId,
+                    ProductName = i.ProductName ?? "Product",
+                    Quantity = i.Quantity,
+                    UnitPrice = i.BasePrice,
+                    ModifierTotal = i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m,
+                    TaxName = i.TaxName ?? "VATable",
+                    IsEligibleForStatutoryDiscount = true
+                }).ToList()
+            };
+            var calcRes = new POS.Shared.Services.LocalDiscountCalculationService().CalculateOrder(calcReq);
 
-            if (isOffline)
+            var order = new OrderResponseDto
             {
-                var calcReq = new OrderCalculationRequestDto
-                {
-                    BranchTaxType = "VAT-Registered",
-                    DiscountCode = createDto.DiscountCode ?? "NONE",
-                    Items = createDto.Items.Select(i => new CartItemCalculationDto
+                OrderId = DateTime.UtcNow.Ticks,
+                OrderNumber = "PENDING",
+                BranchId = createDto.BranchId,
+                TerminalId = createDto.TerminalId,
+                CashierId = createDto.CashierId,
+                OrderType = createDto.OrderType,
+                OrderStatus = "PENDING",
+                PaymentStatus = "UNPAID",
+                Subtotal = calcRes.Subtotal,
+                DiscountAmount = calcRes.DiscountAmount,
+                VatableSales = calcRes.VatableSales,
+                VatExemptSales = calcRes.VatExemptSales,
+                ZeroRatedSales = calcRes.ZeroRatedSales,
+                VatAmount = calcRes.VatAmount,
+                TotalAmount = calcRes.TotalAmount,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            if (!paymentMethods.Any(pm => pm.Code == "CASH"))
+            {
+                using var db = new POS.Client.Data.LocalPosDbContext();
+                db.InitializeDatabase();
+                paymentMethods = db.PaymentMethods
+                    .AsNoTracking()
+                    .Where(pm => pm.IsActive)
+                    .OrderBy(pm => pm.DisplayOrder)
+                    .Select(pm => new PaymentMethodDto
                     {
-                        ProductId = i.ProductId,
-                        ProductName = i.ProductName ?? "Product",
-                        Quantity = i.Quantity,
-                        UnitPrice = i.BasePrice,
-                        ModifierTotal = i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m,
-                        TaxName = i.TaxName ?? "VATable",
-                        IsEligibleForStatutoryDiscount = true
-                    }).ToList()
-                };
-                var calcRes = new POS.Shared.Services.LocalDiscountCalculationService().CalculateOrder(calcReq);
+                        PaymentMethodId = pm.PaymentMethodId,
+                        Code = pm.Code,
+                        Name = pm.Name,
+                        RequiresReference = pm.RequiresReference,
+                        IsActive = pm.IsActive,
+                        DisplayOrder = pm.DisplayOrder
+                    })
+                    .ToList();
 
-                // In offline mode, fabricate OrderResponseDto locally from cart to allow payment dialog
-                order = new OrderResponseDto
-                {
-                    OrderId = DateTime.UtcNow.Ticks,
-                    OrderNumber = "OFFLINE-PENDING",
-                    BranchId = createDto.BranchId,
-                    TerminalId = createDto.TerminalId,
-                    CashierId = createDto.CashierId,
-                    OrderType = createDto.OrderType,
-                    OrderStatus = "PENDING",
-                    PaymentStatus = "UNPAID",
-                    Subtotal = calcRes.Subtotal,
-                    DiscountAmount = calcRes.DiscountAmount,
-                    VatableSales = calcRes.VatableSales,
-                    VatExemptSales = calcRes.VatExemptSales,
-                    ZeroRatedSales = calcRes.ZeroRatedSales,
-                    VatAmount = calcRes.VatAmount,
-                    TotalAmount = calcRes.TotalAmount,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                if (!paymentMethods.Any(pm => pm.Code == "CASH"))
+                if (!paymentMethods.Any())
                 {
                     paymentMethods = new List<PaymentMethodDto>
                     {
-                        new PaymentMethodDto { Code = "CASH", Name = "Cash", IsActive = true }
+                        new PaymentMethodDto { PaymentMethodId = 1, Code = "CASH", Name = "Cash", RequiresReference = false, IsActive = true, DisplayOrder = 1 },
+                        new PaymentMethodDto { PaymentMethodId = 2, Code = "GCASH", Name = "GCash", RequiresReference = true, IsActive = true, DisplayOrder = 2 },
+                        new PaymentMethodDto { PaymentMethodId = 3, Code = "MAYA", Name = "Maya", RequiresReference = true, IsActive = true, DisplayOrder = 3 },
+                        new PaymentMethodDto { PaymentMethodId = 4, Code = "CARD", Name = "Credit / Debit Card", RequiresReference = true, IsActive = true, DisplayOrder = 4 }
                     };
                 }
             }
@@ -2204,11 +2260,6 @@ else
             }
 
             var saleMethod = selectedPaymentMethod?.Code ?? "CASH";
-            if (isOffline && saleMethod != "CASH")
-            {
-                paymentError = "Only Cash payments are allowed in Offline Mode.";
-                return;
-            }
 
             var saleCreateDto = new OrderCreateDto
             {

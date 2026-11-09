@@ -289,7 +289,15 @@
             {
                 using var db = new LocalPosDbContext();
                 db.InitializeDatabase();
-                var users = await UserService.GetUsersAsync();
+                List<UserDto>? users = null;
+                try
+                {
+                    users = await UserService.GetUsersAsync();
+                }
+                catch
+                {
+                    // Non-fatal: Step 4 SyncReferenceDataAsync downloads staff PIN hashes via terminal token
+                }
                 var validUsers = users?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****").ToList();
                 if (validUsers != null && validUsers.Count > 0)
                 {

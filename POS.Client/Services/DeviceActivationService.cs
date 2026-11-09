@@ -18,6 +18,7 @@ public interface IDeviceActivationService
 
 public class DeviceActivationService : IDeviceActivationService
 {
+    public static string? ActiveTerminalToken { get; set; }
     private readonly ITerminalService _terminalService;
     private readonly IReferenceDataSyncService? _referenceDataSync;
     private readonly HttpClient? _httpClient;
@@ -174,6 +175,21 @@ public class DeviceActivationService : IDeviceActivationService
                 IsInitialized = priorPrinter?.IsInitialized ?? false
             });
 
+            if (response.Cashiers != null && response.Cashiers.Count > 0)
+            {
+                await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
+                foreach (var cashier in response.Cashiers)
+                {
+                    db.Cashiers.Add(new LocalCashier
+                    {
+                        UserId = cashier.UserId,
+                        Username = cashier.Username,
+                        Role = cashier.Role,
+                        PinHash = cashier.PinHash
+                    });
+                }
+            }
+
             await db.SaveChangesAsync();
         }
         finally
@@ -181,20 +197,93 @@ public class DeviceActivationService : IDeviceActivationService
             LocalPosDbContext.WriteLock.Release();
         }
 
-        // 4. Optional initial reference data sync (cashier PINs, catalog) using activation token
-        if (!string.IsNullOrEmpty(response.Token) && _referenceDataSync != null && _httpClient != null && terminalId > 0)
+        // 4. Persist terminal token for offline-login sessions and run initial reference data sync
+        if (!string.IsNullOrEmpty(response.Token))
         {
-            try
+            ActiveTerminalToken = response.Token;
+            if (_httpClient != null)
             {
                 _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", response.Token);
-                await _referenceDataSync.SyncReferenceDataAsync(terminalId, _httpClient);
-            }
-            catch
-            {
-                // Non-fatal: cashier can still sync or initialize later
+                if (_referenceDataSync != null && terminalId > 0)
+                {
+                    try
+                    {
+                        await _referenceDataSync.SyncReferenceDataAsync(terminalId, _httpClient);
+                    }
+                    catch
+                    {
+                        // Non-fatal: cashier can still sync or initialize later
+                    }
+                }
             }
         }
 
         return response;
+    }
+
+    public static async Task<bool> EnsureOnlineBearerTokenAsync(HttpClient httpClient, PosSessionService? session = null)
+    {
+        if (httpClient == null) return false;
+
+        if (session != null && !string.IsNullOrWhiteSpace(session.Token) && session.Token != "OFFLINE-SESSION-TOKEN")
+        {
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
+            return true;
+        }
+
+        try
+        {
+            LocalTerminalConfig? localOutlet;
+            using (var db = new LocalPosDbContext())
+            {
+                db.InitializeDatabase();
+                localOutlet = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
+            }
+
+            string? deviceUuid = !string.IsNullOrWhiteSpace(localOutlet?.DeviceUuid)
+                ? localOutlet!.DeviceUuid
+                : localOutlet?.TerminalIdentifier;
+
+            if (localOutlet != null && !string.IsNullOrWhiteSpace(deviceUuid))
+            {
+                var req = new TerminalSessionTokenRequestDto
+                {
+                    TerminalId = localOutlet.TerminalId,
+                    DeviceUuid = deviceUuid,
+                    CashierUsername = session?.Username
+                };
+                var resp = await System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync(httpClient, "api/terminals/session-token", req);
+                if (resp.IsSuccessStatusCode)
+                {
+                    var dto = await System.Net.Http.Json.HttpContentJsonExtensions.ReadFromJsonAsync<TerminalSessionTokenResponseDto>(resp.Content);
+                    if (!string.IsNullOrWhiteSpace(dto?.Token))
+                    {
+                        ActiveTerminalToken = dto.Token;
+                        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", dto.Token);
+                        if (session != null && session.Terminal != null)
+                        {
+                            session.SetSession(dto.Token, session.Username ?? string.Empty, session.Role ?? "Cashier", session.Terminal);
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore network/token exchange failure and fall back to cached token if available
+        }
+
+        if (!string.IsNullOrWhiteSpace(ActiveTerminalToken))
+        {
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ActiveTerminalToken);
+            if (session != null && session.Terminal != null && (string.IsNullOrWhiteSpace(session.Token) || session.Token == "OFFLINE-SESSION-TOKEN"))
+            {
+                session.SetSession(ActiveTerminalToken, session.Username ?? string.Empty, session.Role ?? "Cashier", session.Terminal);
+            }
+            return true;
+        }
+
+        return httpClient.DefaultRequestHeaders.Authorization?.Parameter is { Length: > 0 } p && p != "OFFLINE-SESSION-TOKEN";
     }
 }

@@ -15,6 +15,7 @@ public class LocalPosDbContext : DbContext
     public DbSet<LocalDiscount> Discounts => Set<LocalDiscount>();
     public DbSet<LocalPaymentMethod> PaymentMethods => Set<LocalPaymentMethod>();
     public DbSet<LocalTerminalConfig> TerminalConfigs => Set<LocalTerminalConfig>();
+    public DbSet<LocalOrderSequence> OrderSequences => Set<LocalOrderSequence>();
     public DbSet<LocalInvoiceSequence> InvoiceSequences => Set<LocalInvoiceSequence>();
     public DbSet<LocalOrder> Orders => Set<LocalOrder>();
     public DbSet<LocalOrderItem> OrderItems => Set<LocalOrderItem>();
@@ -85,6 +86,7 @@ public class LocalPosDbContext : DbContext
             entity.Property(e => e.AllowSync).HasDefaultValue(true);
             entity.Property(e => e.MenuDisplayMode).HasDefaultValue(POS.Shared.Models.MenuDisplayMode.TextOnly);
         });
+        modelBuilder.Entity<LocalOrderSequence>().ToTable("LocalOrderSequences");
         modelBuilder.Entity<LocalInvoiceSequence>().ToTable("LocalInvoiceSequences");
         modelBuilder.Entity<LocalOrder>().ToTable("LocalOrders");
         modelBuilder.Entity<LocalOrderItem>(entity =>
@@ -114,6 +116,7 @@ public class LocalPosDbContext : DbContext
                 Database.EnsureCreated();
 
                 // Ensure newly added columns and tables exist on existing SQLite files
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OrderNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OutletId INTEGER NOT NULL DEFAULT 0;"); }
                 catch { /* Column already exists */ }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN ShiftId INTEGER NULL;"); } catch { }
@@ -122,6 +125,12 @@ public class LocalPosDbContext : DbContext
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN TableNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN HeadCount INTEGER NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalProducts ADD COLUMN IsBarItem INTEGER NOT NULL DEFAULT 0;"); } catch { }
+                Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS LocalOrderSequences (
+                        TerminalId INTEGER PRIMARY KEY,
+                        LastIssuedNumber INTEGER NOT NULL DEFAULT 0,
+                        UpdatedAt TEXT NOT NULL
+                    );");
                 foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT", "DeviceUuid TEXT", "IsActivated INTEGER NOT NULL DEFAULT 0", "AllowSync INTEGER NOT NULL DEFAULT 1", "ActivatedAt TEXT" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }

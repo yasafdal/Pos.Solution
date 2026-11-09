@@ -124,7 +124,7 @@ public static partial class Program
         await db.SaveChangesAsync();
         var api = new OfflineSyncController(db); Authenticate(api);
         var request = new OfflineTransactionSyncRequest { LocalTransactionId = "original-tx", TerminalId = 1, BranchId = 1, CashierId = "cashier1",
-            DeviceIdentifier = "TEST", InvoiceNumber = "OFF-0000017", PayloadHash = "unchanged-original-hash", TransactionDate = DateTime.UtcNow,
+            DeviceIdentifier = "TEST", OrderNumber = "POS01-000155", InvoiceNumber = "OFF-0000017", PayloadHash = "unchanged-original-hash", TransactionDate = DateTime.UtcNow,
             Subtotal = 112, TotalAmount = 112, VatableSales = 100, VatAmount = 12,
             Payments = new() { new OfflinePaymentDto { Amount = 112, TenderedAmount = 120, ChangeAmount = 8, PaidAt = DateTime.UtcNow } } };
         var first = await api.SyncTransaction(request);
@@ -133,6 +133,7 @@ public static partial class Program
         request.LocalTransactionId = "different-tx";
         Assert((await api.SyncTransaction(request)).Result is ConflictObjectResult, "Same invoice must not acknowledge another transaction.");
         Assert(await db.Orders.CountAsync() == 1 && (await db.InvoiceSequences.SingleAsync()).LastIssuedNumber == 17, "Offline upload must preserve one order and advance its terminal counter exactly once.");
+        Assert((await db.Orders.SingleAsync()).OrderNumber == "POS01-000155" && (await db.OrderSequences.SingleAsync()).LastIssuedNumber == 155, "Offline sync must strictly preserve the client-generated OrderNumber and advance server OrderSequences.");
     }
 
     private static async Task Test29_InvoiceReservations()

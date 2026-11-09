@@ -305,6 +305,24 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         existingSeq.IsActive = false;
                     }
 
+                    // Upsert local OrderSequence counter while preserving any higher local counter
+                    var localOrderSeq = await db.OrderSequences.FirstOrDefaultAsync(s => s.TerminalId == terminalId);
+                    if (localOrderSeq == null)
+                    {
+                        localOrderSeq = new LocalOrderSequence
+                        {
+                            TerminalId = terminalId,
+                            LastIssuedNumber = data.Terminal.LastIssuedOrderNumber,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        db.OrderSequences.Add(localOrderSeq);
+                    }
+                    else
+                    {
+                        localOrderSeq.LastIssuedNumber = Math.Max(localOrderSeq.LastIssuedNumber, data.Terminal.LastIssuedOrderNumber);
+                        localOrderSeq.UpdatedAt = DateTime.UtcNow;
+                    }
+
                     db.SyncAuditLogs.Add(new LocalSyncAuditLog
                     {
                         Message = $"Successfully synced reference data version {data.Version} at {DateTime.UtcNow}",

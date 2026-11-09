@@ -75,6 +75,7 @@ public class OfflineTerminalConfigDto
     public string? ReceiptPrinterName { get; set; }
     public string? KitchenPrinterName { get; set; }
     public string? BarPrinterName { get; set; }
+    public long LastIssuedOrderNumber { get; set; }
 }
 
 public class OfflineProductDto
