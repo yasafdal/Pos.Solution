@@ -123,6 +123,8 @@ public static partial class Program
         await RunTestAsync("MENU03. Unsupported menu modes rejected without mutation", TestMenuDisplayModeInvalidServerValues);
         await RunTestAsync("MENU04. Supervisor attributes, manager branch isolation and cashier terminal isolation", TestMenuDisplayModeAuthorization);
         await RunTestAsync("MENU05. PostgreSQL integer default, allowed values and discoverable migration", TestMenuDisplayModeDatabaseModel);
+        await RunTestAsync("FUND01. Initial Cash Fund Outlet default inheritance, Terminal override, denomination opening count, discrepancy tracking, and active shift isolation", TestInitialCashFundManagementAndOpeningProcess);
+        await RunTestAsync("LOCK01. Cashier account restriction and POS terminal locking after closing until 4:00 AM Asia/Manila", TestCashierAndTerminalClosingLockUntil4Am);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
@@ -1056,5 +1058,269 @@ public static partial class Program
         Assert(localOrderMock.CreatedAt >= cutoffUtc, "Recent order must fall within active business day");
         Assert(localOrderMock.TerminalId == 1 && localOrderMock.CashierId == "cashier1", "Order scoped to active terminal and cashier");
         return Task.CompletedTask;
+    }
+
+    private static async Task TestInitialCashFundManagementAndOpeningProcess()
+    {
+        var (conn, db, initialShift) = await CreateTestEnvAsync();
+        await using var _ = conn;
+
+        // Close the default seeded shift so we can test opening shifts with cash fund configuration
+        initialShift.Status = "CLOSED";
+        initialShift.ClosedAt = DateTime.UtcNow;
+        var outlet = await db.Outlets.FirstAsync(o => o.OutletId == 1);
+        var terminal = await db.Terminals.FirstAsync(t => t.TerminalId == 1);
+        outlet.DefaultOpeningFund = null;
+        terminal.OpeningFundOverride = null;
+        await db.SaveChangesAsync();
+
+        var cashDrawerController = CreateController(db, "cashier1", "Cashier");
+
+        // 1. Unconfigured Outlet & Terminal -> GetOpeningFundConfig returns IsConfigured = false, and RequireConfiguredFund blocks OpenShift
+        var unconfRes = await cashDrawerController.GetOpeningFundConfig(1);
+        var unconfDto = (TerminalCashFundConfigDto)((OkObjectResult)unconfRes.Result!).Value!;
+        Assert(!unconfDto.IsConfigured && unconfDto.EffectiveOpeningFund == null && unconfDto.OpeningFundSource == "UNCONFIGURED",
+            "Expected unconfigured cash fund when neither Outlet Default nor Terminal Override is set.");
+
+        var blockedOpen = await cashDrawerController.OpenShift(new OpenShiftDto
+        {
+            BranchId = 1,
+            TerminalId = 1,
+            CashierId = "cashier1",
+            ClientShiftId = Guid.NewGuid().ToString("N"),
+            OpeningFloat = 1000m,
+            RequireConfiguredFund = true
+        });
+        Assert(blockedOpen is BadRequestObjectResult, "OpenShift with RequireConfiguredFund=true must be blocked when cash fund is unconfigured.");
+
+        // 2. Admin configures Outlet Default Initial Cash Fund (₱3,000.00) -> Terminal inherits Outlet Default without duplicating into Terminal row
+        var outletsController = new OutletsController(db)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                    [
+                        new Claim(ClaimTypes.Name, "admin1"),
+                        new Claim(ClaimTypes.Role, "Admin")
+                    ], "TestAuth"))
+                }
+            }
+        };
+        var updateOutletRes = await outletsController.UpdateOutlet(1, new OutletDto
+        {
+            OutletId = 1,
+            BranchId = 1,
+            OutletCode = outlet.OutletCode,
+            Name = outlet.Name,
+            DefaultOpeningFund = 3000.00m,
+            IsActive = true
+        });
+        Assert(updateOutletRes is NoContentResult, "UpdateOutlet must return NoContent.");
+        Assert(outlet.DefaultOpeningFund == 3000.00m && outlet.CashFundUpdatedBy == "admin1" && outlet.CashFundUpdatedAt.HasValue,
+            "Outlet DefaultOpeningFund and audit metadata must be saved.");
+
+        var inheritedRes = await cashDrawerController.GetOpeningFundConfig(1);
+        var inheritedDto = (TerminalCashFundConfigDto)((OkObjectResult)inheritedRes.Result!).Value!;
+        Assert(inheritedDto.IsConfigured && inheritedDto.EffectiveOpeningFund == 3000.00m && inheritedDto.OpeningFundSource == "OUTLET_DEFAULT" && inheritedDto.OpeningFundOverride == null,
+            "Terminal must inherit Outlet DefaultOpeningFund without duplicating into OpeningFundOverride.");
+
+        // 3. Admin configures Terminal Override (₱5,000.00) -> Terminal Override takes precedence over Outlet Default
+        var terminalsController = new TerminalsController(db, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build())
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                    [
+                        new Claim(ClaimTypes.Name, "admin1"),
+                        new Claim(ClaimTypes.Role, "Admin")
+                    ], "TestAuth"))
+                }
+            }
+        };
+        var updateTermRes = await terminalsController.UpdateTerminal(1, new TerminalDto
+        {
+            TerminalId = 1,
+            BranchId = 1,
+            OutletId = 1,
+            TerminalCode = terminal.TerminalCode,
+            Name = terminal.Name,
+            MenuDisplayMode = terminal.MenuDisplayMode,
+            OpeningFundOverride = 5000.00m,
+            IsActive = true
+        });
+        Assert(updateTermRes is NoContentResult, "UpdateTerminal must return NoContent.");
+        var getTermRes = await terminalsController.GetTerminal(1);
+        var updatedTermDto = (TerminalDto)((OkObjectResult)getTermRes.Result!).Value!;
+        Assert(updatedTermDto.OpeningFundOverride == 5000.00m && updatedTermDto.EffectiveOpeningFund == 5000.00m && updatedTermDto.OpeningFundSource == "TERMINAL_OVERRIDE",
+            "Terminal Override must override Outlet Default.");
+
+        // 4. Cashier opens shift using denomination count with a ₱150.00 shortage (counted ₱4,850.00 vs expected ₱5,000.00)
+        var openDenoms = CashDenominationCatalog.CreateDefaultLines();
+        openDenoms.Single(d => d.Type == "BILL" && d.Denomination == 1000m).Quantity = 4; // 4,000
+        openDenoms.Single(d => d.Type == "BILL" && d.Denomination == 500m).Quantity = 1;  // 500
+        openDenoms.Single(d => d.Type == "BILL" && d.Denomination == 100m).Quantity = 3;  // 300
+        openDenoms.Single(d => d.Type == "BILL" && d.Denomination == 50m).Quantity = 1;   // 50 -> total 4,850
+
+        var openRes = await cashDrawerController.OpenShift(new OpenShiftDto
+        {
+            BranchId = 1,
+            TerminalId = 1,
+            CashierId = "cashier1",
+            ClientShiftId = Guid.NewGuid().ToString("N"),
+            RequireConfiguredFund = true,
+            OpeningDenominations = openDenoms
+        });
+        var openedShiftDto = (CashDrawerShiftDto)((OkObjectResult)openRes).Value!;
+        Assert(openedShiftDto.OpeningFloat == 4850.00m, $"Expected counted OpeningFloat 4850.00, got {openedShiftDto.OpeningFloat}");
+        Assert(openedShiftDto.ExpectedOpeningFund == 5000.00m, $"Expected ExpectedOpeningFund 5000.00, got {openedShiftDto.ExpectedOpeningFund}");
+        Assert(openedShiftDto.OpeningDiscrepancy == -150.00m, $"Expected OpeningDiscrepancy -150.00, got {openedShiftDto.OpeningDiscrepancy}");
+        Assert(openedShiftDto.OpeningReconciliationStatus == "SHORT", $"Expected SHORT status, got {openedShiftDto.OpeningReconciliationStatus}");
+
+        // 5. Changing Terminal Override while shift is open must NOT alter the already-open shift
+        await terminalsController.UpdateTerminal(1, new TerminalDto
+        {
+            TerminalId = 1,
+            BranchId = 1,
+            OutletId = 1,
+            TerminalCode = terminal.TerminalCode,
+            Name = terminal.Name,
+            MenuDisplayMode = terminal.MenuDisplayMode,
+            OpeningFundOverride = null, // Disable override -> falls back to Outlet Default 3,000 for future shifts
+            IsActive = true
+        });
+        var openShiftInDb = await db.CashDrawerShifts.FindAsync(openedShiftDto.ShiftId);
+        Assert(openShiftInDb!.ExpectedBalance == 4850.00m, "Expected drawer balance in DB must start from actual counted opening cash.");
+        Assert(openShiftInDb.ExpectedOpeningFund == 5000.00m && openShiftInDb.OpeningFloat == 4850.00m && openShiftInDb.OpeningDiscrepancy == -150.00m,
+            "Admin config changes must never mutate an already-open cashier session.");
+    }
+
+    private static async Task TestCashierAndTerminalClosingLockUntil4Am()
+    {
+        try
+        {
+            // Business Day 2026-10-20 at 10:00 PM Asia/Manila (14:00:00 UTC)
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => new DateTime(2026, 10, 20, 14, 0, 0, DateTimeKind.Utc);
+
+            var (conn, db, shift) = await CreateTestEnvAsync();
+            await using var _ = conn;
+
+            var outlet = await db.Outlets.FindAsync(1);
+            outlet!.DefaultOpeningFund = 2000.00m;
+            db.CashierSessions.Add(new CashierSession
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                Status = "ACTIVE",
+                LoginAt = new DateTime(2026, 10, 20, 10, 0, 0, DateTimeKind.Utc)
+            });
+            await db.SaveChangesAsync();
+
+            var cashDrawerCashier1 = CreateController(db, "cashier1", "Cashier");
+
+            // 1. Cashier A (cashier1) closes Terminal 01 at 10:00 PM Asia/Manila
+            var closeRes = await cashDrawerCashier1.CloseShift(new CloseShiftDto
+            {
+                ShiftId = shift.ShiftId,
+                ActualCountedBalance = 2000.00m,
+                Notes = "End of day close"
+            });
+            Assert(closeRes is OkObjectResult, "CloseShift must succeed.");
+
+            // 2. Verify Terminal lock state persisted in DB & active CashierSessions closed
+            var terminalInDb = await db.Terminals.FindAsync(1);
+            Assert(terminalInDb!.ClosedBusinessDate == "2026-10-20", $"Expected ClosedBusinessDate 2026-10-20, got {terminalInDb.ClosedBusinessDate}");
+            Assert(terminalInDb.ClosingLockedByCashier == "cashier1", $"Expected ClosingLockedByCashier cashier1, got {terminalInDb.ClosingLockedByCashier}");
+            Assert(terminalInDb.ClosingUnlockAtUtc == new DateTime(2026, 10, 20, 20, 0, 0, DateTimeKind.Utc),
+                $"Expected ClosingUnlockAtUtc 2026-10-20 20:00:00 UTC (4:00 AM Manila next day), got {terminalInDb.ClosingUnlockAtUtc}");
+
+            var activeSessionsAfterClose = await db.CashierSessions.CountAsync(s => s.TerminalId == 1 && s.Status == "ACTIVE");
+            Assert(activeSessionsAfterClose == 0, "Closing shift must terminate all active CashierSessions on that terminal.");
+
+            // 3. Verify AuthController blocks BOTH Cashier A (403 Cashier Restricted) and Cashier B (423 Terminal Locked)
+            var jwtBuilder = new Microsoft.Extensions.Configuration.ConfigurationBuilder();
+            jwtBuilder.Add(new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource
+            {
+                InitialData = new Dictionary<string, string?>
+                {
+                    ["Jwt:Key"] = "SuperSecretTestKeyForUnitTestsOnly1234567890!",
+                    ["Jwt:Issuer"] = "POS.Api",
+                    ["Jwt:Audience"] = "POS.Client"
+                }
+            });
+            var jwtConfig = jwtBuilder.Build();
+            var authController = new AuthController(db, jwtConfig);
+
+            var pinLoginCashier1 = await authController.PinLogin(new PinLoginDto { PinCode = "1111", TerminalId = 1, BranchId = 1 });
+            var pinRes1 = pinLoginCashier1 as ObjectResult;
+            Assert(pinRes1 != null && pinRes1.StatusCode == 403, $"Cashier who closed terminal must get 403 Forbidden, got {pinRes1?.StatusCode}");
+
+            var pinLoginCashier2 = await authController.PinLogin(new PinLoginDto { PinCode = "2222", TerminalId = 1, BranchId = 1 });
+            var pinRes2 = pinLoginCashier2 as ObjectResult;
+            Assert(pinRes2 != null && pinRes2.StatusCode == 423, $"Other cashiers on closed terminal must get 423 Locked, got {pinRes2?.StatusCode}");
+
+            // 4. Verify CashierSessionsController, CashDrawerController.OpenShift, and OrdersController are all blocked before 4:00 AM
+            var sessionsController1 = new CashierSessionsController(db)
+            {
+                ControllerContext = cashDrawerCashier1.ControllerContext
+            };
+            var activateRes1 = await sessionsController1.ActivateSession(new CashierSessionActivateDto { BranchId = 1, TerminalId = 1 });
+            Assert((activateRes1 as ObjectResult)?.StatusCode == 403, "ActivateSession for closing cashier must return 403.");
+
+            var cashDrawerCashier2 = CreateController(db, "cashier2", "Cashier");
+            var sessionsController2 = new CashierSessionsController(db)
+            {
+                ControllerContext = cashDrawerCashier2.ControllerContext
+            };
+            var activateRes2 = await sessionsController2.ActivateSession(new CashierSessionActivateDto { BranchId = 1, TerminalId = 1 });
+            Assert((activateRes2 as ObjectResult)?.StatusCode == 423, "ActivateSession for other cashier on locked terminal must return 423.");
+
+            var openWhileLocked = await cashDrawerCashier2.OpenShift(new OpenShiftDto
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier2",
+                OpeningFloat = 2000.00m
+            });
+            Assert(openWhileLocked is ConflictObjectResult, "OpenShift on locked terminal must return ConflictObjectResult.");
+
+            // 5. At 3:59:59 AM Asia/Manila (19:59:59 UTC), terminal and cashier remain locked
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => new DateTime(2026, 10, 20, 19, 59, 59, DateTimeKind.Utc);
+            var lockStatusBefore4Am = (TerminalClosingLockDto)((OkObjectResult)(await cashDrawerCashier1.GetTerminalLockStatus(1, "cashier1")).Result!).Value!;
+            Assert(lockStatusBefore4Am.IsTerminalLocked && lockStatusBefore4Am.IsCashierRestricted,
+                "At 3:59:59 AM Manila, both terminal lock and cashier restriction must still be active.");
+
+            // 6. At exactly 4:00:00 AM Asia/Manila (20:00:00 UTC), both restrictions automatically reset
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => new DateTime(2026, 10, 20, 20, 0, 0, DateTimeKind.Utc);
+            var lockStatusAt4Am = (TerminalClosingLockDto)((OkObjectResult)(await cashDrawerCashier1.GetTerminalLockStatus(1, "cashier1")).Result!).Value!;
+            Assert(!lockStatusAt4Am.IsTerminalLocked && !lockStatusAt4Am.IsCashierRestricted,
+                "At 4:00:00 AM Manila, both terminal lock and cashier restriction must automatically unlock.");
+
+            var unlockedTerminalInDb = await db.Terminals.FindAsync(1);
+            Assert(unlockedTerminalInDb!.ClosedBusinessDate == null && unlockedTerminalInDb.ClosingLockedByCashier == null,
+                "Auto-unlock at 4:00 AM must clear terminal lock columns in DB.");
+
+            // 7. Authorized cashier can now log in and open a new session after Initial Cash Fund confirmation
+            var pinAfter4Am = await authController.PinLogin(new PinLoginDto { PinCode = "1111", TerminalId = 1, BranchId = 1 });
+            Assert(pinAfter4Am is OkObjectResult, "Cashier A must be allowed to log in after 4:00 AM.");
+
+            var openAfter4Am = await cashDrawerCashier1.OpenShift(new OpenShiftDto
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                OpeningFloat = 2000.00m,
+                RequireConfiguredFund = true
+            });
+            Assert(openAfter4Am is OkObjectResult, "Cashier A must be able to open a new shift after 4:00 AM with Initial Cash Fund confirmation.");
+        }
+        finally
+        {
+            POS.Shared.Services.BusinessDayClock.ResetProviders();
+        }
     }
 }

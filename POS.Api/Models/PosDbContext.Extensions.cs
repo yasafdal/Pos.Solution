@@ -189,6 +189,7 @@ public partial class PosDbContext
             entity.Property(e => e.ProductId).HasColumnName("ProductId");
             entity.Property(e => e.ProductName).HasColumnName("ProductName").HasMaxLength(200).IsRequired();
             entity.Property(e => e.ProductShortCode).HasColumnName("ProductShortCode").HasMaxLength(30);
+            entity.Property(e => e.SpecialInstructions).HasColumnName("SpecialInstructions").HasMaxLength(250);
             entity.Property(e => e.Quantity).HasColumnName("Quantity").HasPrecision(18, 3);
             entity.Property(e => e.BasePrice).HasColumnName("BasePrice").HasPrecision(18, 2);
             entity.Property(e => e.ModifierTotal).HasColumnName("ModifierTotal").HasPrecision(18, 2).HasDefaultValue(0.00m);
@@ -336,6 +337,7 @@ public partial class PosDbContext
             entity.Property(e => e.ProductId).HasColumnName("ProductId");
             entity.Property(e => e.ProductName).HasColumnName("ProductName").HasMaxLength(200).IsRequired();
             entity.Property(e => e.ProductShortCode).HasColumnName("ProductShortCode").HasMaxLength(50);
+            entity.Property(e => e.SpecialInstructions).HasColumnName("SpecialInstructions").HasMaxLength(250);
             entity.Property(e => e.Quantity).HasColumnName("Quantity").HasColumnType("numeric(18,3)");
             entity.Property(e => e.BasePrice).HasColumnName("BasePrice").HasColumnType("numeric(18,2)");
             entity.Property(e => e.LineTotal).HasColumnName("LineTotal").HasColumnType("numeric(18,2)");
@@ -531,6 +533,9 @@ public partial class PosDbContext
             entity.Property(e => e.TerminalId).HasColumnName("TerminalId");
             entity.Property(e => e.CashierId).HasColumnName("CashierId").HasMaxLength(450).IsRequired();
             entity.Property(e => e.OpeningFloat).HasColumnName("OpeningFloat").HasColumnType("numeric(18,2)");
+            entity.Property(e => e.ExpectedOpeningFund).HasColumnName("ExpectedOpeningFund").HasColumnType("numeric(18,2)");
+            entity.Property(e => e.OpeningDiscrepancy).HasColumnName("OpeningDiscrepancy").HasColumnType("numeric(18,2)");
+            entity.Property(e => e.OpeningDenominationsJson).HasColumnName("OpeningDenominationsJson");
             entity.Property(e => e.OpeningConfirmed).HasColumnName("OpeningConfirmed");
             entity.Property(e => e.ClientShiftId).HasColumnName("ClientShiftId").HasMaxLength(100);
             entity.Property(e => e.ClientCloseId).HasColumnName("ClientCloseId").HasMaxLength(100);

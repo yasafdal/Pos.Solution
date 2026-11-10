@@ -74,6 +74,38 @@ public static class LocalHierarchyUpgrade
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN AllowSync INTEGER NOT NULL DEFAULT 1");
                 if (!Columns("LocalTerminalConfigs").Contains("ActivatedAt"))
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ActivatedAt TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("DefaultOpeningFund"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN DefaultOpeningFund TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("OpeningFundOverride"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN OpeningFundOverride TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("EffectiveOpeningFund"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN EffectiveOpeningFund TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("OpeningFundSource"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN OpeningFundSource TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("ClosedBusinessDate"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ClosedBusinessDate TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("ClosingLockedByCashier"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ClosingLockedByCashier TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("ClosingLockedAtUtc"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ClosingLockedAtUtc TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("ClosingUnlockAtUtc"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ClosingUnlockAtUtc TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("ClosingLockedTickCount64"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ClosingLockedTickCount64 INTEGER NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("LastKnownServerUtc"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastKnownServerUtc TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("LastKnownServerTickCount64"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastKnownServerTickCount64 INTEGER NULL");
+            }
+            if (TableExists("LocalCashDrawerShifts"))
+            {
+                var shiftCols = Columns("LocalCashDrawerShifts");
+                if (!shiftCols.Contains("ExpectedOpeningFund"))
+                    Execute("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ExpectedOpeningFund TEXT NULL");
+                if (!shiftCols.Contains("OpeningDiscrepancy"))
+                    Execute("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDiscrepancy TEXT NULL");
+                if (!shiftCols.Contains("OpeningDenominationsJson"))
+                    Execute("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDenominationsJson TEXT NULL");
             }
             if (TableExists("LocalOrderItems"))
             {
@@ -86,6 +118,8 @@ public static class LocalHierarchyUpgrade
                     Execute("ALTER TABLE LocalOrderItems ADD COLUMN IsBarItem INTEGER NOT NULL DEFAULT 0");
                 if (!itemCols.Contains("ModifiersJson"))
                     Execute("ALTER TABLE LocalOrderItems ADD COLUMN ModifiersJson TEXT NULL");
+                if (!itemCols.Contains("SpecialInstructions"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN SpecialInstructions TEXT NULL");
             }
             if (TableExists("LocalOrders"))
             {

@@ -1,5 +1,7 @@
 @using System.Net.Http.Headers
 @page "/login"
+@page "/terminal-locked"
+@implements IDisposable
 @layout Layout.AuthLayout
 @inject IUserService UserService
 @inject ITerminalService TerminalService
@@ -10,6 +12,87 @@
 @inject IDeviceActivationService ActivationService
 
 <div class="pos-login-card">
+    @if (lockStatus?.IsTerminalLocked == true)
+    {
+        <!-- POS Terminal Locked Screen -->
+        <div class="pos-header">
+            <div class="pos-logo-icon" style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); box-shadow: 0 10px 15px -3px rgba(220, 38, 38, 0.4);">
+                <i class="bi bi-shield-lock-fill fs-2"></i>
+            </div>
+            <h2 class="pos-title">POS Terminal Locked</h2>
+            <p class="pos-subtitle text-danger fw-semibold">Closed for the Current Business Day</p>
+        </div>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="pos-error-badge w-100">
+                <i class="bi bi-exclamation-circle-fill me-1"></i>
+                <span>@errorMessage</span>
+            </div>
+        }
+
+        <div class="w-100 rounded-4 p-3 mb-3" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(239, 68, 68, 0.35);">
+            <div class="small text-light mb-3" style="line-height: 1.5;">
+                @(lockStatus.LockMessage ?? "This POS Terminal has completed Cashier Closing for the current business day. No cashier login or transactions are permitted until 4:00 AM (Asia/Manila).")
+            </div>
+
+            <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
+                <span class="text-secondary">Terminal</span>
+                <span class="fw-semibold text-white">@(provisionedTerminalName ?? $"Terminal #{lockStatus.TerminalId}")</span>
+            </div>
+            <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
+                <span class="text-secondary">Business Date</span>
+                <span class="fw-semibold text-white font-monospace">@(lockStatus.ClosedBusinessDate ?? "—")</span>
+            </div>
+            <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
+                <span class="text-secondary">Closed By (Restricted)</span>
+                <span class="fw-semibold text-warning">@(lockStatus.LockedByCashier ?? "Cashier")</span>
+            </div>
+            @if (lockStatus.LockedAtUtc.HasValue)
+            {
+                <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
+                    <span class="text-secondary">Closed At</span>
+                    <span class="text-white">@POS.Shared.Services.BusinessDayClock.FormatManilaDateTime(lockStatus.LockedAtUtc.Value)</span>
+                </div>
+            }
+            @if (lockStatus.UnlockAtUtc.HasValue)
+            {
+                <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
+                    <span class="text-secondary">Automatic Unlock</span>
+                    <span class="fw-bold text-info">@POS.Shared.Services.BusinessDayClock.FormatManilaDateTime(lockStatus.UnlockAtUtc.Value)</span>
+                </div>
+            }
+        </div>
+
+        @if (lockStatus.ClockTamperDetected)
+        {
+            <div class="pos-error-badge w-100 mb-3">
+                <i class="bi bi-clock-history me-1"></i>
+                <span>Untrusted device clock change detected. Terminal remains locked until verified 4:00 AM (Asia/Manila).</span>
+            </div>
+        }
+
+        <button type="button"
+                class="btn btn-outline-light w-100 rounded-3 py-2 fw-semibold"
+                @onclick="RefreshTerminalLockStatusAsync"
+                disabled="@isLoading">
+            <i class="bi bi-arrow-clockwise me-1"></i>
+            Check Unlock Status
+        </button>
+
+        <div class="pos-footer w-100 flex-column">
+            <div class="helper-text text-center">
+                Terminal &amp; closing cashier restrictions reset automatically at 4:00 AM (Asia/Manila).
+            </div>
+            <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
+                <small class="text-secondary font-monospace" style="font-size: 0.72rem;">
+                    UAT Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "https://dev-uat.agressolutions.com")
+                </small>
+            </div>
+        </div>
+    }
+    else
+    {
     <!-- POS Terminal Branding -->
     <div class="pos-header">
         <div class="pos-logo-icon">
@@ -92,6 +175,7 @@
             </small>
         </div>
     </div>
+    }
 </div>
 
 <style>
@@ -296,13 +380,64 @@
     private string? errorMessage;
     private ElementReference hiddenInput;
     private bool restoreInputFocus;
+    private TerminalClosingLockDto? lockStatus;
+    private string? provisionedTerminalName;
+    private int provisionedTerminalId;
+    private int provisionedBranchId;
+    private System.Threading.Timer? _lockCheckTimer;
 
     protected override async Task OnInitializedAsync()
     {
         if (!await ActivationService.IsDeviceProvisionedAsync())
         {
             Navigation.NavigateTo("/activate", replace: true);
+            return;
         }
+
+        await RefreshTerminalLockStatusAsync();
+
+        _lockCheckTimer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    bool wasLocked = lockStatus?.IsTerminalLocked == true;
+                    await RefreshTerminalLockStatusAsync();
+                    if (wasLocked && lockStatus?.IsTerminalLocked != true)
+                    {
+                        errorMessage = null;
+                        restoreInputFocus = true;
+                    }
+                    StateHasChanged();
+                });
+            }
+            catch { }
+        }, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
+
+    private async Task RefreshTerminalLockStatusAsync()
+    {
+        try
+        {
+            var provisioned = await ActivationService.GetProvisionedTerminalAsync();
+            if (provisioned != null)
+            {
+                provisionedTerminalId = provisioned.TerminalId;
+                provisionedBranchId = provisioned.BranchId;
+                provisionedTerminalName = !string.IsNullOrWhiteSpace(provisioned.TerminalCode)
+                    ? $"{provisioned.TerminalCode} — {provisioned.TerminalName}"
+                    : provisioned.TerminalName;
+                lockStatus = await POS.Client.Services.ShiftSession.GetTerminalLockStatusAsync(
+                    Http, provisioned.TerminalId, null, offline: false);
+            }
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        _lockCheckTimer?.Dispose();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -507,6 +642,17 @@
                 Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.TerminalConfigs));
             if (localOutlet == null || localOutlet.OutletId <= 0) return false; // Refresh legacy ownership online before a new offline session.
 
+            var currentLock = await POS.Client.Services.ShiftSession.GetTerminalLockStatusAsync(
+                Http, localOutlet.TerminalId, localCashier.Username, offline: true);
+            if (currentLock.IsCashierRestricted || currentLock.IsTerminalLocked)
+            {
+                lockStatus = currentLock;
+                throw new InvalidOperationException(
+                    currentLock.CashierRestrictionMessage ??
+                    currentLock.LockMessage ??
+                    "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
+            }
+
             var outletDto = new TerminalConfigDto
             {
                 TerminalId = localOutlet.TerminalId,
@@ -554,6 +700,10 @@
             Navigation.NavigateTo("/");
             return true;
         }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
         catch
         {
             return false;
@@ -569,6 +719,13 @@
 
         try
         {
+            await RefreshTerminalLockStatusAsync();
+            if (lockStatus?.IsTerminalLocked == true)
+            {
+                errorMessage = lockStatus.LockMessage ?? "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).";
+                return;
+            }
+
             // Local-First: Always authenticate against local SQLite cache first (zero network dependency).
             if (await TryOfflinePinLoginAsync(pin))
             {
@@ -579,7 +736,15 @@
             bool isNetworkError = false;
             try
             {
-                authResult = await UserService.PinLoginAsync(pin);
+                authResult = await UserService.PinLoginAsync(
+                    pin,
+                    provisionedTerminalId > 0 ? provisionedTerminalId : null,
+                    provisionedBranchId > 0 ? provisionedBranchId : null);
+            }
+            catch (InvalidOperationException)
+            {
+                await RefreshTerminalLockStatusAsync();
+                throw;
             }
             catch (Exception)
             {
@@ -595,6 +760,17 @@
                 {
                     Navigation.NavigateTo("/activate", replace: true);
                     return;
+                }
+
+                var postAuthLock = await POS.Client.Services.ShiftSession.GetTerminalLockStatusAsync(
+                    Http, provisioned.TerminalId, username, offline: false);
+                if (postAuthLock.IsCashierRestricted || postAuthLock.IsTerminalLocked)
+                {
+                    lockStatus = postAuthLock;
+                    throw new InvalidOperationException(
+                        postAuthLock.CashierRestrictionMessage ??
+                        postAuthLock.LockMessage ??
+                        "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
                 }
 
                 var deviceUuid = provisioned.DeviceUuid;

@@ -184,6 +184,21 @@
             {
                 await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
             }
+            if (Session.IsAuthenticated && Session.Terminal != null)
+            {
+                var lockState = await POS.Client.Services.ShiftSession.GetTerminalLockStatusAsync(
+                    Http,
+                    Session.Terminal.TerminalId,
+                    Session.Username,
+                    _connectivityState != TerminalConnectivityState.OnlineAndHealthy);
+                if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+                {
+                    Session.ClearSession();
+                    Http.DefaultRequestHeaders.Authorization = null;
+                    Navigation.NavigateTo("/terminal-locked", replace: true);
+                    return;
+                }
+            }
             using var db = new POS.Client.Data.LocalPosDbContext();
             db.InitializeDatabase();
             _pendingCount = db.SyncOutboxes.Count(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING");

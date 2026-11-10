@@ -57,6 +57,13 @@ namespace POS.Api.Controllers
                 if (terminal == null || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive
                     || (request.BranchId.HasValue && request.BranchId != terminal.BranchId))
                     return BadRequest("Invalid or inactive terminal ownership.");
+
+                var lockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(_context, terminal.TerminalId, user.Username);
+                if (lockState.IsCashierRestricted)
+                    return StatusCode(403, lockState.CashierRestrictionMessage ?? lockState.LockMessage);
+                if (lockState.IsTerminalLocked)
+                    return StatusCode(423, lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
+
                 claims.Add(new Claim("branch_id", terminal.BranchId.ToString()));
                 claims.Add(new Claim("outlet_id", terminal.OutletId.ToString()));
                 claims.Add(new Claim("terminal_id", terminal.TerminalId.ToString()));
@@ -109,6 +116,13 @@ namespace POS.Api.Controllers
                 if (terminal == null || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive
                     || (request.BranchId.HasValue && request.BranchId != terminal.BranchId))
                     return BadRequest("Invalid or inactive terminal ownership.");
+
+                var lockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(_context, terminal.TerminalId, user.Username);
+                if (lockState.IsCashierRestricted)
+                    return StatusCode(403, lockState.CashierRestrictionMessage ?? lockState.LockMessage);
+                if (lockState.IsTerminalLocked)
+                    return StatusCode(423, lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
+
                 claims.Add(new Claim("branch_id", terminal.BranchId.ToString()));
                 claims.Add(new Claim("outlet_id", terminal.OutletId.ToString()));
                 claims.Add(new Claim("terminal_id", terminal.TerminalId.ToString()));

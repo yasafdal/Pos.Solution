@@ -17,5 +17,6 @@ public class OrderItemResponseDto
     public decimal VatAmount { get; set; }
     public bool IsKitchenItem { get; set; }
     public bool IsBarItem { get; set; }
+    public string? SpecialInstructions { get; set; }
     public List<OrderItemModifierResponseDto> Modifiers { get; set; } = new();
 }

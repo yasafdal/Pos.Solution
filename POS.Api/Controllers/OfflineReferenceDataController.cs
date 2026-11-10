@@ -236,7 +236,17 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                 TerminalName = outlet.Name,
                 BranchTaxType = outlet.Branch?.TaxType ?? "VAT-Registered",
                 DeviceIdentifier = outlet.DeviceIdentifier ?? string.Empty,
-                LastIssuedOrderNumber = orderSequence?.LastIssuedNumber ?? 0
+                LastIssuedOrderNumber = orderSequence?.LastIssuedNumber ?? 0,
+                DefaultOpeningFund = physicalOutlet.DefaultOpeningFund,
+                OpeningFundOverride = outlet.OpeningFundOverride,
+                EffectiveOpeningFund = outlet.OpeningFundOverride ?? physicalOutlet.DefaultOpeningFund,
+                OpeningFundSource = outlet.OpeningFundOverride.HasValue
+                    ? "TERMINAL_OVERRIDE"
+                    : (physicalOutlet.DefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED"),
+                ClosedBusinessDate = outlet.ClosedBusinessDate,
+                ClosingLockedByCashier = outlet.ClosingLockedByCashier,
+                ClosingLockedAtUtc = outlet.ClosingLockedAtUtc,
+                ClosingUnlockAtUtc = outlet.ClosingUnlockAtUtc
             },
             Products = products,
             Categories = categories,

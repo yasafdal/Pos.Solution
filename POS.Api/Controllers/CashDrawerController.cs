@@ -257,6 +257,53 @@ public class CashDrawerController : ControllerBase
         return Ok(new { Message = "Category deactivated successfully." });
     }
 
+    [AllowAnonymous]
+    [HttpGet("terminal-lock/{terminalId:int}")]
+    public async Task<ActionResult<TerminalClosingLockDto>> GetTerminalLockStatus(
+        int terminalId,
+        [FromQuery] string? cashierUsername = null,
+        CancellationToken cancellationToken = default)
+    {
+        var status = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
+            _context, terminalId, cashierUsername, cancellationToken);
+        return Ok(status);
+    }
+
+    [HttpGet("opening-fund-config/{terminalId:int}")]
+    public async Task<ActionResult<TerminalCashFundConfigDto>> GetOpeningFundConfig(int terminalId, CancellationToken cancellationToken = default)
+    {
+        if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != terminalId.ToString())
+            return Forbid();
+
+        var terminal = await _context.Terminals
+            .AsNoTracking()
+            .Include(t => t.Outlet)
+            .Include(t => t.Branch)
+            .FirstOrDefaultAsync(t => t.TerminalId == terminalId, cancellationToken);
+
+        if (terminal == null)
+            return NotFound("Terminal not found.");
+
+        return Ok(new TerminalCashFundConfigDto
+        {
+            TerminalId = terminal.TerminalId,
+            TerminalCode = terminal.TerminalCode,
+            TerminalName = terminal.Name,
+            OutletId = terminal.OutletId,
+            OutletName = terminal.Outlet?.Name ?? string.Empty,
+            BranchId = terminal.BranchId,
+            BranchName = terminal.Branch?.Name ?? string.Empty,
+            DefaultOpeningFund = terminal.Outlet?.DefaultOpeningFund,
+            OpeningFundOverride = terminal.OpeningFundOverride,
+            UpdatedBy = terminal.OpeningFundOverride.HasValue
+                ? terminal.CashFundUpdatedBy
+                : (terminal.Outlet?.DefaultOpeningFund.HasValue == true ? terminal.Outlet.CashFundUpdatedBy : terminal.CashFundUpdatedBy),
+            UpdatedAt = terminal.OpeningFundOverride.HasValue
+                ? terminal.CashFundUpdatedAt
+                : (terminal.Outlet?.DefaultOpeningFund.HasValue == true ? terminal.Outlet.CashFundUpdatedAt : terminal.CashFundUpdatedAt)
+        });
+    }
+
     [HttpPost("open-shift")]
     public async Task<IActionResult> OpenShift([FromBody] OpenShiftDto request, CancellationToken cancellationToken = default)
     {
@@ -264,8 +311,19 @@ public class CashDrawerController : ControllerBase
         if (string.IsNullOrEmpty(cashierId)) return Unauthorized();
         if (request.CashierId != null && request.CashierId != cashierId) return Forbid();
 
+        List<CashDenominationLineDto>? validatedOpeningDenoms = null;
+        if (request.OpeningDenominations is { Count: > 0 })
+        {
+            if (!CashDenominationCatalog.TryValidateAndCalculate(request.OpeningDenominations, out var normalizedDenoms, out decimal countedOpeningCash, out string? denomErr))
+                return BadRequest(denomErr ?? "Invalid opening cash denomination breakdown.");
+            validatedOpeningDenoms = normalizedDenoms;
+            request.OpeningFloat = countedOpeningCash;
+        }
+
         if (!request.OpeningFloat.HasValue || request.OpeningFloat < 0)
             return BadRequest("Explicit opening float is required; zero is allowed, negative is not.");
+        if (request.ExpectedOpeningFund.HasValue && request.ExpectedOpeningFund.Value < 0m)
+            return BadRequest("Expected opening fund cannot be negative.");
         if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
         if (request.ClientShiftId?.Length > 100 || request.OpenedAt > DateTime.UtcNow.AddMinutes(1))
             return BadRequest("Invalid opening identity or timestamp.");
@@ -287,7 +345,22 @@ public class CashDrawerController : ControllerBase
         }
 
         if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
+
+        var lockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
+            _context, request.TerminalId, cashierId, cancellationToken);
+        bool isHistoricalOfflineOpen = request.OpenedAt.HasValue &&
+            lockState.LockedAtUtc.HasValue &&
+            request.OpenedAt.Value.ToUniversalTime() < lockState.LockedAtUtc.Value.ToUniversalTime();
+        if (!isHistoricalOfflineOpen)
+        {
+            if (lockState.IsCashierRestricted)
+                return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage);
+            if (lockState.IsTerminalLocked)
+                return Conflict(lockState.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
+        }
+
         var outlet = await _context.Terminals.AsNoTracking()
+            .Include(o => o.Outlet)
             .FirstOrDefaultAsync(o => o.TerminalId == request.TerminalId, cancellationToken);
         if (outlet == null || !outlet.IsActive || !await _context.Outlets.AnyAsync(o => o.OutletId == outlet.OutletId && o.IsActive && o.Branch.IsActive, cancellationToken))
             return BadRequest("Select a valid active terminal and outlet.");
@@ -299,6 +372,14 @@ public class CashDrawerController : ControllerBase
         {
             return BadRequest("Terminal does not belong to the specified branch.");
         }
+
+        decimal? configuredOpeningFund = outlet?.OpeningFundOverride ?? outlet?.Outlet?.DefaultOpeningFund;
+        decimal? resolvedExpectedOpeningFund = request.ExpectedOpeningFund.HasValue
+            ? Math.Round(request.ExpectedOpeningFund.Value, 2, MidpointRounding.AwayFromZero)
+            : configuredOpeningFund;
+
+        if (request.RequireConfiguredFund && !resolvedExpectedOpeningFund.HasValue)
+            return BadRequest("Initial Cash Fund is not configured for this Terminal or Outlet. Please contact an Administrator.");
 
         var existingOpen = await _context.CashDrawerShifts
             .FirstOrDefaultAsync(s => s.TerminalId == request.TerminalId && s.Status == "OPEN", cancellationToken);
@@ -313,13 +394,18 @@ public class CashDrawerController : ControllerBase
         var openingTime = request.OpenedAt ?? DateTime.UtcNow;
         if (await _context.CashDrawerShifts.AnyAsync(s => s.TerminalId == request.TerminalId && (s.ClosedAt == null || s.ClosedAt >= openingTime), cancellationToken))
             return Conflict("Opening overlaps an existing drawer lifecycle.");
-        decimal openingFloat = Math.Round(request.OpeningFloat.Value, 2);
+        decimal openingFloat = Math.Round(request.OpeningFloat.Value, 2, MidpointRounding.AwayFromZero);
+        decimal finalExpectedOpening = resolvedExpectedOpeningFund ?? openingFloat;
+        decimal openingDiscrepancy = Math.Round(openingFloat - finalExpectedOpening, 2, MidpointRounding.AwayFromZero);
         var shift = new CashDrawerShift
         {
             BranchId = request.BranchId > 0 ? request.BranchId : (outlet?.BranchId ?? 1),
             TerminalId = request.TerminalId,
             CashierId = cashierId,
             OpeningFloat = openingFloat,
+            ExpectedOpeningFund = finalExpectedOpening,
+            OpeningDiscrepancy = openingDiscrepancy,
+            OpeningDenominationsJson = validatedOpeningDenoms != null ? JsonSerializer.Serialize(validatedOpeningDenoms) : null,
             OpeningConfirmed = true,
             ClientShiftId = request.ClientShiftId,
             ExpectedBalance = openingFloat,
@@ -520,6 +606,15 @@ public class CashDrawerController : ControllerBase
             }
 
             if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString()) return Forbid();
+
+            var movementLockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
+                _context, shift.TerminalId, cashierId, cancellationToken);
+            if (movementLockState.IsCashierRestricted || movementLockState.IsTerminalLocked)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return Conflict(movementLockState.CashierRestrictionMessage ?? movementLockState.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
+            }
+
             // Validate branch & outlet ownership
             if (request.TerminalId > 0 && shift.TerminalId != request.TerminalId)
             {
@@ -1445,7 +1540,12 @@ public class CashDrawerController : ControllerBase
                 .FirstOrDefaultAsync(cancellationToken);
 
             var caller = GetAuthenticatedUsername();
-            if (shift != null && (User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString() || shift.CashierId != caller) && !IsSupervisorRole(GetAuthenticatedRole()))
+            bool isTerminalTokenForShiftOwner = string.Equals(GetAuthenticatedRole(), "Terminal", StringComparison.OrdinalIgnoreCase)
+                && shift != null
+                && User.FindFirst("terminal_id")?.Value == shift.TerminalId.ToString()
+                && !string.IsNullOrWhiteSpace(request.CashierId)
+                && string.Equals(request.CashierId, shift.CashierId, StringComparison.Ordinal);
+            if (shift != null && (User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString() || (shift.CashierId != caller && !isTerminalTokenForShiftOwner)) && !IsSupervisorRole(GetAuthenticatedRole()))
                 return Forbid();
             if (shift != null && !string.IsNullOrWhiteSpace(request.CashierId) && !string.Equals(request.CashierId, shift.CashierId, StringComparison.Ordinal))
                 return Forbid();
@@ -1522,6 +1622,13 @@ public class CashDrawerController : ControllerBase
                 };
                 shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(initialDeclaration);
             }
+
+            await POS.Api.Services.TerminalClosingLockGuard.LockTerminalOnCloseAsync(
+                _context,
+                shift.TerminalId,
+                shift.CashierId,
+                shift.ClosedAt ?? DateTime.UtcNow,
+                cancellationToken);
 
             await _context.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
@@ -1969,6 +2076,9 @@ public class CashDrawerController : ControllerBase
             ShiftCashNetSales = Math.Round(shift.TotalCashSales - shift.TotalCashRefunds, 2, MidpointRounding.AwayFromZero),
             ShiftNonCashNetSales = dto.TotalNonCashExpected,
             OpeningFloat = shift.OpeningFloat,
+            ExpectedOpeningFund = dto.ExpectedOpeningFund,
+            OpeningDiscrepancy = dto.OpeningDiscrepancy,
+            OpeningDenominations = dto.OpeningDenominations,
             CashSalesCollected = shift.TotalCashSales,
             CashRefunds = shift.TotalCashRefunds,
             NetCashSales = Math.Round(shift.TotalCashSales - shift.TotalCashRefunds, 2, MidpointRounding.AwayFromZero),
@@ -2002,6 +2112,20 @@ public class CashDrawerController : ControllerBase
             .Where(m => (m.Status ?? "POSTED") == "POSTED" && m.MovementType == "PETTY_CASH")
             .Sum(m => m.Amount);
 
+        List<CashDenominationLineDto> openingDenoms = new();
+        if (!string.IsNullOrWhiteSpace(shift.OpeningDenominationsJson))
+        {
+            try
+            {
+                openingDenoms = JsonSerializer.Deserialize<List<CashDenominationLineDto>>(shift.OpeningDenominationsJson) ?? new();
+            }
+            catch { openingDenoms = new(); }
+        }
+
+        decimal expectedOpeningFund = shift.ExpectedOpeningFund ?? shift.OpeningFloat;
+        decimal openingDiscrepancy = shift.OpeningDiscrepancy
+            ?? Math.Round(shift.OpeningFloat - expectedOpeningFund, 2, MidpointRounding.AwayFromZero);
+
         return new CashDrawerShiftDto
         {
             ShiftId = shift.ShiftId,
@@ -2009,6 +2133,9 @@ public class CashDrawerController : ControllerBase
             TerminalId = shift.TerminalId,
             CashierId = shift.CashierId,
             OpeningFloat = shift.OpeningFloat,
+            ExpectedOpeningFund = expectedOpeningFund,
+            OpeningDiscrepancy = openingDiscrepancy,
+            OpeningDenominations = openingDenoms,
             OpeningConfirmed = shift.OpeningConfirmed,
             ClientShiftId = shift.ClientShiftId,
             ClientCloseId = shift.ClientCloseId,

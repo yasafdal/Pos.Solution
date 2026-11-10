@@ -166,9 +166,220 @@ public static class ShiftSession
         return closed == null ? null : await BuildLocalShiftDtoAsync(local, closed, isReprint: true, includeSupervisorReconciliation: authorizedSupervisor);
     }
 
+    public static async Task<TerminalCashFundConfigDto> GetOpeningFundConfigAsync(HttpClient http, int terminalId, bool offline)
+    {
+        if (!offline && terminalId > 0)
+        {
+            try
+            {
+                var response = await http.GetAsync($"api/cash-drawer/opening-fund-config/{terminalId}");
+                if (response.IsSuccessStatusCode)
+                {
+                    var remoteCfg = await response.Content.ReadFromJsonAsync<TerminalCashFundConfigDto>();
+                    if (remoteCfg != null)
+                    {
+                        await LocalPosDbContext.WriteLock.WaitAsync();
+                        try
+                        {
+                            using var db = new LocalPosDbContext();
+                            db.InitializeDatabase();
+                            var localTerm = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId);
+                            if (localTerm != null)
+                            {
+                                localTerm.DefaultOpeningFund = remoteCfg.DefaultOpeningFund;
+                                localTerm.OpeningFundOverride = remoteCfg.OpeningFundOverride;
+                                localTerm.EffectiveOpeningFund = remoteCfg.EffectiveOpeningFund;
+                                localTerm.OpeningFundSource = remoteCfg.OpeningFundSource;
+                                await db.SaveChangesAsync();
+                            }
+                        }
+                        finally { LocalPosDbContext.WriteLock.Release(); }
+                        return remoteCfg;
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback to cached SQLite config when offline or unreachable
+            }
+        }
+
+        using var localDb = new LocalPosDbContext();
+        localDb.InitializeDatabase();
+        var cached = await localDb.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == terminalId)
+                     ?? await localDb.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
+        if (cached == null)
+        {
+            return new TerminalCashFundConfigDto { TerminalId = terminalId };
+        }
+
+        return new TerminalCashFundConfigDto
+        {
+            TerminalId = cached.TerminalId,
+            TerminalCode = cached.TerminalCode,
+            TerminalName = cached.TerminalName,
+            OutletId = cached.OutletId,
+            OutletName = cached.OutletName,
+            BranchId = cached.BranchId,
+            BranchName = cached.BranchName ?? string.Empty,
+            DefaultOpeningFund = cached.DefaultOpeningFund ?? (cached.OpeningFundSource == "OUTLET_DEFAULT" ? cached.EffectiveOpeningFund : null),
+            OpeningFundOverride = cached.OpeningFundOverride ?? (cached.OpeningFundSource == "TERMINAL_OVERRIDE" ? cached.EffectiveOpeningFund : null)
+        };
+    }
+
+    public static void ApplyLocalClosingLock(LocalTerminalConfig? termCfg, string cashierId, DateTime closedAtUtc)
+    {
+        if (termCfg == null) return;
+        var utcClosed = closedAtUtc.Kind == DateTimeKind.Utc
+            ? closedAtUtc
+            : DateTime.SpecifyKind(closedAtUtc, DateTimeKind.Utc);
+        termCfg.ClosedBusinessDate = POS.Shared.Services.BusinessDayClock.GetBusinessDateString(utcClosed);
+        termCfg.ClosingLockedByCashier = cashierId;
+        termCfg.ClosingLockedAtUtc = utcClosed;
+        termCfg.ClosingUnlockAtUtc = POS.Shared.Services.BusinessDayClock.GetNextBusinessDayStartUtc(utcClosed);
+        termCfg.ClosingLockedTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64();
+    }
+
+    public static async Task<TerminalClosingLockDto> GetTerminalLockStatusAsync(
+        HttpClient? http,
+        int terminalId,
+        string? cashierUsername = null,
+        bool offline = false)
+    {
+        if (!offline && http != null && terminalId > 0)
+        {
+            try
+            {
+                string url = string.IsNullOrWhiteSpace(cashierUsername)
+                    ? $"api/cash-drawer/terminal-lock/{terminalId}"
+                    : $"api/cash-drawer/terminal-lock/{terminalId}?cashierUsername={Uri.EscapeDataString(cashierUsername.Trim())}";
+                var response = await http.GetAsync(url);
+                if (response.IsSuccessStatusCode)
+                {
+                    var remoteLock = await response.Content.ReadFromJsonAsync<TerminalClosingLockDto>();
+                    if (remoteLock != null)
+                    {
+                        await LocalPosDbContext.WriteLock.WaitAsync();
+                        try
+                        {
+                            using var db = new LocalPosDbContext();
+                            db.InitializeDatabase();
+                            var localTerm = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId)
+                                            ?? await db.TerminalConfigs.FirstOrDefaultAsync();
+                            if (localTerm != null)
+                            {
+                                var nowTick = POS.Shared.Services.BusinessDayClock.TickCount64();
+                                localTerm.LastKnownServerUtc = remoteLock.ServerUtcNow;
+                                localTerm.LastKnownServerTickCount64 = nowTick;
+
+                                if (remoteLock.IsTerminalLocked)
+                                {
+                                    localTerm.ClosedBusinessDate = remoteLock.ClosedBusinessDate;
+                                    localTerm.ClosingLockedByCashier = remoteLock.LockedByCashier;
+                                    localTerm.ClosingLockedAtUtc = remoteLock.LockedAtUtc;
+                                    localTerm.ClosingUnlockAtUtc = remoteLock.UnlockAtUtc;
+                                    localTerm.ClosingLockedTickCount64 ??= nowTick;
+                                    await db.SaveChangesAsync();
+                                    return remoteLock;
+                                }
+
+                                bool hasPendingLocalClose = !string.IsNullOrWhiteSpace(localTerm.ClosedBusinessDate) &&
+                                    string.CompareOrdinal(
+                                        localTerm.ClosedBusinessDate,
+                                        POS.Shared.Services.BusinessDayClock.GetBusinessDateString(remoteLock.ServerUtcNow ?? POS.Shared.Services.BusinessDayClock.UtcNow())) >= 0 &&
+                                    await db.SyncOutboxes.AnyAsync(o => o.EntityType == "SHIFT_CLOSE" && o.Status != "COMPLETED");
+
+                                if (!hasPendingLocalClose)
+                                {
+                                    localTerm.ClosedBusinessDate = null;
+                                    localTerm.ClosingLockedByCashier = null;
+                                    localTerm.ClosingLockedAtUtc = null;
+                                    localTerm.ClosingUnlockAtUtc = null;
+                                    localTerm.ClosingLockedTickCount64 = null;
+                                    await db.SaveChangesAsync();
+                                    return remoteLock;
+                                }
+
+                                await db.SaveChangesAsync();
+                                return POS.Shared.Services.BusinessDayClock.EvaluateLock(
+                                    terminalId: localTerm.TerminalId,
+                                    closedBusinessDate: localTerm.ClosedBusinessDate,
+                                    lockedByCashier: localTerm.ClosingLockedByCashier,
+                                    lockedAtUtc: localTerm.ClosingLockedAtUtc,
+                                    unlockAtUtc: localTerm.ClosingUnlockAtUtc,
+                                    candidateCashierUsername: cashierUsername,
+                                    authoritativeServerUtc: remoteLock.ServerUtcNow);
+                            }
+                        }
+                        finally { LocalPosDbContext.WriteLock.Release(); }
+                        return remoteLock;
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback to local SQLite lock evaluation when offline or unreachable
+            }
+        }
+
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var localDb = new LocalPosDbContext();
+            localDb.InitializeDatabase();
+            var cached = (terminalId > 0
+                ? await localDb.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId)
+                : null) ?? await localDb.TerminalConfigs.FirstOrDefaultAsync();
+
+            if (cached == null)
+            {
+                return new TerminalClosingLockDto
+                {
+                    TerminalId = terminalId,
+                    ServerUtcNow = POS.Shared.Services.BusinessDayClock.UtcNow()
+                };
+            }
+
+            var status = POS.Shared.Services.BusinessDayClock.EvaluateLock(
+                terminalId: cached.TerminalId,
+                closedBusinessDate: cached.ClosedBusinessDate,
+                lockedByCashier: cached.ClosingLockedByCashier,
+                lockedAtUtc: cached.ClosingLockedAtUtc,
+                unlockAtUtc: cached.ClosingUnlockAtUtc,
+                candidateCashierUsername: cashierUsername,
+                authoritativeServerUtc: null,
+                deviceUtcNow: POS.Shared.Services.BusinessDayClock.UtcNow(),
+                currentTickCount64: POS.Shared.Services.BusinessDayClock.TickCount64(),
+                lockedAtTickCount64: cached.ClosingLockedTickCount64,
+                lastKnownServerUtc: cached.LastKnownServerUtc,
+                lastKnownServerTickCount64: cached.LastKnownServerTickCount64);
+
+            if (!status.IsTerminalLocked && !string.IsNullOrWhiteSpace(cached.ClosedBusinessDate))
+            {
+                cached.ClosedBusinessDate = null;
+                cached.ClosingLockedByCashier = null;
+                cached.ClosingLockedAtUtc = null;
+                cached.ClosingUnlockAtUtc = null;
+                cached.ClosingLockedTickCount64 = null;
+                await localDb.SaveChangesAsync();
+            }
+
+            return status;
+        }
+        finally { LocalPosDbContext.WriteLock.Release(); }
+    }
+
     public static async Task<LocalCashDrawerShift> OpenAsync(HttpClient http, OpenShiftDto request, string cashier, bool offline)
     {
+        if (request.OpeningDenominations is { Count: > 0 })
+        {
+            if (!CashDenominationCatalog.TryValidateAndCalculate(request.OpeningDenominations, out var normDenoms, out decimal countedOpeningCash, out string? denomErr))
+                throw new InvalidOperationException(denomErr ?? "Invalid opening cash denomination breakdown.");
+            request.OpeningDenominations = normDenoms;
+            request.OpeningFloat = countedOpeningCash;
+        }
         if (!request.OpeningFloat.HasValue || request.OpeningFloat < 0) throw new InvalidOperationException("Enter opening float. Zero is allowed.");
+        if (request.ExpectedOpeningFund.HasValue && request.ExpectedOpeningFund.Value < 0m) throw new InvalidOperationException("Expected opening fund cannot be negative.");
         request.CashierId = cashier;
         if (string.IsNullOrWhiteSpace(request.ClientShiftId)) throw new InvalidOperationException("Opening identity is required.");
         if (!offline)
@@ -182,10 +393,60 @@ public static class ShiftSession
         {
             using var db = new LocalPosDbContext(); db.InitializeDatabase();
             using var tx = await db.Database.BeginTransactionAsync();
-            if (!await db.TerminalConfigs.AnyAsync(t => t.TerminalId == request.TerminalId && t.BranchId == request.BranchId && t.OutletId > 0)) throw new InvalidOperationException("Refresh terminal ownership online before opening offline.");
+            var termCfg = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == request.TerminalId && t.BranchId == request.BranchId && t.OutletId > 0);
+            if (termCfg == null) throw new InvalidOperationException("Refresh terminal ownership online before opening offline.");
+            var lockStatus = POS.Shared.Services.BusinessDayClock.EvaluateLock(
+                terminalId: termCfg.TerminalId,
+                closedBusinessDate: termCfg.ClosedBusinessDate,
+                lockedByCashier: termCfg.ClosingLockedByCashier,
+                lockedAtUtc: termCfg.ClosingLockedAtUtc,
+                unlockAtUtc: termCfg.ClosingUnlockAtUtc,
+                candidateCashierUsername: cashier,
+                authoritativeServerUtc: null,
+                deviceUtcNow: POS.Shared.Services.BusinessDayClock.UtcNow(),
+                currentTickCount64: POS.Shared.Services.BusinessDayClock.TickCount64(),
+                lockedAtTickCount64: termCfg.ClosingLockedTickCount64,
+                lastKnownServerUtc: termCfg.LastKnownServerUtc,
+                lastKnownServerTickCount64: termCfg.LastKnownServerTickCount64);
+            if (lockStatus.IsCashierRestricted || lockStatus.IsTerminalLocked)
+                throw new InvalidOperationException(lockStatus.CashierRestrictionMessage ?? lockStatus.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
+            if (!string.IsNullOrWhiteSpace(termCfg.ClosedBusinessDate))
+            {
+                termCfg.ClosedBusinessDate = null;
+                termCfg.ClosingLockedByCashier = null;
+                termCfg.ClosingLockedAtUtc = null;
+                termCfg.ClosingUnlockAtUtc = null;
+                termCfg.ClosingLockedTickCount64 = null;
+            }
+            decimal? configuredFund = termCfg.OpeningFundOverride ?? termCfg.DefaultOpeningFund ?? termCfg.EffectiveOpeningFund;
+            decimal? resolvedExpected = request.ExpectedOpeningFund.HasValue
+                ? Math.Round(request.ExpectedOpeningFund.Value, 2, MidpointRounding.AwayFromZero)
+                : configuredFund;
+            if (request.RequireConfiguredFund && !resolvedExpected.HasValue)
+                throw new InvalidOperationException("Initial Cash Fund is not configured for this Terminal or Outlet. Please contact an Administrator.");
             var existing = await db.CashDrawerShifts.SingleOrDefaultAsync(s => s.TerminalId == request.TerminalId && s.Status == "OPEN");
             if (existing != null) throw new InvalidOperationException("This drawer already has an open shift.");
-            var shift = new LocalCashDrawerShift { ShiftId = -DateTime.UtcNow.Ticks, BranchId = request.BranchId, TerminalId = request.TerminalId, CashierId = cashier, OpeningConfirmed = true, ClientShiftId = request.ClientShiftId, OpeningFloat = Math.Round(request.OpeningFloat.Value, 2), ExpectedBalance = Math.Round(request.OpeningFloat.Value, 2), OpenedAt = request.OpenedAt ?? DateTime.UtcNow };
+            decimal openingFloat = Math.Round(request.OpeningFloat.Value, 2, MidpointRounding.AwayFromZero);
+            decimal expectedOpening = resolvedExpected ?? openingFloat;
+            decimal openingDiscrepancy = Math.Round(openingFloat - expectedOpening, 2, MidpointRounding.AwayFromZero);
+            request.ExpectedOpeningFund = expectedOpening;
+            request.OpeningDiscrepancy = openingDiscrepancy;
+            var shift = new LocalCashDrawerShift
+            {
+                ShiftId = -DateTime.UtcNow.Ticks,
+                BranchId = request.BranchId,
+                TerminalId = request.TerminalId,
+                CashierId = cashier,
+                OpeningConfirmed = true,
+                ClientShiftId = request.ClientShiftId,
+                OpeningFloat = openingFloat,
+                ExpectedOpeningFund = expectedOpening,
+                OpeningDiscrepancy = openingDiscrepancy,
+                OpeningDenominationsJson = request.OpeningDenominations != null ? JsonSerializer.Serialize(request.OpeningDenominations) : null,
+                ExpectedBalance = openingFloat,
+                OpenedAt = request.OpenedAt ?? POS.Shared.Services.BusinessDayClock.UtcNow(),
+                Notes = request.Notes
+            };
             db.CashDrawerShifts.Add(shift);
             db.SyncOutboxes.Add(new LocalSyncOutbox { EntityType = "SHIFT_OPEN", EntityId = shift.ClientShiftId!, PayloadJson = JsonSerializer.Serialize(request), Status = "PENDING", CreatedAt = shift.OpenedAt });
             await db.SaveChangesAsync(); await tx.CommitAsync(); return shift;
@@ -246,7 +507,7 @@ public static class ShiftSession
         request.ClientCloseId = string.IsNullOrWhiteSpace(request.ClientCloseId)
             ? Guid.NewGuid().ToString("N")
             : request.ClientCloseId.Trim();
-        request.ClosedAt ??= DateTime.UtcNow;
+        request.ClosedAt ??= POS.Shared.Services.BusinessDayClock.UtcNow();
 
         if (!offline)
         {
@@ -258,6 +519,16 @@ public static class ShiftSession
             if (serverDto == null)
                 throw new InvalidOperationException("Shift closing response was empty.");
             await CacheAsync(serverDto);
+            await LocalPosDbContext.WriteLock.WaitAsync();
+            try
+            {
+                using var lockDb = new LocalPosDbContext(); lockDb.InitializeDatabase();
+                var lockTerm = await lockDb.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == serverDto.TerminalId)
+                               ?? await lockDb.TerminalConfigs.FirstOrDefaultAsync();
+                ApplyLocalClosingLock(lockTerm, serverDto.CashierId, serverDto.ClosedAt ?? request.ClosedAt ?? POS.Shared.Services.BusinessDayClock.UtcNow());
+                await lockDb.SaveChangesAsync();
+            }
+            finally { LocalPosDbContext.WriteLock.Release(); }
             return serverDto;
         }
 
@@ -299,8 +570,9 @@ public static class ShiftSession
 
             var reconciliations = await BuildLocalPaymentReconciliationsAsync(db, shift, request.PaymentDeclarations, countedCash);
 
+            var closedAtUtc = request.ClosedAt.Value >= shift.OpenedAt ? request.ClosedAt.Value : POS.Shared.Services.BusinessDayClock.UtcNow();
             shift.Status = "CLOSED";
-            shift.ClosedAt = request.ClosedAt.Value >= shift.OpenedAt ? request.ClosedAt.Value : DateTime.UtcNow;
+            shift.ClosedAt = closedAtUtc;
             var trimmedNotes = request.Notes?.Trim();
             shift.Notes = string.IsNullOrWhiteSpace(trimmedNotes)
                 ? null
@@ -331,7 +603,7 @@ public static class ShiftSession
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+                    SubmittedAt = closedAtUtc,
                     TotalCountedCash = countedCash,
                     TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
                     Denominations = validatedDenominations ?? CashDenominationCatalog.CreateDefaultLines(),
@@ -356,9 +628,13 @@ public static class ShiftSession
                     EntityId = shift.ClientCloseId!,
                     PayloadJson = JsonSerializer.Serialize(request),
                     Status = "PENDING",
-                    CreatedAt = shift.ClosedAt.Value
+                    CreatedAt = closedAtUtc
                 });
             }
+
+            var localTerm = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == shift.TerminalId)
+                            ?? await db.TerminalConfigs.FirstOrDefaultAsync();
+            ApplyLocalClosingLock(localTerm, shift.CashierId, closedAtUtc);
 
             await db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -585,7 +861,12 @@ public static class ShiftSession
             if ((old.ShiftId < 0 && !string.IsNullOrWhiteSpace(dto.ClientShiftId) && old.ClientShiftId == dto.ClientShiftId)
                 || (reconcileCurrent && old.ShiftId > 0)) old.Status = "CLOSED";
         shift.BranchId = dto.BranchId; shift.TerminalId = dto.TerminalId; shift.CashierId = dto.CashierId;
-        shift.OpeningFloat = dto.OpeningFloat; shift.OpeningConfirmed = dto.OpeningConfirmed; shift.ClientShiftId = dto.ClientShiftId;
+        shift.OpeningFloat = dto.OpeningFloat;
+        shift.ExpectedOpeningFund = dto.ExpectedOpeningFund ?? shift.ExpectedOpeningFund ?? dto.OpeningFloat;
+        shift.OpeningDiscrepancy = dto.OpeningDiscrepancy ?? Math.Round(dto.OpeningFloat - (shift.ExpectedOpeningFund ?? dto.OpeningFloat), 2, MidpointRounding.AwayFromZero);
+        if (dto.OpeningDenominations != null && dto.OpeningDenominations.Count > 0)
+            shift.OpeningDenominationsJson = JsonSerializer.Serialize(dto.OpeningDenominations);
+        shift.OpeningConfirmed = dto.OpeningConfirmed; shift.ClientShiftId = dto.ClientShiftId;
         if (!string.IsNullOrWhiteSpace(dto.ClientCloseId)) shift.ClientCloseId = dto.ClientCloseId;
         else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.ClientCloseId)) shift.ClientCloseId = closedLocalPlaceholder.ClientCloseId;
         shift.OpenedAt = dto.OpenedAt;
@@ -770,6 +1051,21 @@ public static class ShiftSession
                 SyncStatus = m.SyncStatus
             }).ToList();
 
+        List<CashDenominationLineDto> openingDenoms = new();
+        if (!string.IsNullOrWhiteSpace(shift.OpeningDenominationsJson))
+        {
+            try { openingDenoms = JsonSerializer.Deserialize<List<CashDenominationLineDto>>(shift.OpeningDenominationsJson) ?? new(); }
+            catch { openingDenoms = new(); }
+        }
+        else if (serverSnapshot?.OpeningDenominations != null && serverSnapshot.OpeningDenominations.Count > 0)
+        {
+            openingDenoms = serverSnapshot.OpeningDenominations;
+        }
+        decimal expectedOpening = shift.ExpectedOpeningFund ?? serverSnapshot?.ExpectedOpeningFund ?? shift.OpeningFloat;
+        decimal openingDiscrepancy = shift.OpeningDiscrepancy
+            ?? serverSnapshot?.OpeningDiscrepancy
+            ?? Math.Round(shift.OpeningFloat - expectedOpening, 2, MidpointRounding.AwayFromZero);
+
         var dto = new CashDrawerShiftDto
         {
             ShiftId = shift.ShiftId,
@@ -777,6 +1073,9 @@ public static class ShiftSession
             TerminalId = shift.TerminalId,
             CashierId = shift.CashierId,
             OpeningFloat = shift.OpeningFloat,
+            ExpectedOpeningFund = expectedOpening,
+            OpeningDiscrepancy = openingDiscrepancy,
+            OpeningDenominations = openingDenoms,
             OpeningConfirmed = shift.OpeningConfirmed,
             ClientShiftId = shift.ClientShiftId,
             ClientCloseId = shift.ClientCloseId,
@@ -954,6 +1253,9 @@ public static class ShiftSession
             ShiftCashNetSales = Math.Round(shift.TotalCashSales - shift.TotalCashRefunds, 2, MidpointRounding.AwayFromZero),
             ShiftNonCashNetSales = dto.TotalNonCashExpected,
             OpeningFloat = shift.OpeningFloat,
+            ExpectedOpeningFund = dto.ExpectedOpeningFund,
+            OpeningDiscrepancy = dto.OpeningDiscrepancy,
+            OpeningDenominations = dto.OpeningDenominations,
             CashSalesCollected = shift.TotalCashSales,
             CashRefunds = shift.TotalCashRefunds,
             NetCashSales = Math.Round(shift.TotalCashSales - shift.TotalCashRefunds, 2, MidpointRounding.AwayFromZero),

@@ -16,11 +16,25 @@ namespace POS.Shared.Services
             _http = http;
         }
 
-        public async Task<(string Token, string Username, string Role)?> PinLoginAsync(string pinCode)
+        public async Task<(string Token, string Username, string Role)?> PinLoginAsync(string pinCode, int? terminalId = null, int? branchId = null)
         {
-            var response = await _http.PostAsJsonAsync("api/Auth/pin-login", new PinLoginDto { PinCode = pinCode });
+            var response = await _http.PostAsJsonAsync("api/Auth/pin-login", new PinLoginDto
+            {
+                PinCode = pinCode,
+                TerminalId = terminalId,
+                BranchId = branchId
+            });
             if (!response.IsSuccessStatusCode)
+            {
+                if ((int)response.StatusCode == 403 || (int)response.StatusCode == 423)
+                {
+                    var errText = await response.Content.ReadAsStringAsync();
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(errText)
+                        ? "This POS Terminal or cashier account is locked for the remainder of the current business day."
+                        : errText.Trim('"'));
+                }
                 return null;
+            }
 
             var result = await response.Content.ReadFromJsonAsync<PinLoginResponse>();
             if (result == null || string.IsNullOrEmpty(result.Token))

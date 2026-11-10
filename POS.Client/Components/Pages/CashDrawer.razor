@@ -97,36 +97,168 @@
     else if (currentShift == null)
     {
         <div class="row g-4 justify-content-center">
-            <div class="col-12 col-lg-5">
-                <!-- Open Shift Card -->
-                <div class="pos-panel-card rounded-4 p-4 p-md-5 text-center h-100">
-                    <div class="mb-3 text-primary">
-                        <i class="bi bi-cash-stack" style="font-size: 3rem;"></i>
+            <div class="col-12 @(lastClosedShift != null ? "col-lg-6" : "col-lg-8")">
+                <!-- Open Shift Card (Admin-Configured Initial Cash Fund Verification) -->
+                <div class="pos-panel-card rounded-4 p-4 h-100 text-start">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <div>
+                            <h5 class="fw-bold mb-1 text-light">
+                                <i class="bi bi-safe2 text-info me-2"></i>Open Cashier Drawer Shift — Initial Cash Fund
+                            </h5>
+                            <div class="text-secondary small">
+                                Cashier: <strong class="text-light">@Session.Username</strong> •
+                                Terminal: <strong class="text-light">@(Session.Terminal?.TerminalName ?? $"#{Session.Terminal?.TerminalId}")</strong>
+                            </div>
+                        </div>
+                        @if (openingFundConfig != null)
+                        {
+                            @if (openingFundConfig.OpeningFundSource == "TERMINAL_OVERRIDE")
+                            {
+                                <span class="badge bg-warning text-dark">Terminal Override</span>
+                            }
+                            else if (openingFundConfig.OpeningFundSource == "OUTLET_DEFAULT")
+                            {
+                                <span class="badge bg-info text-dark">Outlet Default</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-danger">Not Configured</span>
+                            }
+                        }
                     </div>
-                    <h4 class="fw-bold mb-2 text-light">No Active Cashier Drawer Shift</h4>
-                    <p class="text-secondary small mb-4">
-                        Opening float is drawer starting cash, not sales revenue. Confirm the starting float in PHP (₱) below to open the drawer shift.
-                    </p>
 
-                    <div class="mb-3 text-start">
-                        <label class="form-label fw-semibold text-light small">Opening Float Amount (₱)</label>
-                        <input type="number" step="0.01" min="0" class="form-control form-control-lg rounded-3 fw-bold" @bind="openFloatInput" placeholder="0.00" />
-                    </div>
+                    @if (openingFundConfig == null || !openingFundConfig.IsConfigured || !openingFundConfig.EffectiveOpeningFund.HasValue)
+                    {
+                        <div class="alert alert-danger mb-0">
+                            <div class="fw-bold mb-1"><i class="bi bi-exclamation-octagon-fill me-2"></i>Initial Cash Fund Not Configured</div>
+                            <div class="small">
+                                An Initial Cash Fund has not been configured for this Terminal or its Outlet.
+                                Please ask an Administrator to configure the Outlet Default or Terminal Override Initial Cash Fund in the Admin module before opening a cashier session.
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row g-2 mb-3">
+                            <div class="col-4">
+                                <div class="pos-subpanel rounded-3 p-2 h-100">
+                                    <div class="text-secondary" style="font-size: 0.72rem;">Expected Opening Fund</div>
+                                    <div class="fs-5 fw-bold text-light font-monospace">₱@ExpectedOpeningFundAmount.ToString("N2")</div>
+                                    <div class="text-secondary" style="font-size: 0.7rem;">
+                                        @(openingFundConfig.OpeningFundSource == "TERMINAL_OVERRIDE" ? "Terminal Override" : "Outlet Default")
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="pos-subpanel rounded-3 p-2 h-100">
+                                    <div class="text-secondary" style="font-size: 0.72rem;">Actual Counted Cash</div>
+                                    <div class="fs-5 fw-bold text-info font-monospace">₱@OpeningCountedCash.ToString("N2")</div>
+                                    <div class="text-secondary" style="font-size: 0.7rem;">From denominations</div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="pos-subpanel rounded-3 p-2 h-100">
+                                    <div class="text-secondary" style="font-size: 0.72rem;">Opening Discrepancy</div>
+                                    <div class="fs-5 fw-bold font-monospace @GetVarianceTextClass(OpeningDiscrepancyAmount)">
+                                        @FormatSignedCurrency(OpeningDiscrepancyAmount)
+                                    </div>
+                                    <div class="fw-bold @GetVarianceTextClass(OpeningDiscrepancyAmount)" style="font-size: 0.7rem;">
+                                        @(OpeningDiscrepancyAmount == 0m ? "BALANCED" : (OpeningDiscrepancyAmount > 0m ? "OVERAGE" : "SHORTAGE"))
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
-                    <div class="mb-4 text-start">
-                        <label class="form-label fw-semibold text-light small">Shift Notes / Remarks</label>
-                        <input type="text" class="form-control rounded-3 py-2" @bind="shiftNotes" placeholder="Optional remarks..." />
-                    </div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="small fw-bold text-uppercase text-secondary">Count Opening Drawer Cash by Denomination</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" disabled="@isSubmittingShift" @onclick="ResetOpeningDenominationCounts">
+                                Reset Counts
+                            </button>
+                        </div>
 
-                    <button class="btn btn-success rounded-3 py-3 fw-bold shadow-sm w-100" @onclick="OpenShift" disabled="@isSubmittingShift">
-                        <i class="bi bi-unlock-fill me-1"></i> @(isSubmittingShift ? "Opening Shift..." : "Open Cash Drawer Shift")
-                    </button>
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-6">
+                                <div class="pos-subpanel rounded-3 p-2">
+                                    <div class="d-flex justify-content-between align-items-center px-2 py-1 mb-1 border-bottom border-secondary border-opacity-25">
+                                        <span class="fw-bold small text-light">Bills</span>
+                                        <span class="fw-bold small text-info font-monospace">₱@OpeningBillsSubtotal.ToString("N2")</span>
+                                    </div>
+                                    @foreach (var row in openingDenominationRows.Where(r => r.Type == "BILL"))
+                                    {
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-1">
+                                            <span class="small fw-semibold text-light" style="min-width: 58px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 132px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(isSubmittingShift || row.Quantity <= 0)" @onclick="() => StepOpeningDenominationQuantity(row, -1)">-</button>
+                                                <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
+                                                       value="@row.RawQuantity"
+                                                       disabled="@isSubmittingShift"
+                                                       @oninput="e => OnOpeningDenominationInputChanged(row, e.Value?.ToString())" />
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@isSubmittingShift" @onclick="() => StepOpeningDenominationQuantity(row, 1)">+</button>
+                                            </div>
+                                            <span class="small font-monospace text-light text-end" style="min-width: 78px;">₱@row.Subtotal.ToString("N2")</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="pos-subpanel rounded-3 p-2">
+                                    <div class="d-flex justify-content-between align-items-center px-2 py-1 mb-1 border-bottom border-secondary border-opacity-25">
+                                        <span class="fw-bold small text-light">Coins</span>
+                                        <span class="fw-bold small text-info font-monospace">₱@OpeningCoinsSubtotal.ToString("N2")</span>
+                                    </div>
+                                    @foreach (var row in openingDenominationRows.Where(r => r.Type == "COIN"))
+                                    {
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-1">
+                                            <span class="small fw-semibold text-light" style="min-width: 58px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 132px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(isSubmittingShift || row.Quantity <= 0)" @onclick="() => StepOpeningDenominationQuantity(row, -1)">-</button>
+                                                <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
+                                                       value="@row.RawQuantity"
+                                                       disabled="@isSubmittingShift"
+                                                       @oninput="e => OnOpeningDenominationInputChanged(row, e.Value?.ToString())" />
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@isSubmittingShift" @onclick="() => StepOpeningDenominationQuantity(row, 1)">+</button>
+                                            </div>
+                                            <span class="small font-monospace text-light text-end" style="min-width: 78px;">₱@row.Subtotal.ToString("N2")</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        @if (OpeningDiscrepancyAmount != 0m)
+                        {
+                            <div class="alert alert-warning py-2 small mb-3">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                <strong>Opening Discrepancy:</strong> Actual counted cash (<strong>₱@OpeningCountedCash.ToString("N2")</strong>) differs from expected fund (<strong>₱@ExpectedOpeningFundAmount.ToString("N2")</strong>) by
+                                <strong>@FormatSignedCurrency(OpeningDiscrepancyAmount) (@(OpeningDiscrepancyAmount > 0m ? "Overage" : "Shortage"))</strong>.
+                                Both expected and actual counted amounts will be recorded for audit.
+                            </div>
+                        }
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold text-light small mb-1">Shift Notes / Remarks</label>
+                            <input type="text" class="form-control form-control-sm rounded-3 py-2" @bind="shiftNotes" disabled="@isSubmittingShift" placeholder="Optional opening remarks..." />
+                        </div>
+
+                        <div class="form-check pos-subpanel rounded-3 p-3 mb-3">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" id="confirmDrawerOpeningFund" @bind="isOpeningConfirmedByCashier" disabled="@isSubmittingShift" />
+                            <label class="form-check-label small text-light" for="confirmDrawerOpeningFund">
+                                I confirm that I have physically counted the initial cash fund (<strong>₱@OpeningCountedCash.ToString("N2")</strong>) against the Admin-configured expected fund (<strong>₱@ExpectedOpeningFundAmount.ToString("N2")</strong>).
+                            </label>
+                        </div>
+
+                        <button class="btn btn-success rounded-3 py-3 fw-bold shadow-sm w-100"
+                                @onclick="OpenShift"
+                                disabled="@(isSubmittingShift || !isOpeningConfirmedByCashier || openingDenominationRows.Any(r => r.HasError))">
+                            <i class="bi bi-unlock-fill me-1"></i> @(isSubmittingShift ? "Opening Shift..." : "Confirm & Open Cash Drawer Shift")
+                        </button>
+                    }
                 </div>
             </div>
 
             @if (lastClosedShift != null)
             {
-                <div class="col-12 col-lg-7">
+                <div class="col-12 col-lg-6">
                     <div class="pos-panel-card rounded-4 p-4 h-100 d-flex flex-column justify-content-between">
                         <div>
                             <!-- Saved Cashier Declaration Acknowledgment (Cashier-Safe) -->
@@ -317,9 +449,24 @@
         <div class="row g-3 mb-4">
             <div class="col-6 col-md-3">
                 <div class="pos-kpi-card rounded-4 p-3 border-start border-primary border-4 h-100">
-                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Opening Float</span>
+                    <span class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem;">Opening Float (Counted)</span>
                     <h4 class="fw-bolder text-light mb-0 mt-1">₱@currentShift.OpeningFloat.ToString("N2")</h4>
-                    <small class="text-secondary" style="font-size: 0.75rem;">Include remaining float in cash count</small>
+                    @if (currentShift.ExpectedOpeningFund.HasValue)
+                    {
+                        <small class="text-secondary d-block" style="font-size: 0.73rem;">
+                            Expected Fund: ₱@currentShift.ExpectedOpeningFund.Value.ToString("N2")
+                            @if ((currentShift.OpeningDiscrepancy ?? 0m) != 0m)
+                            {
+                                <span class="ms-1 fw-bold @GetVarianceTextClass(currentShift.OpeningDiscrepancy.Value)">
+                                    (@FormatSignedCurrency(currentShift.OpeningDiscrepancy.Value))
+                                </span>
+                            }
+                        </small>
+                    }
+                    else
+                    {
+                        <small class="text-secondary" style="font-size: 0.75rem;">Include remaining float in cash count</small>
+                    }
                 </div>
             </div>
             <div class="col-6 col-md-3">
@@ -1771,10 +1918,18 @@
     private XReadingReportDto? selectedXReading;
     private List<CashMovementCategoryDto> categories = new();
 
-    private decimal? openFloatInput = 1000.00m;
+    private TerminalCashFundConfigDto? openingFundConfig;
+    private List<DenominationRowState> openingDenominationRows = new();
+    private bool isOpeningConfirmedByCashier = false;
     private string shiftNotes = string.Empty;
     private string pendingOpenShiftId = Guid.NewGuid().ToString("N");
     private string pendingClientCloseId = Guid.NewGuid().ToString("N");
+
+    private decimal OpeningCoinsSubtotal => openingDenominationRows.Where(r => r.Type == "COIN").Sum(r => r.Subtotal);
+    private decimal OpeningBillsSubtotal => openingDenominationRows.Where(r => r.Type == "BILL").Sum(r => r.Subtotal);
+    private decimal OpeningCountedCash => Math.Round(OpeningCoinsSubtotal + OpeningBillsSubtotal, 2, MidpointRounding.AwayFromZero);
+    private decimal ExpectedOpeningFundAmount => Math.Round(openingFundConfig?.EffectiveOpeningFund ?? 0m, 2, MidpointRounding.AwayFromZero);
+    private decimal OpeningDiscrepancyAmount => Math.Round(OpeningCountedCash - ExpectedOpeningFundAmount, 2, MidpointRounding.AwayFromZero);
 
     private List<DenominationRowState> denominationRows = new();
     private List<NonCashDeclarationRowState> nonCashDeclarations = new();
@@ -1833,8 +1988,67 @@
             Navigation.NavigateTo("/login");
             return;
         }
+        InitializeOpeningDenominationRows();
         InitializeDenominationRows();
         await LoadShiftData();
+    }
+
+    private void InitializeOpeningDenominationRows()
+    {
+        openingDenominationRows = CashDenominationCatalog.CreateDefaultLines()
+            .Select(d => new DenominationRowState
+            {
+                Type = d.Type,
+                Denomination = d.Denomination,
+                Label = d.Label,
+                Quantity = 0,
+                RawQuantity = "0",
+                HasError = false
+            })
+            .ToList();
+        isOpeningConfirmedByCashier = false;
+    }
+
+    private void ResetOpeningDenominationCounts()
+    {
+        foreach (var row in openingDenominationRows)
+        {
+            row.Quantity = 0;
+            row.RawQuantity = "0";
+            row.HasError = false;
+        }
+        isOpeningConfirmedByCashier = false;
+    }
+
+    private void OnOpeningDenominationInputChanged(DenominationRowState row, string? rawValue)
+    {
+        string trimmed = (rawValue ?? string.Empty).Trim();
+        row.RawQuantity = trimmed;
+
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            row.Quantity = 0;
+            row.HasError = false;
+        }
+        else if (int.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out int parsed) && parsed >= 0 && parsed <= 1_000_000)
+        {
+            row.Quantity = parsed;
+            row.HasError = false;
+        }
+        else
+        {
+            row.HasError = true;
+        }
+        isOpeningConfirmedByCashier = false;
+    }
+
+    private void StepOpeningDenominationQuantity(DenominationRowState row, int delta)
+    {
+        int next = Math.Max(0, row.Quantity + delta);
+        row.Quantity = next;
+        row.RawQuantity = next.ToString(CultureInfo.InvariantCulture);
+        row.HasError = false;
+        isOpeningConfirmedByCashier = false;
     }
 
     private void InitializeDenominationRows()
@@ -2264,6 +2478,15 @@
                     isPrintingDeclaration = false;
                 }
             }
+
+            if (!isOffline)
+            {
+                try { _ = SyncManager.TriggerManualSyncAsync(); } catch { }
+            }
+
+            Session.ClearSession();
+            Http.DefaultRequestHeaders.Authorization = null;
+            Navigation.NavigateTo("/terminal-locked", replace: true);
         }
         catch (Exception ex)
         {
@@ -2596,6 +2819,15 @@
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
 
+            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, Session.Username, isOffline);
+            if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+            {
+                Session.ClearSession();
+                Http.DefaultRequestHeaders.Authorization = null;
+                Navigation.NavigateTo("/terminal-locked", replace: true);
+                return;
+            }
+
             if (!isOffline)
             {
                 try
@@ -2631,6 +2863,7 @@
             }
             else
             {
+                openingFundConfig = await ShiftSession.GetOpeningFundConfigAsync(Http, terminalId, isOffline);
                 lastClosedShift = await ShiftSession.LastClosedDtoAsync(Http, terminalId, isOffline, isSupervisor: IsSupervisorUnlocked, supervisorPin: unlockedSupervisorPin);
             }
 
@@ -2699,9 +2932,19 @@
     private async Task OpenShift()
     {
         if (isSubmittingShift) return;
-        if (openFloatInput is null or < 0)
+        if (openingFundConfig == null || !openingFundConfig.IsConfigured || !openingFundConfig.EffectiveOpeningFund.HasValue)
         {
-            ShowAlert("Opening float cannot be negative.", isError: true);
+            ShowAlert("Initial Cash Fund is not configured for this Terminal or Outlet. Please contact an Administrator.", isError: true);
+            return;
+        }
+        if (openingDenominationRows.Any(r => r.HasError))
+        {
+            ShowAlert("All opening denomination quantities must be non-negative whole numbers.", isError: true);
+            return;
+        }
+        if (!isOpeningConfirmedByCashier)
+        {
+            ShowAlert("Please explicitly confirm your opening cash count before opening the shift.", isError: true);
             return;
         }
 
@@ -2713,6 +2956,15 @@
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
 
+            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, Session.Username, isOffline);
+            if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+            {
+                Session.ClearSession();
+                Http.DefaultRequestHeaders.Authorization = null;
+                Navigation.NavigateTo("/terminal-locked", replace: true);
+                return;
+            }
+
             var dto = new OpenShiftDto
             {
                 BranchId = branchId,
@@ -2720,12 +2972,23 @@
                 CashierId = Session.Username,
                 ClientShiftId = pendingOpenShiftId,
                 OpenedAt = DateTime.UtcNow,
-                OpeningFloat = openFloatInput,
+                OpeningFloat = OpeningCountedCash,
+                ExpectedOpeningFund = ExpectedOpeningFundAmount,
+                OpeningDiscrepancy = OpeningDiscrepancyAmount,
+                RequireConfiguredFund = true,
+                OpeningDenominations = openingDenominationRows.Select(r => new CashDenominationLineDto
+                {
+                    Type = r.Type,
+                    Denomination = r.Denomination,
+                    Quantity = r.Quantity,
+                    Subtotal = r.Subtotal
+                }).ToList(),
                 Notes = shiftNotes
             };
 
             await ShiftSession.OpenAsync(Http, dto, Session.Username ?? "cashier", isOffline);
             pendingOpenShiftId = Guid.NewGuid().ToString("N");
+            ResetOpeningDenominationCounts();
             ResetDenominationCounts();
             nonCashDeclarations.Clear();
             activeTab = "CASH_COUNT";
@@ -2733,6 +2996,7 @@
             requiresRecountConfirmationAfterMovement = false;
             isReviewingClose = false;
             isDeclarationConfirmed = false;
+            shiftNotes = string.Empty;
             ShowAlert("Cash drawer shift opened successfully!", isError: false);
             await LoadShiftData();
         }

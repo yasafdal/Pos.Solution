@@ -74,8 +74,20 @@ else
                     </div>
                     <div class="d-flex flex-wrap gap-3 text-end">
                         <div>
-                            <span class="text-secondary small d-block">Opening Float (Include in Count)</span>
+                            <span class="text-secondary small d-block">Opening Float (Counted)</span>
                             <strong class="text-light">₱@shift.OpeningFloat.ToString("N2")</strong>
+                            @if (shift.ExpectedOpeningFund.HasValue)
+                            {
+                                <span class="d-block text-secondary" style="font-size: 0.72rem;">
+                                    Expected: ₱@shift.ExpectedOpeningFund.Value.ToString("N2")
+                                    @if ((shift.OpeningDiscrepancy ?? 0m) != 0m)
+                                    {
+                                        <span class="ms-1 fw-bold @(shift.OpeningDiscrepancy > 0 ? "text-info" : "text-danger")">
+                                            (@(shift.OpeningDiscrepancy >= 0 ? $"+₱{shift.OpeningDiscrepancy:N2}" : $"-₱{Math.Abs(shift.OpeningDiscrepancy.Value):N2}"))
+                                        </span>
+                                    }
+                                </span>
+                            }
                         </div>
                         <div>
                             <span class="text-secondary small d-block">Total Counted Cash</span>
@@ -342,7 +354,11 @@ else
         else
         {
             <div class="pos-shift-card rounded-4 p-4">
-                <p class="mb-2 text-light fw-semibold">No active shift. Payment will ask you to explicitly confirm opening float.</p>
+                <p class="mb-2 text-light fw-semibold">No active shift. Open a shift in Cash Drawer or start New Sales to count and confirm the Admin-configured Initial Cash Fund.</p>
+                <div class="d-flex gap-2 mb-2">
+                    <a href="/cash-drawer" class="btn btn-sm btn-primary fw-bold rounded-3">Go to Cash Drawer</a>
+                    <a href="/" class="btn btn-sm btn-outline-light fw-semibold rounded-3">Go to New Sales</a>
+                </div>
                 @if (lastClosedShift != null)
                 {
                     <div class="pos-shift-subpanel rounded-3 p-3 mt-3 small">
@@ -469,6 +485,14 @@ else
         {
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, Session.Terminal.TerminalId, Session.Username, isOffline);
+            if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+            {
+                Session.ClearSession();
+                Http.DefaultRequestHeaders.Authorization = null;
+                Navigation.NavigateTo("/terminal-locked", replace: true);
+                return;
+            }
             shift = await ShiftSession.CurrentDtoAsync(Http, Session.Terminal.TerminalId, isOffline);
             if (shift != null)
             {
@@ -651,6 +675,10 @@ else
                 }
                 finally { printing = false; }
             }
+
+            Session.ClearSession();
+            Http.DefaultRequestHeaders.Authorization = null;
+            Navigation.NavigateTo("/terminal-locked", replace: true);
         }
         catch (Exception ex) { error = ex.Message; }
         finally { busy = false; }

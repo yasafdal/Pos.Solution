@@ -18,6 +18,9 @@ public partial class OrderItem
     [MaxLength(30)]
     public string? ProductShortCode { get; set; }
 
+    [MaxLength(250)]
+    public string? SpecialInstructions { get; set; }
+
     public decimal Quantity { get; set; }
 
     public decimal BasePrice { get; set; }

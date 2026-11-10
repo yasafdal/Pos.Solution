@@ -27,4 +27,12 @@ public class TerminalConfigDto
     public string? Token { get; set; }
     public string? Uuid { get; set; }
     public bool AllowSync { get; set; } = true;
+    public decimal? DefaultOpeningFund { get; set; }
+    public decimal? OpeningFundOverride { get; set; }
+    public decimal? EffectiveOpeningFund { get; set; }
+    public string? OpeningFundSource { get; set; }
+    public string? ClosedBusinessDate { get; set; }
+    public string? ClosingLockedByCashier { get; set; }
+    public DateTime? ClosingLockedAtUtc { get; set; }
+    public DateTime? ClosingUnlockAtUtc { get; set; }
 }

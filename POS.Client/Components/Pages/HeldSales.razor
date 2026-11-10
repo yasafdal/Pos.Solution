@@ -132,16 +132,26 @@ else
             var resumed = await HeldSaleService.ResumeHeldSaleAsync(held.HeldSaleId, Session.Terminal?.TerminalId);
             if (resumed != null)
             {
+                using var localDb = new POS.Client.Data.LocalPosDbContext();
+                localDb.InitializeDatabase();
+                var prodIds = resumed.Items.Select(i => i.ProductId).Distinct().ToList();
+                var localProds = localDb.Products
+                    .Where(p => prodIds.Contains(p.ProductId))
+                    .ToDictionary(p => p.ProductId);
+
                 Cart.Clear();
                 foreach (var item in resumed.Items)
                 {
+                    localProds.TryGetValue(item.ProductId, out var lp);
                     var product = new ProductDto
                     {
                         ProductId = item.ProductId,
                         Name = item.ProductName,
                         ShortCode = item.ProductShortCode,
                         Price = item.BasePrice,
-                        TaxName = item.TaxName
+                        TaxName = item.TaxName,
+                        IsKitchenItem = lp?.IsKitchenItem ?? false,
+                        IsBarItem = lp?.IsBarItem ?? false
                     };
 
                     var mods = item.Modifiers.Select(m => new ModifierOptionDto
@@ -151,7 +161,7 @@ else
                         Price = m.AdditionalPrice
                     }).ToList();
 
-                    Cart.AddItem(product, (int)item.Quantity, mods);
+                    Cart.AddItem(product, (int)item.Quantity, mods, item.SpecialInstructions);
                 }
 
                 if (!string.IsNullOrWhiteSpace(resumed.DiscountCode) && resumed.DiscountCode != "NONE")

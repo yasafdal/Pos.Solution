@@ -136,6 +136,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
                 ProductId = itemDto.ProductId,
                 ProductName = itemDto.ProductName,
                 ProductShortCode = itemDto.ProductShortCode,
+                SpecialInstructions = CartItem.NormalizeSpecialInstructions(itemDto.SpecialInstructions),
                 Quantity = itemDto.Quantity,
                 BasePrice = itemDto.BasePrice,
                 LineTotal = itemDto.LineTotal,
@@ -285,6 +286,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             BasePrice = i.BasePrice,
             LineTotal = i.LineTotal,
             TaxName = i.TaxName,
+            SpecialInstructions = i.SpecialInstructions,
             Modifiers = i.HeldSaleItemModifiers.Select(m => new HeldSaleModifierDto
             {
                 HeldSaleItemModifierId = m.HeldSaleItemModifierId,

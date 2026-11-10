@@ -30,4 +30,18 @@ public class TerminalDto
     public string? ActivationCode { get; set; }
     public bool IsActivationCodeUsed { get; set; } = false;
     public bool AllowSync { get; set; } = true;
+    [System.ComponentModel.DataAnnotations.Range(typeof(decimal), "0", "9999999999999999.99")]
+    public decimal? OpeningFundOverride { get; set; }
+    public decimal? OutletDefaultOpeningFund { get; set; }
+    public decimal? EffectiveOpeningFund => OpeningFundOverride ?? OutletDefaultOpeningFund;
+    public string OpeningFundSource => OpeningFundOverride.HasValue
+        ? "TERMINAL_OVERRIDE"
+        : (OutletDefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED");
+    public bool IsOpeningFundConfigured => EffectiveOpeningFund.HasValue;
+    public string? CashFundUpdatedBy { get; set; }
+    public DateTime? CashFundUpdatedAt { get; set; }
+    public string? ClosedBusinessDate { get; set; }
+    public string? ClosingLockedByCashier { get; set; }
+    public DateTime? ClosingLockedAtUtc { get; set; }
+    public DateTime? ClosingUnlockAtUtc { get; set; }
 }

@@ -538,6 +538,146 @@
     margin-left: 0.4rem;
 }
 
+.cart-item-note-pill {
+    margin-top: 0.28rem;
+    padding: 0.22rem 0.48rem;
+    border-radius: 6px;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    background-color: rgba(245, 158, 11, 0.14);
+    color: #fcd34d;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.25;
+    display: inline-flex;
+    align-items: flex-start;
+    max-width: 100%;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    word-break: break-word;
+}
+
+.cart-item-note-pill:hover {
+    background-color: rgba(245, 158, 11, 0.24);
+    border-color: rgba(245, 158, 11, 0.65);
+    color: #fef3c7;
+}
+
+.cart-item-note-text {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.cart-note-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--pos-border-color, #334155);
+    background-color: var(--pos-bg-card, #1e293b);
+    color: var(--pos-text-secondary, #94a3b8);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.cart-note-btn:hover {
+    background-color: var(--pos-bg-surface-hover, #334155);
+    color: #ffffff;
+    border-color: var(--pos-border-light, #475569);
+}
+
+.cart-note-btn.has-note {
+    background-color: rgba(245, 158, 11, 0.18);
+    border-color: rgba(245, 158, 11, 0.55);
+    color: #fbbf24;
+}
+
+.cart-note-btn.has-note:hover {
+    background-color: rgba(245, 158, 11, 0.28);
+    color: #fde68a;
+}
+
+.note-modal-dialog {
+    max-width: 520px;
+}
+
+.note-suggestion-chip {
+    min-height: 36px;
+    padding: 0.35rem 0.75rem;
+    border-radius: 9999px;
+    border: 1px solid var(--pos-border-color, #334155);
+    background-color: var(--pos-bg-surface, #0f172a);
+    color: var(--pos-text-secondary, #cbd5e1);
+    font-size: 0.8rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.14s ease;
+    user-select: none;
+}
+
+.note-suggestion-chip:hover {
+    background-color: var(--pos-bg-surface-hover, #334155);
+    color: #ffffff;
+    border-color: var(--pos-border-light, #475569);
+}
+
+.note-suggestion-chip.active {
+    background-color: rgba(245, 158, 11, 0.2);
+    border-color: #f59e0b;
+    color: #fde68a;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
+}
+
+.note-modal-textarea {
+    background-color: var(--pos-bg-surface, #0f172a) !important;
+    border: 1px solid var(--pos-border-color, #334155) !important;
+    color: var(--pos-text-primary, #f8fafc) !important;
+    border-radius: 10px !important;
+    font-size: 0.92rem;
+    resize: none;
+}
+
+.note-modal-textarea:focus {
+    border-color: var(--pos-border-focus, #3b82f6) !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25) !important;
+}
+
+.note-modal-textarea::placeholder {
+    color: #64748b !important;
+}
+
+.note-scope-bar {
+    padding: 0.55rem 0.7rem;
+    border-radius: 10px;
+    background-color: var(--pos-bg-surface, #0f172a);
+    border: 1px solid var(--pos-border-color, #334155);
+}
+
+.note-scope-btn {
+    min-height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--pos-border-color, #334155);
+    background-color: var(--pos-bg-card, #1e293b);
+    color: var(--pos-text-secondary, #94a3b8);
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.35rem 0.6rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.note-scope-btn.active {
+    background: var(--pos-primary-gradient, linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%));
+    border-color: #3b82f6;
+    color: #ffffff;
+}
+
 .cart-item-actions {
     display: flex;
     flex-direction: column;

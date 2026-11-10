@@ -172,7 +172,18 @@ public class DeviceActivationService : IDeviceActivationService
                 ReceiptPrinterName = priorPrinter?.ReceiptPrinterName,
                 KitchenPrinterName = priorPrinter?.KitchenPrinterName,
                 BarPrinterName = priorPrinter?.BarPrinterName,
-                IsInitialized = priorPrinter?.IsInitialized ?? false
+                IsInitialized = priorPrinter?.IsInitialized ?? false,
+                DefaultOpeningFund = cfg?.DefaultOpeningFund ?? term?.OutletDefaultOpeningFund,
+                OpeningFundOverride = cfg?.OpeningFundOverride ?? term?.OpeningFundOverride,
+                EffectiveOpeningFund = cfg?.EffectiveOpeningFund ?? term?.EffectiveOpeningFund,
+                OpeningFundSource = cfg?.OpeningFundSource ?? term?.OpeningFundSource,
+                ClosedBusinessDate = cfg?.ClosedBusinessDate ?? term?.ClosedBusinessDate ?? priorPrinter?.ClosedBusinessDate,
+                ClosingLockedByCashier = cfg?.ClosingLockedByCashier ?? term?.ClosingLockedByCashier ?? priorPrinter?.ClosingLockedByCashier,
+                ClosingLockedAtUtc = cfg?.ClosingLockedAtUtc ?? term?.ClosingLockedAtUtc ?? priorPrinter?.ClosingLockedAtUtc,
+                ClosingUnlockAtUtc = cfg?.ClosingUnlockAtUtc ?? term?.ClosingUnlockAtUtc ?? priorPrinter?.ClosingUnlockAtUtc,
+                ClosingLockedTickCount64 = priorPrinter?.ClosingLockedTickCount64,
+                LastKnownServerUtc = DateTime.UtcNow,
+                LastKnownServerTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64()
             });
 
             if (response.Cashiers != null && response.Cashiers.Count > 0)

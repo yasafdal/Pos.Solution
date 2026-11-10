@@ -10,6 +10,9 @@ public class Outlet
     public string? LocationDescription { get; set; }
     public string OutletType { get; set; } = "Main";
     public bool IsActive { get; set; } = true;
+    public decimal? DefaultOpeningFund { get; set; }
+    public string? CashFundUpdatedBy { get; set; }
+    public DateTime? CashFundUpdatedAt { get; set; }
     public DateTime? DeactivatedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

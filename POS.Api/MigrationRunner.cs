@@ -152,6 +152,26 @@ public class MigrationRunner
 
             ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""IsActivationCodeUsed"" BOOLEAN NOT NULL DEFAULT FALSE;
             ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""AllowSync"" BOOLEAN NOT NULL DEFAULT TRUE;
+
+            ALTER TABLE ""OrderItems"" ADD COLUMN IF NOT EXISTS ""SpecialInstructions"" VARCHAR(250) NULL;
+            ALTER TABLE ""HeldSaleItems"" ADD COLUMN IF NOT EXISTS ""SpecialInstructions"" VARCHAR(250) NULL;
+
+            ALTER TABLE ""Outlets"" ADD COLUMN IF NOT EXISTS ""DefaultOpeningFund"" NUMERIC(18,2) NULL;
+            ALTER TABLE ""Outlets"" ADD COLUMN IF NOT EXISTS ""CashFundUpdatedBy"" VARCHAR(450) NULL;
+            ALTER TABLE ""Outlets"" ADD COLUMN IF NOT EXISTS ""CashFundUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""OpeningFundOverride"" NUMERIC(18,2) NULL;
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""CashFundUpdatedBy"" VARCHAR(450) NULL;
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""CashFundUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""ExpectedOpeningFund"" NUMERIC(18,2) NULL;
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""OpeningDiscrepancy"" NUMERIC(18,2) NULL;
+            ALTER TABLE ""CashDrawerShifts"" ADD COLUMN IF NOT EXISTS ""OpeningDenominationsJson"" TEXT NULL;
+
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ClosedBusinessDate"" VARCHAR(20) NULL;
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ClosingLockedByCashier"" VARCHAR(450) NULL;
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ClosingLockedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
+            ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ClosingUnlockAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
         ";
 
         using (var terminalCmd = new NpgsqlCommand(terminalLocalFirstSql, conn))

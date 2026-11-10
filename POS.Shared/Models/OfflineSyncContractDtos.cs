@@ -45,6 +45,7 @@ public class OfflineTransactionItemDto
     public decimal UnitPrice { get; set; }
     public decimal LineTotal { get; set; }
     public string TaxName { get; set; } = "VATable";
+    public string? SpecialInstructions { get; set; }
     public List<OfflineModifierDto> Modifiers { get; set; } = new();
 }
 

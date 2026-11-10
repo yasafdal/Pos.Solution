@@ -118,6 +118,29 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         IsActivated = priorConfig?.IsActivated ?? true,
                         AllowSync = priorConfig?.AllowSync ?? true,
                         ActivatedAt = priorConfig?.ActivatedAt,
+                        DefaultOpeningFund = data.Terminal.DefaultOpeningFund,
+                        OpeningFundOverride = data.Terminal.OpeningFundOverride,
+                        EffectiveOpeningFund = data.Terminal.EffectiveOpeningFund ?? data.Terminal.OpeningFundOverride ?? data.Terminal.DefaultOpeningFund,
+                        OpeningFundSource = data.Terminal.OpeningFundSource ?? (data.Terminal.OpeningFundOverride.HasValue
+                            ? "TERMINAL_OVERRIDE"
+                            : (data.Terminal.DefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED")),
+                        ClosedBusinessDate = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                            ? data.Terminal.ClosedBusinessDate
+                            : (priorConfig != null && !string.IsNullOrWhiteSpace(priorConfig.ClosedBusinessDate) &&
+                               string.CompareOrdinal(priorConfig.ClosedBusinessDate, POS.Shared.Services.BusinessDayClock.GetBusinessDateString(data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow)) >= 0
+                                ? priorConfig.ClosedBusinessDate : null),
+                        ClosingLockedByCashier = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                            ? data.Terminal.ClosingLockedByCashier
+                            : priorConfig?.ClosingLockedByCashier,
+                        ClosingLockedAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                            ? data.Terminal.ClosingLockedAtUtc
+                            : priorConfig?.ClosingLockedAtUtc,
+                        ClosingUnlockAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                            ? data.Terminal.ClosingUnlockAtUtc
+                            : priorConfig?.ClosingUnlockAtUtc,
+                        ClosingLockedTickCount64 = priorConfig?.ClosingLockedTickCount64 ?? (!string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate) ? POS.Shared.Services.BusinessDayClock.TickCount64() : null),
+                        LastKnownServerUtc = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow,
+                        LastKnownServerTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64(),
                         LastSyncVersion = data.Version,
                         LastSyncAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow
                     });

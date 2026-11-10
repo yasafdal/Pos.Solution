@@ -34,6 +34,13 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
         await context.Entry(order).ReloadAsync();
         if (order.PaymentStatus == "PAID") return Conflict("Order is already paid.");
         var cashier = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+        var lockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
+            context, order.TerminalId, cashier);
+        if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+        {
+            await transaction.RollbackAsync();
+            return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
+        }
         var activeShift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.TerminalId == order.TerminalId && s.Status == "OPEN" && s.OpeningConfirmed && s.CashierId == cashier && s.BranchId == order.BranchId);
         if (order.CashierId != cashier) return Forbid();
         if (activeShift == null) return Conflict("Open a shift and explicitly confirm opening float before payment.");

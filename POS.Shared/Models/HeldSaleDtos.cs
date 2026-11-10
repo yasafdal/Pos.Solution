@@ -53,6 +53,7 @@ public class HeldSaleItemDto
     public decimal BasePrice { get; set; }
     public decimal LineTotal { get; set; }
     public string TaxName { get; set; } = "VATable";
+    public string? SpecialInstructions { get; set; }
     public List<HeldSaleModifierDto> Modifiers { get; set; } = new();
 }
 

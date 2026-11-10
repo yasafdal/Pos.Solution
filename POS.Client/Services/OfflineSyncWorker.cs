@@ -70,7 +70,8 @@ public class OfflineSyncWorker : IOfflineSyncWorker
                         Quantity = (int)i.Quantity,
                         UnitPrice = i.BasePrice,
                         LineTotal = i.BasePrice * i.Quantity,
-                        TaxName = i.TaxName ?? "VATable"
+                        TaxName = i.TaxName ?? "VATable",
+                        SpecialInstructions = CartItem.NormalizeSpecialInstructions(i.SpecialInstructions)
                     }).ToList(),
                     Payments = new List<OfflinePaymentDto>
                     {

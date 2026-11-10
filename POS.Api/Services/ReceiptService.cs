@@ -76,6 +76,7 @@ public class ReceiptService(PosDbContext context) : IReceiptService
                 LineTotal = i.LineTotal,
                 IsKitchenItem = productRouting.TryGetValue(i.ProductId, out var pr) && pr.IsKitchenItem,
                 IsBarItem = productRouting.TryGetValue(i.ProductId, out var pr2) && pr2.IsBarItem,
+                SpecialInstructions = i.SpecialInstructions,
                 Modifiers = i.OrderItemModifiers.OrderBy(m => m.OrderItemModifierId).Select(m => new OrderItemModifierResponseDto
                 {
                     OrderItemModifierId = m.OrderItemModifierId,

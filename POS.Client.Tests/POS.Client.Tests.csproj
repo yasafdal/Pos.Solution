@@ -22,6 +22,10 @@
     <Compile Include="../POS.Client/Services/OfflineTransactionSyncService.cs" Link="Client/OfflineTransactionSyncService.cs" />
     <Compile Include="../POS.Client/Services/ReferenceDataSyncService.cs" Link="Client/ReferenceDataSyncService.cs" />
     <Compile Include="../POS.Client/Services/DeviceActivationService.cs" Link="Client/DeviceActivationService.cs" />
+    <Compile Include="../POS.Client/Services/CartService.cs" Link="Client/CartService.cs" />
+    <Compile Include="../POS.Client/Services/PreparationTicketRouter.cs" Link="Client/PreparationTicketRouter.cs" />
+    <Compile Include="../POS.Client/Services/PreparationTicketHtmlFormatter.cs" Link="Client/PreparationTicketHtmlFormatter.cs" />
+    <Compile Include="../POS.Client/Services/ReceiptHtmlFormatter.cs" Link="Client/ReceiptHtmlFormatter.cs" />
     <Compile Include="../POS.Tests/ShiftCacheRegressionTests.cs" Link="ShiftCacheRegressionTests.cs" />
   </ItemGroup>
 </Project>

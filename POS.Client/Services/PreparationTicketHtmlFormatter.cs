@@ -138,6 +138,16 @@ public static class PreparationTicketHtmlFormatter
                 margin-top: 0.3mm;
                 font-weight: normal;
             }
+            .note-line {
+                font-size: 9.5px;
+                padding-left: 9mm;
+                color: #000;
+                margin-top: 0.4mm;
+                font-weight: 600;
+                word-break: break-word;
+                overflow-wrap: anywhere;
+                line-height: 1.25;
+            }
             .footer {
                 margin-top: 1.5mm;
                 font-size: 8.5px;
@@ -210,6 +220,19 @@ public static class PreparationTicketHtmlFormatter
                     if (!string.IsNullOrWhiteSpace(mod))
                     {
                         html.Append("<div class=\"modifier-line\">+ ").Append(Encode(mod)).Append("</div>");
+                    }
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(item.SpecialInstructions))
+            {
+                var notes = item.SpecialInstructions.Split(
+                    new[] { '\r', '\n', ',' },
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var note in notes)
+                {
+                    if (!string.IsNullOrWhiteSpace(note))
+                    {
+                        html.Append("<div class=\"note-line\">- ").Append(Encode(note)).Append("</div>");
                     }
                 }
             }

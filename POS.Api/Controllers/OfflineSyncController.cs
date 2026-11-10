@@ -188,6 +188,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     OrderId = order.OrderId,
                     ProductId = itemDto.ProductId,
                     ProductName = itemDto.ProductName,
+                    SpecialInstructions = CartItem.NormalizeSpecialInstructions(itemDto.SpecialInstructions),
                     Quantity = itemDto.Quantity,
                     UnitPrice = itemDto.UnitPrice,
                     BasePrice = basePrice,

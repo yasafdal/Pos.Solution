@@ -27,5 +27,6 @@ public class PreparationTicketItemDto
     public string ProductName { get; set; } = string.Empty;
     public string? ProductShortCode { get; set; }
     public decimal Quantity { get; set; }
+    public string? SpecialInstructions { get; set; }
     public List<string> Modifiers { get; set; } = new();
 }

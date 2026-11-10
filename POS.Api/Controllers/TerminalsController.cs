@@ -39,7 +39,13 @@ namespace POS.Api.Controllers
                     BranchAddress = o.Branch.Address, BranchPhone = o.Branch.Phone,
                     o.Branch.BusinessTypeId,
                     BusinessType = o.Branch.BusinessType == null ? null : o.Branch.BusinessType.Type,
-                    o.Uuid, o.AllowSync });
+                    o.Uuid, o.AllowSync,
+                    o.OpeningFundOverride,
+                    DefaultOpeningFund = o.Outlet.DefaultOpeningFund,
+                    o.ClosedBusinessDate,
+                    o.ClosingLockedByCashier,
+                    o.ClosingLockedAtUtc,
+                    o.ClosingUnlockAtUtc });
 
             var matchedByUuid = !string.IsNullOrWhiteSpace(deviceUuid)
                 ? await query.Where(o => o.Uuid == deviceUuid.Trim()).ToListAsync()
@@ -120,7 +126,17 @@ namespace POS.Api.Controllers
                 BusinessType = outlet.BusinessType,
                 Token = token,
                 Uuid = outlet.Uuid,
-                AllowSync = outlet.AllowSync
+                AllowSync = outlet.AllowSync,
+                DefaultOpeningFund = outlet.DefaultOpeningFund,
+                OpeningFundOverride = outlet.OpeningFundOverride,
+                EffectiveOpeningFund = outlet.OpeningFundOverride ?? outlet.DefaultOpeningFund,
+                OpeningFundSource = outlet.OpeningFundOverride.HasValue
+                    ? "TERMINAL_OVERRIDE"
+                    : (outlet.DefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED"),
+                ClosedBusinessDate = outlet.ClosedBusinessDate,
+                ClosingLockedByCashier = outlet.ClosingLockedByCashier,
+                ClosingLockedAtUtc = outlet.ClosingLockedAtUtc,
+                ClosingUnlockAtUtc = outlet.ClosingUnlockAtUtc
             });
         }
 
@@ -323,7 +339,13 @@ namespace POS.Api.Controllers
                 BusinessType = terminal.Branch?.BusinessType?.Type,
                 Token = token,
                 Uuid = terminal.Uuid,
-                AllowSync = terminal.AllowSync
+                AllowSync = terminal.AllowSync,
+                DefaultOpeningFund = terminal.Outlet?.DefaultOpeningFund,
+                OpeningFundOverride = terminal.OpeningFundOverride,
+                EffectiveOpeningFund = terminal.OpeningFundOverride ?? terminal.Outlet?.DefaultOpeningFund,
+                OpeningFundSource = terminal.OpeningFundOverride.HasValue
+                    ? "TERMINAL_OVERRIDE"
+                    : (terminal.Outlet?.DefaultOpeningFund.HasValue == true ? "OUTLET_DEFAULT" : "UNCONFIGURED")
             };
 
             var usersWithPins = await _context.Users
@@ -467,6 +489,13 @@ namespace POS.Api.Controllers
             if (existing.Any(t => t.OutletId == dto.OutletId && t.TerminalCode.Equals(dto.TerminalCode, StringComparison.OrdinalIgnoreCase))) return "Terminal code must be unique within the outlet.";
             if (dto.DeviceIdentifier != null && existing.Any(t => string.Equals(t.DeviceIdentifier, dto.DeviceIdentifier, StringComparison.OrdinalIgnoreCase))) return "Device identifier is already registered.";
             if (dto.IpAddress != null && existing.Any(t => MatchesIp(t.IpAddress, dto.IpAddress) || MatchesIp(t.DeviceIdentifier, dto.IpAddress))) return "IP address is already registered.";
+            if (dto.OpeningFundOverride.HasValue)
+            {
+                if (dto.OpeningFundOverride.Value < 0m)
+                    return "Terminal cash fund override cannot be negative.";
+                dto.OpeningFundOverride = Math.Round(dto.OpeningFundOverride.Value, 2, MidpointRounding.AwayFromZero);
+            }
+            dto.OutletDefaultOpeningFund = outlet.DefaultOpeningFund;
             return null;
         }
 
@@ -480,13 +509,21 @@ namespace POS.Api.Controllers
         private static string NormalizeIp(IPAddress ip) => (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString();
         private static bool MatchesIp(string? value, string expected) => IPAddress.TryParse(value, out var ip) && NormalizeIp(ip) == expected;
 
-        private static void ApplyTerminal(Terminal t, TerminalDto dto)
+        private void ApplyTerminal(Terminal t, TerminalDto dto)
         {
             t.OutletId = dto.OutletId; t.BranchId = dto.BranchId; t.TerminalCode = dto.TerminalCode;
             t.Name = dto.Name; t.DeviceIdentifier = dto.DeviceIdentifier; t.IpAddress = dto.IpAddress;
             t.MenuDisplayMode = dto.MenuDisplayMode;
             t.Ptunumber = dto.PTUNumber; t.Minnumber = dto.MINNumber; t.SerialNumber = dto.SerialNumber;
             t.AllowSync = dto.AllowSync;
+            if (t.OpeningFundOverride != dto.OpeningFundOverride || (t.TerminalId == 0 && dto.OpeningFundOverride.HasValue))
+            {
+                t.OpeningFundOverride = dto.OpeningFundOverride;
+                t.CashFundUpdatedBy = User?.Identity?.Name
+                    ?? User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? "Admin";
+                t.CashFundUpdatedAt = DateTime.UtcNow;
+            }
             if (string.IsNullOrWhiteSpace(t.Uuid))
             {
                 t.Uuid = string.IsNullOrWhiteSpace(dto.Uuid) ? Guid.NewGuid().ToString() : dto.Uuid;

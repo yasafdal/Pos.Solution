@@ -318,16 +318,31 @@ else
                                                 }
                                             </div>
                                         }
+                                        @if (!string.IsNullOrWhiteSpace(item.SpecialInstructions))
+                                        {
+                                            <button type="button" class="cart-item-note-pill" @onclick="() => OpenNoteModal(item)" title="Tap to edit special instructions">
+                                                <i class="bi bi-chat-left-text-fill me-1 flex-shrink-0"></i>
+                                                <span class="cart-item-note-text">@item.SpecialInstructions</span>
+                                            </button>
+                                        }
                                     </div>
                                     <div class="cart-item-actions">
-                                        <div class="qty-control">
-                                            <button type="button" class="qty-btn" @onclick="() => Cart.DecreaseQuantity(item)" title="Decrease">
-                                                −
+                                        <div class="d-flex align-items-center gap-1">
+                                            <button type="button"
+                                                    class="cart-note-btn @(!string.IsNullOrWhiteSpace(item.SpecialInstructions) ? "has-note" : "")"
+                                                    @onclick="() => OpenNoteModal(item)"
+                                                    title="@(!string.IsNullOrWhiteSpace(item.SpecialInstructions) ? "Edit Special Instructions" : "Add Special Instructions")">
+                                                <i class="bi @(!string.IsNullOrWhiteSpace(item.SpecialInstructions) ? "bi-chat-left-text-fill" : "bi-chat-left-text")"></i>
                                             </button>
-                                            <span class="qty-display">@item.Quantity</span>
-                                            <button type="button" class="qty-btn" @onclick="() => Cart.IncreaseQuantity(item)" title="Increase">
-                                                +
-                                            </button>
+                                            <div class="qty-control">
+                                                <button type="button" class="qty-btn" @onclick="() => Cart.DecreaseQuantity(item)" title="Decrease">
+                                                    −
+                                                </button>
+                                                <span class="qty-display">@item.Quantity</span>
+                                                <button type="button" class="qty-btn" @onclick="() => Cart.IncreaseQuantity(item)" title="Increase">
+                                                    +
+                                                </button>
+                                            </div>
                                         </div>
                                         <div class="cart-item-total">
                                             ₱@item.LineTotal.ToString("N2")
@@ -526,6 +541,40 @@ else
                                 </div>
                             </section>
                         }
+
+                        <!-- Optional Special Instructions inside Customization Modal -->
+                        <section class="modifier-group-section mb-1 p-3 rounded-4">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div class="d-flex align-items-center gap-2">
+                                    <div class="group-icon-pill bg-warning-subtle text-warning">
+                                        <i class="bi bi-chat-left-text fs-5"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="fw-bold text-white mb-0">Special Instructions</h6>
+                                    </div>
+                                </div>
+                                <span class="badge modifier-rule-badge optional">
+                                    Optional • @(customizationSpecialInstructions?.Length ?? 0)/@CartItem.MaxSpecialInstructionsLength
+                                </span>
+                            </div>
+                            <div class="d-flex flex-wrap gap-1.5 mb-2">
+                                @foreach (var chip in GetProductNoteSuggestions(customizingProduct.IsKitchenItem, customizingProduct.IsBarItem))
+                                {
+                                    var isChipActive = HasInstructionChip(customizationSpecialInstructions, chip);
+                                    <button type="button"
+                                            class="note-suggestion-chip @(isChipActive ? "active" : "")"
+                                            @onclick="() => customizationSpecialInstructions = ToggleInstructionChip(customizationSpecialInstructions, chip)">
+                                        <i class="bi @(isChipActive ? "bi-check-lg" : "bi-plus") me-1"></i>@chip
+                                    </button>
+                                }
+                            </div>
+                            <textarea class="form-control note-modal-textarea"
+                                      rows="2"
+                                      maxlength="@CartItem.MaxSpecialInstructionsLength"
+                                      placeholder="E.g. No Ice, Less Sugar, No Onion, Separate Sauce..."
+                                      @bind="customizationSpecialInstructions"
+                                      @bind:event="oninput"></textarea>
+                        </section>
                     </div>
 
                     <!-- Modal Footer -->
@@ -565,6 +614,119 @@ else
                                     @onclick="ConfirmCustomization">
                                 <i class="bi bi-cart-plus-fill fs-5"></i>
                                 <span>Add to Cart</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Cart Item Special Instructions Modal -->
+    @if (isNoteModalOpen && editingNoteCartItem != null)
+    {
+        <div class="modal fade show d-block pos-sale-modal note-modal-overlay" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.72); backdrop-filter: blur(5px); z-index: 1065;" role="dialog" aria-modal="true" aria-labelledby="note-modal-title">
+            <div class="modal-dialog modal-dialog-centered note-modal-dialog">
+                <div class="modal-content customization-modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                    <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <h5 id="note-modal-title" class="modal-title fw-bold text-white mb-0">Special Instructions</h5>
+                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-2.5 py-1">
+                                    @(editingNoteCartItem.Quantity)x @editingNoteCartItem.ProductName
+                                </span>
+                                @if (editingNoteCartItem.IsKitchenItem)
+                                {
+                                    <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill px-2 py-0.5 small">Kitchen</span>
+                                }
+                                @if (editingNoteCartItem.IsBarItem)
+                                {
+                                    <span class="badge bg-info-subtle text-info border border-info-subtle rounded-pill px-2 py-0.5 small">Bar</span>
+                                }
+                            </div>
+                            <div class="text-secondary small mt-1">
+                                Preparation instructions printed on Kitchen / Bar order tickets
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-link text-secondary p-1 modal-close-btn" @onclick="CloseNoteModal" aria-label="Close" title="Cancel">
+                            <i class="bi bi-x-lg fs-5"></i>
+                        </button>
+                    </div>
+
+                    <div class="modal-body px-4 py-3">
+                        @if (editingNoteCartItem.Quantity > 1)
+                        {
+                            <div class="note-scope-bar mb-3">
+                                <span class="text-secondary small fw-semibold">Apply instructions to:</span>
+                                <div class="d-flex gap-2 mt-1">
+                                    <button type="button"
+                                            class="note-scope-btn flex-fill @(!splitSingleItemForNote ? "active" : "")"
+                                            @onclick="() => splitSingleItemForNote = false">
+                                        <i class="bi bi-collection me-1"></i>All @editingNoteCartItem.Quantity items
+                                    </button>
+                                    <button type="button"
+                                            class="note-scope-btn flex-fill @(splitSingleItemForNote ? "active" : "")"
+                                            @onclick="() => splitSingleItemForNote = true">
+                                        <i class="bi bi-distribute-vertical me-1"></i>1 item only (Separate line)
+                                    </button>
+                                </div>
+                            </div>
+                        }
+
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.4px; font-size: 0.73rem;">
+                                    Quick-Select Suggestions
+                                </label>
+                            </div>
+                            <div class="d-flex flex-wrap gap-1.5">
+                                @foreach (var chip in GetProductNoteSuggestions(editingNoteCartItem.IsKitchenItem, editingNoteCartItem.IsBarItem))
+                                {
+                                    var isChipActive = HasInstructionChip(noteDraftText, chip);
+                                    <button type="button"
+                                            class="note-suggestion-chip @(isChipActive ? "active" : "")"
+                                            @onclick="() => noteDraftText = ToggleInstructionChip(noteDraftText, chip)">
+                                        <i class="bi @(isChipActive ? "bi-check-lg" : "bi-plus") me-1"></i>@chip
+                                    </button>
+                                }
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1.5">
+                                <label for="cart-item-note-input" class="text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.4px; font-size: 0.73rem;">
+                                    Custom Instructions
+                                </label>
+                                <span class="small @((noteDraftText?.Length ?? 0) >= CartItem.MaxSpecialInstructionsLength ? "text-warning fw-bold" : "text-secondary")">
+                                    @(noteDraftText?.Length ?? 0) / @CartItem.MaxSpecialInstructionsLength
+                                </span>
+                            </div>
+                            <textarea id="cart-item-note-input"
+                                      class="form-control note-modal-textarea"
+                                      rows="3"
+                                      maxlength="@CartItem.MaxSpecialInstructionsLength"
+                                      placeholder="Enter preparation note (e.g. No Ice, Less Sugar, No Onion, Extra Sauce)..."
+                                      @bind="noteDraftText"
+                                      @bind:event="oninput"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer border-top px-4 py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            @if (!string.IsNullOrWhiteSpace(noteDraftText) || !string.IsNullOrWhiteSpace(editingNoteCartItem.SpecialInstructions))
+                            {
+                                <button type="button" class="btn btn-outline-danger px-3 py-2 rounded-3 fw-semibold" @onclick="ClearCartItemNote">
+                                    <i class="bi bi-trash3 me-1"></i>Clear Note
+                                </button>
+                            }
+                        </div>
+                        <div class="d-flex gap-2 ms-auto">
+                            <button type="button" class="btn btn-outline-secondary px-3.5 py-2 rounded-3 fw-semibold" @onclick="CloseNoteModal">
+                                Cancel
+                            </button>
+                            <button type="button" class="btn btn-primary px-4 py-2 rounded-3 fw-bold shadow-sm d-flex align-items-center gap-2" @onclick="SaveCartItemNote">
+                                <i class="bi bi-check2-circle fs-5"></i>
+                                <span>Save Note</span>
                             </button>
                         </div>
                     </div>
@@ -975,21 +1137,170 @@ else
 
 @if (openingShiftModal)
 {
-    <div class="modal d-block" role="dialog" aria-modal="true" aria-label="Open Shift" style="background:rgba(0,0,0,.5);z-index:1100">
-        <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
-            <div class="modal-header"><h5>Open Shift — Confirm Opening Float</h5></div>
-            <div class="modal-body">
-                <p>Cashier: <strong>@Session.Username</strong><br />Terminal: <strong>@Session.Terminal?.TerminalName</strong></p>
-                <label for="opening-float">Counted opening cash (zero is allowed)</label>
-                <input id="opening-float" type="text" inputmode="decimal" class="form-control" @bind="openingFloatText" @bind:event="oninput" disabled="@openingBusy" />
-                <small>Enter 0 to 9999999999999999.99 using a decimal point (up to two decimal places). Your cart is preserved. Payment is blocked until you confirm.</small>
-                @if (openingError != null) { <div class="alert alert-danger">@openingError</div> }
+    <div class="modal d-block" role="dialog" aria-modal="true" aria-label="Open Shift" style="background:rgba(0,0,0,.6);z-index:1100">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-dark text-white">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0"><i class="bi bi-safe2 me-2 text-info"></i>Open Cashier Session — Initial Cash Fund Verification</h5>
+                        <div class="small text-white-50 mt-1">
+                            Cashier: <strong class="text-white">@Session.Username</strong> •
+                            Terminal: <strong class="text-white">@(Session.Terminal?.TerminalName ?? $"#{Session.Terminal?.TerminalId}")</strong>
+                        </div>
+                    </div>
+                    @if (openingFundConfig != null)
+                    {
+                        @if (openingFundConfig.OpeningFundSource == "TERMINAL_OVERRIDE")
+                        {
+                            <span class="badge bg-warning text-dark">Terminal Override</span>
+                        }
+                        else if (openingFundConfig.OpeningFundSource == "OUTLET_DEFAULT")
+                        {
+                            <span class="badge bg-info text-dark">Outlet Default</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-danger">Not Configured</span>
+                        }
+                    }
+                </div>
+                <div class="modal-body">
+                    @if (openingFundConfig == null || !openingFundConfig.IsConfigured || !openingFundConfig.EffectiveOpeningFund.HasValue)
+                    {
+                        <div class="alert alert-danger mb-0">
+                            <div class="fw-bold mb-1"><i class="bi bi-exclamation-octagon-fill me-2"></i>Initial Cash Fund Not Configured</div>
+                            <div class="small">
+                                An Initial Cash Fund has not been configured for this Terminal or its Outlet.
+                                Please ask an Administrator to configure the Outlet Default or Terminal Override Initial Cash Fund in the Admin module before opening a cashier session.
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-4">
+                                <div class="p-3 rounded-3 bg-light border h-100">
+                                    <div class="text-muted small fw-semibold">Expected Opening Fund</div>
+                                    <div class="fs-4 fw-bold text-dark font-monospace">₱@ExpectedOpeningFundAmount.ToString("N2")</div>
+                                    <div class="small text-secondary">
+                                        @(openingFundConfig.OpeningFundSource == "TERMINAL_OVERRIDE" ? "Configured on Terminal" : "Inherited from Outlet")
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="p-3 rounded-3 bg-light border h-100">
+                                    <div class="text-muted small fw-semibold">Actual Counted Cash</div>
+                                    <div class="fs-4 fw-bold text-primary font-monospace">₱@OpeningCountedCash.ToString("N2")</div>
+                                    <div class="small text-secondary">Calculated from denominations</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="p-3 rounded-3 bg-light border h-100">
+                                    <div class="text-muted small fw-semibold">Opening Discrepancy</div>
+                                    <div class="fs-4 fw-bold font-monospace @(OpeningDiscrepancyAmount == 0m ? "text-success" : (OpeningDiscrepancyAmount > 0m ? "text-info" : "text-danger"))">
+                                        @(OpeningDiscrepancyAmount >= 0m ? $"+₱{OpeningDiscrepancyAmount:N2}" : $"-₱{Math.Abs(OpeningDiscrepancyAmount):N2}")
+                                    </div>
+                                    <div class="small fw-semibold @(OpeningDiscrepancyAmount == 0m ? "text-success" : (OpeningDiscrepancyAmount > 0m ? "text-info" : "text-danger"))">
+                                        @(OpeningDiscrepancyAmount == 0m ? "BALANCED" : (OpeningDiscrepancyAmount > 0m ? "OVERAGE" : "SHORTAGE"))
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="small fw-bold text-uppercase text-secondary">Count Physical Drawer Cash by Denomination</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" disabled="@openingBusy" @onclick="ResetOpeningDenominations">
+                                Reset Counts
+                            </button>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <div class="border rounded-3 p-2">
+                                    <div class="d-flex justify-content-between align-items-center px-2 py-1 bg-light rounded-2 mb-2">
+                                        <span class="fw-bold small">Bills</span>
+                                        <span class="fw-bold small text-primary font-monospace">₱@OpeningBillsSubtotal.ToString("N2")</span>
+                                    </div>
+                                    @foreach (var row in openingDenominationRows.Where(r => r.Type == "BILL"))
+                                    {
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-1 border-bottom border-light">
+                                            <span class="fw-semibold small" style="min-width: 65px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 140px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(openingBusy || row.Quantity <= 0)" @onclick="() => StepOpeningDenomination(row, -1)">-</button>
+                                                <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
+                                                       value="@row.RawQuantity"
+                                                       disabled="@openingBusy"
+                                                       @oninput="e => OnOpeningDenominationChanged(row, e.Value?.ToString())" />
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@openingBusy" @onclick="() => StepOpeningDenomination(row, 1)">+</button>
+                                            </div>
+                                            <span class="small font-monospace fw-semibold text-end" style="min-width: 85px;">₱@row.Subtotal.ToString("N2")</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="border rounded-3 p-2">
+                                    <div class="d-flex justify-content-between align-items-center px-2 py-1 bg-light rounded-2 mb-2">
+                                        <span class="fw-bold small">Coins</span>
+                                        <span class="fw-bold small text-primary font-monospace">₱@OpeningCoinsSubtotal.ToString("N2")</span>
+                                    </div>
+                                    @foreach (var row in openingDenominationRows.Where(r => r.Type == "COIN"))
+                                    {
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-1 border-bottom border-light">
+                                            <span class="fw-semibold small" style="min-width: 65px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 140px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(openingBusy || row.Quantity <= 0)" @onclick="() => StepOpeningDenomination(row, -1)">-</button>
+                                                <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
+                                                       value="@row.RawQuantity"
+                                                       disabled="@openingBusy"
+                                                       @oninput="e => OnOpeningDenominationChanged(row, e.Value?.ToString())" />
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@openingBusy" @onclick="() => StepOpeningDenomination(row, 1)">+</button>
+                                            </div>
+                                            <span class="small font-monospace fw-semibold text-end" style="min-width: 85px;">₱@row.Subtotal.ToString("N2")</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        @if (OpeningDiscrepancyAmount != 0m)
+                        {
+                            <div class="alert alert-warning py-2 small mb-3">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                <strong>Opening Discrepancy Detected:</strong> Actual counted cash (<strong>₱@OpeningCountedCash.ToString("N2")</strong>) differs from the configured expected opening fund (<strong>₱@ExpectedOpeningFundAmount.ToString("N2")</strong>) by
+                                <strong>@(OpeningDiscrepancyAmount > 0m ? $"+₱{OpeningDiscrepancyAmount:N2} (Overage)" : $"-₱{Math.Abs(OpeningDiscrepancyAmount):N2} (Shortage)")</strong>.
+                                Both expected and actual counted amounts will be recorded separately for audit.
+                            </div>
+                        }
+
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold mb-1">Opening Remarks / Notes (Optional)</label>
+                            <input type="text" class="form-control form-control-sm" @bind="openingNotes" disabled="@openingBusy" placeholder="Optional notes about the opening drawer count..." />
+                        </div>
+
+                        <div class="form-check p-3 rounded-3 bg-light border">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" id="confirmOpeningFundCheck" @bind="isOpeningFundConfirmedByCashier" disabled="@openingBusy" />
+                            <label class="form-check-label small fw-semibold" for="confirmOpeningFundCheck">
+                                I confirm that I have physically counted the initial cash fund (<strong>₱@OpeningCountedCash.ToString("N2")</strong>) against the expected fund (<strong>₱@ExpectedOpeningFundAmount.ToString("N2")</strong>). Your cart is preserved until shift opening is confirmed.
+                            </label>
+                        </div>
+                    }
+
+                    @if (openingError != null)
+                    {
+                        <div class="alert alert-danger mt-3 mb-0 small">@openingError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" disabled="@openingBusy" @onclick="() => openingShiftModal = false">Cancel</button>
+                    <button class="btn btn-primary fw-bold"
+                            disabled="@(openingBusy || openingFundConfig == null || !openingFundConfig.IsConfigured || !openingFundConfig.EffectiveOpeningFund.HasValue || openingDenominationRows.Any(r => r.HasError) || !isOpeningFundConfirmedByCashier)"
+                            @onclick="ConfirmOpeningFloat">
+                        @(openingBusy ? "Opening Shift..." : "Confirm & Open Shift")
+                    </button>
+                </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" disabled="@openingBusy" @onclick="() => openingShiftModal = false">Cancel</button>
-                <button class="btn btn-primary" disabled="@(openingBusy || !TryParseCashAmount(openingFloatText, out _))" @onclick="ConfirmOpeningFloat">Confirm &amp; Open Shift</button>
-            </div>
-        </div></div>
+        </div>
     </div>
 }
 
@@ -1493,6 +1804,131 @@ else
     private List<ProductModifierGroupDto> currentModifierGroups = new();
     private Dictionary<int, HashSet<int>> selectedOptionIdsByGroup = new();
     private string? customizationError = null;
+    private string? customizationSpecialInstructions = null;
+
+    private bool isNoteModalOpen = false;
+    private CartItem? editingNoteCartItem = null;
+    private string? noteDraftText = null;
+    private bool splitSingleItemForNote = false;
+
+    private static readonly string[] KitchenNoteSuggestions =
+    {
+        "No Onion", "Less Spicy", "Extra Sauce", "Separate Sauce", "No Pickles", "Well Done", "Less Salt"
+    };
+
+    private static readonly string[] BarNoteSuggestions =
+    {
+        "No Ice", "Less Ice", "Less Sugar", "No Sugar", "Extra Hot", "Warm", "Separate Cup"
+    };
+
+    private static readonly string[] GeneralNoteSuggestions =
+    {
+        "No Ice", "Less Sugar", "Extra Hot", "No Onion", "Less Spicy", "Extra Sauce", "Separate Sauce"
+    };
+
+    private static IReadOnlyList<string> GetProductNoteSuggestions(bool isKitchen, bool isBar)
+    {
+        if (isBar && !isKitchen) return BarNoteSuggestions;
+        if (isKitchen && !isBar) return KitchenNoteSuggestions;
+        return GeneralNoteSuggestions;
+    }
+
+    private static bool HasInstructionChip(string? currentText, string chip)
+    {
+        if (string.IsNullOrWhiteSpace(currentText) || string.IsNullOrWhiteSpace(chip))
+            return false;
+
+        var parts = currentText.Split(new[] { ',', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Any(p => string.Equals(p, chip, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? ToggleInstructionChip(string? currentText, string chip)
+    {
+        var parts = (currentText ?? string.Empty)
+            .Split(new[] { ',', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        var existingIdx = parts.FindIndex(p => string.Equals(p, chip, StringComparison.OrdinalIgnoreCase));
+        if (existingIdx >= 0)
+        {
+            parts.RemoveAt(existingIdx);
+        }
+        else
+        {
+            parts.Add(chip);
+        }
+
+        return CartItem.NormalizeSpecialInstructions(string.Join(", ", parts));
+    }
+
+    private void OpenNoteModal(CartItem item)
+    {
+        editingNoteCartItem = item;
+        noteDraftText = item.SpecialInstructions;
+        splitSingleItemForNote = false;
+        isNoteModalOpen = true;
+    }
+
+    private void CloseNoteModal()
+    {
+        isNoteModalOpen = false;
+        editingNoteCartItem = null;
+        noteDraftText = null;
+        splitSingleItemForNote = false;
+    }
+
+    private void ClearCartItemNote()
+    {
+        if (editingNoteCartItem != null)
+        {
+            Cart.UpdateSpecialInstructions(editingNoteCartItem, null);
+        }
+        CloseNoteModal();
+    }
+
+    private void SaveCartItemNote()
+    {
+        if (editingNoteCartItem == null)
+        {
+            CloseNoteModal();
+            return;
+        }
+
+        var normalized = CartItem.NormalizeSpecialInstructions(noteDraftText);
+        if (splitSingleItemForNote && editingNoteCartItem.Quantity > 1)
+        {
+            var itemRef = editingNoteCartItem;
+            Cart.DecreaseQuantity(itemRef);
+            var splitProduct = new ProductDto
+            {
+                ProductId = itemRef.ProductId,
+                Name = itemRef.ProductName,
+                ShortCode = itemRef.ProductShortCode,
+                Price = itemRef.BasePrice,
+                ImageUrl = itemRef.ImageUrl,
+                UnitOfMeasure = itemRef.UnitOfMeasure,
+                TaxName = itemRef.TaxName ?? "VATable",
+                IsKitchenItem = itemRef.IsKitchenItem,
+                IsBarItem = itemRef.IsBarItem
+            };
+            var clonedMods = itemRef.SelectedModifiers?.Select(m => new ModifierOptionDto
+            {
+                ModifierOptionId = m.ModifierOptionId,
+                ModifierGroupId = m.ModifierGroupId,
+                Name = m.Name,
+                Price = m.Price,
+                DisplayOrder = m.DisplayOrder,
+                IsActive = m.IsActive
+            }).ToList();
+            Cart.AddItem(splitProduct, 1, clonedMods, normalized);
+        }
+        else
+        {
+            Cart.UpdateSpecialInstructions(editingNoteCartItem, normalized);
+        }
+
+        CloseNoteModal();
+    }
 
     private async Task AddToCart(ProductDto product)
     {
@@ -1581,6 +2017,7 @@ else
                 currentModifierGroups = groups;
                 selectedOptionIdsByGroup.Clear();
                 customizationError = null;
+                customizationSpecialInstructions = null;
 
                 foreach (var g in groups)
                 {
@@ -1822,7 +2259,7 @@ else
             }
         }
 
-        Cart.AddItem(customizingProduct, 1, selectedModifiers);
+        Cart.AddItem(customizingProduct, 1, selectedModifiers, customizationSpecialInstructions);
         CloseCustomizationModal();
     }
 
@@ -1833,6 +2270,7 @@ else
         currentModifierGroups.Clear();
         selectedOptionIdsByGroup.Clear();
         customizationError = null;
+        customizationSpecialInstructions = null;
         StateHasChanged();
     }
 
@@ -1968,9 +2406,85 @@ else
         }
     }
 
+    private sealed class OpeningDenomRow
+    {
+        public string Type { get; set; } = "BILL";
+        public decimal Denomination { get; set; }
+        public string Label { get; set; } = string.Empty;
+        public int Quantity { get; set; }
+        public string RawQuantity { get; set; } = "0";
+        public bool HasError { get; set; }
+        public decimal Subtotal => Math.Round(Denomination * Quantity, 2, MidpointRounding.AwayFromZero);
+    }
+
     private POS.Client.Data.LocalCashDrawerShift? paymentShift;
     private bool openingShiftModal;
-    private string openingFloatText = string.Empty;
+    private TerminalCashFundConfigDto? openingFundConfig;
+    private List<OpeningDenomRow> openingDenominationRows = new();
+    private bool isOpeningFundConfirmedByCashier;
+    private string openingNotes = string.Empty;
+
+    private decimal OpeningCoinsSubtotal => openingDenominationRows.Where(r => r.Type == "COIN").Sum(r => r.Subtotal);
+    private decimal OpeningBillsSubtotal => openingDenominationRows.Where(r => r.Type == "BILL").Sum(r => r.Subtotal);
+    private decimal OpeningCountedCash => Math.Round(OpeningCoinsSubtotal + OpeningBillsSubtotal, 2, MidpointRounding.AwayFromZero);
+    private decimal ExpectedOpeningFundAmount => Math.Round(openingFundConfig?.EffectiveOpeningFund ?? 0m, 2, MidpointRounding.AwayFromZero);
+    private decimal OpeningDiscrepancyAmount => Math.Round(OpeningCountedCash - ExpectedOpeningFundAmount, 2, MidpointRounding.AwayFromZero);
+
+    private void InitializeOpeningDenominations()
+    {
+        openingDenominationRows = CashDenominationCatalog.CreateDefaultLines()
+            .Select(d => new OpeningDenomRow
+            {
+                Type = d.Type,
+                Denomination = d.Denomination,
+                Label = d.Label,
+                Quantity = 0,
+                RawQuantity = "0",
+                HasError = false
+            })
+            .ToList();
+    }
+
+    private void ResetOpeningDenominations()
+    {
+        foreach (var row in openingDenominationRows)
+        {
+            row.Quantity = 0;
+            row.RawQuantity = "0";
+            row.HasError = false;
+        }
+        isOpeningFundConfirmedByCashier = false;
+    }
+
+    private void StepOpeningDenomination(OpeningDenomRow row, int delta)
+    {
+        int next = Math.Max(0, row.Quantity + delta);
+        row.Quantity = next;
+        row.RawQuantity = next.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        row.HasError = false;
+        isOpeningFundConfirmedByCashier = false;
+    }
+
+    private void OnOpeningDenominationChanged(OpeningDenomRow row, string? rawValue)
+    {
+        string trimmed = (rawValue ?? string.Empty).Trim();
+        row.RawQuantity = trimmed;
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            row.Quantity = 0;
+            row.HasError = false;
+        }
+        else if (int.TryParse(trimmed, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int parsed) && parsed >= 0 && parsed <= 1_000_000)
+        {
+            row.Quantity = parsed;
+            row.HasError = false;
+        }
+        else
+        {
+            row.HasError = true;
+        }
+        isOpeningFundConfirmedByCashier = false;
+    }
 
     // Match numeric(18,2) without culture-dependent separators or silent rounding.
     private static bool TryParseCashAmount(string? text, out decimal amount)
@@ -1996,6 +2510,15 @@ else
         {
             await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
         }
+        var lockState = await POS.Client.Services.ShiftSession.GetTerminalLockStatusAsync(
+            Http, Session.Terminal!.TerminalId, Session.Username, offline);
+        if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+        {
+            Session.ClearSession();
+            Http.DefaultRequestHeaders.Authorization = null;
+            Navigation.NavigateTo("/terminal-locked", replace: true);
+            return false;
+        }
         paymentShift = await POS.Client.Services.ShiftSession.CurrentAsync(Http, Session.Terminal!.TerminalId, offline);
         if (paymentShift != null && paymentShift.CashierId != Session.Username)
         {
@@ -2003,13 +2526,35 @@ else
         }
         if (!offline && paymentShift?.ShiftId < 0)
         {
-            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto { TerminalId = paymentShift.TerminalId, BranchId = paymentShift.BranchId, OpeningFloat = paymentShift.OpeningFloat, ClientShiftId = paymentShift.ClientShiftId, OpenedAt = paymentShift.OpenedAt }, Session.Username!, false);
+            List<CashDenominationLineDto>? openDenoms = null;
+            if (!string.IsNullOrWhiteSpace(paymentShift.OpeningDenominationsJson))
+            {
+                try { openDenoms = System.Text.Json.JsonSerializer.Deserialize<List<CashDenominationLineDto>>(paymentShift.OpeningDenominationsJson); } catch { }
+            }
+            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto
+            {
+                TerminalId = paymentShift.TerminalId,
+                BranchId = paymentShift.BranchId,
+                OpeningFloat = paymentShift.OpeningFloat,
+                ExpectedOpeningFund = paymentShift.ExpectedOpeningFund,
+                OpeningDiscrepancy = paymentShift.OpeningDiscrepancy,
+                OpeningDenominations = openDenoms,
+                ClientShiftId = paymentShift.ClientShiftId,
+                OpenedAt = paymentShift.OpenedAt,
+                Notes = paymentShift.Notes
+            }, Session.Username!, false);
         }
         if (paymentShift != null && paymentShift.Status != "OPEN")
             throw new InvalidOperationException("The acknowledged shift is closed. Reconcile the drawer in My Shift before opening a new shift.");
         if (paymentShift == null || !paymentShift.OpeningConfirmed)
         {
-            openingFloatText = string.Empty; openingError = null; openingShiftModal = true; return false;
+            openingFundConfig = await POS.Client.Services.ShiftSession.GetOpeningFundConfigAsync(Http, Session.Terminal!.TerminalId, offline);
+            InitializeOpeningDenominations();
+            isOpeningFundConfirmedByCashier = false;
+            openingNotes = string.Empty;
+            openingError = null;
+            openingShiftModal = true;
+            return false;
         }
         if (paymentShift.CashierId != Session.Username)
         {
@@ -2021,9 +2566,19 @@ else
     private async Task ConfirmOpeningFloat()
     {
         if (openingBusy || isProcessingPayment || !openingShiftModal) return;
-        if (!TryParseCashAmount(openingFloatText, out var amount))
+        if (openingFundConfig == null || !openingFundConfig.IsConfigured || !openingFundConfig.EffectiveOpeningFund.HasValue)
         {
-            openingError = "Enter opening cash from 0 to 9999999999999999.99 using up to two decimal places.";
+            openingError = "Initial Cash Fund is not configured for this Terminal or Outlet. Please contact an Administrator.";
+            return;
+        }
+        if (openingDenominationRows.Any(r => r.HasError))
+        {
+            openingError = "All denomination quantities must be non-negative whole numbers.";
+            return;
+        }
+        if (!isOpeningFundConfirmedByCashier)
+        {
+            openingError = "Please explicitly confirm your opening cash count before opening the shift.";
             return;
         }
         openingBusy = true;
@@ -2037,7 +2592,26 @@ else
             {
                 await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
             }
-            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto { TerminalId = Session.Terminal!.TerminalId, BranchId = Session.Terminal.BranchId, OpeningFloat = amount, ClientShiftId = openingId, OpenedAt = openingOpenedAt }, Session.Username!, offline);
+            var openDto = new OpenShiftDto
+            {
+                TerminalId = Session.Terminal!.TerminalId,
+                BranchId = Session.Terminal.BranchId,
+                OpeningFloat = OpeningCountedCash,
+                ExpectedOpeningFund = ExpectedOpeningFundAmount,
+                OpeningDiscrepancy = OpeningDiscrepancyAmount,
+                RequireConfiguredFund = true,
+                OpeningDenominations = openingDenominationRows.Select(r => new CashDenominationLineDto
+                {
+                    Type = r.Type,
+                    Denomination = r.Denomination,
+                    Quantity = r.Quantity,
+                    Subtotal = r.Subtotal
+                }).ToList(),
+                ClientShiftId = openingId,
+                OpenedAt = openingOpenedAt,
+                Notes = string.IsNullOrWhiteSpace(openingNotes) ? null : openingNotes.Trim()
+            };
+            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, openDto, Session.Username!, offline);
             if (paymentShift.Status != "OPEN")
                 throw new InvalidOperationException("This opening acknowledgement is for a closed shift. Reconcile the drawer in My Shift before starting another sale.");
             openingShiftModal = false;
@@ -2083,6 +2657,7 @@ else
                     TaxName = ci.TaxName ?? "VATable",
                     IsKitchenItem = ci.IsKitchenItem,
                     IsBarItem = ci.IsBarItem,
+                    SpecialInstructions = ci.SpecialInstructions,
                     Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                     {
                         ModifierOptionId = m.ModifierOptionId,
@@ -2289,6 +2864,7 @@ else
                     TaxName = ci.TaxName ?? "VATable",
                     IsKitchenItem = ci.IsKitchenItem,
                     IsBarItem = ci.IsBarItem,
+                    SpecialInstructions = ci.SpecialInstructions,
                     Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                     {
                         ModifierOptionId = m.ModifierOptionId,
@@ -2473,6 +3049,7 @@ else
                     BasePrice = ci.BasePrice,
                     LineTotal = ci.LineTotal,
                     TaxName = ci.TaxName ?? "VATable",
+                    SpecialInstructions = ci.SpecialInstructions,
                     Modifiers = ci.SelectedModifiers?.Select(m => new HeldSaleModifierDto
                     {
                         ModifierOptionId = m.ModifierOptionId,

@@ -77,6 +77,7 @@ public static class PreparationTicketRouter
             ProductName = item.ProductName,
             ProductShortCode = item.ProductShortCode,
             Quantity = item.Quantity,
+            SpecialInstructions = CartItem.NormalizeSpecialInstructions(item.SpecialInstructions),
             Modifiers = item.Modifiers?.Select(m => m.ModifierName).ToList() ?? new()
         };
     }

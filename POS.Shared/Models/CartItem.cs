@@ -19,6 +19,19 @@ namespace POS.Shared.Models
         public string? TaxName { get; set; } = "VATable";
         public bool IsKitchenItem { get; set; }
         public bool IsBarItem { get; set; }
+        public const int MaxSpecialInstructionsLength = 250;
+        public string? SpecialInstructions { get; set; }
         public decimal LineTotal => UnitPrice * Quantity;
+
+        public static string? NormalizeSpecialInstructions(string? instructions)
+        {
+            if (string.IsNullOrWhiteSpace(instructions))
+                return null;
+
+            var trimmed = instructions.Trim();
+            return trimmed.Length > MaxSpecialInstructionsLength
+                ? trimmed[..MaxSpecialInstructionsLength].TrimEnd()
+                : trimmed;
+        }
     }
 }

@@ -315,6 +315,16 @@
                                     </td>
                                     <td class="text-end">
                                         <div>Float: ₱@s.OpeningFloat.ToString("N2")</div>
+                                        @if (s.ExpectedOpeningFund.HasValue && s.ExpectedOpeningFund.Value != s.OpeningFloat)
+                                        {
+                                            <div class="small text-muted">Cfg: ₱@s.ExpectedOpeningFund.Value.ToString("N2")</div>
+                                            @if (s.OpeningDiscrepancy.HasValue && s.OpeningDiscrepancy.Value != 0m)
+                                            {
+                                                <div class="small @(s.OpeningDiscrepancy.Value < 0m ? "text-danger" : "text-warning") fw-semibold">
+                                                    Open @(s.OpeningDiscrepancy.Value > 0m ? "+" : "")₱@s.OpeningDiscrepancy.Value.ToString("N2")
+                                                </div>
+                                            }
+                                        }
                                         <div class="text-secondary">Mvmt: @(netMvmt >= 0 ? "+" : "")₱@netMvmt.ToString("N2")</div>
                                     </td>
                                     <td class="text-end">

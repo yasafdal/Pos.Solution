@@ -171,6 +171,23 @@ else
                                         <div>
                                             <span class="fw-semibold text-dark">@item.ProductName</span><br />
                                             <small class="text-secondary">@item.Quantity.ToString("0.###") × ₱@item.UnitPrice.ToString("N2")</small>
+                                            @if (item.Modifiers != null && item.Modifiers.Any())
+                                            {
+                                                <div class="ps-2 mt-1">
+                                                    @foreach (var mod in item.Modifiers)
+                                                    {
+                                                        <div class="text-secondary" style="font-size: 0.78rem;">+ @mod.ModifierName @(mod.AdditionalPrice > 0 ? $"(+₱{mod.AdditionalPrice:N2})" : "")</div>
+                                                    }
+                                                </div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(item.SpecialInstructions))
+                                            {
+                                                <div class="ps-2 mt-1">
+                                                    <span class="badge bg-warning-subtle text-dark border border-warning-subtle fw-semibold" style="font-size: 0.75rem; white-space: normal; text-align: left;">
+                                                        <i class="bi bi-chat-left-text me-1"></i>@item.SpecialInstructions
+                                                    </span>
+                                                </div>
+                                            }
                                         </div>
                                         <span class="fw-bold text-dark">₱@item.LineTotal.ToString("N2")</span>
                                     </div>
@@ -206,6 +223,12 @@ else
                             </button>
                             <button type="button" class="btn btn-outline-warning text-dark rounded px-3 fw-bold" @onclick="() => OpenReturnModal(selectedOrder)">
                                 <i class="bi bi-arrow-counterclockwise me-1"></i> Return
+                            </button>
+                        }
+                        @if (selectedOrder.Items.Any(i => i.IsKitchenItem || i.IsBarItem))
+                        {
+                            <button type="button" class="btn btn-outline-primary rounded px-3 fw-bold" @onclick="() => ReprintPreparationTickets(selectedOrder)">
+                                <i class="bi bi-receipt-cutoff me-1"></i> Reprint Prep Ticket
                             </button>
                         }
                         <button type="button" class="btn btn-primary rounded px-4 fw-bold shadow-sm" @onclick="() => ReprintInvoice(selectedOrder.OrderId)">
@@ -479,6 +502,7 @@ else
                             LineTotal = i.LineTotal,
                             IsKitchenItem = i.IsKitchenItem,
                             IsBarItem = i.IsBarItem,
+                            SpecialInstructions = i.SpecialInstructions,
                             Modifiers = mods
                         };
                     }).ToList(),
@@ -543,6 +567,49 @@ else
     }
 
     private void CloseDetailModal() => isDetailModalOpen = false;
+
+    private async Task ReprintPreparationTickets(OrderResponseDto target)
+    {
+        try
+        {
+            using var db = new POS.Client.Data.LocalPosDbContext();
+            db.InitializeDatabase();
+            int termId = Session.Terminal?.TerminalId ?? target.TerminalId;
+            var cfg = db.TerminalConfigs.AsNoTracking().FirstOrDefault(t => t.TerminalId == termId);
+            var receiptDto = new ReceiptDto
+            {
+                OrderId = target.OrderId,
+                OrderNumber = target.OrderNumber,
+                InvoiceNumber = target.InvoiceNumber,
+                BranchId = target.BranchId,
+                TerminalId = target.TerminalId,
+                TerminalName = !string.IsNullOrWhiteSpace(target.TerminalName) ? target.TerminalName : (Session.Terminal?.TerminalName ?? "Terminal"),
+                CashierId = target.CashierId,
+                OrderType = target.OrderType,
+                TableNumber = target.TableNumber,
+                HeadCount = target.HeadCount,
+                CreatedAt = target.CreatedAt,
+                Items = target.Items
+            };
+
+            var tickets = PreparationTicketRouter.GenerateTickets(receiptDto, cfg?.KitchenPrinterName, cfg?.BarPrinterName);
+            if (!tickets.Any())
+            {
+                await Swal.FireAsync("Info", "No Kitchen or Bar items on this transaction.", SweetAlertIcon.Info);
+                return;
+            }
+
+            foreach (var ticket in tickets)
+            {
+                await ReceiptPrinter.PrintPreparationTicketAsync(ticket);
+            }
+            await Swal.FireAsync("Success", $"Sent {tickets.Count} preparation ticket(s) to printer.", SweetAlertIcon.Success);
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync("Error", "Preparation ticket print failed: " + ex.Message, SweetAlertIcon.Error);
+        }
+    }
 
     private async Task ReprintInvoice(long orderId)
     {

@@ -4,12 +4,53 @@ using System.ComponentModel.DataAnnotations;
 
 namespace POS.Shared.Models;
 
+public class TerminalClosingLockDto
+{
+    public int TerminalId { get; set; }
+    public bool IsTerminalLocked { get; set; }
+    public bool IsCashierRestricted { get; set; }
+    public bool ClockTamperDetected { get; set; }
+    public string? ClosedBusinessDate { get; set; }
+    public string CurrentBusinessDate { get; set; } = string.Empty;
+    public string? LockedByCashier { get; set; }
+    public List<string> RestrictedCashiers { get; set; } = new();
+    public DateTime? LockedAtUtc { get; set; }
+    public DateTime? UnlockAtUtc { get; set; }
+    public DateTime? ServerUtcNow { get; set; }
+    public string? LockMessage { get; set; }
+    public string? CashierRestrictionMessage { get; set; }
+}
+
+public class TerminalCashFundConfigDto
+{
+    public int TerminalId { get; set; }
+    public string TerminalCode { get; set; } = string.Empty;
+    public string TerminalName { get; set; } = string.Empty;
+    public int OutletId { get; set; }
+    public string OutletName { get; set; } = string.Empty;
+    public int BranchId { get; set; }
+    public string BranchName { get; set; } = string.Empty;
+    public decimal? DefaultOpeningFund { get; set; }
+    public decimal? OpeningFundOverride { get; set; }
+    public decimal? EffectiveOpeningFund => OpeningFundOverride ?? DefaultOpeningFund;
+    public string OpeningFundSource => OpeningFundOverride.HasValue
+        ? "TERMINAL_OVERRIDE"
+        : (DefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED");
+    public bool IsConfigured => EffectiveOpeningFund.HasValue;
+    public string? UpdatedBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+}
+
 public class OpenShiftDto
 {
     public int BranchId { get; set; }
     public int TerminalId { get; set; }
     [Required, Range(typeof(decimal), "0", "9999999999999999.99")]
     public decimal? OpeningFloat { get; set; }
+    public decimal? ExpectedOpeningFund { get; set; }
+    public decimal? OpeningDiscrepancy { get; set; }
+    public List<CashDenominationLineDto>? OpeningDenominations { get; set; }
+    public bool RequireConfiguredFund { get; set; }
     public string? ClientShiftId { get; set; }
     public string? CashierId { get; set; }
     public DateTime? OpenedAt { get; set; }
@@ -320,6 +361,12 @@ public class XReadingReportDto
 
     // Cash Drawer Ledger (Physical Drawer Cash)
     public decimal OpeningFloat { get; set; }
+    public decimal? ExpectedOpeningFund { get; set; }
+    public decimal? OpeningDiscrepancy { get; set; }
+    public List<CashDenominationLineDto> OpeningDenominations { get; set; } = new();
+    public string OpeningReconciliationStatus => !OpeningDiscrepancy.HasValue || OpeningDiscrepancy.Value == 0m
+        ? "BALANCED"
+        : (OpeningDiscrepancy.Value < 0m ? "SHORT" : "OVER");
     public decimal CashSalesCollected { get; set; }
     public decimal CashRefunds { get; set; }
     public decimal NetCashSales { get; set; }
@@ -376,6 +423,12 @@ public class CashDrawerShiftDto
     public string TerminalName { get; set; } = "Unknown / Legacy Terminal";
     public string CashierId { get; set; } = null!;
     public decimal OpeningFloat { get; set; }
+    public decimal? ExpectedOpeningFund { get; set; }
+    public decimal? OpeningDiscrepancy { get; set; }
+    public List<CashDenominationLineDto> OpeningDenominations { get; set; } = new();
+    public string OpeningReconciliationStatus => !OpeningDiscrepancy.HasValue || OpeningDiscrepancy.Value == 0m
+        ? "BALANCED"
+        : (OpeningDiscrepancy.Value < 0m ? "SHORT" : "OVER");
     public decimal TotalCashSales { get; set; }
     public decimal TotalCashRefunds { get; set; }
     public decimal TotalCashIn { get; set; }

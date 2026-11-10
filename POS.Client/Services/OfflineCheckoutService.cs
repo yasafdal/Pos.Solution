@@ -101,6 +101,23 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     .FirstOrDefaultAsync(o => o.TerminalId == createDto.TerminalId);
                 if (outletConfig == null || outletConfig.OutletId <= 0 || outletConfig.BranchId != createDto.BranchId)
                     throw new InvalidOperationException("Terminal ownership must be refreshed online before offline checkout.");
+
+                var lockStatus = BusinessDayClock.EvaluateLock(
+                    terminalId: outletConfig.TerminalId,
+                    closedBusinessDate: outletConfig.ClosedBusinessDate,
+                    lockedByCashier: outletConfig.ClosingLockedByCashier,
+                    lockedAtUtc: outletConfig.ClosingLockedAtUtc,
+                    unlockAtUtc: outletConfig.ClosingUnlockAtUtc,
+                    candidateCashierUsername: cashierId,
+                    authoritativeServerUtc: null,
+                    deviceUtcNow: BusinessDayClock.UtcNow(),
+                    currentTickCount64: BusinessDayClock.TickCount64(),
+                    lockedAtTickCount64: outletConfig.ClosingLockedTickCount64,
+                    lastKnownServerUtc: outletConfig.LastKnownServerUtc,
+                    lastKnownServerTickCount64: outletConfig.LastKnownServerTickCount64);
+                if (lockStatus.IsCashierRestricted || lockStatus.IsTerminalLocked)
+                    throw new InvalidOperationException(lockStatus.CashierRestrictionMessage ?? lockStatus.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
+
                 string branchTaxType = outletConfig.BranchTaxType;
 
                 // 2. Calculate taxes and discounts first (before incrementing sequence) using decimal precision
@@ -210,6 +227,8 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     var localProd = await db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.ProductId == itemDto.ProductId);
                     bool isKitchen = localProd?.IsKitchenItem ?? itemDto.IsKitchenItem;
                     bool isBar = localProd?.IsBarItem ?? itemDto.IsBarItem;
+                    string? normalizedInstructions = CartItem.NormalizeSpecialInstructions(itemDto.SpecialInstructions);
+                    itemDto.SpecialInstructions = normalizedInstructions;
 
                     db.OrderItems.Add(new LocalOrderItem
                     {
@@ -223,6 +242,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                         TaxName = itemDto.TaxName ?? "VATable",
                         IsKitchenItem = isKitchen,
                         IsBarItem = isBar,
+                        SpecialInstructions = normalizedInstructions,
                         ModifiersJson = itemDto.Modifiers != null && itemDto.Modifiers.Count > 0
                             ? System.Text.Json.JsonSerializer.Serialize(itemDto.Modifiers)
                             : null
@@ -243,6 +263,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                         VatAmount = calcItem?.VatAmount ?? 0m,
                         IsKitchenItem = isKitchen,
                         IsBarItem = isBar,
+                        SpecialInstructions = normalizedInstructions,
                         Modifiers = itemDto.Modifiers?.Select((m, mIdx) => new OrderItemModifierResponseDto
                         {
                             OrderItemModifierId = mIdx + 1,

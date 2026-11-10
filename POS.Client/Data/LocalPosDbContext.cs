@@ -131,12 +131,12 @@ public class LocalPosDbContext : DbContext
                         LastIssuedNumber INTEGER NOT NULL DEFAULT 0,
                         UpdatedAt TEXT NOT NULL
                     );");
-                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT", "DeviceUuid TEXT", "IsActivated INTEGER NOT NULL DEFAULT 0", "AllowSync INTEGER NOT NULL DEFAULT 1", "ActivatedAt TEXT" })
+                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT", "DeviceUuid TEXT", "IsActivated INTEGER NOT NULL DEFAULT 0", "AllowSync INTEGER NOT NULL DEFAULT 1", "ActivatedAt TEXT", "DefaultOpeningFund TEXT NULL", "OpeningFundOverride TEXT NULL", "EffectiveOpeningFund TEXT NULL", "OpeningFundSource TEXT NULL", "ClosedBusinessDate TEXT NULL", "ClosingLockedByCashier TEXT NULL", "ClosingLockedAtUtc TEXT NULL", "ClosingUnlockAtUtc TEXT NULL", "ClosingLockedTickCount64 INTEGER NULL", "LastKnownServerUtc TEXT NULL", "LastKnownServerTickCount64 INTEGER NULL" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
                 }
-                foreach (var col in new[] { "ProductShortCode TEXT", "IsKitchenItem INTEGER NOT NULL DEFAULT 0", "IsBarItem INTEGER NOT NULL DEFAULT 0", "ModifiersJson TEXT" })
+                foreach (var col in new[] { "ProductShortCode TEXT", "IsKitchenItem INTEGER NOT NULL DEFAULT 0", "IsBarItem INTEGER NOT NULL DEFAULT 0", "SpecialInstructions TEXT NULL", "ModifiersJson TEXT" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalOrderItems ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
@@ -273,6 +273,9 @@ public class LocalPosDbContext : DbContext
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClosingOriginalDeclarationJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClosingPaymentReconciliationsJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ClosingRecountHistoryJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ExpectedOpeningFund TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDiscrepancy TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDenominationsJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 // Enable WAL mode and busy_timeout for high concurrency and durability
                 Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
                 Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");

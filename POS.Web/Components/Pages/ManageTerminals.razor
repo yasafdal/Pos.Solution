@@ -94,6 +94,30 @@
                     <PropertyColumn Property="@(t => t.Name)" Title="Terminal Name" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(t => t.BranchName)" Title="Branch" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(t => t.OutletName)" Title="Outlet" Sortable="true" Align="Align.Left" />
+                    <TemplateColumn Title="Initial Cash Fund" Context="t" Align="Align.Right">
+                        @if (t.EffectiveOpeningFund.HasValue)
+                        {
+                            <div class="d-flex flex-column align-items-end lh-sm">
+                                <span class="fw-bold text-dark">₱@t.EffectiveOpeningFund.Value.ToString("N2")</span>
+                                @if (t.OpeningFundSource == "TERMINAL_OVERRIDE")
+                                {
+                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle mt-1" style="font-size: 0.68rem;" title="@(string.IsNullOrEmpty(t.CashFundUpdatedBy) ? "Terminal Override" : $"Updated by {t.CashFundUpdatedBy}")">
+                                        Terminal Override
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-light text-secondary border mt-1" style="font-size: 0.68rem;">
+                                        Outlet Default
+                                    </span>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning-subtle text-dark border border-warning-subtle" style="font-size: 0.72rem;">Not Configured</span>
+                        }
+                    </TemplateColumn>
                     <TemplateColumn Title="IP / Device" Context="t" Align="Align.Left">
                         @if (!string.IsNullOrEmpty(t.IpAddress))
                         {
@@ -342,6 +366,75 @@
                                 </div>
                             </div>
 
+                            <!-- Initial Cash Fund Configuration -->
+                            <div class="col-12">
+                                <div class="p-3 bg-light rounded-3 border">
+                                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                        <span class="fw-bold text-dark small d-flex align-items-center gap-1.5">
+                                            <i class="bi bi-cash-coin text-success"></i> Initial Cash Fund Configuration
+                                        </span>
+                                        @{
+                                            var outletDefaultFund = GetSelectedModalOutletDefaultFund();
+                                            var effectiveModalFund = useTerminalCashFundOverride ? currentTerminal.OpeningFundOverride : outletDefaultFund;
+                                        }
+                                        @if (effectiveModalFund.HasValue)
+                                        {
+                                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                Effective Fund: ₱@effectiveModalFund.Value.ToString("N2") (@(useTerminalCashFundOverride ? "Terminal Override" : "Inherited from Outlet"))
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-warning-subtle text-dark border border-warning-subtle">
+                                                Effective Fund: Not Configured
+                                            </span>
+                                        }
+                                    </div>
+
+                                    <div class="small text-secondary mb-2">
+                                        Outlet Default Fund:
+                                        @if (outletDefaultFund.HasValue)
+                                        {
+                                            <strong class="text-dark">₱@outletDefaultFund.Value.ToString("N2")</strong>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-warning-emphasis fw-semibold">Not configured on selected outlet</span>
+                                        }
+                                    </div>
+
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" id="terminalCashFundOverrideSwitch" checked="@useTerminalCashFundOverride" @onchange="OnTerminalOverrideToggled" />
+                                        <label class="form-check-label fw-semibold text-dark small" for="terminalCashFundOverrideSwitch">
+                                            Enable Custom Terminal Cash Fund Override
+                                        </label>
+                                    </div>
+
+                                    @if (useTerminalCashFundOverride)
+                                    {
+                                        <div class="mt-2">
+                                            <label class="form-label text-dark fw-semibold small mb-1">Terminal Opening Cash Fund Override (₱) *</label>
+                                            <div class="input-group input-group-sm">
+                                                <span class="input-group-text bg-white fw-bold text-secondary">₱</span>
+                                                <InputNumber @bind-Value="currentTerminal.OpeningFundOverride" class="form-control" step="0.01" min="0" placeholder="e.g. 3000.00" />
+                                            </div>
+                                            <ValidationMessage For="@(() => currentTerminal.OpeningFundOverride)" class="text-danger small" />
+                                        </div>
+                                    }
+
+                                    @if (isEditingTerminal && !string.IsNullOrEmpty(currentTerminal.CashFundUpdatedBy))
+                                    {
+                                        <div class="small text-muted mt-2" style="font-size: 0.72rem;">
+                                            Last cash fund update by <strong>@currentTerminal.CashFundUpdatedBy</strong>
+                                            @(currentTerminal.CashFundUpdatedAt.HasValue ? $"on {currentTerminal.CashFundUpdatedAt.Value.ToLocalTime():MMM d, yyyy HH:mm}" : "")
+                                        </div>
+                                    }
+                                    <div class="form-text" style="font-size: 0.74rem;">
+                                        Changes apply to future cashier sessions only and never modify an already-open cashier shift.
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- BIR Fields Section -->
                             <div class="col-12">
                                 <div class="p-3 bg-light rounded-3 border">
@@ -571,6 +664,30 @@
     private bool isSaving = false;
     private string? modalError;
     private TerminalDto currentTerminal = new();
+    private bool useTerminalCashFundOverride = false;
+
+    private decimal? GetSelectedModalOutletDefaultFund()
+    {
+        if (currentTerminal.OutletId > 0 && modalOutlets != null)
+        {
+            var found = modalOutlets.FirstOrDefault(o => o.OutletId == currentTerminal.OutletId);
+            if (found != null) return found.DefaultOpeningFund;
+        }
+        return currentTerminal.OutletDefaultOpeningFund;
+    }
+
+    private void OnTerminalOverrideToggled(ChangeEventArgs e)
+    {
+        useTerminalCashFundOverride = e.Value is bool b && b;
+        if (!useTerminalCashFundOverride)
+        {
+            currentTerminal.OpeningFundOverride = null;
+        }
+        else if (!currentTerminal.OpeningFundOverride.HasValue)
+        {
+            currentTerminal.OpeningFundOverride = GetSelectedModalOutletDefaultFund() ?? 0m;
+        }
+    }
 
     private bool isInvoiceSequencesModalOpen = false;
     private TerminalDto? activeSequenceTerminal;
@@ -763,6 +880,7 @@
         }
 
         isEditingTerminal = false;
+        useTerminalCashFundOverride = false;
         isTerminalModalOpen = true;
     }
 
@@ -789,8 +907,13 @@
             Uuid = terminal.Uuid,
             ActivationCode = terminal.ActivationCode,
             IsActivationCodeUsed = terminal.IsActivationCodeUsed,
-            AllowSync = terminal.AllowSync
+            AllowSync = terminal.AllowSync,
+            OpeningFundOverride = terminal.OpeningFundOverride,
+            OutletDefaultOpeningFund = terminal.OutletDefaultOpeningFund,
+            CashFundUpdatedBy = terminal.CashFundUpdatedBy,
+            CashFundUpdatedAt = terminal.CashFundUpdatedAt
         };
+        useTerminalCashFundOverride = terminal.OpeningFundOverride.HasValue;
         isEditingTerminal = true;
         isTerminalModalOpen = true;
     }
@@ -817,6 +940,15 @@
         if (string.IsNullOrWhiteSpace(currentTerminal.Name))
         {
             modalError = "Terminal name is required.";
+            return;
+        }
+        if (!useTerminalCashFundOverride)
+        {
+            currentTerminal.OpeningFundOverride = null;
+        }
+        else if (!currentTerminal.OpeningFundOverride.HasValue || currentTerminal.OpeningFundOverride.Value < 0m)
+        {
+            modalError = "Please enter a valid non-negative terminal cash fund override amount.";
             return;
         }
 
@@ -926,7 +1058,8 @@
                 Uuid = terminal.Uuid,
                 ActivationCode = terminal.ActivationCode,
                 IsActivationCodeUsed = terminal.IsActivationCodeUsed,
-                AllowSync = terminal.AllowSync
+                AllowSync = terminal.AllowSync,
+                OpeningFundOverride = terminal.OpeningFundOverride
             };
 
             var success = await TerminalService.UpdateTerminalAsync(terminal.TerminalId, updateDto);

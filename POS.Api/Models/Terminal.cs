@@ -36,4 +36,11 @@ public partial class Terminal
     public string? ActivationCode { get; set; }
     public bool IsActivationCodeUsed { get; set; } = false;
     public bool AllowSync { get; set; } = true;
+    public decimal? OpeningFundOverride { get; set; }
+    public string? CashFundUpdatedBy { get; set; }
+    public DateTime? CashFundUpdatedAt { get; set; }
+    public string? ClosedBusinessDate { get; set; }
+    public string? ClosingLockedByCashier { get; set; }
+    public DateTime? ClosingLockedAtUtc { get; set; }
+    public DateTime? ClosingUnlockAtUtc { get; set; }
 }

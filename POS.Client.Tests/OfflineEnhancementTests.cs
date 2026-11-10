@@ -24,6 +24,9 @@ internal static class OfflineEnhancementTests
             await run("Offline enhancement: Incremental sync skips full download when valid", TestIncrementalSyncAndLaunch);
             await run("Offline enhancement: Transaction retention prevents deletion of synced orders", TestDataRetentionAndNoDeletion);
             await run("Offline enhancement: Masked PIN protection preserves cached credentials", TestMaskedPinProtection);
+            await run("Offline enhancement: Product special instructions cart separation, SQLite persistence, and Kitchen/Bar ticket routing", TestProductSpecialInstructionsFlow);
+            await run("Offline enhancement: Initial Cash Fund inheritance, denomination counting, discrepancy tracking, and unconfigured guard", TestOfflineInitialCashFundAndDenominationOpening);
+            await run("Offline enhancement: Cashier account restriction, POS terminal locking, clock-tamper protection, and 4:00 AM auto-unlock", TestOfflineTerminalAndCashierClosingLock);
         }
         finally
         {
@@ -485,5 +488,367 @@ internal static class OfflineEnhancementTests
         // Verify existing PIN hash remains intact
         var cached = await db.Cashiers.SingleAsync(c => c.UserId == 1);
         Program.Check(cached.PinHash == realHash, "Cached cashier PIN hash must remain the real hash.");
+    }
+
+    private static async Task TestProductSpecialInstructionsFlow()
+    {
+        using var db = NewDatabase();
+
+        var session = new PosSessionService();
+        session.SetSession("TOKEN", "cashier1", "Cashier", new TerminalConfigDto { TerminalId = 1, BranchId = 1, OutletId = 1 });
+        var cart = new CartService(session);
+
+        var burger = new ProductDto
+        {
+            ProductId = 101,
+            Name = "Cheeseburger",
+            Price = 150m,
+            IsKitchenItem = true,
+            IsBarItem = false
+        };
+        var coffee = new ProductDto
+        {
+            ProductId = 102,
+            Name = "Iced Coffee",
+            Price = 110m,
+            IsKitchenItem = false,
+            IsBarItem = true
+        };
+
+        // 1. Two identical products with different notes must stay as separate cart lines
+        cart.AddItem(burger, 1, null, "  No Onion, Extra Sauce  ");
+        cart.AddItem(burger, 2, null, "No Pickles");
+        cart.AddItem(coffee, 2, null, "No Ice, Less Sugar");
+
+        Program.Check(cart.Items.Count == 3, "Identical products with different special instructions must be kept as separate cart lines.");
+        Program.Check(cart.Items[0].SpecialInstructions == "No Onion, Extra Sauce", "SpecialInstructions must be trimmed.");
+        Program.Check(cart.Items[1].SpecialInstructions == "No Pickles" && cart.Items[1].Quantity == 2, "Second burger line must preserve its own note and quantity.");
+        Program.Check(cart.Subtotal == (150m * 3) + (110m * 2), "Notes must never alter product pricing or subtotal calculations.");
+
+        // 2. Max length (250 chars) enforcement
+        string overlong = new string('A', 300);
+        Program.Check(CartItem.NormalizeSpecialInstructions(overlong)?.Length == 250, "SpecialInstructions must be capped at 250 characters.");
+
+        // 3. Offline checkout persists SpecialInstructions in SQLite and ReceiptDto
+        db.TerminalConfigs.Add(new LocalTerminalConfig
+        {
+            TerminalId = 1,
+            BranchId = 1,
+            OutletId = 1,
+            TerminalCode = "T01",
+            TerminalName = "POS 1",
+            TerminalIdentifier = "TERM-01",
+            BranchTaxType = "VAT-Registered"
+        });
+        db.InvoiceSequences.Add(new LocalInvoiceSequence
+        {
+            SequenceId = 1,
+            TerminalId = 1,
+            SeriesCode = "S1",
+            Prefix = "INV-",
+            StartingNumber = 1,
+            EndingNumber = 500,
+            LastIssuedNumber = 0,
+            PaddingLength = 7,
+            IsActive = true
+        });
+        db.Products.Add(new LocalProduct { ProductId = 101, Name = "Cheeseburger", Price = 150m, IsActive = true, IsKitchenItem = true });
+        db.Products.Add(new LocalProduct { ProductId = 102, Name = "Iced Coffee", Price = 110m, IsActive = true, IsBarItem = true });
+        db.CashDrawerShifts.Add(new LocalCashDrawerShift
+        {
+            ShiftId = 1,
+            TerminalId = 1,
+            BranchId = 1,
+            CashierId = "cashier1",
+            OpeningFloat = 100m,
+            ExpectedBalance = 100m,
+            Status = "OPEN",
+            OpeningConfirmed = true,
+            OpenedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var checkoutService = new OfflineCheckoutService(db, session);
+        var createDto = new OrderCreateDto
+        {
+            TerminalId = 1,
+            BranchId = 1,
+            OutletId = 1,
+            CashierId = "cashier1",
+            OrderType = "DINING",
+            TableNumber = "05",
+            Items = cart.Items.Select(ci => new OrderItemCreateDto
+            {
+                ProductId = ci.ProductId,
+                ProductName = ci.ProductName,
+                Quantity = ci.Quantity,
+                BasePrice = ci.BasePrice,
+                IsKitchenItem = ci.IsKitchenItem,
+                IsBarItem = ci.IsBarItem,
+                SpecialInstructions = ci.SpecialInstructions
+            }).ToList()
+        };
+
+        var res = await checkoutService.ProcessSaleAsync(createDto, 700m, "CASH", null, "cashier1");
+        Program.Check(res.Success && res.Receipt != null, "Checkout with special instructions must succeed.");
+
+        using var verifyDb = new LocalPosDbContext();
+        verifyDb.InitializeDatabase();
+        var savedItems = await verifyDb.OrderItems.Where(i => i.OrderId == res.LocalTransactionId).OrderBy(i => i.OrderItemId).ToListAsync();
+        Program.Check(savedItems.Count == 3, "All 3 preparation lines must be saved in LocalOrderItems.");
+        Program.Check(savedItems[0].SpecialInstructions == "No Onion, Extra Sauce", "First line note must persist in SQLite.");
+        Program.Check(savedItems[1].SpecialInstructions == "No Pickles", "Second line note must persist in SQLite.");
+        Program.Check(savedItems[2].SpecialInstructions == "No Ice, Less Sugar", "Bar line note must persist in SQLite.");
+
+        // 4. Verify Kitchen and Bar PreparationTicketRouter and HTML formatting
+        var tickets = PreparationTicketRouter.GenerateTickets(res.Receipt!, "KitchenPrinter", "BarPrinter");
+        Program.Check(tickets.Count == 2, "Must generate separate KITCHEN and BAR preparation tickets.");
+
+        var kitchenTicket = tickets.Single(t => t.Station == "KITCHEN");
+        var barTicket = tickets.Single(t => t.Station == "BAR");
+        Program.Check(kitchenTicket.Items.Count == 2, "Kitchen ticket must contain both burger preparation lines.");
+        Program.Check(barTicket.Items.Count == 1 && barTicket.Items[0].SpecialInstructions == "No Ice, Less Sugar", "Bar ticket must contain Iced Coffee with its note.");
+
+        var kitchenHtml = PreparationTicketHtmlFormatter.Format(kitchenTicket);
+        var barHtml = PreparationTicketHtmlFormatter.Format(barTicket);
+        var customerReceiptHtml = ReceiptHtmlFormatter.Format(res.Receipt!);
+
+        Program.Check(kitchenHtml.Contains("- No Onion") && kitchenHtml.Contains("- Extra Sauce") && kitchenHtml.Contains("- No Pickles"), "Kitchen ticket HTML must format each special instruction line.");
+        Program.Check(barHtml.Contains("- No Ice") && barHtml.Contains("- Less Sugar"), "Bar ticket HTML must format each special instruction line.");
+        Program.Check(!customerReceiptHtml.Contains("No Onion") && !customerReceiptHtml.Contains("Less Sugar"), "Customer BIR tax receipt must not expose internal kitchen/bar preparation notes.");
+    }
+
+    private static async Task TestOfflineInitialCashFundAndDenominationOpening()
+    {
+        using var db = NewDatabase();
+        using var offlineHttp = new HttpClient();
+
+        // 1. Seed Terminal with no cash fund configured
+        var termCfg = new LocalTerminalConfig
+        {
+            TerminalId = 1,
+            BranchId = 1,
+            OutletId = 1,
+            OutletName = "Main Counter",
+            TerminalCode = "T01",
+            TerminalName = "POS 1",
+            TerminalIdentifier = "TERM-01",
+            BranchTaxType = "VAT-Registered",
+            DefaultOpeningFund = null,
+            OpeningFundOverride = null,
+            EffectiveOpeningFund = null,
+            OpeningFundSource = "UNCONFIGURED"
+        };
+        db.TerminalConfigs.Add(termCfg);
+        await db.SaveChangesAsync();
+
+        var unconf = await ShiftSession.GetOpeningFundConfigAsync(offlineHttp, 1, offline: true);
+        Program.Check(!unconf.IsConfigured && unconf.EffectiveOpeningFund == null && unconf.OpeningFundSource == "UNCONFIGURED",
+            "Unconfigured terminal must report IsConfigured=false offline.");
+
+        bool blocked = false;
+        try
+        {
+            await ShiftSession.OpenAsync(offlineHttp, new OpenShiftDto
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                ClientShiftId = Guid.NewGuid().ToString("N"),
+                OpeningFloat = 1000m,
+                RequireConfiguredFund = true
+            }, "cashier1", offline: true);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Initial Cash Fund is not configured"))
+        {
+            blocked = true;
+        }
+        Program.Check(blocked, "Offline OpenAsync with RequireConfiguredFund=true must block shift opening when unconfigured.");
+
+        // 2. Configure Outlet Default (₱2,500.00) -> Terminal inherits Outlet Default
+        termCfg.DefaultOpeningFund = 2500.00m;
+        termCfg.EffectiveOpeningFund = 2500.00m;
+        termCfg.OpeningFundSource = "OUTLET_DEFAULT";
+        await db.SaveChangesAsync();
+
+        var outletInherited = await ShiftSession.GetOpeningFundConfigAsync(offlineHttp, 1, offline: true);
+        Program.Check(outletInherited.IsConfigured && outletInherited.EffectiveOpeningFund == 2500.00m && outletInherited.OpeningFundSource == "OUTLET_DEFAULT",
+            "Offline terminal must inherit Outlet DefaultOpeningFund.");
+
+        // 3. Configure Terminal Override (₱4,000.00) -> Override takes precedence
+        termCfg.OpeningFundOverride = 4000.00m;
+        termCfg.EffectiveOpeningFund = 4000.00m;
+        termCfg.OpeningFundSource = "TERMINAL_OVERRIDE";
+        await db.SaveChangesAsync();
+
+        var overrideCfg = await ShiftSession.GetOpeningFundConfigAsync(offlineHttp, 1, offline: true);
+        Program.Check(overrideCfg.IsConfigured && overrideCfg.EffectiveOpeningFund == 4000.00m && overrideCfg.OpeningFundSource == "TERMINAL_OVERRIDE",
+            "Offline terminal override must take precedence over Outlet Default.");
+
+        // 4. Open shift offline with denomination breakdown totaling ₱4,020.00 (+₱20.00 Overage)
+        var denoms = CashDenominationCatalog.CreateDefaultLines();
+        denoms.Single(d => d.Type == "BILL" && d.Denomination == 1000m).Quantity = 4;
+        denoms.Single(d => d.Type == "COIN" && d.Denomination == 20m).Quantity = 1;
+
+        var opened = await ShiftSession.OpenAsync(offlineHttp, new OpenShiftDto
+        {
+            BranchId = 1,
+            TerminalId = 1,
+            ClientShiftId = Guid.NewGuid().ToString("N"),
+            RequireConfiguredFund = true,
+            OpeningDenominations = denoms
+        }, "cashier1", offline: true);
+
+        Program.Check(opened.OpeningFloat == 4020.00m, "Counted opening float must be calculated from denominations (4020.00).");
+        Program.Check(opened.ExpectedOpeningFund == 4000.00m, "ExpectedOpeningFund must be recorded (4000.00).");
+        Program.Check(opened.OpeningDiscrepancy == 20.00m, "OpeningDiscrepancy (+20.00 overage) must be recorded.");
+        Program.Check(!string.IsNullOrWhiteSpace(opened.OpeningDenominationsJson), "OpeningDenominationsJson must be persisted in SQLite.");
+
+        var dto = await ShiftSession.CurrentDtoAsync(offlineHttp, 1, offline: true);
+        Program.Check(dto != null && dto.ExpectedOpeningFund == 4000.00m && dto.OpeningDiscrepancy == 20.00m && dto.OpeningReconciliationStatus == "OVER",
+            "CurrentDtoAsync must expose ExpectedOpeningFund, OpeningDiscrepancy, and OVER status.");
+    }
+
+    private static async Task TestOfflineTerminalAndCashierClosingLock()
+    {
+        try
+        {
+            // Business Day 2026-10-20 at 10:00 PM Asia/Manila (14:00:00 UTC)
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => new DateTime(2026, 10, 20, 14, 0, 0, DateTimeKind.Utc);
+            POS.Shared.Services.BusinessDayClock.TickCount64Provider = () => 1_000_000L;
+
+            using var db = NewDatabase();
+            db.TerminalConfigs.Add(new LocalTerminalConfig
+            {
+                TerminalId = 1,
+                BranchId = 1,
+                OutletId = 1,
+                TerminalCode = "T01",
+                TerminalName = "Counter 1",
+                TerminalIdentifier = "TERM-01",
+                BranchTaxType = "VAT-Registered",
+                DefaultOpeningFund = 2000.00m,
+                EffectiveOpeningFund = 2000.00m,
+                OpeningFundSource = "OUTLET_DEFAULT",
+                IsInitialized = true
+            });
+            db.InvoiceSequences.Add(new LocalInvoiceSequence
+            {
+                SequenceId = 1,
+                TerminalId = 1,
+                SeriesCode = "S1",
+                Prefix = "INV-",
+                StartingNumber = 1,
+                EndingNumber = 1000,
+                LastIssuedNumber = 0,
+                PaddingLength = 7,
+                IsActive = true
+            });
+            db.Products.Add(new LocalProduct
+            {
+                ProductId = 1,
+                CategoryId = 1,
+                Name = "Espresso",
+                Price = 100m,
+                IsActive = true
+            });
+            await db.SaveChangesAsync();
+
+            using var offlineHttp = new HttpClient();
+
+            // 1. Cashier1 opens and closes Terminal 1 offline at 10:00 PM Manila
+            var opened = await ShiftSession.OpenAsync(offlineHttp, new OpenShiftDto
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                ClientShiftId = Guid.NewGuid().ToString("N"),
+                OpeningFloat = 2000.00m,
+                RequireConfiguredFund = true
+            }, "cashier1", offline: true);
+
+            var closed = await ShiftSession.CloseAsync(offlineHttp, new CloseShiftDto
+            {
+                ShiftId = opened.ShiftId,
+                ActualCountedBalance = 2000.00m,
+                Notes = "Offline EOD Close"
+            }, "cashier1", offline: true);
+
+            Program.Check(closed != null && closed.Status == "CLOSED", "Offline CloseAsync must close the shift.");
+
+            // 2. Verify SQLite persisted both lock states and monotonic tick count
+            using (var checkDb = new LocalPosDbContext())
+            {
+                var cfg = await checkDb.TerminalConfigs.SingleAsync(t => t.TerminalId == 1);
+                Program.Check(cfg.ClosedBusinessDate == "2026-10-20", $"Expected ClosedBusinessDate 2026-10-20, got {cfg.ClosedBusinessDate}");
+                Program.Check(cfg.ClosingLockedByCashier == "cashier1", $"Expected ClosingLockedByCashier cashier1, got {cfg.ClosingLockedByCashier}");
+                Program.Check(cfg.ClosingLockedTickCount64 == 1_000_000L, $"Expected ClosingLockedTickCount64 1000000, got {cfg.ClosingLockedTickCount64}");
+            }
+
+            // 3. Verify BOTH cashier1 restriction and terminal lock are active
+            var lockForCashier1 = await ShiftSession.GetTerminalLockStatusAsync(offlineHttp, 1, "cashier1", offline: true);
+            Program.Check(lockForCashier1.IsTerminalLocked && lockForCashier1.IsCashierRestricted,
+                "Cashier1 must have BOTH IsTerminalLocked and IsCashierRestricted after closing.");
+
+            var lockForCashier2 = await ShiftSession.GetTerminalLockStatusAsync(offlineHttp, 1, "cashier2", offline: true);
+            Program.Check(lockForCashier2.IsTerminalLocked && !lockForCashier2.IsCashierRestricted,
+                "Cashier2 must also be blocked by IsTerminalLocked on Terminal 1.");
+
+            // 4. Verify OpenAsync and OfflineCheckoutService.ProcessSaleAsync are blocked while locked
+            bool openBlockedForCashier2 = false;
+            try
+            {
+                await ShiftSession.OpenAsync(offlineHttp, new OpenShiftDto
+                {
+                    BranchId = 1,
+                    TerminalId = 1,
+                    ClientShiftId = Guid.NewGuid().ToString("N"),
+                    OpeningFloat = 2000.00m
+                }, "cashier2", offline: true);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("locked") || ex.Message.Contains("4:00 AM"))
+            {
+                openBlockedForCashier2 = true;
+            }
+            Program.Check(openBlockedForCashier2, "ShiftSession.OpenAsync must block all cashiers while terminal is locked.");
+
+            // 5. Anti-clock-tamper test: User advances device clock to 5:00 AM next day (21:00:00 UTC),
+            //    but monotonic OS uptime only advanced 5 minutes (300,000 ms) instead of the required 6 hours!
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => new DateTime(2026, 10, 20, 21, 0, 0, DateTimeKind.Utc);
+            POS.Shared.Services.BusinessDayClock.TickCount64Provider = () => 1_300_000L; // Only +5 mins elapsed
+
+            var tamperedLock = await ShiftSession.GetTerminalLockStatusAsync(offlineHttp, 1, "cashier1", offline: true);
+            Program.Check(tamperedLock.ClockTamperDetected && tamperedLock.IsTerminalLocked && tamperedLock.IsCashierRestricted,
+                "Offline clock tampering must NOT unlock the terminal or cashier restriction when monotonic uptime has not elapsed.");
+
+            // 6. Legitimate 4:00 AM unlock: Both clock reaches 4:00 AM Manila (20:00:00 UTC) AND monotonic uptime advances 6 hours (21,600,000 ms)
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => new DateTime(2026, 10, 20, 20, 0, 0, DateTimeKind.Utc);
+            POS.Shared.Services.BusinessDayClock.TickCount64Provider = () => 1_000_000L + (6L * 3600L * 1000L);
+
+            var unlockedAt4Am = await ShiftSession.GetTerminalLockStatusAsync(offlineHttp, 1, "cashier1", offline: true);
+            Program.Check(!unlockedAt4Am.IsTerminalLocked && !unlockedAt4Am.IsCashierRestricted && !unlockedAt4Am.ClockTamperDetected,
+                "At 4:00 AM Manila with legitimate elapsed uptime, both terminal lock and cashier restriction must reset.");
+
+            using (var checkDbAfter = new LocalPosDbContext())
+            {
+                var cfgAfter = await checkDbAfter.TerminalConfigs.SingleAsync(t => t.TerminalId == 1);
+                Program.Check(cfgAfter.ClosedBusinessDate == null && cfgAfter.ClosingLockedByCashier == null,
+                    "Auto-unlock at 4:00 AM must clear local SQLite terminal lock fields.");
+            }
+
+            // 7. Require fresh Initial Cash Fund confirmation for the new business day session
+            var newDayShift = await ShiftSession.OpenAsync(offlineHttp, new OpenShiftDto
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                ClientShiftId = Guid.NewGuid().ToString("N"),
+                OpeningFloat = 2000.00m,
+                RequireConfiguredFund = true
+            }, "cashier1", offline: true);
+            Program.Check(newDayShift.Status == "OPEN" && newDayShift.OpeningConfirmed,
+                "Authorized cashier must be able to open a new shift after 4:00 AM with Initial Cash Fund confirmation.");
+        }
+        finally
+        {
+            POS.Shared.Services.BusinessDayClock.ResetProviders();
+        }
     }
 }

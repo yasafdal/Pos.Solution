@@ -172,6 +172,13 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         var terminalsById = terminalIds.Count > 0
             ? await context.Terminals.AsNoTracking().Where(t => terminalIds.Contains(t.TerminalId)).ToDictionaryAsync(t => t.TerminalId, cancellationToken)
             : new Dictionary<int, Terminal>();
+        var allProductIds = orders.SelectMany(o => o.OrderItems.Select(i => i.ProductId)).Distinct().ToList();
+        var productRouting = allProductIds.Count > 0
+            ? await context.Products.AsNoTracking()
+                .Where(p => allProductIds.Contains(p.ProductId))
+                .Select(p => new { p.ProductId, p.IsKitchenItem, p.IsBarItem })
+                .ToDictionaryAsync(p => p.ProductId, cancellationToken)
+            : new();
 
         var result = orders.Select(o =>
         {
@@ -230,6 +237,9 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
                 LineTotal = i.LineTotal,
                 VatType = i.VatType,
                 VatAmount = i.VatAmount,
+                IsKitchenItem = productRouting.TryGetValue(i.ProductId, out var pr) && pr.IsKitchenItem,
+                IsBarItem = productRouting.TryGetValue(i.ProductId, out var pr2) && pr2.IsBarItem,
+                SpecialInstructions = i.SpecialInstructions,
                 Modifiers = i.OrderItemModifiers.Select(m => new OrderItemModifierResponseDto
                 {
                     ModifierOptionId = m.ModifierOptionId,
@@ -327,24 +337,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             CustomerAddress = order.CustomerAddress,
             CustomerTin = order.CustomerTin,
             CustomerBusinessStyle = order.CustomerBusinessStyle,
-            Items = order.OrderItems.Select(i => new OrderItemResponseDto
-            {
-                OrderItemId = i.OrderItemId,
-                ProductId = i.ProductId,
-                ProductName = i.ProductName,
-                ProductShortCode = i.ProductShortCode,
-                Quantity = i.Quantity,
-                UnitPrice = i.UnitPrice,
-                LineTotal = i.LineTotal,
-                VatType = i.VatType,
-                VatAmount = i.VatAmount,
-                Modifiers = i.OrderItemModifiers.Select(m => new OrderItemModifierResponseDto
-                {
-                    ModifierOptionId = m.ModifierOptionId,
-                    ModifierName = m.ModifierName,
-                    AdditionalPrice = m.AdditionalPrice
-                }).ToList()
-            }).ToList(),
+            Items = receipt.Items,
             Payments = order.Payments.Select(p => new PaymentResponseDto
             {
                 PaymentId = p.PaymentId,

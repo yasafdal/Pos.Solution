@@ -345,6 +345,10 @@ namespace POS.Api.Migrations
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("ExpectedBalance");
 
+                    b.Property<decimal?>("ExpectedOpeningFund")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("ExpectedOpeningFund");
+
                     b.Property<string>("Notes")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)")
@@ -357,6 +361,14 @@ namespace POS.Api.Migrations
                     b.Property<bool>("OpeningConfirmed")
                         .HasColumnType("boolean")
                         .HasColumnName("OpeningConfirmed");
+
+                    b.Property<string>("OpeningDenominationsJson")
+                        .HasColumnType("text")
+                        .HasColumnName("OpeningDenominationsJson");
+
+                    b.Property<decimal?>("OpeningDiscrepancy")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("OpeningDiscrepancy");
 
                     b.Property<decimal>("OpeningFloat")
                         .HasColumnType("numeric(18,2)")
@@ -899,6 +911,11 @@ namespace POS.Api.Migrations
                         .HasColumnType("numeric(18,3)")
                         .HasColumnName("Quantity");
 
+                    b.Property<string>("SpecialInstructions")
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)")
+                        .HasColumnName("SpecialInstructions");
+
                     b.Property<string>("TaxName")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -1372,6 +1389,11 @@ namespace POS.Api.Migrations
                         .HasColumnType("numeric(18,3)")
                         .HasColumnName("Quantity");
 
+                    b.Property<string>("SpecialInstructions")
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)")
+                        .HasColumnName("SpecialInstructions");
+
                     b.Property<decimal>("UnitPrice")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
@@ -1470,11 +1492,21 @@ namespace POS.Api.Migrations
                     b.Property<int>("BranchId")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("CashFundUpdatedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CashFundUpdatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp without time zone");
 
                     b.Property<DateTime?>("DeactivatedAt")
                         .HasColumnType("timestamp without time zone");
+
+                    b.Property<decimal?>("DefaultOpeningFund")
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("Description")
                         .HasMaxLength(255)
@@ -2148,6 +2180,27 @@ namespace POS.Api.Migrations
                     b.Property<int>("BranchId")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("CashFundUpdatedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CashFundUpdatedBy")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("ClosedBusinessDate")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("ClosingLockedAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("ClosingLockedByCashier")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<DateTime?>("ClosingUnlockAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp without time zone");
 
@@ -2186,6 +2239,9 @@ namespace POS.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<decimal?>("OpeningFundOverride")
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<int>("OutletId")
                         .HasColumnType("integer");

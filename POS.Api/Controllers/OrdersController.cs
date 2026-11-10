@@ -30,6 +30,12 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && dto.BranchId != callerBranchId)
             return Forbid();
         if (User.FindFirst("terminal_id")?.Value != dto.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
+
+        var lockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
+            context, dto.TerminalId, dto.CashierId);
+        if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+            return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
+
         using var transaction = await context.Database.BeginTransactionAsync();
         try
         {
@@ -116,6 +122,7 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                     ProductId = itemDto.ProductId,
                     ProductName = itemDto.ProductName ?? "Product",
                     ProductShortCode = itemDto.ProductShortCode,
+                    SpecialInstructions = CartItem.NormalizeSpecialInstructions(itemDto.SpecialInstructions),
                     Quantity = itemDto.Quantity,
                     BasePrice = itemDto.BasePrice,
                     ModifierTotal = modifierTotal,
@@ -224,6 +231,7 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 LineTotal = i.LineTotal,
                 IsKitchenItem = routing.TryGetValue(i.ProductId, out var r) && r.IsKitchenItem,
                 IsBarItem = routing.TryGetValue(i.ProductId, out var r2) && r2.IsBarItem,
+                SpecialInstructions = i.SpecialInstructions,
                 Modifiers = i.OrderItemModifiers.Select(m => new OrderItemModifierResponseDto
                 {
                     OrderItemModifierId = m.OrderItemModifierId,

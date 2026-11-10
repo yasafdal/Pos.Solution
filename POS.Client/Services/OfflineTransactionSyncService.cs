@@ -187,6 +187,8 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                         UnitPrice = i.UnitPrice,
                         LineTotal = i.LineTotal,
                         TaxName = i.TaxName,
+                        SpecialInstructions = CartItem.NormalizeSpecialInstructions(
+                            !string.IsNullOrWhiteSpace(i.SpecialInstructions) ? i.SpecialInstructions : payloadItem?.SpecialInstructions),
                         Modifiers = payloadItem?.Modifiers?.Select(m => new OfflineModifierDto
                         {
                             OptionId = m.ModifierOptionId,

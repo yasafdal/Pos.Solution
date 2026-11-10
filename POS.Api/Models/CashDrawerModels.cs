@@ -45,6 +45,14 @@ public class CashDrawerShift
     [Column(TypeName = "numeric(18,2)")]
     public decimal OpeningFloat { get; set; }
 
+    [Column(TypeName = "numeric(18,2)")]
+    public decimal? ExpectedOpeningFund { get; set; }
+
+    [Column(TypeName = "numeric(18,2)")]
+    public decimal? OpeningDiscrepancy { get; set; }
+
+    public string? OpeningDenominationsJson { get; set; }
+
     public bool OpeningConfirmed { get; set; }
 
     [MaxLength(100)]

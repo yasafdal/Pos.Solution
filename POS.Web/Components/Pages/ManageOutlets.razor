@@ -91,6 +91,22 @@
                             @o.TerminalCount
                         </span>
                     </TemplateColumn>
+                    <TemplateColumn Title="Default Cash Fund" Context="o" Align="Align.Right">
+                        @if (o.DefaultOpeningFund.HasValue)
+                        {
+                            <div class="d-flex flex-column align-items-end lh-sm">
+                                <span class="fw-bold text-dark">₱@o.DefaultOpeningFund.Value.ToString("N2")</span>
+                                @if (!string.IsNullOrEmpty(o.CashFundUpdatedBy))
+                                {
+                                    <small class="text-muted" style="font-size: 0.7rem;">by @o.CashFundUpdatedBy @(o.CashFundUpdatedAt.HasValue ? o.CashFundUpdatedAt.Value.ToLocalTime().ToString("MMM d, HH:mm") : "")</small>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning-subtle text-dark border border-warning-subtle" style="font-size: 0.72rem;">Not Configured</span>
+                        }
+                    </TemplateColumn>
                     <TemplateColumn Title="Status" Context="o" Align="Align.Center">
                         @if (o.IsActive)
                         {
@@ -234,6 +250,31 @@
                             <div class="col-12">
                                 <label class="form-label text-dark fw-semibold small mb-1">Description</label>
                                 <InputTextArea @bind-Value="currentOutlet.Description" class="form-control rounded" rows="2" placeholder="Optional notes about this location..." />
+                            </div>
+
+                            <div class="col-12">
+                                <div class="p-3 bg-light rounded border">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span class="fw-bold text-dark small d-flex align-items-center gap-1">
+                                            <i class="bi bi-cash-stack text-success"></i> Default Initial Cash Fund (Terminals)
+                                        </span>
+                                        @if (isEditingOutlet && !string.IsNullOrEmpty(currentOutlet.CashFundUpdatedBy))
+                                        {
+                                            <span class="badge bg-white text-secondary border" style="font-size: 0.7rem;">
+                                                Updated by @currentOutlet.CashFundUpdatedBy @(currentOutlet.CashFundUpdatedAt.HasValue ? $"on {currentOutlet.CashFundUpdatedAt.Value.ToLocalTime():MMM d, yyyy HH:mm}" : "")
+                                            </span>
+                                        }
+                                    </div>
+                                    <label class="form-label text-dark fw-semibold small mb-1">Default Opening Cash Fund Amount (₱)</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-white fw-bold text-secondary">₱</span>
+                                        <InputNumber @bind-Value="currentOutlet.DefaultOpeningFund" class="form-control rounded-end" step="0.01" min="0" placeholder="e.g. 5000.00" />
+                                    </div>
+                                    <ValidationMessage For="@(() => currentOutlet.DefaultOpeningFund)" class="text-danger small" />
+                                    <small class="text-muted d-block mt-1" style="font-size: 0.75rem;">
+                                        Inherited by all terminals in this outlet unless a terminal override is enabled. Changes apply to future cashier sessions only and never modify an open shift.
+                                    </small>
+                                </div>
                             </div>
 
                             <div class="col-12">
@@ -406,6 +447,9 @@
             LocationDescription = outlet.LocationDescription,
             Description = outlet.Description,
             IsActive = outlet.IsActive,
+            DefaultOpeningFund = outlet.DefaultOpeningFund,
+            CashFundUpdatedBy = outlet.CashFundUpdatedBy,
+            CashFundUpdatedAt = outlet.CashFundUpdatedAt,
             TerminalCount = outlet.TerminalCount
         };
         isEditingOutlet = true;
@@ -429,6 +473,11 @@
         if (string.IsNullOrWhiteSpace(currentOutlet.Name))
         {
             modalError = "Outlet name is required.";
+            return;
+        }
+        if (currentOutlet.DefaultOpeningFund.HasValue && currentOutlet.DefaultOpeningFund.Value < 0m)
+        {
+            modalError = "Default initial cash fund cannot be negative.";
             return;
         }
 
@@ -506,6 +555,7 @@
                 OutletType = outlet.OutletType,
                 LocationDescription = outlet.LocationDescription,
                 Description = outlet.Description,
+                DefaultOpeningFund = outlet.DefaultOpeningFund,
                 IsActive = !outlet.IsActive
             };
 

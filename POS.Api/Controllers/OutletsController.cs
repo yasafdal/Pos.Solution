@@ -94,13 +94,27 @@ public class OutletsController(PosDbContext context) : ControllerBase
         if (branch == null || (dto.IsActive && !branch.IsActive)) return "Select an existing active branch.";
         if (await context.Outlets.AnyAsync(o => o.BranchId == dto.BranchId && o.OutletId != id && o.OutletCode.ToUpper() == dto.OutletCode))
             return "Outlet code must be unique within its branch.";
+        if (dto.DefaultOpeningFund.HasValue)
+        {
+            if (dto.DefaultOpeningFund.Value < 0m)
+                return "Default initial cash fund cannot be negative.";
+            dto.DefaultOpeningFund = Math.Round(dto.DefaultOpeningFund.Value, 2, MidpointRounding.AwayFromZero);
+        }
         return null;
     }
 
-    private static void Apply(Outlet o, OutletDto dto)
+    private void Apply(Outlet o, OutletDto dto)
     {
         o.OutletCode = dto.OutletCode; o.Name = dto.Name; o.Description = dto.Description;
         o.LocationDescription = dto.LocationDescription; o.OutletType = dto.OutletType;
+        if (o.DefaultOpeningFund != dto.DefaultOpeningFund || (o.OutletId == 0 && dto.DefaultOpeningFund.HasValue))
+        {
+            o.DefaultOpeningFund = dto.DefaultOpeningFund;
+            o.CashFundUpdatedBy = User?.Identity?.Name
+                ?? User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                ?? "Admin";
+            o.CashFundUpdatedAt = DateTime.UtcNow;
+        }
         if (o.IsActive && !dto.IsActive)
         {
             o.DeactivatedAt ??= DateTime.UtcNow;

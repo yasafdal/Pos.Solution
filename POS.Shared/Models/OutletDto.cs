@@ -13,6 +13,10 @@ public class OutletDto
     [Required, RegularExpression("^(Main|Booth|Kiosk|Counter|Mobile)$")]
     public string OutletType { get; set; } = "Main";
     public bool IsActive { get; set; } = true;
+    [Range(typeof(decimal), "0", "9999999999999999.99")]
+    public decimal? DefaultOpeningFund { get; set; }
+    public string? CashFundUpdatedBy { get; set; }
+    public DateTime? CashFundUpdatedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public int TerminalCount { get; set; }

@@ -28,6 +28,9 @@ public partial class PosDbContext
             e.Property(x => x.Description).HasMaxLength(255);
             e.Property(x => x.LocationDescription).HasMaxLength(255);
             e.Property(x => x.OutletType).HasMaxLength(20).IsRequired();
+            e.Property(x => x.DefaultOpeningFund).HasColumnType("numeric(18,2)");
+            e.Property(x => x.CashFundUpdatedBy).HasMaxLength(450);
+            e.Property(x => x.CashFundUpdatedAt).HasColumnType("timestamp without time zone");
             e.Property(x => x.CreatedAt).HasColumnType("timestamp without time zone");
             e.Property(x => x.UpdatedAt).HasColumnType("timestamp without time zone");
             e.Property(x => x.DeactivatedAt).HasColumnType("timestamp without time zone");
@@ -61,6 +64,13 @@ public partial class PosDbContext
             e.Property(x => x.ActivationCode).HasMaxLength(10);
             e.Property(x => x.IsActivationCodeUsed).HasDefaultValue(false);
             e.Property(x => x.AllowSync).HasDefaultValue(true);
+            e.Property(x => x.OpeningFundOverride).HasColumnType("numeric(18,2)");
+            e.Property(x => x.CashFundUpdatedBy).HasMaxLength(450);
+            e.Property(x => x.CashFundUpdatedAt).HasColumnType("timestamp without time zone");
+            e.Property(x => x.ClosedBusinessDate).HasMaxLength(20);
+            e.Property(x => x.ClosingLockedByCashier).HasMaxLength(450);
+            e.Property(x => x.ClosingLockedAtUtc).HasColumnType("timestamp without time zone");
+            e.Property(x => x.ClosingUnlockAtUtc).HasColumnType("timestamp without time zone");
             e.HasIndex(x => x.Uuid).IsUnique().HasDatabaseName("UX_Terminals_Uuid");
             e.HasIndex(x => x.ActivationCode).HasDatabaseName("IX_Terminals_ActivationCode");
             e.HasIndex(x => new { x.OutletId, x.TerminalCode }).IsUnique().HasDatabaseName("UX_Terminals_Outlet_Code");

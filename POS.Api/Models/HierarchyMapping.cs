@@ -11,14 +11,41 @@ internal static class HierarchyMapping
         TerminalCode = t.TerminalCode, Name = t.Name, DeviceIdentifier = t.DeviceIdentifier,
         IpAddress = t.IpAddress, PTUNumber = t.Ptunumber, MINNumber = t.Minnumber,
         SerialNumber = t.SerialNumber, IsActive = t.IsActive, CreatedAt = t.CreatedAt, UpdatedAt = t.UpdatedAt,
-        Uuid = t.Uuid, ActivationCode = t.ActivationCode, IsActivationCodeUsed = t.IsActivationCodeUsed, AllowSync = t.AllowSync
+        Uuid = t.Uuid, ActivationCode = t.ActivationCode, IsActivationCodeUsed = t.IsActivationCodeUsed, AllowSync = t.AllowSync,
+        OpeningFundOverride = t.OpeningFundOverride,
+        OutletDefaultOpeningFund = t.Outlet?.DefaultOpeningFund,
+        CashFundUpdatedBy = t.OpeningFundOverride.HasValue
+            ? t.CashFundUpdatedBy
+            : (t.Outlet?.DefaultOpeningFund.HasValue == true ? t.Outlet.CashFundUpdatedBy : t.CashFundUpdatedBy),
+        CashFundUpdatedAt = t.OpeningFundOverride.HasValue
+            ? t.CashFundUpdatedAt
+            : (t.Outlet?.DefaultOpeningFund.HasValue == true ? t.Outlet.CashFundUpdatedAt : t.CashFundUpdatedAt),
+        ClosedBusinessDate = t.ClosedBusinessDate,
+        ClosingLockedByCashier = t.ClosingLockedByCashier,
+        ClosingLockedAtUtc = t.ClosingLockedAtUtc,
+        ClosingUnlockAtUtc = t.ClosingUnlockAtUtc
     };
 
     internal static OutletDto ToDto(Outlet o) => new()
     {
         OutletId = o.OutletId, BranchId = o.BranchId, OutletCode = o.OutletCode, Name = o.Name,
         Description = o.Description, LocationDescription = o.LocationDescription, OutletType = o.OutletType,
-        IsActive = o.IsActive, CreatedAt = o.CreatedAt, UpdatedAt = o.UpdatedAt,
-        TerminalCount = o.Terminals.Count, Terminals = o.Terminals.OrderBy(t => t.TerminalCode).Select(ToDto).ToList()
+        IsActive = o.IsActive,
+        DefaultOpeningFund = o.DefaultOpeningFund,
+        CashFundUpdatedBy = o.CashFundUpdatedBy,
+        CashFundUpdatedAt = o.CashFundUpdatedAt,
+        CreatedAt = o.CreatedAt, UpdatedAt = o.UpdatedAt,
+        TerminalCount = o.Terminals.Count,
+        Terminals = o.Terminals.OrderBy(t => t.TerminalCode).Select(t =>
+        {
+            var dto = ToDto(t);
+            dto.OutletDefaultOpeningFund ??= o.DefaultOpeningFund;
+            if (!dto.OpeningFundOverride.HasValue && o.DefaultOpeningFund.HasValue)
+            {
+                dto.CashFundUpdatedBy ??= o.CashFundUpdatedBy;
+                dto.CashFundUpdatedAt ??= o.CashFundUpdatedAt;
+            }
+            return dto;
+        }).ToList()
     };
 }

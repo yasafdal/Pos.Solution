@@ -152,6 +152,20 @@ public class LocalTerminalConfig
     public bool IsActivated { get; set; } = false;
     public bool AllowSync { get; set; } = true;
     public DateTime? ActivatedAt { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? DefaultOpeningFund { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? OpeningFundOverride { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? EffectiveOpeningFund { get; set; }
+    public string? OpeningFundSource { get; set; }
+    public string? ClosedBusinessDate { get; set; }
+    public string? ClosingLockedByCashier { get; set; }
+    public DateTime? ClosingLockedAtUtc { get; set; }
+    public DateTime? ClosingUnlockAtUtc { get; set; }
+    public long? ClosingLockedTickCount64 { get; set; }
+    public DateTime? LastKnownServerUtc { get; set; }
+    public long? LastKnownServerTickCount64 { get; set; }
 }
 
 public class LocalInvoiceSequence
@@ -227,6 +241,8 @@ public class LocalOrderItem
     public string? ProductShortCode { get; set; }
     public bool IsKitchenItem { get; set; }
     public bool IsBarItem { get; set; }
+    [MaxLength(250)]
+    public string? SpecialInstructions { get; set; }
     public string? ModifiersJson { get; set; }
 }
 
@@ -320,6 +336,11 @@ public class LocalCashDrawerShift
     public string CashierId { get; set; } = string.Empty;
     [Column(TypeName = "decimal(18,2)")]
     public decimal OpeningFloat { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? ExpectedOpeningFund { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? OpeningDiscrepancy { get; set; }
+    public string? OpeningDenominationsJson { get; set; }
     [Column(TypeName = "decimal(18,2)")]
     public decimal TotalCashSales { get; set; }
     [Column(TypeName = "decimal(18,2)")]

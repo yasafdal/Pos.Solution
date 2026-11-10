@@ -57,17 +57,30 @@ namespace POS.Client.Services
             return ids1.SequenceEqual(ids2);
         }
 
-        public void AddItem(ProductDto product, int quantity = 1)
+        private static bool NotesEqual(string? a, string? b)
         {
-            AddItem(product, quantity, null);
+            var normA = CartItem.NormalizeSpecialInstructions(a);
+            var normB = CartItem.NormalizeSpecialInstructions(b);
+            return string.Equals(normA, normB, StringComparison.OrdinalIgnoreCase);
         }
 
-        public void AddItem(ProductDto product, int quantity, List<ModifierOptionDto>? selectedModifiers)
+        public void AddItem(ProductDto product, int quantity = 1)
+        {
+            AddItem(product, quantity, null, null);
+        }
+
+        public void AddItem(ProductDto product, int quantity, List<ModifierOptionDto>? selectedModifiers, string? specialInstructions = null)
         {
             selectedModifiers ??= new();
             if (quantity <= 0 || quantity > int.MaxValue - TotalItems)
                 throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be positive and fit the current order.");
-            var existing = _items.FirstOrDefault(i => i.ProductId == product.ProductId && ModifiersEqual(i.SelectedModifiers, selectedModifiers));
+
+            var normalizedInstructions = CartItem.NormalizeSpecialInstructions(specialInstructions);
+            var existing = _items.FirstOrDefault(i =>
+                i.ProductId == product.ProductId &&
+                ModifiersEqual(i.SelectedModifiers, selectedModifiers) &&
+                NotesEqual(i.SpecialInstructions, normalizedInstructions));
+
             if (existing != null)
             {
                 existing.Quantity += quantity;
@@ -86,8 +99,33 @@ namespace POS.Client.Services
                     UnitOfMeasure = product.UnitOfMeasure,
                     TaxName = product.TaxName ?? "VATable",
                     IsKitchenItem = product.IsKitchenItem,
-                    IsBarItem = product.IsBarItem
+                    IsBarItem = product.IsBarItem,
+                    SpecialInstructions = normalizedInstructions
                 });
+            }
+            NotifyStateChanged();
+        }
+
+        public void UpdateSpecialInstructions(CartItem item, string? specialInstructions)
+        {
+            if (item == null || !_items.Contains(item))
+                return;
+
+            var normalizedInstructions = CartItem.NormalizeSpecialInstructions(specialInstructions);
+            var matchingLine = _items.FirstOrDefault(i =>
+                !ReferenceEquals(i, item) &&
+                i.ProductId == item.ProductId &&
+                ModifiersEqual(i.SelectedModifiers, item.SelectedModifiers) &&
+                NotesEqual(i.SpecialInstructions, normalizedInstructions));
+
+            if (matchingLine != null && matchingLine.Quantity <= int.MaxValue - item.Quantity)
+            {
+                matchingLine.Quantity += item.Quantity;
+                _items.Remove(item);
+            }
+            else
+            {
+                item.SpecialInstructions = normalizedInstructions;
             }
             NotifyStateChanged();
         }

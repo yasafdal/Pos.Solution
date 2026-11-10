@@ -12,5 +12,7 @@ public class OrderItemCreateDto
     public string? TaxName { get; set; } = "VATable";
     public bool IsKitchenItem { get; set; }
     public bool IsBarItem { get; set; }
+    [System.ComponentModel.DataAnnotations.MaxLength(CartItem.MaxSpecialInstructionsLength)]
+    public string? SpecialInstructions { get; set; }
     public List<OrderItemModifierCreateDto> Modifiers { get; set; } = new();
 }

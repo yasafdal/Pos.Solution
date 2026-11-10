@@ -33,6 +33,13 @@ namespace POS.Api.Controllers
             if (terminal == null || terminal.BranchId != request.BranchId || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive)
                 return BadRequest("Invalid or inactive terminal ownership.");
             if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
+
+            var lockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(_context, request.TerminalId, cashierId);
+            if (lockState.IsCashierRestricted)
+                return StatusCode(403, lockState.CashierRestrictionMessage ?? lockState.LockMessage);
+            if (lockState.IsTerminalLocked)
+                return StatusCode(423, lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
+
             // Close any existing active sessions for this outlet/device
             var activeSessions = await _context.CashierSessions
                 .Where(s => s.TerminalId == request.TerminalId && s.Status == "ACTIVE")
