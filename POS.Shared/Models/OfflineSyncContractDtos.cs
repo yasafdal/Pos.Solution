@@ -62,7 +62,7 @@ public class OfflinePaymentDto
     public decimal TenderedAmount { get; set; }
     public decimal ChangeAmount { get; set; }
     public string PaymentMethod { get; set; } = "CASH";
-    public string PaymentStatus { get; set; } = "SUCCESS";
+    public string PaymentStatus { get; set; } = POS.Shared.Constants.PaymentStatuses.Paid;
     public DateTime PaidAt { get; set; }
 }
 

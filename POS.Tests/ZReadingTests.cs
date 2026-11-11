@@ -17,7 +17,7 @@ public static partial class Program
         shift.Status = "CLOSED"; shift.OpenedAt = start.AddHours(1); shift.ClosedAt = start.AddHours(8);
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, ConfiguredBy = "verified" });
         var order = new Order { OrderNumber = "Z-UNRECONCILED", BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1", OrderType = "DINE_IN", OrderStatus = "COMPLETED", PaymentStatus = "PAID", CreatedAt = start.AddHours(1), InvoiceIssuedAt = start.AddHours(1), InvoiceNumber = "Z-UNRECONCILED", Subtotal = 100, TotalAmount = 100 };
-        order.Payments.Add(new Payment { PaymentMethod = "CASH", Amount = 80, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = start.AddHours(1) });
+        order.Payments.Add(new Payment { PaymentMethod = "CASH", Amount = 80, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = start.AddHours(1) });
         db.Orders.Add(order); await db.SaveChangesAsync();
         var service = new ZReadingService(db, new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ZReading:Enabled"] = "true" }).Build());
         var ready = await service.ReadinessAsync(1, date);

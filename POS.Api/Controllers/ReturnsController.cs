@@ -81,7 +81,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
 
             // If payments were successful, record offsetting refund records
             decimal cashRefundTotal = 0m;
-            foreach (var payment in order.Payments.Where(p => p.PaymentStatus == "SUCCESS"))
+            foreach (var payment in order.Payments.Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid))
             {
                 payment.PaymentStatus = "REFUNDED";
                 if (string.Equals(payment.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
@@ -489,7 +489,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             returnRecord.TotalRefundAmount = totalRefund;
 
             // Link refund against primary successful payment
-            var primaryPayment = order.Payments.FirstOrDefault(p => p.PaymentStatus == "SUCCESS");
+            var primaryPayment = order.Payments.FirstOrDefault(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid);
             if (primaryPayment != null)
             {
                 context.Refunds.Add(new Refund

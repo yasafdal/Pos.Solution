@@ -115,6 +115,10 @@ public class LocalPosDbContext : DbContext
                 LocalHierarchyUpgrade.Apply(Database.GetDbConnection());
                 Database.EnsureCreated();
 
+                // Non-destructive data migration: Standardize legacy SUCCESS status to PAID
+                try { Database.ExecuteSqlRaw("UPDATE LocalPayments SET PaymentStatus = 'PAID' WHERE PaymentStatus = 'SUCCESS';"); } catch { }
+                try { Database.ExecuteSqlRaw("UPDATE LocalOrders SET PaymentStatus = 'PAID' WHERE PaymentStatus = 'SUCCESS';"); } catch { }
+
                 // Ensure newly added columns and tables exist on existing SQLite files
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OrderNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OutletId INTEGER NOT NULL DEFAULT 0;"); }

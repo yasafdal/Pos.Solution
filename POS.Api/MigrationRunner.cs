@@ -179,6 +179,16 @@ public class MigrationRunner
             terminalCmd.ExecuteNonQuery();
         }
 
+        // Non-destructive data migration: Standardize legacy SUCCESS status to PAID
+        string paymentStatusMigrationSql = @"
+            UPDATE ""Payments"" SET ""PaymentStatus"" = 'PAID' WHERE ""PaymentStatus"" = 'SUCCESS';
+            UPDATE ""Orders"" SET ""PaymentStatus"" = 'PAID' WHERE ""PaymentStatus"" = 'SUCCESS';
+        ";
+        using (var payCmd = new NpgsqlCommand(paymentStatusMigrationSql, conn))
+        {
+            payCmd.ExecuteNonQuery();
+        }
+
         Console.WriteLine("All migration scripts applied successfully to pos_db!");
     }
 }

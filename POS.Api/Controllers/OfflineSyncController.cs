@@ -94,7 +94,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             var saleShift = historical[0];
             if (saleShift.Status != "OPEN" && saleShift.Status != "CLOSED") return Conflict("Invalid shift lifecycle.");
             if (request.Payments.Any(p => p.PaidAt.ToUniversalTime() < saleShift.OpenedAt.ToUniversalTime() || (saleShift.ClosedAt.HasValue && p.PaidAt.ToUniversalTime() > saleShift.ClosedAt.Value.ToUniversalTime()))) return Conflict("Payment is outside the shift lifecycle.");
-            if (User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value != request.CashierId && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
+            bool isTerminalTokenForTerminal = string.Equals(User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, "Terminal", StringComparison.OrdinalIgnoreCase)
+                && User.FindFirst("terminal_id")?.Value == request.TerminalId.ToString();
+            if (User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value != request.CashierId && !User.IsInRole("Admin") && !User.IsInRole("Manager") && !isTerminalTokenForTerminal) return Forbid();
             // Strictly retain the client-generated sequential order number and advance server OrderSequences counter.
             var orderSequence = context.Database.IsNpgsql()
                 ? await context.OrderSequences.FromSqlInterpolated($"SELECT * FROM \"OrderSequences\" WHERE \"terminal_id\" = {request.TerminalId} FOR UPDATE").SingleOrDefaultAsync()
@@ -248,7 +250,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     Amount = payDto.Amount,
                     AmountTendered = payDto.TenderedAmount,
                     ChangeAmount = payDto.ChangeAmount,
-                    PaymentStatus = "SUCCESS",
+                    PaymentStatus = string.IsNullOrWhiteSpace(payDto.PaymentStatus) || payDto.PaymentStatus.Equals("SUCCESS", StringComparison.OrdinalIgnoreCase)
+                        ? POS.Shared.Constants.PaymentStatuses.Paid
+                        : payDto.PaymentStatus,
                     ProcessedBy = request.CashierId,
                     PaidAt = payDto.PaidAt
                 };

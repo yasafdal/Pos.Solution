@@ -258,7 +258,7 @@ public class LocalPayment
     [Column(TypeName = "decimal(18,2)")]
     public decimal ChangeAmount { get; set; }
     public string PaymentMethod { get; set; } = "CASH";
-    public string PaymentStatus { get; set; } = "SUCCESS";
+    public string PaymentStatus { get; set; } = POS.Shared.Constants.PaymentStatuses.Paid;
     public DateTime PaidAt { get; set; } = DateTime.UtcNow;
 }
 

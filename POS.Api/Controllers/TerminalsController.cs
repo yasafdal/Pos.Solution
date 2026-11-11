@@ -388,27 +388,42 @@ namespace POS.Api.Controllers
                 .Include(t => t.Branch)
                 .FirstOrDefaultAsync(t =>
                     (request.TerminalId <= 0 || t.TerminalId == request.TerminalId) &&
-                    (t.Uuid == uuid || t.DeviceIdentifier == uuid));
+                    t.Uuid == uuid);
 
             if (terminal == null || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Branch.IsActive)
                 return Unauthorized(new TerminalSessionTokenResponseDto { Success = false, Message = "Unpaired or inactive terminal." });
+
+            if (!string.IsNullOrWhiteSpace(request.CashierUsername))
+            {
+                var lockStatus = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
+                    _context, terminal.TerminalId, request.CashierUsername.Trim());
+                if (lockStatus.IsCashierRestricted)
+                {
+                    return StatusCode(403, new TerminalSessionTokenResponseDto
+                    {
+                        Success = false,
+                        Message = lockStatus.CashierRestrictionMessage ?? lockStatus.LockMessage ?? "Cashier login restricted for this business day."
+                    });
+                }
+                if (lockStatus.IsTerminalLocked)
+                {
+                    return StatusCode(423, new TerminalSessionTokenResponseDto
+                    {
+                        Success = false,
+                        Message = lockStatus.LockMessage ?? "Terminal is locked for the remainder of the business day."
+                    });
+                }
+            }
 
             var jwtKey = _configuration["Jwt:Key"];
             if (string.IsNullOrEmpty(jwtKey))
                 return StatusCode(500, new TerminalSessionTokenResponseDto { Success = false, Message = "JWT key not configured." });
 
-            User? user = null;
-            if (!string.IsNullOrWhiteSpace(request.CashierUsername))
-            {
-                string uname = request.CashierUsername.Trim();
-                user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Username == uname);
-            }
-
             var claims = new List<Claim>
             {
-                new Claim(ClaimTypes.NameIdentifier, user?.UserId.ToString() ?? terminal.TerminalId.ToString()),
-                new Claim(ClaimTypes.Name, user?.Username ?? (!string.IsNullOrWhiteSpace(request.CashierUsername) ? request.CashierUsername.Trim() : terminal.TerminalCode)),
-                new Claim(ClaimTypes.Role, user?.Role ?? "Cashier"),
+                new Claim(ClaimTypes.NameIdentifier, terminal.TerminalId.ToString()),
+                new Claim(ClaimTypes.Name, terminal.TerminalCode),
+                new Claim(ClaimTypes.Role, "Terminal"),
                 new Claim("branch_id", terminal.BranchId.ToString()),
                 new Claim("terminal_id", terminal.TerminalId.ToString()),
                 new Claim("outlet_id", terminal.OutletId.ToString()),

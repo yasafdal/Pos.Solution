@@ -310,6 +310,7 @@
     {
         await CacheCurrentOutletAsync(Session.Terminal);
         Session.ClearSession();
+        POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
         Http.DefaultRequestHeaders.Authorization = null;
         Navigation.NavigateTo("/login");
     }
@@ -322,6 +323,7 @@
         var currentOutlet = Session.Terminal;
         await CacheCurrentOutletAsync(currentOutlet);
         Session.ClearSession();
+        POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
         Http.DefaultRequestHeaders.Authorization = null;
         if (currentOutlet != null)
         {

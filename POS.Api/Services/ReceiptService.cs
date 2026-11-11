@@ -15,7 +15,7 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             .SingleOrDefaultAsync(o => o.OrderId == orderId);
         if (order == null) return null;
 
-        var payments = order.Payments.Where(p => p.PaymentStatus == "SUCCESS")
+        var payments = order.Payments.Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid)
             .OrderBy(p => p.PaidAt).ThenBy(p => p.PaymentId).ToList();
         if (order.PaymentStatus != "PAID" || payments.Count == 0 || payments.Sum(p => p.Amount) < order.TotalAmount)
             throw new InvalidOperationException("A receipt is only available for a fully paid order with successful payments.");

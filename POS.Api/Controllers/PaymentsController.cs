@@ -82,7 +82,7 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
                         Amount = split.Amount,
                         AmountTendered = tendered,
                         ChangeAmount = change,
-                        PaymentStatus = "SUCCESS",
+                        PaymentStatus = POS.Shared.Constants.PaymentStatuses.Paid,
                         ReferenceNumber = split.ReferenceNumber,
                         ProcessedBy = dto.ProcessedBy ?? "system",
                         PaidAt = DateTime.UtcNow
@@ -114,7 +114,7 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
                     Amount = totalAmount,
                     AmountTendered = tendered,
                     ChangeAmount = change,
-                    PaymentStatus = "SUCCESS",
+                    PaymentStatus = POS.Shared.Constants.PaymentStatuses.Paid,
                     ReferenceNumber = dto.ReferenceNumber,
                     ProcessedBy = dto.ProcessedBy ?? "system",
                     PaidAt = DateTime.UtcNow
@@ -130,23 +130,23 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
             if (!string.IsNullOrWhiteSpace(dto.CustomerBusinessStyle)) order.CustomerBusinessStyle = dto.CustomerBusinessStyle.Trim();
 
             // Verify total payments cover or equal order total
-            decimal currentTotalPaid = order.Payments.Where(p => p.PaymentStatus == "SUCCESS").Sum(p => p.Amount);
+            decimal currentTotalPaid = order.Payments.Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid).Sum(p => p.Amount);
             if (currentTotalPaid >= order.TotalAmount - 0.01m)
             {
-                order.PaymentStatus = "PAID";
+                order.PaymentStatus = POS.Shared.Constants.PaymentStatuses.Paid;
                 order.OrderStatus = "COMPLETED";
             }
 
             await context.SaveChangesAsync();
 
             // Issue BIR invoice number upon successful payment if paid
-            if (order.PaymentStatus == "PAID")
+            if (order.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid)
             {
                 await sequenceService.IssueInvoiceNumberAsync(order.OrderId, order.TerminalId);
 
                 // Accumulate online CASH payments into active CashDrawerShift for accurate shift reconciliation
                 decimal cashPaid = order.Payments
-                    .Where(p => p.PaymentStatus == "SUCCESS" && string.Equals(p.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
+                    .Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid && string.Equals(p.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
                     .Sum(p => p.Amount);
 
                 if (cashPaid > 0m)

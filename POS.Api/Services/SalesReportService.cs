@@ -87,7 +87,7 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
 
         var validPayments = paidOrders
             .SelectMany(o => o.Payments)
-            .Where(p => p.PaymentStatus == "SUCCESS"
+            .Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid
                 && (string.IsNullOrWhiteSpace(request.PaymentMethod)
                     || string.Equals(p.PaymentMethod, request.PaymentMethod, StringComparison.OrdinalIgnoreCase)))
             .ToList();

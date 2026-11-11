@@ -125,6 +125,9 @@ public static partial class Program
         await RunTestAsync("MENU05. PostgreSQL integer default, allowed values and discoverable migration", TestMenuDisplayModeDatabaseModel);
         await RunTestAsync("FUND01. Initial Cash Fund Outlet default inheritance, Terminal override, denomination opening count, discrepancy tracking, and active shift isolation", TestInitialCashFundManagementAndOpeningProcess);
         await RunTestAsync("LOCK01. Cashier account restriction and POS terminal locking after closing until 4:00 AM Asia/Manila", TestCashierAndTerminalClosingLockUntil4Am);
+        await RunTestAsync("PHASE1A-01. Session-token endpoint strictly issues Terminal role (never Admin/Cashier) and validates lock", TestPhase1A_SessionTokenNeverMintsAdmin);
+        await RunTestAsync("PHASE1A-02. BIR InvoiceSequence block preservation (zero number burning on sync/re-login)", TestPhase1A_OfflineReferenceDataPreservesInvoiceSequenceBlock);
+        await RunTestAsync("PAYMENT-01. Standardize payment status to PAID (offline/online/sync/void/receipt/migration)", TestPaymentStatusStandardization);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
@@ -815,7 +818,7 @@ public static partial class Program
             Amount = 1120.00m,
             AmountTendered = 1120.00m,
             ChangeAmount = 0m,
-            PaymentStatus = "SUCCESS",
+            PaymentStatus = "PAID",
             ProcessedBy = "cashier1",
             PaidAt = DateTime.UtcNow
         });
@@ -1002,7 +1005,7 @@ public static partial class Program
         db.Payments.Add(new Payment
         {
             PaymentId = 301, OrderId = 301, PaymentMethod = "CASH", Amount = 500m,
-            AmountTendered = 500m, ChangeAmount = 0m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
+            AmountTendered = 500m, ChangeAmount = 0m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
 

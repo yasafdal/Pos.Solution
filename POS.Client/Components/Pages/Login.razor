@@ -670,20 +670,35 @@
                 TerminalName = localOutlet.TerminalName
             };
 
-            var activeBearer = Http.DefaultRequestHeaders.Authorization?.Parameter;
-            if (string.IsNullOrWhiteSpace(activeBearer) && !string.IsNullOrWhiteSpace(POS.Client.Services.DeviceActivationService.ActiveTerminalToken))
-            {
-                activeBearer = POS.Client.Services.DeviceActivationService.ActiveTerminalToken;
-                Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", activeBearer);
-            }
-
-            var sessionToken = !string.IsNullOrWhiteSpace(activeBearer) ? activeBearer : "OFFLINE-SESSION-TOKEN";
+            var sessionToken = "OFFLINE-SESSION-TOKEN";
             Session.SetSession(sessionToken, localCashier.Username, localCashier.Role, outletDto);
 
             if (await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session))
             {
                 try
                 {
+                    try
+                    {
+                        var auth = await UserService.PinLoginAsync(rawPin, localOutlet.TerminalId, localOutlet.BranchId);
+                        if (auth != null && !string.IsNullOrWhiteSpace(auth.Value.Token))
+                        {
+                            sessionToken = auth.Value.Token;
+                            Session.SetSession(sessionToken, auth.Value.Username, auth.Value.Role, outletDto);
+                            Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", sessionToken);
+
+                            await Http.PostAsJsonAsync("api/cashier-sessions/activate", new CashierSessionActivateDto
+                            {
+                                BranchId = localOutlet.BranchId,
+                                TerminalId = localOutlet.TerminalId,
+                                DeviceIdentifier = localOutlet.DeviceUuid ?? localOutlet.TerminalIdentifier ?? string.Empty
+                            });
+                        }
+                    }
+                    catch
+                    {
+                        // Non-fatal: continue with offline session if online cashier session activation fails
+                    }
+
                     await ReferenceDataSync.SyncReferenceDataAsync(localOutlet.TerminalId, Http);
                 }
                 catch { }

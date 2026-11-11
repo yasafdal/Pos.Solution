@@ -1,6 +1,7 @@
 using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using POS.Client.Data;
@@ -238,8 +239,11 @@ public class DeviceActivationService : IDeviceActivationService
 
         if (session != null && !string.IsNullOrWhiteSpace(session.Token) && session.Token != "OFFLINE-SESSION-TOKEN")
         {
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
-            return true;
+            if (TryValidateTokenIdentity(session.Token, session.Username))
+            {
+                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
+                return true;
+            }
         }
 
         try
@@ -296,5 +300,57 @@ public class DeviceActivationService : IDeviceActivationService
         }
 
         return httpClient.DefaultRequestHeaders.Authorization?.Parameter is { Length: > 0 } p && p != "OFFLINE-SESSION-TOKEN";
+    }
+
+    private static bool TryValidateTokenIdentity(string token, string? expectedUsername)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length != 3) return true; // Non-JWT token string
+
+            string payload = parts[1];
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var bytes = Convert.FromBase64String(payload);
+            using var doc = JsonDocument.Parse(bytes);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("exp", out var expProp) && expProp.TryGetInt64(out var expSeconds))
+            {
+                var expDate = DateTimeOffset.FromUnixTimeSeconds(expSeconds).UtcDateTime;
+                if (expDate < DateTime.UtcNow) return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedUsername))
+            {
+                string? name = null;
+                if (root.TryGetProperty("unique_name", out var unProp)) name = unProp.GetString();
+                else if (root.TryGetProperty("name", out var nProp)) name = nProp.GetString();
+                else if (root.TryGetProperty("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name", out var soapProp)) name = soapProp.GetString();
+
+                string? role = null;
+                if (root.TryGetProperty("role", out var rProp)) role = rProp.GetString();
+                else if (root.TryGetProperty("http://schemas.microsoft.com/ws/2008/06/identity/claims/role", out var soapRProp)) role = soapRProp.GetString();
+
+                if (!string.Equals(role, "Terminal", StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(name) &&
+                    !string.Equals(name, expectedUsername, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

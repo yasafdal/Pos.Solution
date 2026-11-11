@@ -30,7 +30,7 @@ CREATE TABLE public."Terminals" ("TerminalId" integer PRIMARY KEY, "BranchId" in
 CREATE TABLE public."Orders" ("OrderId" bigint PRIMARY KEY, "TerminalId" integer NOT NULL REFERENCES "Terminals", "CreatedAt" timestamp NOT NULL, "InvoiceIssuedAt" timestamp, "InvoiceNumber" text, "PaymentStatus" text DEFAULT 'PAID', "TotalAmount" numeric DEFAULT 100);
 CREATE TABLE public."OrderItems" ("OrderItemId" bigint PRIMARY KEY, "OrderId" bigint NOT NULL REFERENCES "Orders" ON DELETE CASCADE, "ProductName" text DEFAULT 'Historical coffee', "LineTotal" numeric DEFAULT 100);
 CREATE TABLE public."OrderItemModifiers" ("OrderItemModifierId" bigint PRIMARY KEY, "OrderItemId" bigint NOT NULL REFERENCES "OrderItems" ON DELETE CASCADE, "AdditionalPrice" numeric DEFAULT 0);
-CREATE TABLE public."Payments" ("PaymentId" bigint PRIMARY KEY, "OrderId" bigint NOT NULL REFERENCES "Orders" ON DELETE CASCADE, "PaidAt" timestamp NOT NULL, "PaymentStatus" text DEFAULT 'SUCCESS', "Amount" numeric DEFAULT 100);
+CREATE TABLE public."Payments" ("PaymentId" bigint PRIMARY KEY, "OrderId" bigint NOT NULL REFERENCES "Orders" ON DELETE CASCADE, "PaidAt" timestamp NOT NULL, "PaymentStatus" text DEFAULT 'PAID', "Amount" numeric DEFAULT 100);
 CREATE TABLE public."CashDrawerShifts" ("ShiftId" bigint PRIMARY KEY, "TerminalId" integer NOT NULL REFERENCES "Terminals", "OpenedAt" timestamp NOT NULL, "ClosedAt" timestamp, "TotalCashRefunds" numeric DEFAULT 0, "ClosingRecountHistoryJson" text);
 CREATE TABLE public."CashDrawerMovements" ("MovementId" bigint PRIMARY KEY, "ShiftId" bigint NOT NULL REFERENCES "CashDrawerShifts" ON DELETE CASCADE, "TerminalId" integer NOT NULL REFERENCES "Terminals", "CreatedAt" timestamp NOT NULL, "ApprovedAt" timestamp, "PostedAt" timestamp, "ReversedAt" timestamp, "Amount" numeric DEFAULT 5);
 CREATE TABLE public."SalesReturns" ("ReturnId" bigint PRIMARY KEY, "OriginalOrderId" bigint NOT NULL REFERENCES "Orders", "TerminalId" integer NOT NULL REFERENCES "Terminals", "CreatedAt" timestamp NOT NULL, "CompletedAt" timestamp, "TotalRefundAmount" numeric DEFAULT 10);
@@ -291,7 +291,7 @@ UPDATE "SalesReturns" SET "TotalRefundAmount"=20 WHERE "ReturnId"=2;
 UPDATE "CashDrawerShifts" SET "TotalCashRefunds"=20 WHERE "ShiftId"=2;
 COMMIT;
 DO $$ BEGIN
-IF (SELECT "PaymentStatus" FROM "Payments" WHERE "PaymentId"=1) <> 'SUCCESS' OR
+IF (SELECT "PaymentStatus" FROM "Payments" WHERE "PaymentId"=1) <> 'PAID' OR
    (SELECT "InvoiceNumber" FROM "Orders" WHERE "OrderId"=1) <> 'OLD' OR
    (SELECT "ProductName" FROM "OrderItems" WHERE "OrderItemId"=1) <> 'Historical coffee' OR
    (SELECT "SnapshotJson" FROM "ZReadings" WHERE "TerminalId"=1) <> '{"original":"retained"}'
@@ -383,7 +383,7 @@ db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId=1,FirstBusi
 Order Sale(long id, decimal amount) {
     var sale = new Order { OrderId=id,OrderNumber="SCRATCH-"+id,BranchId=1,OutletId=1,TerminalId=1,CashierId="cashier1",ShiftId=1,OrderType="DINE_IN",OrderStatus="COMPLETED",PaymentStatus="PAID",CreatedAt=start.AddHours(2),InvoiceIssuedAt=start.AddHours(2),InvoiceNumber="I-"+id,Subtotal=amount,TotalAmount=amount };
     sale.OrderItems.Add(new OrderItem { OrderItemId=id,ProductId=1,ProductName="Historical coffee",Quantity=1,UnitPrice=amount,LineTotal=amount });
-    sale.Payments.Add(new Payment { PaymentId=id,PaymentMethod="CASH",Amount=amount,PaymentStatus="SUCCESS",ProcessedBy="cashier1",PaidAt=start.AddHours(2) });
+    sale.Payments.Add(new Payment { PaymentId=id,PaymentMethod="CASH",Amount=amount,PaymentStatus="PAID",ProcessedBy="cashier1",PaidAt=start.AddHours(2) });
     return sale;
 }
 db.Orders.AddRange(Sale(1,100),Sale(2,60));

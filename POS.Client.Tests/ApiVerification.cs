@@ -149,7 +149,7 @@ internal static class ApiAndSchemaTests
             LocalTransactionId = "pg-offline-sale", InvoiceNumber = "PG-000001", TerminalId = 1, BranchId = 1,
             CashierId = "cashier1", ClientShiftId = "offline-replay", TransactionDate = opened.AddMinutes(1),
             PayloadHash = "pg-offline-hash", Subtotal = 25, TotalAmount = 25,
-            Payments = [new OfflinePaymentDto { PaymentMethod = "CASH", Amount = 25, TenderedAmount = 30, ChangeAmount = 5, PaymentStatus = "SUCCESS", PaidAt = opened.AddMinutes(1) }]
+            Payments = [new OfflinePaymentDto { PaymentMethod = "CASH", Amount = 25, TenderedAmount = 30, ChangeAmount = 5, PaymentStatus = "PAID", PaidAt = opened.AddMinutes(1) }]
         };
         for (var i = 0; i < 2; i++)
         {

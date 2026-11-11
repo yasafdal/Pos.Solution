@@ -4,6 +4,16 @@ using System.ComponentModel.DataAnnotations;
 
 namespace POS.Shared.Models;
 
+public class OfflineReferenceDataRequestDto
+{
+    public int TerminalId { get; set; }
+    public int? CurrentSequenceId { get; set; }
+    public string? SeriesCode { get; set; }
+    public long? CurrentStartingNumber { get; set; }
+    public long? CurrentEndingNumber { get; set; }
+    public long? CurrentLastIssuedNumber { get; set; }
+}
+
 public class OfflineReferenceDataResponseDto
 {
     public string Version { get; set; } = null!;

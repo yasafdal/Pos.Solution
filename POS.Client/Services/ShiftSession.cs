@@ -982,7 +982,7 @@ public static class ShiftSession
             var cfg = configuredMethods.FirstOrDefault(m => string.Equals(m.Code, code, StringComparison.OrdinalIgnoreCase));
             decimal gross = shiftPayments
                 .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
-                            && (p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED"))
+                            && (p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded))
                 .Sum(p => p.Amount);
             decimal refund = shiftPayments
                 .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
@@ -1296,7 +1296,7 @@ public static class ShiftSession
         }
 
         var allOrders = await db.Orders.AsNoTracking()
-            .Where(o => o.TerminalId == shift.TerminalId && o.BranchId == shift.BranchId && o.PaymentStatus == "SUCCESS")
+            .Where(o => o.TerminalId == shift.TerminalId && o.BranchId == shift.BranchId && o.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid)
             .ToListAsync();
 
         return allOrders
@@ -1329,7 +1329,7 @@ public static class ShiftSession
         var payments = await (from payment in db.Payments.AsNoTracking()
                               join order in db.Orders.AsNoTracking() on payment.OrderId equals order.OrderId
                               where order.TerminalId == dto.TerminalId && order.BranchId == dto.BranchId && order.CashierId == dto.CashierId
-                                  && payment.PaymentMethod == "CASH" && payment.PaymentStatus == "SUCCESS"
+                                  && payment.PaymentMethod == "CASH" && payment.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid
                               select payment).ToListAsync();
         return payments.Where(p => pendingIds.Contains(p.OrderId)).Sum(p => p.Amount);
     }

@@ -12,8 +12,11 @@ namespace POS.Api.Controllers;
 public class OfflineReferenceDataController(PosDbContext context) : ControllerBase
 {
     [HttpPost("reference-data")]
-    public async Task<ActionResult<OfflineReferenceDataResponseDto>> GetReferenceData([FromQuery] int terminalId)
+    public async Task<ActionResult<OfflineReferenceDataResponseDto>> GetReferenceData(
+        [FromQuery] int terminalId,
+        [FromBody] OfflineReferenceDataRequestDto? request = null)
     {
+        if (terminalId <= 0 && request?.TerminalId > 0) terminalId = request.TerminalId;
         var outlet = await context.Terminals
             .Include(o => o.Branch)
                 .ThenInclude(b => b.BusinessType)
@@ -133,20 +136,58 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         OfflineInvoiceSequenceDto? invoiceSequenceDto = null;
         if (activeSeq != null)
         {
-            var next = Math.Max(activeSeq.StartingNumber, checked(activeSeq.LastIssuedNumber + 1));
-            var end = Math.Min(activeSeq.EndingNumber ?? long.MaxValue, checked(next + 999));
-            if (next <= end)
+            // If the client already possesses an active block of numbers for this sequence with sufficient remaining capacity,
+            // avoid allocating a new block to prevent skipping numbers in BIR invoice sequences.
+            bool clientHasValidBlock = request != null
+                && request.CurrentSequenceId.HasValue
+                && request.CurrentSequenceId.Value == activeSeq.InvoiceSequenceId
+                && request.CurrentStartingNumber.HasValue
+                && request.CurrentEndingNumber.HasValue
+                && request.CurrentLastIssuedNumber.HasValue
+                && request.CurrentLastIssuedNumber.Value >= request.CurrentStartingNumber.Value - 1
+                && request.CurrentEndingNumber.Value >= request.CurrentLastIssuedNumber.Value;
+
+            long remainingCapacity = clientHasValidBlock
+                ? (request!.CurrentEndingNumber!.Value - request.CurrentLastIssuedNumber!.Value)
+                : 0;
+
+            if (clientHasValidBlock && remainingCapacity >= 100)
             {
                 invoiceSequenceDto = new OfflineInvoiceSequenceDto
                 {
-                    SequenceId = activeSeq.InvoiceSequenceId, TerminalId = terminalId,
-                    SeriesCode = activeSeq.SeriesCode, Prefix = activeSeq.Prefix ?? string.Empty,
-                    StartingNumber = next, EndingNumber = end, LastIssuedNumber = next - 1,
-                    PaddingLength = activeSeq.PaddingLength, IsActive = true
+                    SequenceId = activeSeq.InvoiceSequenceId,
+                    TerminalId = terminalId,
+                    SeriesCode = activeSeq.SeriesCode,
+                    Prefix = activeSeq.Prefix ?? string.Empty,
+                    StartingNumber = request!.CurrentStartingNumber!.Value,
+                    EndingNumber = request.CurrentEndingNumber!.Value,
+                    LastIssuedNumber = request.CurrentLastIssuedNumber!.Value,
+                    PaddingLength = activeSeq.PaddingLength,
+                    IsActive = true
                 };
-                activeSeq.LastIssuedNumber = end;
-                activeSeq.UpdatedAt = DateTime.UtcNow;
-                await context.SaveChangesAsync();
+            }
+            else
+            {
+                var next = Math.Max(activeSeq.StartingNumber, checked(activeSeq.LastIssuedNumber + 1));
+                var end = Math.Min(activeSeq.EndingNumber ?? long.MaxValue, checked(next + 999));
+                if (next <= end)
+                {
+                    invoiceSequenceDto = new OfflineInvoiceSequenceDto
+                    {
+                        SequenceId = activeSeq.InvoiceSequenceId,
+                        TerminalId = terminalId,
+                        SeriesCode = activeSeq.SeriesCode,
+                        Prefix = activeSeq.Prefix ?? string.Empty,
+                        StartingNumber = next,
+                        EndingNumber = end,
+                        LastIssuedNumber = next - 1,
+                        PaddingLength = activeSeq.PaddingLength,
+                        IsActive = true
+                    };
+                    activeSeq.LastIssuedNumber = end;
+                    activeSeq.UpdatedAt = DateTime.UtcNow;
+                    await context.SaveChangesAsync();
+                }
             }
         }
         await allocation.CommitAsync();

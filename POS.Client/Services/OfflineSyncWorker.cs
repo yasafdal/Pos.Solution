@@ -75,7 +75,7 @@ public class OfflineSyncWorker : IOfflineSyncWorker
                     }).ToList(),
                     Payments = new List<OfflinePaymentDto>
                     {
-                        new() { Amount = orderCreateDto.Items.Sum(i => i.BasePrice * i.Quantity) - orderCreateDto.DiscountAmount, TenderedAmount = orderCreateDto.Items.Sum(i => i.BasePrice * i.Quantity) - orderCreateDto.DiscountAmount, ChangeAmount = 0m, PaymentMethod = "CASH", PaymentStatus = "SUCCESS", PaidAt = DateTime.UtcNow }
+                        new() { Amount = orderCreateDto.Items.Sum(i => i.BasePrice * i.Quantity) - orderCreateDto.DiscountAmount, TenderedAmount = orderCreateDto.Items.Sum(i => i.BasePrice * i.Quantity) - orderCreateDto.DiscountAmount, ChangeAmount = 0m, PaymentMethod = "CASH", PaymentStatus = POS.Shared.Constants.PaymentStatuses.Paid, PaidAt = DateTime.UtcNow }
                     },
                     IdempotencyKey = item.EntityId,
                     PayloadHash = item.PayloadJson.GetHashCode().ToString()

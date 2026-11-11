@@ -115,9 +115,9 @@ public static partial class Program
             new Order { OrderId = 503, BranchId = 1, OutletId = 1, TerminalId = 1, ShiftId = shift.ShiftId, OrderNumber = "O-503", OrderType = "DINE_IN", CashierId = "cashier1", OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 250m, TotalAmount = 250m, CreatedAt = DateTime.UtcNow }
         );
         db.Payments.AddRange(
-            new Payment { PaymentId = 501, OrderId = 501, PaymentMethod = "GCASH", Amount = 500m, AmountTendered = 500m, ChangeAmount = 0m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow },
-            new Payment { PaymentId = 502, OrderId = 502, PaymentMethod = "MAYA", Amount = 300m, AmountTendered = 300m, ChangeAmount = 0m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow },
-            new Payment { PaymentId = 503, OrderId = 503, PaymentMethod = "GRABPAY", Amount = 250m, AmountTendered = 250m, ChangeAmount = 0m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow }
+            new Payment { PaymentId = 501, OrderId = 501, PaymentMethod = "GCASH", Amount = 500m, AmountTendered = 500m, ChangeAmount = 0m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow },
+            new Payment { PaymentId = 502, OrderId = 502, PaymentMethod = "MAYA", Amount = 300m, AmountTendered = 300m, ChangeAmount = 0m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow },
+            new Payment { PaymentId = 503, OrderId = 503, PaymentMethod = "GRABPAY", Amount = 250m, AmountTendered = 250m, ChangeAmount = 0m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow }
         );
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
         await db.SaveChangesAsync();
@@ -207,7 +207,7 @@ public static partial class Program
         db.Payments.Add(new Payment
         {
             PaymentId = 601, OrderId = 601, PaymentMethod = "CASH", Amount = 1500m,
-            AmountTendered = 2000m, ChangeAmount = 500m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
+            AmountTendered = 2000m, ChangeAmount = 500m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
         });
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
         await db.SaveChangesAsync();
@@ -349,7 +349,7 @@ public static partial class Program
 
         db.PaymentMethods.Add(new PaymentMethod { PaymentMethodId = 10, Code = "GCASH", Name = "GCash", IsActive = true, DisplayOrder = 1 });
         db.Orders.Add(new Order { OrderId = 701, BranchId = 1, OutletId = 1, TerminalId = 1, ShiftId = shift.ShiftId, OrderNumber = "O-701", OrderType = "DINE_IN", CashierId = "cashier1", OrderStatus = "COMPLETED", PaymentStatus = "PAID", Subtotal = 250m, TotalAmount = 250m, CreatedAt = DateTime.UtcNow });
-        db.Payments.Add(new Payment { PaymentId = 701, OrderId = 701, PaymentMethod = "GCASH", Amount = 250m, AmountTendered = 250m, ChangeAmount = 0m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow });
+        db.Payments.Add(new Payment { PaymentId = 701, OrderId = 701, PaymentMethod = "GCASH", Amount = 250m, AmountTendered = 250m, ChangeAmount = 0m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow });
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
         await db.SaveChangesAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
@@ -447,7 +447,7 @@ public static partial class Program
         var pay801 = new Payment
         {
             PaymentId = 801, OrderId = 801, PaymentMethod = "CASH", Amount = 1000m, AmountTendered = 1000m, ChangeAmount = 0m,
-            PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
+            PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
         };
         db.Payments.Add(pay801);
 
@@ -459,8 +459,8 @@ public static partial class Program
             Subtotal = 600m, DiscountAmount = 100m, TotalAmount = 500m, VatableSales = 446.43m, VatAmount = 53.57m, CreatedAt = DateTime.UtcNow
         });
         db.Payments.AddRange(
-            new Payment { PaymentId = 802, OrderId = 802, PaymentMethod = "CASH", Amount = 200m, AmountTendered = 200m, ChangeAmount = 0m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow },
-            new Payment { PaymentId = 803, OrderId = 802, PaymentMethod = "GCASH", Amount = 300m, AmountTendered = 300m, ChangeAmount = 0m, PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow }
+            new Payment { PaymentId = 802, OrderId = 802, PaymentMethod = "CASH", Amount = 200m, AmountTendered = 200m, ChangeAmount = 0m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow },
+            new Payment { PaymentId = 803, OrderId = 802, PaymentMethod = "GCASH", Amount = 300m, AmountTendered = 300m, ChangeAmount = 0m, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow }
         );
 
         // Order 3: Terminal 1, Total 400, VOIDED
@@ -481,7 +481,7 @@ public static partial class Program
         db.Payments.Add(new Payment
         {
             PaymentId = 804, OrderId = 804, PaymentMethod = "MAYA", Amount = 300m, AmountTendered = 300m, ChangeAmount = 0m,
-            PaymentStatus = "SUCCESS", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
+            PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = DateTime.UtcNow
         });
 
         // Partial Refund of 150.00 CASH on Order 801

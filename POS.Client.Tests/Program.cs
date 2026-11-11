@@ -113,6 +113,8 @@ internal static class Program
         {
             var saved = await db.CashDrawerShifts.SingleAsync(); Check(saved.TotalCashSales == 25 && saved.ExpectedBalance == 125, "Float/sales totals wrong.");
             Check(await db.Orders.CountAsync() == 1 && await db.Payments.CountAsync() == 1 && (await db.InvoiceSequences.SingleAsync()).LastIssuedNumber == 1, "Atomic sale state wrong.");
+            var payment = await db.Payments.SingleAsync(); Check(payment.PaymentStatus == "PAID", $"PaymentStatus must be PAID, got {payment.PaymentStatus}");
+            var order = await db.Orders.SingleAsync(); Check(order.PaymentStatus == "PAID", $"Order PaymentStatus must be PAID, got {order.PaymentStatus}");
             var opening = JsonSerializer.Deserialize<OpenShiftDto>((await db.SyncOutboxes.SingleAsync(o => o.EntityType == "SHIFT_OPEN")).PayloadJson)!;
             Check(opening.CashierId == "cashier1" && opening.ClientShiftId == request.ClientShiftId, "Opening outbox lost owner or identity.");
             var payload = JsonSerializer.Deserialize<OrderCreateDto>((await db.SyncOutboxes.SingleAsync(o => o.EntityType == "Order")).PayloadJson)!;

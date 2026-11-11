@@ -29,7 +29,34 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
     {
         try
         {
-            var response = await httpClient.PostAsync($"api/offline/reference-data?terminalId={terminalId}", null);
+            OfflineReferenceDataRequestDto? refDataReq = null;
+            try
+            {
+                using var dbRead = new LocalPosDbContext();
+                dbRead.InitializeDatabase();
+                var currentLocalSeq = await dbRead.InvoiceSequences.AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.IsActive);
+                if (currentLocalSeq != null)
+                {
+                    refDataReq = new OfflineReferenceDataRequestDto
+                    {
+                        TerminalId = terminalId,
+                        CurrentSequenceId = currentLocalSeq.SequenceId,
+                        SeriesCode = currentLocalSeq.SeriesCode,
+                        CurrentStartingNumber = currentLocalSeq.StartingNumber,
+                        CurrentEndingNumber = currentLocalSeq.EndingNumber,
+                        CurrentLastIssuedNumber = currentLocalSeq.LastIssuedNumber
+                    };
+                }
+            }
+            catch
+            {
+                // Non-fatal if local db is uninitialized or migrating
+            }
+
+            var response = refDataReq != null
+                ? await httpClient.PostAsJsonAsync($"api/offline/reference-data?terminalId={terminalId}", refDataReq)
+                : await httpClient.PostAsync($"api/offline/reference-data?terminalId={terminalId}", null);
             if (!response.IsSuccessStatusCode) return false;
 
             var data = await response.Content.ReadFromJsonAsync<OfflineReferenceDataResponseDto>();
@@ -317,9 +344,19 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         }
                         localSeq.SeriesCode = seqDto.SeriesCode;
                         localSeq.Prefix = seqDto.Prefix;
-                        localSeq.StartingNumber = seqDto.StartingNumber;
-                        localSeq.LastIssuedNumber = Math.Max(localSeq.LastIssuedNumber, Math.Max(seqDto.StartingNumber - 1, seqDto.LastIssuedNumber));
-                        localSeq.EndingNumber = seqDto.EndingNumber;
+                        if (localSeq.SequenceId != seqDto.SequenceId || seqDto.StartingNumber > localSeq.EndingNumber)
+                        {
+                            // New sequence or new allocated block beyond current range
+                            localSeq.StartingNumber = seqDto.StartingNumber;
+                            localSeq.EndingNumber = seqDto.EndingNumber;
+                            localSeq.LastIssuedNumber = Math.Max(localSeq.LastIssuedNumber, Math.Max(seqDto.StartingNumber - 1, seqDto.LastIssuedNumber));
+                        }
+                        else
+                        {
+                            // Same block or continuation: preserve local issued progress without jumping
+                            localSeq.LastIssuedNumber = Math.Max(localSeq.LastIssuedNumber, seqDto.LastIssuedNumber);
+                            localSeq.EndingNumber = Math.Max(localSeq.EndingNumber, seqDto.EndingNumber);
+                        }
                         localSeq.PaddingLength = seqDto.PaddingLength;
                         localSeq.IsActive = seqDto.IsActive;
                     }

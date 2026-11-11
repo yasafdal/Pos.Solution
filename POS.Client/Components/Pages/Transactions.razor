@@ -108,7 +108,7 @@ else
                             <td>@t.OrderNumber</td>
                             <td>@t.CashierId</td>
                             <td>
-                                @if (t.PaymentStatus == "PAID" || t.PaymentStatus == "SUCCESS")
+                                @if (t.PaymentStatus == "PAID")
                                 {
                                     <span class="transaction-status-badge paid">PAID</span>
                                 }
@@ -127,7 +127,7 @@ else
                                     <button type="button" class="btn btn-sm btn-info text-white rounded-3 px-3" @onclick="() => ViewDetails(t.OrderId)" title="View Details">
                                         <i class="bi bi-eye"></i> View
                                     </button>
-                                    @if (t.PaymentStatus == "PAID" || t.PaymentStatus == "SUCCESS")
+                                    @if (t.PaymentStatus == "PAID")
                                     {
                                         <button type="button" class="btn btn-sm btn-secondary text-white rounded-3 px-3" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint">
                                             <i class="bi bi-printer"></i> Reprint

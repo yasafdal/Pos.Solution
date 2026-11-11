@@ -87,7 +87,7 @@ public static class ShiftCacheRegressionTests
             db.CashDrawerShifts.Add(new LocalCashDrawerShift { ShiftId = -10, ClientShiftId = "merge", BranchId = 1, TerminalId = 1, CashierId = "original-owner", TotalCashSales = 65 });
             foreach (var (id, amount, status, shift) in new[] { ("pending", 25m, "PENDING", "merge"), ("lost-ack", 40m, "RETRY_PENDING", "merge"), ("acked", 10m, "SYNCED", "merge"), ("foreign", 99m, "PENDING", "other") })
             {
-                db.Orders.Add(new LocalOrder { OrderId = id, InvoiceNumber = id, BranchId = 1, TerminalId = 1, CashierId = "original-owner", TotalAmount = amount, PaymentStatus = "SUCCESS" });
+                db.Orders.Add(new LocalOrder { OrderId = id, InvoiceNumber = id, BranchId = 1, TerminalId = 1, CashierId = "original-owner", TotalAmount = amount, PaymentStatus = "PAID" });
                 db.Payments.Add(new LocalPayment { OrderId = id, Amount = amount });
                 db.Payments.Add(new LocalPayment { OrderId = id, Amount = 500, PaymentMethod = "CARD" });
                 db.SyncOutboxes.Add(new LocalSyncOutbox { EntityType = "Order", EntityId = id, Status = status, PayloadJson = JsonSerializer.Serialize(new OrderCreateDto { ShiftId = -10, ClientShiftId = shift, BranchId = 1, TerminalId = 1 }) });
@@ -133,7 +133,7 @@ public static class ShiftCacheRegressionTests
         using (var seed = new LocalPosDbContext())
         {
             seed.CashDrawerShifts.Add(new LocalCashDrawerShift { ShiftId = -20, ClientShiftId = "reference", BranchId = 1, TerminalId = 1, CashierId = "original-owner" });
-            seed.Orders.Add(new LocalOrder { OrderId = "ref-pending", InvoiceNumber = "REF-1", BranchId = 1, TerminalId = 1, CashierId = "original-owner", PaymentStatus = "SUCCESS" });
+            seed.Orders.Add(new LocalOrder { OrderId = "ref-pending", InvoiceNumber = "REF-1", BranchId = 1, TerminalId = 1, CashierId = "original-owner", PaymentStatus = "PAID" });
             seed.Payments.Add(new LocalPayment { OrderId = "ref-pending", Amount = 25 });
             seed.SyncOutboxes.Add(new LocalSyncOutbox { EntityType = "Order", EntityId = "ref-pending", PayloadJson = JsonSerializer.Serialize(new OrderCreateDto { BranchId = 1, TerminalId = 1, ClientShiftId = "reference", ShiftId = -20 }) });
             await seed.SaveChangesAsync();
@@ -215,8 +215,8 @@ public static class ShiftCacheRegressionTests
             var tracked = await saleDb.CashDrawerShifts.SingleAsync(s => s.ShiftId == localShift.ShiftId);
             tracked.TotalCashSales = 125.25m;
             tracked.ExpectedBalance = 625.25m;
-            saleDb.Orders.Add(new LocalOrder { OrderId = "off-ord-1", InvoiceNumber = "INV-OFF-1", BranchId = 1, OutletId = 1, TerminalId = 1, ShiftId = localShift.ShiftId, ClientShiftId = localShift.ClientShiftId, CashierId = "original-owner", Subtotal = 200m, TotalAmount = 200m, PaymentStatus = "SUCCESS", OrderStatus = "COMPLETED", CreatedAt = DateTime.UtcNow.AddHours(-1) });
-            saleDb.Payments.Add(new LocalPayment { OrderId = "off-ord-1", Amount = 200m, PaymentMethod = "GCASH", PaymentStatus = "SUCCESS", PaidAt = DateTime.UtcNow.AddHours(-1) });
+            saleDb.Orders.Add(new LocalOrder { OrderId = "off-ord-1", InvoiceNumber = "INV-OFF-1", BranchId = 1, OutletId = 1, TerminalId = 1, ShiftId = localShift.ShiftId, ClientShiftId = localShift.ClientShiftId, CashierId = "original-owner", Subtotal = 200m, TotalAmount = 200m, PaymentStatus = "PAID", OrderStatus = "COMPLETED", CreatedAt = DateTime.UtcNow.AddHours(-1) });
+            saleDb.Payments.Add(new LocalPayment { OrderId = "off-ord-1", Amount = 200m, PaymentMethod = "GCASH", PaymentStatus = "PAID", PaidAt = DateTime.UtcNow.AddHours(-1) });
             await saleDb.SaveChangesAsync();
         }
 

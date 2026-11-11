@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using POS.Api.Models;
 using POS.Shared.Models;
+using POS.Shared.Services;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -1580,7 +1581,7 @@ public class CashDrawerController : ControllerBase
             shift.Status = "CLOSED";
             shift.ClosedAt = request.ClosedAt.HasValue && request.ClosedAt.Value >= shift.OpenedAt
                 ? request.ClosedAt.Value
-                : DateTime.UtcNow;
+                : BusinessDayClock.UtcNow();
             var trimmedNotes = request.Notes?.Trim();
             shift.Notes = string.IsNullOrWhiteSpace(trimmedNotes)
                 ? null
@@ -1612,7 +1613,7 @@ public class CashDrawerController : ControllerBase
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+                    SubmittedAt = shift.ClosedAt ?? BusinessDayClock.UtcNow(),
                     TotalCountedCash = countedCash,
                     TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
                     HasRecordedDenominations = validatedDenominations != null && validatedDenominations.Count > 0,
@@ -1627,7 +1628,7 @@ public class CashDrawerController : ControllerBase
                 _context,
                 shift.TerminalId,
                 shift.CashierId,
-                shift.ClosedAt ?? DateTime.UtcNow,
+                shift.ClosedAt ?? BusinessDayClock.UtcNow(),
                 cancellationToken);
 
             await _context.SaveChangesAsync(cancellationToken);
@@ -1706,7 +1707,7 @@ public class CashDrawerController : ControllerBase
         foreach (var p in shiftOrders.SelectMany(o => o.Payments))
         {
             if (!string.IsNullOrWhiteSpace(p.PaymentMethod)
-                && (p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED")
+                && (p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded)
                 && seenCodes.Add(p.PaymentMethod.Trim()))
             {
                 nonCashCodes.Add(p.PaymentMethod.Trim().ToUpperInvariant());
@@ -1733,7 +1734,7 @@ public class CashDrawerController : ControllerBase
             var cfg = configuredMethods.FirstOrDefault(m => string.Equals(m.Code, code, StringComparison.OrdinalIgnoreCase));
             decimal gross = shiftOrders.SelectMany(o => o.Payments)
                 .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
-                            && (p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED"))
+                            && (p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded))
                 .Sum(p => p.Amount);
             decimal voidRefund = shiftOrders.SelectMany(o => o.Payments)
                 .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)

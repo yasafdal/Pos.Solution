@@ -55,15 +55,15 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
         if (orders.Any(x => x.OrderStatus != "CANCELLED" && x.OrderStatus != "VOIDED" && x.OrderStatus != "COMPLETED" && x.OrderStatus != "RETURNED" && x.OrderStatus != "PARTIALLY_RETURNED"))
             result.Blockers.Add("Incomplete order lifecycle remains, regardless of paid flag.");
         if (orders.Any(x => x.InvoiceIssuedAt < end && x.InvoiceIssuedAt.HasValue &&
-            (Math.Abs(x.Payments.Where(p => p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED").Sum(p => p.Amount) - x.TotalAmount) > .01m ||
-             x.Payments.Any(p => (p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED") && BusinessDate(p.PaidAt) != BusinessDate(x.InvoiceIssuedAt.Value)))))
+            (Math.Abs(x.Payments.Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == "REFUNDED").Sum(p => p.Amount) - x.TotalAmount) > .01m ||
+             x.Payments.Any(p => (p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == "REFUNDED") && BusinessDate(p.PaidAt) != BusinessDate(x.InvoiceIssuedAt.Value)))))
             result.Blockers.Add("Invoice totals/payment entries do not reconcile, or collections cross the invoice business date; review event attribution before finalization.");
         if (orders.Any(x => x.InvoiceIssuedAt < end && x.InvoiceIssuedAt.HasValue &&
             (x.Subtotal - x.DiscountAmount != x.TotalAmount)))
             result.Warnings.Add("Stored VAT removal/residual is reported separately as VatAdjustment; cashier net uses stored order totals.");
-        if (orders.Any(x => x.Payments.Any(p => p.PaidAt < end && p.PaymentStatus != "SUCCESS" && p.PaymentStatus != "REFUNDED" && p.PaymentStatus != "FAILED" && p.PaymentStatus != "CANCELLED")))
+        if (orders.Any(x => x.Payments.Any(p => p.PaidAt < end && p.PaymentStatus != POS.Shared.Constants.PaymentStatuses.Paid && p.PaymentStatus != "REFUNDED" && p.PaymentStatus != "FAILED" && p.PaymentStatus != "CANCELLED")))
             result.Blockers.Add("Unresolved payment commits remain.");
-        if (orders.Any(x => x.Payments.Any(p => p.PaymentStatus == "SUCCESS" || p.PaymentStatus == "REFUNDED") &&
+        if (orders.Any(x => x.Payments.Any(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == "REFUNDED") &&
             (!x.InvoiceIssuedAt.HasValue || string.IsNullOrEmpty(x.InvoiceNumber))))
             result.Blockers.Add("Paid order has no authoritative invoice issuance timestamp/number; reconcile before finalization.");
         if (await db.SalesReturns.AnyAsync(x => x.TerminalId == terminalId && x.CreatedAt < end &&

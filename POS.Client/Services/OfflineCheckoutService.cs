@@ -411,7 +411,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
         db.InitializeDatabase();
         return await db.Orders
             .AsNoTracking()
-            .Where(o => o.PaymentStatus == "SUCCESS")
+            .Where(o => o.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid)
             .OrderByDescending(o => o.CreatedAt)
             .ToListAsync();
     }

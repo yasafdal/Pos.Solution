@@ -31,7 +31,7 @@ def setup(db):
         INSERT INTO "InvoiceSequences" ("outlet_id","series_code","prefix","starting_number","ending_number","last_issued_number","padding_length","is_active","created_at","updated_at") VALUES (1,'KEEP-SER','KEEP-',1,99999,17,6,true,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
         INSERT INTO "OrderSequences" ("outlet_id","last_issued_number","created_at","updated_at") VALUES (1,29,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
         INSERT INTO "Orders" ("OrderNumber","BranchId","OutletId","CashierId","OrderType","OrderStatus","PaymentStatus","Subtotal","TotalAmount","VatableSales","VatExemptSales","ZeroRatedSales","VatAmount","DiscountPercentage","InvoiceNumber","invoice_sequence_id") VALUES ('LEGACY-ORDER',7,1,'cashier','RETAIL','COMPLETED','PAID',112,112,100,0,0,12,0,'KEEP-000017',1);
-        INSERT INTO "Payments" ("OrderId","PaymentMethod","Amount","AmountTendered","ChangeAmount","PaymentStatus","ProcessedBy") VALUES (1,'CASH',112,120,8,'SUCCESS','cashier');''')
+        INSERT INTO "Payments" ("OrderId","PaymentMethod","Amount","AmountTendered","ChangeAmount","PaymentStatus","ProcessedBy") VALUES (1,'CASH',112,120,8,'PAID','cashier');''')
 
 
 def snapshot(db, terminal_column):
