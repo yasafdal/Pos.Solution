@@ -147,25 +147,38 @@ namespace POS.Api.Controllers
             if (!allowedExtensions.Contains(extension))
                 return BadRequest("Invalid image format. Allowed formats: JPG, JPEG, PNG, WEBP.");
 
-            // Ensure wwwroot/uploads/products directory exists
-            var uploadsFolder = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), "uploads", "products");
-            if (!Directory.Exists(uploadsFolder))
+            try
             {
-                Directory.CreateDirectory(uploadsFolder);
+                var webRoot = _env.WebRootPath;
+                if (string.IsNullOrWhiteSpace(webRoot))
+                {
+                    webRoot = Path.Combine(_env.ContentRootPath ?? Directory.GetCurrentDirectory(), "wwwroot");
+                }
+
+                // Ensure wwwroot/uploads/products directory exists
+                var uploadsFolder = Path.Combine(webRoot, "uploads", "products");
+                if (!Directory.Exists(uploadsFolder))
+                {
+                    Directory.CreateDirectory(uploadsFolder);
+                }
+
+                // Generate unique filename to avoid overwrites
+                var uniqueFileName = $"{Guid.NewGuid()}{extension}";
+                var filePath = Path.Combine(uploadsFolder, uniqueFileName);
+
+                using (var stream = new FileStream(filePath, FileMode.Create))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                // Relative URL saved to database
+                var relativeUrl = $"/uploads/products/{uniqueFileName}";
+                return Ok(new { imageUrl = relativeUrl });
             }
-
-            // Generate unique filename to avoid overwrites
-            var uniqueFileName = $"{Guid.NewGuid()}{extension}";
-            var filePath = Path.Combine(uploadsFolder, uniqueFileName);
-
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            catch (Exception ex)
             {
-                await file.CopyToAsync(stream);
+                return StatusCode(StatusCodes.Status500InternalServerError, $"Failed to save image on server: {ex.Message}");
             }
-
-            // Relative URL saved to database
-            var relativeUrl = $"/uploads/products/{uniqueFileName}";
-            return Ok(new { imageUrl = relativeUrl });
         }
     }
 }

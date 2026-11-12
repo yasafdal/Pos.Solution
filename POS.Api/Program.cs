@@ -105,6 +105,17 @@ app.Use(async (context, next) =>
     await next();
 });
 
+var webRootPath = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+try
+{
+    var uploadsDir = Path.Combine(webRootPath, "uploads", "products");
+    if (!Directory.Exists(uploadsDir))
+    {
+        Directory.CreateDirectory(uploadsDir);
+    }
+}
+catch { /* Non-fatal if folder already managed by host */ }
+
 // app.UseRouting();
 app.UseStaticFiles();
 app.UseCors("AllowAll"); // Enable CORS

@@ -12,6 +12,7 @@
 @inject IModifierService ModifierService
 @inject SweetAlertService Swal
 @inject HttpClient Http
+@inject AuthenticationStateProvider AuthStateProvider
 @inject POS.Web.Services.ProductImageUrlResolver ImageUrls
 
 <PageTitle>@(FilterCategoryId.HasValue && CurrentCategory != null ? $"{CurrentCategory.Name} - POS" : "Products - POS")</PageTitle>
@@ -1016,25 +1017,63 @@
         {
             isUploadingImage = true;
 
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (authState.User.Identity?.IsAuthenticated != true)
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Authentication Required",
+                    Text = "Please log in before uploading images.",
+                    Icon = SweetAlertIcon.Warning,
+                    ConfirmButtonText = "OK",
+                    ConfirmButtonColor = "#2563eb"
+                });
+                return;
+            }
+
             using var content = new MultipartFormDataContent();
             var streamContent = new StreamContent(file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024));
-            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+            var mediaType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
             
             content.Add(streamContent, "file", file.Name);
 
-            var response = await Http.PostAsync("api/Products/upload-image", content);
+            using var request = new HttpRequestMessage(HttpMethod.Post, "api/Products/upload-image")
+            {
+                Content = content
+            };
+            if (Http.DefaultRequestHeaders.Authorization != null)
+            {
+                request.Headers.Authorization = Http.DefaultRequestHeaders.Authorization;
+            }
+
+            var response = await Http.SendAsync(request);
 
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<UploadResult>();
-                if (result != null)
+                if (result != null && !string.IsNullOrWhiteSpace(result.ImageUrl))
                 {
                     currentProduct.ImageUrl = result.ImageUrl;
+                    StateHasChanged();
                 }
             }
             else
             {
                 var errorMsg = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(errorMsg))
+                {
+                    errorMsg = $"Server returned HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).";
+                    if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        errorMsg += " Your session may have expired or you lack Admin/Manager permissions.";
+                    }
+                    else if ((int)response.StatusCode == 413)
+                    {
+                        errorMsg += " The web server / reverse proxy rejected the payload size. Check client_max_body_size on Nginx.";
+                    }
+                }
+
                 await Swal.FireAsync(new SweetAlertOptions
                 {
                     Title = "Upload Failed",
