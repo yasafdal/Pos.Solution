@@ -145,107 +145,31 @@ jobs:
           REMOTE="agresdeploy@192.168.0.142"
 
           cleanup() {
+            echo "Cleaning temporary comparison directory..."
             "${SSH[@]}" "$REMOTE" \
               "rm -rf -- '$REMOTE_DIR'" >/dev/null 2>&1 || true
           }
 
           trap cleanup EXIT
 
+          echo "Preparing temporary comparison directory..."
+
           "${SSH[@]}" "$REMOTE" \
             "umask 077 && mkdir -p '$REMOTE_DIR'"
 
-          echo "Transferring existing artifact for comparison..."
+          echo "Transferring existing build artifact..."
 
           tar -C downloaded-artifact -czf - api web | \
             "${SSH[@]}" "$REMOTE" \
             "tar -xzf - -C '$REMOTE_DIR'"
 
-          echo "Comparing published files with Rocky Linux..."
+          echo "Running root-owned comparison utility..."
 
-          "${SSH[@]}" "$REMOTE" "python3 - '$REMOTE_DIR'" <<'PY'
-          import hashlib
-          import os
-          import sys
+          printf '%s\n' "$COMPARE_ID" | \
+            "${SSH[@]}" "$REMOTE" \
+            "sudo -n /usr/local/sbin/compare-agrespos-official"
 
-          base = sys.argv[1]
-
-          def manifest(root, app):
-              if not os.path.isdir(root):
-                  raise SystemExit(f"Missing directory: {root}")
-
-              files = {}
-
-              for current, dirs, names in os.walk(root):
-                  dirs.sort()
-                  names.sort()
-
-                  for name in names:
-                      full = os.path.join(current, name)
-                      relative = os.path.relpath(
-                          full, root
-                      ).replace(os.sep, "/")
-
-                      # Preserve user-generated product images.
-                      if (
-                          app == "API"
-                          and relative.startswith(
-                              "wwwroot/uploads/products/"
-                          )
-                      ):
-                          continue
-
-                      with open(full, "rb") as f:
-                          files[relative] = hashlib.sha256(
-                              f.read()
-                          ).hexdigest()
-
-              return files
-
-          def compare(app, source, deployed):
-              expected = manifest(source, app)
-              actual = manifest(deployed, app)
-
-              missing = sorted(set(expected) - set(actual))
-              extra = sorted(set(actual) - set(expected))
-              different = sorted(
-                  name
-                  for name in set(expected) & set(actual)
-                  if expected[name] != actual[name]
-              )
-
-              print()
-              print("=" * 55)
-              print(f"{app} COMPARISON")
-              print("=" * 55)
-              print(f"Artifact files: {len(expected)}")
-              print(f"Server files:   {len(actual)}")
-
-              sections = [
-                  ("MISSING ON SERVER", missing),
-                  ("EXTRA ON SERVER", extra),
-                  ("CONTENT DIFFERENCES", different),
-              ]
-
-              for title, items in sections:
-                  print(f"\n{title}: {len(items)}")
-                  for item in items:
-                      print(f"  {item}")
-
-              if not missing and not extra and not different:
-                  print("\nRESULT: ALL FILES MATCH")
-
-          compare(
-              "API",
-              os.path.join(base, "api"),
-              "/var/www/agres-api"
-          )
-
-          compare(
-              "WEB",
-              os.path.join(base, "web"),
-              "/var/www/pos-web"
-          )
-          PY
+          echo "Comparison finished."
 
       - name: Comparison complete
         run: echo "Comparison finished. No applications were deployed or restarted."
