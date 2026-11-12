@@ -128,6 +128,7 @@ public static partial class Program
         await RunTestAsync("PHASE1A-01. Session-token endpoint strictly issues Terminal role (never Admin/Cashier) and validates lock", TestPhase1A_SessionTokenNeverMintsAdmin);
         await RunTestAsync("PHASE1A-02. BIR InvoiceSequence block preservation (zero number burning on sync/re-login)", TestPhase1A_OfflineReferenceDataPreservesInvoiceSequenceBlock);
         await RunTestAsync("PAYMENT-01. Standardize payment status to PAID (offline/online/sync/void/receipt/migration)", TestPaymentStatusStandardization);
+        await RunTestAsync("IMG-01. Product image URLs resolve against configured ApiBaseUrl (UAT), never localhost", TestProductImageUrlResolution);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;

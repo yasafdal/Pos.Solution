@@ -12,6 +12,7 @@
 @inject IModifierService ModifierService
 @inject SweetAlertService Swal
 @inject HttpClient Http
+@inject POS.Web.Services.ProductImageUrlResolver ImageUrls
 
 <PageTitle>@(FilterCategoryId.HasValue && CurrentCategory != null ? $"{CurrentCategory.Name} - POS" : "Products - POS")</PageTitle>
 
@@ -90,7 +91,7 @@
                         <div class="d-flex align-items-center justify-content-center py-1">
                             @if (!string.IsNullOrWhiteSpace(product.ImageUrl))
                             {
-                                <img src="@GetFullImageUrl(product.ImageUrl)"
+                                <img src="@ImageUrls.Resolve(product.ImageUrl)" onerror="@ImageUrls.OnError"
                                      alt="@product.Name"
                                      class="rounded-3 border object-fit-cover shadow-sm"
                                      style="width: 60px; height: 60px;" />
@@ -413,7 +414,7 @@
                             @if (!string.IsNullOrWhiteSpace(currentProduct.ImageUrl))
                             {
                                 <div class="position-relative flex-shrink-0">
-                                    <img src="@GetFullImageUrl(currentProduct.ImageUrl)" alt="Product Preview" class="rounded border object-fit-cover shadow-sm" style="width: 72px; height: 72px;" />
+                                    <img src="@ImageUrls.Resolve(currentProduct.ImageUrl)" onerror="@ImageUrls.OnError" alt="Product Preview" class="rounded border object-fit-cover shadow-sm" style="width: 72px; height: 72px;" />
                                     <button type="button" class="btn btn-sm btn-danger rounded-circle position-absolute top-0 start-100 translate-middle p-0 d-flex align-items-center justify-content-center shadow" style="width: 22px; height: 22px;" @onclick="RemoveImage" title="Remove Image">
                                         &times;
                                     </button>
@@ -990,23 +991,6 @@
         {
             isSaving = false;
         }
-    }
-
-    private string GetFullImageUrl(string? relativeUrl)
-    {
-        if (string.IsNullOrWhiteSpace(relativeUrl))
-            return string.Empty;
-
-        // If it's already a full web URL (e.g. external link), return as-is
-        if (relativeUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-            relativeUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        {
-            return relativeUrl;
-        }
-
-        // Combine API Base Address with the relative path (/uploads/products/...)
-        var apiBaseAddress = Http.BaseAddress?.ToString().TrimEnd('/');
-        return $"{apiBaseAddress}{relativeUrl}";
     }
 
     private async Task HandleImageSelected(InputFileChangeEventArgs e)

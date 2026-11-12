@@ -7,6 +7,7 @@
 @inject IInventoryService InventoryService
 @inject IBranchService BranchService
 @inject HttpClient Http
+@inject POS.Web.Services.ProductImageUrlResolver ImageUrls
 @inject SweetAlertService Swal
 
 <PageTitle>Inventory - POS</PageTitle>
@@ -103,7 +104,7 @@
                         <div class="d-flex align-items-center justify-content-center py-1">
                             @if (!string.IsNullOrWhiteSpace(item.ImageUrl))
                             {
-                                <img src="@GetFullImageUrl(item.ImageUrl)" alt="@item.ProductName" class="rounded-3 border object-fit-cover shadow-sm" style="width: 60px; height: 60px;" />
+                                <img src="@ImageUrls.Resolve(item.ImageUrl)" onerror="@ImageUrls.OnError" alt="@item.ProductName" class="rounded-3 border object-fit-cover shadow-sm" style="width: 60px; height: 60px;" />
                             }
                             else
                             {
@@ -465,13 +466,5 @@
         {
             isSaving = false;
         }
-    }
-
-    private string GetFullImageUrl(string? relativeUrl)
-    {
-        if (string.IsNullOrWhiteSpace(relativeUrl)) return string.Empty;
-        if (relativeUrl.StartsWith("http://") || relativeUrl.StartsWith("https://")) return relativeUrl;
-        var apiBaseAddress = Http.BaseAddress?.ToString().TrimEnd('/');
-        return $"{apiBaseAddress}{relativeUrl}";
     }
 }

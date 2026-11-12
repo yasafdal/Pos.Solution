@@ -88,6 +88,7 @@ builder.Services.AddScoped<ITransactionService, TransactionService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDiscountService, DiscountService>();
 builder.Services.AddScoped<IZReadingAuditService, ZReadingAuditService>();
+builder.Services.AddSingleton<POS.Web.Services.ProductImageUrlResolver>();
 
 var app = builder.Build();
 
