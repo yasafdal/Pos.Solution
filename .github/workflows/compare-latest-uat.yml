@@ -1,0 +1,175 @@
+
+name: AgresPOS UAT - Compare Existing Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  compare:
+    name: Compare latest master build with UAT
+    if: github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, linux, x64, agrespos-uat]
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout current master (no build)
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Find latest successful master build
+        id: latest
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: 'uat-build.yml',
+              branch: 'master',
+              status: 'completed',
+              per_page: 100
+            });
+
+            const latest = data.workflow_runs.find(
+              run => run.conclusion === 'success' &&
+                     run.head_branch === 'master'
+            );
+
+            if (!latest) {
+              core.setFailed('No successful master build was found.');
+              return;
+            }
+
+            const artifactName =
+              `AgresPOS-UAT-publish-${latest.head_sha}`;
+
+            const { data: artifacts } =
+              await github.rest.actions.listWorkflowRunArtifacts({
+                owner,
+                repo,
+                run_id: latest.id,
+                per_page: 100
+              });
+
+            const artifact = artifacts.artifacts.find(
+              item => item.name === artifactName
+            );
+
+            if (!artifact || artifact.expired) {
+              core.setFailed(
+                `Artifact ${artifactName} is missing or expired.`
+              );
+              return;
+            }
+
+            core.setOutput('run_id', String(latest.id));
+            core.setOutput('sha', latest.head_sha);
+            core.setOutput('artifact_name', artifactName);
+            core.setOutput('run_url', latest.html_url);
+
+            core.info(`Build run: ${latest.html_url}`);
+            core.info(`Build commit: ${latest.head_sha}`);
+            core.info(`Artifact: ${artifactName}`);
+
+      - name: Compare build commit with current master
+        shell: bash
+        env:
+          BUILT_SHA: ${{ steps.latest.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          MASTER_SHA="$(git rev-parse HEAD)"
+
+          echo "===================================="
+          echo "LATEST SUCCESSFUL BUILD"
+          echo "===================================="
+          echo "Build commit:  $BUILT_SHA"
+          echo "Master commit: $MASTER_SHA"
+
+          if [ "$BUILT_SHA" = "$MASTER_SHA" ]; then
+            echo "RESULT: Build commit matches current master."
+          else
+            echo "RESULT: Current master has a different commit."
+            echo
+            echo "File differences between build and master:"
+            git diff --name-status "$BUILT_SHA" "$MASTER_SHA"
+          fi
+
+      - name: Download existing build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.latest.outputs.artifact_name }}
+          run-id: ${{ steps.latest.outputs.run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: downloaded-artifact
+
+      - name: Validate downloaded artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -s downloaded-artifact/api/POS.Api.dll
+          test -s downloaded-artifact/web/POS.Web.dll
+
+          echo "Existing build artifact successfully downloaded."
+          echo "No compilation or publishing was performed."
+
+      - name: Compare artifact with deployed applications
+        shell: bash
+        env:
+          COMPARE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          REMOTE_DIR="/tmp/agrespos-compare-${COMPARE_ID}"
+
+          SSH=(
+            ssh
+            -i /home/agres/.ssh/agrespos-test-deploy
+            -o UserKnownHostsFile=/home/agres/.ssh/known_hosts
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o ConnectTimeout=5
+            -o StrictHostKeyChecking=yes
+          )
+
+          REMOTE="agresdeploy@192.168.0.142"
+
+          cleanup() {
+            echo "Cleaning temporary comparison directory..."
+            "${SSH[@]}" "$REMOTE" \
+              "rm -rf -- '$REMOTE_DIR'" >/dev/null 2>&1 || true
+          }
+
+          trap cleanup EXIT
+
+          echo "Preparing temporary comparison directory..."
+
+          "${SSH[@]}" "$REMOTE" \
+            "umask 077 && mkdir -p '$REMOTE_DIR'"
+
+          echo "Transferring existing build artifact..."
+
+          tar -C downloaded-artifact -czf - api web | \
+            "${SSH[@]}" "$REMOTE" \
+            "tar -xzf - -C '$REMOTE_DIR'"
+
+          echo "Running root-owned comparison utility..."
+
+          printf '%s\n' "$COMPARE_ID" | \
+            "${SSH[@]}" "$REMOTE" \
+            "sudo -n /usr/local/sbin/compare-agrespos-official"
+
+          echo "Comparison finished."
+
+      - name: Comparison complete
+        run: echo "Comparison finished. No applications were deployed or restarted."
