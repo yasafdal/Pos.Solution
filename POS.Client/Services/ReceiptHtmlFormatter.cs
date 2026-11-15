@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using POS.Shared.Constants;
 using POS.Shared.Models;
+using POS.Shared.Services;
 
 namespace POS.Client.Services;
 
@@ -16,7 +18,7 @@ public static class ReceiptHtmlFormatter
             <!doctype html>
             <html lang="en"><head><meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
             <title>Sales receipt</title>
             <style>
             @page {
@@ -56,6 +58,20 @@ public static class ReceiptHtmlFormatter
                 text-align: center;
                 margin-bottom: 1.2mm;
             }
+            .receipt-logo-wrap {
+                text-align: center;
+                margin-bottom: 1.5mm;
+            }
+            .receipt-logo {
+                max-width: 48mm;
+                max-height: 22mm;
+                width: auto;
+                height: auto;
+                object-fit: contain;
+                display: block;
+                margin: 0 auto;
+                filter: grayscale(100%) contrast(135%);
+            }
             .header h1 {
                 font-size: 13px;
                 font-weight: 700;
@@ -63,6 +79,15 @@ public static class ReceiptHtmlFormatter
                 line-height: 1.2;
                 text-transform: uppercase;
                 word-break: break-word;
+            }
+            .header .branch-tagline {
+                font-size: 9.5px;
+                font-weight: 500;
+                margin: 0.2mm 0 0.6mm;
+                line-height: 1.25;
+                text-align: center;
+                word-break: break-word;
+                overflow-wrap: anywhere;
             }
             .header p {
                 font-size: 9.5px;
@@ -117,6 +142,7 @@ public static class ReceiptHtmlFormatter
                 text-align: left;
                 word-break: break-word;
                 flex: 1 1 auto;
+                min-width: 0;
             }
 
             .items-section {
@@ -153,6 +179,8 @@ public static class ReceiptHtmlFormatter
                 padding-left: 2mm;
                 color: #222;
                 margin-top: 0.3mm;
+                word-break: break-word;
+                overflow-wrap: break-word;
             }
             .modifier-line {
                 display: flex;
@@ -247,6 +275,20 @@ public static class ReceiptHtmlFormatter
                 break-inside: avoid;
                 page-break-inside: avoid;
             }
+            .company-info {
+                margin-top: 1.5mm;
+                text-align: center;
+            }
+            .company-name {
+                font-size: 9.5px;
+                font-weight: 700;
+                line-height: 1.25;
+            }
+            .company-detail {
+                font-size: 8.5px;
+                line-height: 1.25;
+                word-break: break-word;
+            }
             .cut-feed {
                 height: 12mm;
                 break-inside: avoid;
@@ -258,10 +300,16 @@ public static class ReceiptHtmlFormatter
 
         // Header
         html.Append("<div class=\"header\">");
-        html.Append("<h1>").Append(Encode(receipt.BranchName)).Append("</h1>");
-        if (!string.IsNullOrWhiteSpace(receipt.BranchCode))
+        if (POS.Shared.Helpers.ReceiptLogoValidator.IsSafeDataUri(receipt.ReceiptLogoDataUri))
         {
-            html.Append("<p>Branch Code: ").Append(Encode(receipt.BranchCode)).Append("</p>");
+            html.Append("<div class=\"receipt-logo-wrap\"><img class=\"receipt-logo\" src=\"")
+                .Append(receipt.ReceiptLogoDataUri!.Trim())
+                .Append("\" alt=\"Receipt Logo\"></div>");
+        }
+        html.Append("<h1>").Append(Encode(receipt.BranchName)).Append("</h1>");
+        if (!string.IsNullOrWhiteSpace(receipt.BranchTagline))
+        {
+            html.Append("<p class=\"branch-tagline\">").Append(Encode(receipt.BranchTagline.Trim())).Append("</p>");
         }
         OptionalLine(html, receipt.BranchAddress);
         OptionalLine(html, receipt.BranchPhone);
@@ -303,14 +351,14 @@ public static class ReceiptHtmlFormatter
         {
             var modeInfo = receipt.OrderType.ToUpperInvariant();
             if (!string.IsNullOrWhiteSpace(receipt.TableNumber)) modeInfo += " | Table: " + receipt.TableNumber;
-            if (receipt.HeadCount.HasValue && receipt.HeadCount.Value > 0) modeInfo += " | Guests: " + receipt.HeadCount.Value;
-            MetaRow(html, "Type: " + modeInfo, string.Empty);
+            if (receipt.HeadCount.HasValue && receipt.HeadCount.Value > 0) modeInfo += " | " + receipt.HeadCount.Value;
+            MetaRow(html, "Type:", modeInfo);
         }
         else if (!string.IsNullOrWhiteSpace(receipt.TableNumber))
         {
-            var tableInfo = "Table: " + receipt.TableNumber;
-            if (receipt.HeadCount.HasValue && receipt.HeadCount.Value > 0) tableInfo += " | Guests: " + receipt.HeadCount.Value;
-            MetaRow(html, tableInfo, string.Empty);
+            var tableInfo = receipt.TableNumber;
+            if (receipt.HeadCount.HasValue && receipt.HeadCount.Value > 0) tableInfo += " | " + receipt.HeadCount.Value;
+            MetaRow(html, "Table:", tableInfo);
         }
 
         MetaRow(html, "Terminal:", receipt.TerminalName);
@@ -326,12 +374,17 @@ public static class ReceiptHtmlFormatter
                 ? item.ProductShortCode
                 : item.ProductName;
 
+            if (item.IsComplimentary)
+            {
+                displayName = $"{displayName} [COMPLIMENTARY]";
+            }
+
             html.Append("<div class=\"item-block\">");
             html.Append("<div class=\"item-header\">")
                 .Append("<span class=\"item-name\">").Append(Encode(displayName)).Append("</span>")
                 .Append("<span class=\"amount\">").Append(Money(item.LineTotal)).Append("</span>")
                 .Append("</div>");
-            html.Append("<div class=\"item-subline\">").Append(item.Quantity.ToString("0.###", CultureInfo.InvariantCulture)).Append(" x ").Append(Money(item.UnitPrice)).Append("</div>");
+            html.Append("<div class=\"item-subline\">").Append(Encode(ReceiptPresentationHelper.FormatItemSubline(item))).Append("</div>");
 
             foreach (var modifier in item.Modifiers)
             {
@@ -341,6 +394,10 @@ public static class ReceiptHtmlFormatter
                 {
                     html.Append("<span class=\"mod-price\">(").Append(Money(modifier.AdditionalPrice)).Append(")</span>");
                 }
+                else if (ReceiptPresentationHelper.ShouldShowFreeModifierLabel(item, modifier))
+                {
+                    html.Append("<span class=\"mod-price text-muted\">(Free)</span>");
+                }
                 html.Append("</div>");
             }
             html.Append("</div>");
@@ -349,10 +406,9 @@ public static class ReceiptHtmlFormatter
 
         // Totals Section
         html.Append("<div class=\"totals-section\">");
-        decimal totalItems = receipt.Items.Sum(i => i.Quantity);
         Row(html, "Subtotal", Money(receipt.Subtotal));
 
-        if (receipt.VatableSales > 0 || receipt.VatExemptSales > 0 || receipt.VatAmount > 0)
+        if (receipt.VatDisplay && (receipt.VatableSales > 0 || receipt.VatExemptSales > 0 || receipt.ZeroRatedSales > 0 || receipt.VatAmount > 0))
         {
             if (receipt.VatableSales > 0) RowClass(html, "Vatable Sales", Money(receipt.VatableSales), "tax-detail");
             if (receipt.VatExemptSales > 0) RowClass(html, "VAT-Exempt Sales", Money(receipt.VatExemptSales), "tax-detail");
@@ -389,7 +445,19 @@ public static class ReceiptHtmlFormatter
             html.Append("<hr class=\"dash\">");
         }
 
-        Row(html, "Total Items", totalItems.ToString("0.###", CultureInfo.InvariantCulture));
+        var summary = ReceiptPresentationHelper.Summarize(receipt);
+        Row(html, "Total Items", summary.TotalItemsDisplay);
+        if (summary.WeightTotals.Count == 1)
+        {
+            Row(html, "Total Weight", summary.WeightTotals[0].FormattedWithUnit);
+        }
+        else if (summary.WeightTotals.Count > 1)
+        {
+            foreach (var wt in summary.WeightTotals)
+            {
+                Row(html, $"Total Weight ({wt.Unit})", wt.FormattedWithUnit);
+            }
+        }
 
         // Customer Information (always displayed; shows info if present, otherwise write-in underlines starting at fixed position)
         html.Append("<hr class=\"dash\"><div class=\"cust-box\">");
@@ -405,6 +473,11 @@ public static class ReceiptHtmlFormatter
         html.Append("Thank you for your purchase!<br>");
         html.Append("NOT A BIR TAX INVOICE<br>");
         html.Append("For transaction reference only.");
+        html.Append("<div class=\"company-info\">");
+        html.Append("<p class=\"company-name\">").Append(Encode(ReceiptCompanyInfo.CompanyName)).Append("</p>");
+        html.Append("<p class=\"company-detail\">").Append(Encode(ReceiptCompanyInfo.Email)).Append("</p>");
+        html.Append("<p class=\"company-detail\">").Append(Encode(ReceiptCompanyInfo.Address)).Append("</p>");
+        html.Append("</div>");
         html.Append("</div>");
         html.Append("<div class=\"cut-feed\"></div>");
 
@@ -414,9 +487,9 @@ public static class ReceiptHtmlFormatter
     }
 
     private static string Encode(string? text) => WebUtility.HtmlEncode(text ?? string.Empty);
-    private static string Money(decimal value) => "PHP " + value.ToString("N2", CultureInfo.InvariantCulture);
-    private static string Timestamp(DateTime value) => value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
-        + (value.Kind == DateTimeKind.Utc ? " UTC" : string.Empty);
+    private static string Money(decimal value) => ReceiptPresentationHelper.FormatMoney(value);
+    private static string Timestamp(DateTime value) =>
+        POS.Shared.Services.BusinessDayClock.ToManilaTime(value).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
     private static void OptionalLine(StringBuilder html, string? text)
     {

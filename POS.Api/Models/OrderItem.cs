@@ -31,12 +31,21 @@ public partial class OrderItem
 
     public decimal LineTotal { get; set; }
 
+    [MaxLength(20)]
+    public string? PricingMethod { get; set; }
+
+    public bool IsComplimentary { get; set; } = false;
+
+    public int? ParentProductId { get; set; }
+
     public decimal DiscountAmount { get; set; }
     [MaxLength(20)]
     public string VatType { get; set; } = "VATABLE";
     public decimal VatAmount { get; set; }
 
     public virtual Order Order { get; set; } = null!;
+
+    public virtual Product? ParentProduct { get; set; }
 
     public virtual ICollection<OrderItemModifier> OrderItemModifiers { get; set; } = new List<OrderItemModifier>();
 }

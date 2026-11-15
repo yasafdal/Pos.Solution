@@ -243,7 +243,11 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
         response.Breakdown = grouping switch
         {
             "WEEKLY" => paidOrders
-                .GroupBy(o => System.Globalization.ISOWeek.GetWeekOfYear(o.CreatedAt) + "-" + o.CreatedAt.Year)
+                .GroupBy(o =>
+                {
+                    var manila = POS.Shared.Services.BusinessDayClock.ToManilaTime(o.CreatedAt);
+                    return System.Globalization.ISOWeek.GetWeekOfYear(manila) + "-" + manila.Year;
+                })
                 .Select(g => new SalesReportGroupItemDto
                 {
                     Key = g.Key,
@@ -257,7 +261,7 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
                 }).OrderBy(x => x.Key).ToList(),
 
             "MONTHLY" => paidOrders
-                .GroupBy(o => o.CreatedAt.ToString("yyyy-MM"))
+                .GroupBy(o => POS.Shared.Services.BusinessDayClock.ToManilaTime(o.CreatedAt).ToString("yyyy-MM"))
                 .Select(g => new SalesReportGroupItemDto
                 {
                     Key = g.Key,
@@ -271,7 +275,7 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
                 }).OrderBy(x => x.Key).ToList(),
 
             "YEARLY" => paidOrders
-                .GroupBy(o => o.CreatedAt.ToString("yyyy"))
+                .GroupBy(o => POS.Shared.Services.BusinessDayClock.ToManilaTime(o.CreatedAt).ToString("yyyy"))
                 .Select(g => new SalesReportGroupItemDto
                 {
                     Key = g.Key,
@@ -382,7 +386,7 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
                 }).ToList(),
 
             _ => paidOrders
-                .GroupBy(o => o.CreatedAt.ToString("yyyy-MM-dd"))
+                .GroupBy(o => POS.Shared.Services.BusinessDayClock.GetBusinessDateString(o.CreatedAt))
                 .Select(g => new SalesReportGroupItemDto
                 {
                     Key = g.Key,
@@ -454,10 +458,11 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
 
     public async Task<DashboardSalesSummaryDto> GetDashboardSummaryAsync(int? branchId = null, CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
-        var startOfToday = DateTime.UtcNow.Date; // UTC floor for today
-        var startOfMonth = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var startOfYear = new DateTime(now.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var nowUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
+        var currentBusinessDate = POS.Shared.Services.BusinessDayClock.GetBusinessDate(nowUtc);
+        var startOfToday = POS.Shared.Services.BusinessDayClock.GetPeriodUtc(currentBusinessDate).StartUtc;
+        var startOfMonth = POS.Shared.Services.BusinessDayClock.GetPeriodUtc(new DateOnly(currentBusinessDate.Year, currentBusinessDate.Month, 1)).StartUtc;
+        var startOfYear = POS.Shared.Services.BusinessDayClock.GetPeriodUtc(new DateOnly(currentBusinessDate.Year, 1, 1)).StartUtc;
 
         var ordersQuery = context.Orders.AsNoTracking()
             .Include(o => o.OrderItems)
@@ -468,18 +473,18 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
 
         var orders = await ordersQuery.ToListAsync(cancellationToken);
 
-        var todayOrders = orders.Where(o => o.CreatedAt >= startOfToday).ToList();
-        var monthOrders = orders.Where(o => o.CreatedAt >= startOfMonth).ToList();
-        var yearOrders = orders.Where(o => o.CreatedAt >= startOfYear).ToList();
+        var todayOrders = orders.Where(o => POS.Shared.Services.BusinessDayClock.NormalizeUtc(o.CreatedAt) >= startOfToday).ToList();
+        var monthOrders = orders.Where(o => POS.Shared.Services.BusinessDayClock.NormalizeUtc(o.CreatedAt) >= startOfMonth).ToList();
+        var yearOrders = orders.Where(o => POS.Shared.Services.BusinessDayClock.NormalizeUtc(o.CreatedAt) >= startOfYear).ToList();
 
         var productsCount = await context.Products.CountAsync(p => !p.IsDeleted && p.IsActive, cancellationToken);
         var categoriesCount = await context.Categories.CountAsync(c => !c.IsDeleted && c.IsActive, cancellationToken);
 
-        // Daily Trend (last 7 days)
-        var sevenDaysAgo = now.Date.AddDays(-6);
+        // Daily Trend (last 7 business days in Asia/Manila)
+        var sevenDaysAgo = POS.Shared.Services.BusinessDayClock.GetPeriodUtc(currentBusinessDate.AddDays(-6)).StartUtc;
         var dailyTrend = orders
-            .Where(o => o.CreatedAt >= sevenDaysAgo)
-            .GroupBy(o => o.CreatedAt.ToString("yyyy-MM-dd"))
+            .Where(o => POS.Shared.Services.BusinessDayClock.NormalizeUtc(o.CreatedAt) >= sevenDaysAgo)
+            .GroupBy(o => POS.Shared.Services.BusinessDayClock.GetBusinessDateString(o.CreatedAt))
             .Select(g => new SalesReportGroupItemDto
             {
                 Key = g.Key,
@@ -491,9 +496,9 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
             .OrderBy(x => x.Key)
             .ToList();
 
-        // Monthly Trend (current year months)
+        // Monthly Trend (current year months in Asia/Manila)
         var monthlyTrend = yearOrders
-            .GroupBy(o => o.CreatedAt.ToString("yyyy-MM"))
+            .GroupBy(o => POS.Shared.Services.BusinessDayClock.ToManilaTime(o.CreatedAt).ToString("yyyy-MM"))
             .Select(g => new SalesReportGroupItemDto
             {
                 Key = g.Key,
@@ -505,11 +510,11 @@ public class SalesReportService(PosDbContext context) : ISalesReportService
             .OrderBy(x => x.Key)
             .ToList();
 
-        // Yearly Trend (past 5 years)
-        var fiveYearsAgo = new DateTime(now.Year - 4, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        // Yearly Trend (past 5 years in Asia/Manila)
+        var fiveYearsAgo = POS.Shared.Services.BusinessDayClock.GetPeriodUtc(new DateOnly(currentBusinessDate.Year - 4, 1, 1)).StartUtc;
         var yearlyTrend = orders
-            .Where(o => o.CreatedAt >= fiveYearsAgo)
-            .GroupBy(o => o.CreatedAt.ToString("yyyy"))
+            .Where(o => POS.Shared.Services.BusinessDayClock.NormalizeUtc(o.CreatedAt) >= fiveYearsAgo)
+            .GroupBy(o => POS.Shared.Services.BusinessDayClock.ToManilaTime(o.CreatedAt).ToString("yyyy"))
             .Select(g => new SalesReportGroupItemDto
             {
                 Key = g.Key,

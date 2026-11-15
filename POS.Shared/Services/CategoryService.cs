@@ -40,4 +40,11 @@ public class CategoryService : ICategoryService
         // Matches: /api/Categories/remove-category/{id}
         await _http.DeleteAsync($"api/Categories/remove-category/{id}");
     }
+
+    public async Task ReorderCategoriesAsync(List<int> orderedCategoryIds)
+    {
+        // Matches: /api/Categories/reorder
+        var response = await _http.PutAsJsonAsync("api/Categories/reorder", orderedCategoryIds);
+        response.EnsureSuccessStatusCode();
+    }
 }

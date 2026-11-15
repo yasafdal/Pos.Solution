@@ -98,7 +98,7 @@
                                 <span class="fw-bold text-dark">₱@o.DefaultOpeningFund.Value.ToString("N2")</span>
                                 @if (!string.IsNullOrEmpty(o.CashFundUpdatedBy))
                                 {
-                                    <small class="text-muted" style="font-size: 0.7rem;">by @o.CashFundUpdatedBy @(o.CashFundUpdatedAt.HasValue ? o.CashFundUpdatedAt.Value.ToLocalTime().ToString("MMM d, HH:mm") : "")</small>
+                                    <small class="text-muted" style="font-size: 0.7rem;">by @o.CashFundUpdatedBy @POS.Shared.Services.BusinessDayClock.FormatManila(o.CashFundUpdatedAt, "MMM d, HH:mm", "")</small>
                                 }
                             </div>
                         }
@@ -261,7 +261,7 @@
                                         @if (isEditingOutlet && !string.IsNullOrEmpty(currentOutlet.CashFundUpdatedBy))
                                         {
                                             <span class="badge bg-white text-secondary border" style="font-size: 0.7rem;">
-                                                Updated by @currentOutlet.CashFundUpdatedBy @(currentOutlet.CashFundUpdatedAt.HasValue ? $"on {currentOutlet.CashFundUpdatedAt.Value.ToLocalTime():MMM d, yyyy HH:mm}" : "")
+                                                Updated by @currentOutlet.CashFundUpdatedBy @(currentOutlet.CashFundUpdatedAt.HasValue ? $"on {POS.Shared.Services.BusinessDayClock.FormatManila(currentOutlet.CashFundUpdatedAt.Value, "MMM d, yyyy HH:mm")}" : "")
                                             </span>
                                         }
                                     </div>

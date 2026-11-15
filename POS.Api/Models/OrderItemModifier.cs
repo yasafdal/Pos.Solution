@@ -10,6 +10,8 @@ public partial class OrderItemModifier
 
     public int ModifierOptionId { get; set; }
 
+    public int? ProductId { get; set; }
+
     [Required]
     [MaxLength(100)]
     public string ModifierName { get; set; } = null!;
@@ -17,4 +19,6 @@ public partial class OrderItemModifier
     public decimal AdditionalPrice { get; set; }
 
     public virtual OrderItem OrderItem { get; set; } = null!;
+
+    public virtual Product? Product { get; set; }
 }

@@ -6,9 +6,13 @@ public class ReceiptDto
     public string OrderNumber { get; set; } = string.Empty;
     public int BranchId { get; set; }
     public string BranchName { get; set; } = string.Empty;
+    public string? BranchTagline { get; set; }
     public string? BranchCode { get; set; }
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
+    public string? ReceiptLogoUrl { get; set; }
+    public string? ReceiptLogoDataUri { get; set; }
+    public bool VatDisplay { get; set; } = true;
     public int TerminalId { get; set; }
     public int OutletId { get; set; }
     public string OutletName { get; set; } = string.Empty;
@@ -22,6 +26,9 @@ public class ReceiptDto
     public int? HeadCount { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime PaidAt { get; set; }
+    public DateTime? ServerReceivedAtUtc { get; set; }
+    public string? DeviceTimeZoneId { get; set; }
+    public int? DeviceUtcOffsetMinutes { get; set; }
     public decimal Subtotal { get; set; }
     public decimal VatableSales { get; set; }
     public decimal VatExemptSales { get; set; }

@@ -20,7 +20,7 @@ namespace POS.Client.Services
         public decimal Subtotal => _items.Sum(i => i.LineTotal);
         public decimal TotalAmount => System.Math.Max(0m, Subtotal - activeDiscountAmount);
         public decimal Total => TotalAmount;
-        public int TotalItems => _items.Sum(i => i.Quantity);
+        public decimal TotalItems => _items.Sum(i => i.Quantity);
 
         public event Action? OnChange;
         private string activeDiscountCode = "NONE";
@@ -72,7 +72,7 @@ namespace POS.Client.Services
         public void AddItem(ProductDto product, int quantity, List<ModifierOptionDto>? selectedModifiers, string? specialInstructions = null)
         {
             selectedModifiers ??= new();
-            if (quantity <= 0 || quantity > int.MaxValue - TotalItems)
+            if (quantity <= 0 || (decimal)quantity > (decimal)int.MaxValue - TotalItems)
                 throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be positive and fit the current order.");
 
             var normalizedInstructions = CartItem.NormalizeSpecialInstructions(specialInstructions);
@@ -89,6 +89,7 @@ namespace POS.Client.Services
             {
                 _items.Add(new CartItem
                 {
+                    CartItemId = Guid.NewGuid().ToString(),
                     ProductId = product.ProductId,
                     ProductName = product.Name,
                     ProductShortCode = product.ShortCode,
@@ -106,17 +107,69 @@ namespace POS.Client.Services
             NotifyStateChanged();
         }
 
+        public void AddWeightBasedItem(
+            ProductDto product,
+            decimal weight,
+            decimal? targetAmount,
+            List<ModifierOptionDto>? selectedModifiers = null,
+            string? specialInstructions = null,
+            List<CartItem>? complimentaryItems = null)
+        {
+            if (weight <= 0m)
+                throw new ArgumentOutOfRangeException(nameof(weight), "Weight must be positive.");
+
+            var normalizedInstructions = CartItem.NormalizeSpecialInstructions(specialInstructions);
+            var parentItem = new CartItem
+            {
+                CartItemId = Guid.NewGuid().ToString(),
+                ProductId = product.ProductId,
+                ProductName = product.Name,
+                ProductShortCode = product.ShortCode,
+                BasePrice = product.Price,
+                PricingMethod = product.PricingMethod,
+                Quantity = weight,
+                TargetAmount = targetAmount,
+                SelectedModifiers = selectedModifiers ?? new(),
+                ImageUrl = product.ImageUrl,
+                UnitOfMeasure = product.UnitOfMeasure ?? "kg",
+                TaxName = product.TaxName ?? "VATable",
+                IsKitchenItem = product.IsKitchenItem,
+                IsBarItem = product.IsBarItem,
+                SpecialInstructions = normalizedInstructions
+            };
+
+            _items.Add(parentItem);
+
+            if (complimentaryItems != null && complimentaryItems.Count > 0)
+            {
+                foreach (var comp in complimentaryItems)
+                {
+                    comp.ParentCartItemId = parentItem.CartItemId;
+                    comp.ParentProductId = parentItem.ProductId;
+                    comp.IsComplimentary = true;
+                    comp.BasePrice = 0m;
+                    _items.Add(comp);
+                }
+            }
+
+            NotifyStateChanged();
+        }
+
         public void UpdateSpecialInstructions(CartItem item, string? specialInstructions)
         {
             if (item == null || !_items.Contains(item))
                 return;
 
             var normalizedInstructions = CartItem.NormalizeSpecialInstructions(specialInstructions);
-            var matchingLine = _items.FirstOrDefault(i =>
-                !ReferenceEquals(i, item) &&
-                i.ProductId == item.ProductId &&
-                ModifiersEqual(i.SelectedModifiers, item.SelectedModifiers) &&
-                NotesEqual(i.SpecialInstructions, normalizedInstructions));
+            var matchingLine = (!item.IsWeightBased && !item.IsComplimentary)
+                ? _items.FirstOrDefault(i =>
+                    !ReferenceEquals(i, item) &&
+                    !i.IsWeightBased &&
+                    !i.IsComplimentary &&
+                    i.ProductId == item.ProductId &&
+                    ModifiersEqual(i.SelectedModifiers, item.SelectedModifiers) &&
+                    NotesEqual(i.SpecialInstructions, normalizedInstructions))
+                : null;
 
             if (matchingLine != null && matchingLine.Quantity <= int.MaxValue - item.Quantity)
             {
@@ -187,8 +240,7 @@ namespace POS.Client.Services
             var item = _items.FirstOrDefault(i => i.ProductId == productId);
             if (item != null)
             {
-                _items.Remove(item);
-                NotifyStateChanged();
+                RemoveItem(item);
             }
         }
 
@@ -196,7 +248,16 @@ namespace POS.Client.Services
         {
             if (item != null && _items.Contains(item))
             {
+                var cartId = item.CartItemId;
+                var prodId = item.ProductId;
                 _items.Remove(item);
+                if (!item.IsComplimentary)
+                {
+                    // Fallback on ParentProductId only for legacy/orphaned complimentary rows lacking ParentCartItemId.
+                    _items.RemoveAll(i => i.IsComplimentary && (
+                        (!string.IsNullOrEmpty(cartId) && i.ParentCartItemId == cartId) ||
+                        (string.IsNullOrEmpty(i.ParentCartItemId) && prodId > 0 && i.ParentProductId == prodId)));
+                }
                 NotifyStateChanged();
             }
         }

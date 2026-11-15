@@ -1,40 +1,42 @@
-/* Solid Category-Colored Tile Product Card (Expanded Size) */
+/* Product Card Container */
 .product-card {
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
     min-height: 150px;
-    height: 100%;
-    padding: 0.95rem 0.85rem;
     background-color: var(--category-color, #334155);
-    border: none;
-    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
     text-align: center;
     color: #ffffff;
     cursor: pointer;
     user-select: none;
     touch-action: manipulation;
-    transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+    overflow: hidden;
+    transition: transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     content-visibility: auto;
-    contain-intrinsic-size: auto 125px;
+    contain-intrinsic-size: auto 150px;
+    padding: 0;
 }
 
 .product-card:hover {
     transform: translateY(-2px);
-    filter: brightness(1.08);
-    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+    filter: brightness(1.06);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
 }
 
 .product-card:active {
-    transform: scale(0.96);
-    filter: brightness(0.92);
+    transform: scale(0.97);
+    filter: brightness(0.94);
 }
 
 .product-card.in-cart {
-    box-shadow: 0 0 0 3px #ffffff, 0 8px 18px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 0 0 3px #3b82f6, 0 8px 20px rgba(0, 0, 0, 0.45);
 }
 
 .product-card:disabled,
@@ -45,11 +47,19 @@
     pointer-events: none;
 }
 
+.product-card:focus-visible {
+    outline: 3px solid #3b82f6;
+    outline-offset: 2px;
+}
+
+/* Cart Quantity Badge (Top Right) */
 .product-qty {
     position: absolute;
     top: 8px;
     right: 8px;
+    z-index: 5;
     min-width: 26px;
+    max-width: calc(100% - 16px);
     height: 26px;
     padding: 0 0.4rem;
     border-radius: 13px;
@@ -59,15 +69,107 @@
     font-weight: 800;
     line-height: 26px;
     text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-variant-numeric: tabular-nums;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    border: 1.5px solid rgba(15, 23, 42, 0.15);
 }
 
-.product-card.in-cart .product-name {
-    padding-top: 0.35rem;
+/* --- IMAGE & TEXT MODE --- */
+.product-card.has-image {
+    background-color: #0f172a;
 }
 
-.product-name {
+/* Full Media Container occupying 100% of the card */
+.product-media-container {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #0f172a;
+}
+
+/* Product Image filling card without distortion */
+.product-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    transition: transform 0.2s ease;
+}
+
+.product-card:hover .product-image {
+    transform: scale(1.04);
+}
+
+/* Fallback Placeholder when product has no image or image load fails */
+.product-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+    border-top: 4px solid var(--category-color, #334155);
+}
+
+.placeholder-icon {
+    font-size: 2.75rem;
+    color: #64748b;
+    opacity: 0.6;
+}
+
+/* Bottom Product Name Overlay (Matching Reference Design) */
+.product-label-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    max-height: 50%;
+    padding: 0.45rem 0.65rem;
+    background: rgba(15, 23, 42, 0.88);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    border-bottom: 3px solid var(--category-color, #334155);
+    text-align: center;
+}
+
+/* Product Name Text inside Overlay */
+.product-card.has-image .product-name {
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 0.92rem;
+    line-height: 1.25;
+    text-align: center;
+    margin: 0;
+    width: 100%;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+/* --- TEXT ONLY MODE --- */
+.product-card.text-only {
+    padding: 0.95rem 0.85rem;
+    background-color: var(--category-color, #334155);
+}
+
+.product-card.text-only .product-name {
     font-weight: 700;
     font-size: 1.05rem;
     line-height: 1.3;
@@ -80,55 +182,40 @@
     overflow: hidden;
     overflow-wrap: anywhere;
     margin: 0;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
-.product-card:focus-visible {
-    outline: 3px solid #ffffff;
-    outline-offset: 3px;
-}
-
-.product-card.has-image {
-    justify-content: flex-start;
-    padding: 0;
-    overflow: hidden;
-}
-
-.product-image-frame {
-    display: flex;
-    width: 100%;
-    aspect-ratio: 3 / 2;
-    flex: 0 0 auto;
-    background: var(--pos-bg-card, #1e293b);
-    border-bottom: 4px solid var(--category-color, #334155);
-}
-
-.product-image-frame img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    aspect-ratio: 3 / 2;
-    object-fit: contain;
-}
-
-.product-image-placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    color: var(--pos-text-secondary, #94a3b8);
-    font-size: 2.5rem;
-}
-
-.product-card.has-image .product-name {
-    padding: 0.65rem 0.75rem;
-    flex: 1;
-    width: 100%;
-    background: #0f172a;
-    border-bottom: 4px solid var(--category-color, #334155);
-    text-shadow: none;
-}
-
+/* --- RESPONSIVENESS (Desktop, Android Tablets, Mobile) --- */
 @media (max-width: 768px) {
-    .product-card { min-height: 110px; }
+    .product-card {
+        min-height: 120px;
+        border-radius: 12px;
+    }
+
+    .product-label-overlay {
+        min-height: 38px;
+        padding: 0.35rem 0.5rem;
+    }
+
+    .product-card.has-image .product-name {
+        font-size: 0.82rem;
+        line-height: 1.2;
+    }
+
+    .product-card.text-only .product-name {
+        font-size: 0.92rem;
+    }
+
+    .placeholder-icon {
+        font-size: 2rem;
+    }
+
+    .product-qty {
+        top: 6px;
+        right: 6px;
+        min-width: 22px;
+        height: 22px;
+        line-height: 22px;
+        font-size: 0.78rem;
+    }
 }

@@ -1,0 +1,351 @@
+@page "/license-info"
+@using Microsoft.EntityFrameworkCore
+@using POS.Client.Data
+@using POS.Client.Services
+@using POS.Shared.Helpers
+@using POS.Shared.Models
+@using POS.Shared.Services
+@inject PosSessionService Session
+@inject HttpClient Http
+@inject IPosConnectivityService ConnectivityService
+@inject IClientLicenseService LicenseService
+@inject NavigationManager Navigation
+@inject CurrieTechnologies.Razor.SweetAlert2.SweetAlertService Swal
+
+<PageTitle>Terminal License &amp; Security Status - POS</PageTitle>
+
+<div class="w-100 py-3 px-2">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <h2 class="fw-bolder mb-0 text-light" style="letter-spacing: -0.5px;">
+                    <i class="bi bi-shield-lock-fill text-info me-2"></i>Terminal License &amp; Security Status
+                </h2>
+                @if (evaluation != null)
+                {
+                    <span class="badge @GetStatusBadgeClass(evaluation.EffectiveStatus) px-3 py-2 fs-6">
+                        @evaluation.EffectiveStatus
+                    </span>
+                }
+            </div>
+            <span class="text-secondary small">
+                Cryptographically Verified Terminal License • Offline-First Validation
+            </span>
+        </div>
+
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-primary rounded-3 px-3 py-2 fw-semibold"
+                    disabled="@isBusy"
+                    @onclick="ValidateOnlineNowAsync">
+                <i class="bi bi-cloud-check-fill me-1 @(isBusy ? "spinner-border spinner-border-sm" : "")"></i>
+                @(isBusy ? "Validating..." : "Validate License Online")
+            </button>
+            <button type="button" class="btn btn-outline-info rounded-3 px-3 py-2 fw-semibold"
+                    disabled="@isBusy"
+                    @onclick="ActivateOnlineNowAsync">
+                <i class="bi bi-key-fill me-1"></i> Activate / Refresh Binding
+            </button>
+            @if (Session.IsAuthenticated)
+            {
+                <button type="button" class="btn btn-outline-light rounded-3 px-3 py-2 fw-semibold"
+                        @onclick='() => Navigation.NavigateTo("/")'>
+                    <i class="bi bi-arrow-left me-1"></i> Dashboard
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(feedbackMessage))
+    {
+        <div class="alert @(feedbackIsError ? "alert-danger" : "alert-success") rounded-3 shadow-sm mb-3">
+            <i class="bi @(feedbackIsError ? "bi-exclamation-octagon-fill" : "bi-check-circle-fill") me-2"></i>
+            @feedbackMessage
+        </div>
+    }
+
+    @if (evaluation != null && !string.IsNullOrWhiteSpace(evaluation.BlockMessage))
+    {
+        <div class="alert alert-danger rounded-4 shadow-sm p-3 mb-3 border border-danger">
+            <div class="d-flex align-items-start gap-3">
+                <i class="bi bi-shield-exclamation fs-3 text-danger"></i>
+                <div>
+                    <h5 class="fw-bold mb-1">Sales &amp; New Cashier Shifts Restricted (@evaluation.EffectiveStatus)</h5>
+                    <p class="mb-1">@evaluation.BlockMessage</p>
+                    <small class="text-light opacity-75">
+                        Historical Transaction History, Receipt Reprinting, and X/Z-Reading Inquiries remain available while restricted.
+                        To renew or replace this device binding, open <strong>POS.Web &rarr; Licensing Management</strong> as an Administrator, then click <strong>Validate License Online</strong> above.
+                    </small>
+                </div>
+            </div>
+        </div>
+    }
+    else if (evaluation != null && !string.IsNullOrWhiteSpace(evaluation.WarningMessage))
+    {
+        <div class="alert alert-warning rounded-4 shadow-sm p-3 mb-3 border border-warning">
+            <div class="d-flex align-items-start gap-3">
+                <i class="bi bi-exclamation-triangle-fill fs-3 text-warning"></i>
+                <div>
+                    <h5 class="fw-bold mb-1">License Expiration Warning (@(evaluation.WarningThresholdDays ?? 90)-Day Notice)</h5>
+                    <p class="mb-1">@evaluation.WarningMessage</p>
+                    <small>Please contact your System Administrator to renew this terminal's license in POS.Web before the expiration date.</small>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="row g-3">
+        <!-- Terminal & Hierarchy Assignment Card -->
+        <div class="col-12 col-lg-6">
+            <div class="p-4 rounded-4 h-100" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255,255,255,0.1);">
+                <h5 class="fw-bold text-info mb-3">
+                    <i class="bi bi-pc-display me-2"></i>Terminal &amp; Hierarchy Identity
+                </h5>
+                <div class="d-flex flex-column gap-2 text-light">
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Branch:</span>
+                        <span class="fw-semibold">@(terminalConfig?.BranchName ?? Session.Terminal?.BranchName ?? $"Branch #{evaluation?.BranchId ?? 0}")</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Outlet:</span>
+                        <span class="fw-semibold">@(terminalConfig?.OutletName ?? Session.Terminal?.OutletName ?? $"Outlet #{evaluation?.OutletId ?? 0}")</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Terminal Name:</span>
+                        <span class="fw-semibold">@(terminalConfig?.TerminalName ?? Session.Terminal?.TerminalName ?? "Unprovisioned") (@(terminalConfig?.TerminalCode ?? Session.Terminal?.TerminalCode ?? $"#{evaluation?.TerminalId ?? 0}"))</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Hardware Device ID:</span>
+                        <span class="font-monospace small text-info">@liveDeviceId</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">License Key:</span>
+                        <span class="font-monospace fw-bold">@(localLicense?.LicenseKey ?? evaluation?.LicenseKey ?? "NOT INSTALLED")</span>
+                    </div>
+                    <div class="d-flex justify-content-between pt-1">
+                        <span class="text-secondary">Environment &amp; Version:</span>
+                        <span>
+                            <span class="badge bg-secondary me-1">@(evaluation?.EnvironmentType ?? "Production")</span>
+                            <span class="badge bg-dark border border-secondary">v@(evaluation?.LicenseVersion ?? 0)</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- License Validity, Duration & Offline Grace Card -->
+        <div class="col-12 col-lg-6">
+            <div class="p-4 rounded-4 h-100" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255,255,255,0.1);">
+                <h5 class="fw-bold text-info mb-3">
+                    <i class="bi bi-calendar-check me-2"></i>Validity, Granted Duration &amp; Offline Grace Period
+                </h5>
+                <div class="d-flex flex-column gap-2 text-light">
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">License Status:</span>
+                        <span class="badge @GetStatusBadgeClass(evaluation?.EffectiveStatus)">@(evaluation?.EffectiveStatus ?? "UNKNOWN")</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Original Granted Duration:</span>
+                        <span class="fw-semibold">
+                            @(evaluation != null && evaluation.OriginalDurationValue > 0 ? LicenseCryptoService.FormatDurationLabel(evaluation.OriginalDurationValue, evaluation.OriginalDurationUnit) : "—")
+                            @if (evaluation != null && evaluation.RenewalCount > 0)
+                            {
+                                <span class="badge bg-info text-dark ms-1">Latest: @LicenseCryptoService.FormatDurationLabel(evaluation.DurationValue, evaluation.DurationUnit) • Renewed @evaluation.RenewalCount time(s)</span>
+                            }
+                        </span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Original Activation Date:</span>
+                        <span class="fw-semibold">@(evaluation?.ActivatedAtUtc.HasValue == true ? BusinessDayClock.FormatManila(evaluation.ActivatedAtUtc.Value, "yyyy-MM-dd hh:mm tt") : "Pending Activation")</span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Expiration Date:</span>
+                        <span class="fw-bold @(evaluation?.RemainingDays <= 30 ? "text-warning" : "text-success")">
+                            @(evaluation?.ExpiresAtUtc.HasValue == true ? BusinessDayClock.FormatManila(evaluation.ExpiresAtUtc.Value, "yyyy-MM-dd hh:mm tt") : "—")
+                        </span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Remaining License Days:</span>
+                        <span class="fw-bold fs-5 @(evaluation?.RemainingDays <= 0 ? "text-danger" : evaluation?.RemainingDays <= 90 ? "text-warning" : "text-success")">
+                            @(evaluation?.RemainingDays.HasValue == true ? $"{evaluation.RemainingDays.Value:N0} day(s)" : "0 days")
+                        </span>
+                    </div>
+                    <div class="d-flex justify-content-between border-bottom border-secondary border-opacity-25 pb-2">
+                        <span class="text-secondary">Last Successful Server Validation:</span>
+                        <span>@(evaluation?.LastValidatedAtUtc.HasValue == true ? BusinessDayClock.FormatManila(evaluation.LastValidatedAtUtc.Value, "yyyy-MM-dd hh:mm tt") : "Never")</span>
+                    </div>
+                    <div class="d-flex justify-content-between pt-1">
+                        <span class="text-secondary">Offline Grace Period Status:</span>
+                        <span>
+                            @if (evaluation?.IsOfflineGraceExpired == true)
+                            {
+                                <span class="badge bg-danger">EXPIRED (Online Revalidation Required)</span>
+                            }
+                            else if (evaluation?.RemainingOfflineGraceDays.HasValue == true)
+                            {
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                    @evaluation.RemainingOfflineGraceDays.Value / @evaluation.OfflineGracePeriodDays days remaining
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">Not Validated</span>
+                            }
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cryptographic Security Verification Summary & Renewal Instructions -->
+        <div class="col-12">
+            <div class="p-4 rounded-4" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255,255,255,0.1);">
+                <h5 class="fw-bold text-info mb-3">
+                    <i class="bi bi-shield-check me-2"></i>Security Integrity Checks &amp; Renewal Instructions
+                </h5>
+                <div class="row g-3 mb-3">
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 rounded-3 bg-dark border border-secondary border-opacity-25">
+                            <div class="small text-secondary">Digital Signature</div>
+                            <div class="fw-bold @(evaluation?.IsSignatureValid == true ? "text-success" : "text-danger")">
+                                <i class="bi @(evaluation?.IsSignatureValid == true ? "bi-patch-check-fill" : "bi-x-octagon-fill") me-1"></i>
+                                @(evaluation?.IsSignatureValid == true ? "ECDSA P-256 Verified" : "Invalid / Unverified")
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 rounded-3 bg-dark border border-secondary border-opacity-25">
+                            <div class="small text-secondary">Device Hardware Binding</div>
+                            <div class="fw-bold @(evaluation?.IsDeviceBoundValid == true ? "text-success" : "text-danger")">
+                                <i class="bi @(evaluation?.IsDeviceBoundValid == true ? "bi-hdd-network-fill" : "bi-exclamation-triangle-fill") me-1"></i>
+                                @(evaluation?.IsDeviceBoundValid == true ? "Matched to Device" : "Unbound / Mismatch")
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 rounded-3 bg-dark border border-secondary border-opacity-25">
+                            <div class="small text-secondary">Clock Tamper Protection</div>
+                            <div class="fw-bold @(evaluation?.IsClockRollbackDetected == false ? "text-success" : "text-danger")">
+                                <i class="bi @(evaluation?.IsClockRollbackDetected == false ? "bi-clock-history" : "bi-alarm-fill") me-1"></i>
+                                @(evaluation?.IsClockRollbackDetected == false ? "Monotonic Clock OK" : "Rollback Detected")
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="p-3 rounded-3 bg-dark border border-secondary border-opacity-25">
+                            <div class="small text-secondary">New Sales Eligibility</div>
+                            <div class="fw-bold @(evaluation?.IsValidForNewSales == true ? "text-success" : "text-danger")">
+                                <i class="bi @(evaluation?.IsValidForNewSales == true ? "bi-cart-check-fill" : "bi-cart-x-fill") me-1"></i>
+                                @(evaluation?.IsValidForNewSales == true ? "Authorized" : "Restricted")
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="small text-secondary">
+                    <strong>Renewal &amp; Device Replacement Instructions:</strong>
+                    To issue or renew an expiring or expired terminal license with a configured duration, or to authorize hardware replacement for this terminal, an Administrator must sign in to <strong>POS.Web &rarr; Licensing Management (`/licensing`)</strong>, select Terminal <strong>@(terminalConfig?.TerminalCode ?? Session.Terminal?.TerminalCode ?? $"#{evaluation?.TerminalId ?? 0}")</strong>, and execute <strong>Issue License</strong>, <strong>Renew License</strong>, or <strong>Replace Device</strong>. Once updated, reconnect to sync automatically or click <strong>Validate License Online</strong> on this screen.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private LocalTerminalConfig? terminalConfig;
+    private LocalTerminalLicense? localLicense;
+    private LicenseEvaluationResultDto? evaluation;
+    private string liveDeviceId = string.Empty;
+    private bool isBusy;
+    private string? feedbackMessage;
+    private bool feedbackIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadLocalStateAsync();
+    }
+
+    private async Task ReloadLocalStateAsync()
+    {
+        int termId = Session.Terminal?.TerminalId ?? 0;
+        using (var db = new LocalPosDbContext())
+        {
+            db.InitializeDatabase();
+            terminalConfig = termId > 0
+                ? await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == termId)
+                : await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
+
+            int resolvedId = terminalConfig?.TerminalId ?? termId;
+            localLicense = resolvedId > 0
+                ? await db.TerminalLicenses.AsNoTracking().FirstOrDefaultAsync(l => l.TerminalId == resolvedId)
+                : await db.TerminalLicenses.AsNoTracking().FirstOrDefaultAsync();
+        }
+
+        string? uuid = terminalConfig?.DeviceUuid ?? terminalConfig?.TerminalIdentifier;
+        liveDeviceId = DeviceBindingHelper.ComputeDeviceId(uuid);
+        evaluation = await LicenseService.EvaluateLocalLicenseAsync(terminalConfig?.TerminalId ?? termId);
+    }
+
+    private async Task ValidateOnlineNowAsync()
+    {
+        if (isBusy) return;
+        isBusy = true;
+        feedbackMessage = null;
+        StateHasChanged();
+        try
+        {
+            int termId = terminalConfig?.TerminalId ?? Session.Terminal?.TerminalId ?? 0;
+            var res = await LicenseService.ValidateOnlineAsync(Http, termId, force: true);
+            await ReloadLocalStateAsync();
+            feedbackIsError = !res.Success;
+            feedbackMessage = res.Message;
+        }
+        catch (Exception ex)
+        {
+            feedbackIsError = true;
+            feedbackMessage = $"Validation failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ActivateOnlineNowAsync()
+    {
+        if (isBusy) return;
+        isBusy = true;
+        feedbackMessage = null;
+        StateHasChanged();
+        try
+        {
+            int termId = terminalConfig?.TerminalId ?? Session.Terminal?.TerminalId ?? 0;
+            var res = await LicenseService.ActivateOnlineAsync(Http, termId, localLicense?.LicenseKey);
+            await ReloadLocalStateAsync();
+            feedbackIsError = !res.Success;
+            feedbackMessage = res.Message;
+        }
+        catch (Exception ex)
+        {
+            feedbackIsError = true;
+            feedbackMessage = $"Activation failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string GetStatusBadgeClass(string? status) =>
+        (status ?? string.Empty).ToUpperInvariant() switch
+        {
+            LicenseStatusConstants.Active => "bg-success text-white",
+            LicenseStatusConstants.ExpiringSoon => "bg-warning text-dark",
+            LicenseStatusConstants.Expired => "bg-danger text-white",
+            LicenseStatusConstants.Revoked => "bg-danger text-white",
+            LicenseStatusConstants.Suspended => "bg-warning text-dark",
+            LicenseStatusConstants.PendingActivation => "bg-info text-dark",
+            _ => "bg-danger text-white"
+        };
+}

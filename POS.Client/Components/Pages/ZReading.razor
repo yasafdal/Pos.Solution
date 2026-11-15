@@ -6,12 +6,41 @@
 @inject HttpClient Http
 @inject IPosConnectivityService Connectivity
 @inject IReceiptPrinter Printer
+@inject NavigationManager Navigation
 
-<PageTitle>Z-Reading — End of Day</PageTitle>
+<PageTitle>POS Readings — X-Reading &amp; Z-Reading</PageTitle>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 px-4 pt-3 pb-2 border-bottom" style="border-color: rgba(255,255,255,0.1) !important;">
+    <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-file-earmark-bar-graph-fill text-info fs-4"></i>
+        <div>
+            <h5 class="fw-bold text-light mb-0">POS Readings &amp; Fiscal Reports</h5>
+            <small class="text-secondary">Shift Declaration, Supervisor X-Reading, and End-of-Day Z-Reading</small>
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-info rounded-3 px-3 fw-semibold" @onclick='() => Navigation.NavigateTo("/cash-drawer")'>
+            <i class="bi bi-cash-stack me-1"></i> X-Reading &amp; Shift Closing
+        </button>
+        <button type="button" class="btn btn-sm btn-primary rounded-3 px-3 fw-bold">
+            <i class="bi bi-file-earmark-lock me-1"></i> Z-Reading (End of Day)
+        </button>
+    </div>
+</div>
 
 @if (!Session.IsAuthenticated || !ShiftSession.IsSupervisorRole(Session.Role))
 {
-    <div class="alert alert-warning" role="alert">Supervisor authorization is required. No Z-Reading totals are available to a cashier session.</div>
+    <div class="p-4">
+        <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 rounded-4 p-4" role="alert">
+            <div>
+                <h6 class="fw-bold mb-1"><i class="bi bi-shield-lock-fill me-2"></i>Supervisor Authorization Required for Z-Reading</h6>
+                <div class="small">End-of-Day Z-Reading totals and report generation require a Supervisor, Manager, or Admin session. For Cashier Blind Closing Declaration and Supervisor X-Reading, open the Cash Drawer &amp; Shift module.</div>
+            </div>
+            <button type="button" class="btn btn-dark fw-bold rounded-3 px-4 py-2" @onclick='() => Navigation.NavigateTo("/cash-drawer")'>
+                <i class="bi bi-cash-stack me-1"></i> Go to Shift &amp; X-Reading
+            </button>
+        </div>
+    </div>
 }
 else
 {
@@ -79,7 +108,7 @@ else
                 <button type="button" class="btn btn-primary" disabled="@(busy || string.IsNullOrWhiteSpace(printReason) || (unknownPrint && !pendingPrintAcknowledged))" @onclick="PrintAsync">@(busy ? "Working..." : "Print saved report / Reprint")</button>
             </div>
             <details class="z-reading-audit"><summary>Print audit (@printAudit.Count attempts)</summary>
-                <ul>@foreach (var a in printAudit) { <li>@a.StartedAt.ToString("u") — @a.RequestedBy — @a.Status — @(a.IsReprint ? "REPRINT" : "Original attempt") — @a.Reason @a.ErrorMessage</li> }</ul>
+                <ul>@foreach (var a in printAudit) { <li>@POS.Shared.Services.BusinessDayClock.FormatManila(a.StartedAt, "yyyy-MM-dd HH:mm:ss") PHT — @a.RequestedBy — @a.Status — @(a.IsReprint ? "REPRINT" : "Original attempt") — @a.Reason @a.ErrorMessage</li> }</ul>
             </details>
             <iframe class="z-reading-preview" title="Saved Z-Reading report preview" sandbox="" srcdoc="@ZReadingHtmlFormatter.Format(report)"></iframe>
         }
@@ -87,7 +116,7 @@ else
 }
 
 @code {
-    private DateOnly businessDate = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8).AddHours(-4)).AddDays(-1);
+    private DateOnly businessDate = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDate().AddDays(-1);
     private ZReadingReadinessDto? readiness;
     private ZReadingReportDto? report;
     private List<string> blockers = new();

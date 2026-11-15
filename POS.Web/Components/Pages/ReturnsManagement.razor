@@ -152,7 +152,7 @@
                                     <div>Req: <strong>@r.RequestedBy</strong></div>
                                     <div class="text-success">Appr: @r.ApprovedBy</div>
                                 </td>
-                                <td class="text-secondary small">@r.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="text-secondary small">@POS.Shared.Services.BusinessDayClock.FormatManila(r.CreatedAt, "yyyy-MM-dd HH:mm")</td>
                                 <td class="text-end px-4 fw-bold text-danger">-₱@r.TotalRefundAmount.ToString("N2")</td>
                             </tr>
                         }
@@ -214,7 +214,7 @@
                                     <div>Req: <strong>@v.RequestedBy</strong></div>
                                     <div class="text-success">Appr: @v.ApprovedBy</div>
                                 </td>
-                                <td class="text-secondary small">@v.VoidedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="text-secondary small">@POS.Shared.Services.BusinessDayClock.FormatManila(v.VoidedAt, "yyyy-MM-dd HH:mm")</td>
                                 <td class="text-end px-4 fw-bold text-danger">₱@v.VoidedAmount.ToString("N2")</td>
                             </tr>
                         }
@@ -380,11 +380,11 @@
         sb.AppendLine("\"Type\",\"Ref #\",\"Order ID\",\"Invoice #\",\"Branch\",\"Outlet\",\"Terminal Name\",\"Terminal Code\",\"Method\",\"Reason\",\"Requested By\",\"Approved By\",\"Date\",\"Amount\"");
         foreach (var r in FilteredReturns)
         {
-            sb.AppendLine($"\"RETURN\",\"{r.ReturnReference}\",{r.OriginalOrderId},\"{r.OriginalInvoiceNumber ?? ""}\",\"{r.BranchName.Replace("\"", "\"\"")}\",\"{r.OutletName.Replace("\"", "\"\"")}\",\"{r.TerminalName.Replace("\"", "\"\"")}\",\"{r.TerminalCode.Replace("\"", "\"\"")}\",\"{r.RefundMethod}\",\"{r.ReturnReason.Replace("\"", "\"\"")}\",\"{r.RequestedBy}\",\"{r.ApprovedBy}\",\"{r.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\",{r.TotalRefundAmount:0.00}");
+            sb.AppendLine($"\"RETURN\",\"{r.ReturnReference}\",{r.OriginalOrderId},\"{r.OriginalInvoiceNumber ?? ""}\",\"{r.BranchName.Replace("\"", "\"\"")}\",\"{r.OutletName.Replace("\"", "\"\"")}\",\"{r.TerminalName.Replace("\"", "\"\"")}\",\"{r.TerminalCode.Replace("\"", "\"\"")}\",\"{r.RefundMethod}\",\"{r.ReturnReason.Replace("\"", "\"\"")}\",\"{r.RequestedBy}\",\"{r.ApprovedBy}\",\"{POS.Shared.Services.BusinessDayClock.FormatManila(r.CreatedAt, "yyyy-MM-dd HH:mm:ss")}\",{r.TotalRefundAmount:0.00}");
         }
         foreach (var v in FilteredVoids)
         {
-            sb.AppendLine($"\"VOID\",\"{v.ReversalReference}\",{v.OriginalOrderId},\"{v.OriginalInvoiceNumber ?? ""}\",\"{v.BranchName.Replace("\"", "\"\"")}\",\"{v.OutletName.Replace("\"", "\"\"")}\",\"{v.TerminalName.Replace("\"", "\"\"")}\",\"{v.TerminalCode.Replace("\"", "\"\"")}\",\"VOID\",\"{v.VoidReason.Replace("\"", "\"\"")}\",\"{v.RequestedBy}\",\"{v.ApprovedBy}\",\"{v.VoidedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\",{v.VoidedAmount:0.00}");
+            sb.AppendLine($"\"VOID\",\"{v.ReversalReference}\",{v.OriginalOrderId},\"{v.OriginalInvoiceNumber ?? ""}\",\"{v.BranchName.Replace("\"", "\"\"")}\",\"{v.OutletName.Replace("\"", "\"\"")}\",\"{v.TerminalName.Replace("\"", "\"\"")}\",\"{v.TerminalCode.Replace("\"", "\"\"")}\",\"VOID\",\"{v.VoidReason.Replace("\"", "\"\"")}\",\"{v.RequestedBy}\",\"{v.ApprovedBy}\",\"{POS.Shared.Services.BusinessDayClock.FormatManila(v.VoidedAt, "yyyy-MM-dd HH:mm:ss")}\",{v.VoidedAmount:0.00}");
         }
         var bytes = Encoding.UTF8.GetBytes(sb.ToString());
         var b64 = Convert.ToBase64String(bytes);

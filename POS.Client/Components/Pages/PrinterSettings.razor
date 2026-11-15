@@ -1,0 +1,554 @@
+@page "/printer-settings"
+@using POS.Client.Data
+@using POS.Client.Services
+@inject PosSessionService Session
+@inject IPrinterService PrinterService
+@inject NavigationManager Navigation
+
+<PageTitle>Printer &amp; Cash Drawer Setup - POS</PageTitle>
+
+<div class="w-100 py-1 px-1 pos-hw-page">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-0 text-light" style="letter-spacing: -0.5px;">
+                <i class="bi bi-printer me-2 text-info"></i>Unified ESC/POS Printer &amp; Cash Drawer Setup
+            </h2>
+            <span class="text-secondary small">
+                Terminal #@(Session.Terminal?.TerminalId ?? 1) (@(Session.Terminal?.TerminalName ?? "Terminal")) •
+                USB &amp; Ethernet ESC/POS + RJ11/RJ12 DK Port
+            </span>
+        </div>
+        <button type="button" class="btn btn-outline-light rounded-3 px-3 py-2 fw-semibold" @onclick='() => Navigation.NavigateTo("/cash-drawer")'>
+            <i class="bi bi-arrow-left me-1"></i> Back to Cash Drawer
+        </button>
+    </div>
+
+    @if (!Session.IsAuthenticated || Session.Terminal == null)
+    {
+        <div class="alert alert-warning rounded-3">Please sign in to an active terminal to configure printer and cash drawer hardware.</div>
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(statusMessage))
+        {
+            <div class="alert @(statusIsError ? "alert-danger" : "alert-success") alert-dismissible fade show rounded-3 mb-3" role="alert">
+                <i class="bi @(statusIsError ? "bi-exclamation-octagon-fill" : "bi-check-circle-fill") me-2"></i>
+                @statusMessage
+                <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+            </div>
+        }
+
+        <div class="row g-3">
+            <div class="col-12 col-lg-7">
+                <div class="hw-card rounded-4 p-4 h-100">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <h5 class="fw-bold text-light mb-0"><i class="bi bi-sliders me-2 text-warning"></i>Connection, Receipt &amp; Drawer Settings</h5>
+                        @if (connectionStatus != null)
+                        {
+                            <span class="badge @(connectionStatus.IsConnected ? "bg-success" : "bg-secondary") px-2 py-1">
+                                <i class="bi @(connectionStatus.IsConnected ? "bi-plug-fill" : "bi-exclamation-circle") me-1"></i>
+                                @connectionStatus.StatusMessage
+                            </span>
+                        }
+                    </div>
+
+                    <!-- Connection Type Selector -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small text-secondary d-block">Connection Type</label>
+                        <div class="btn-group w-100" role="group" aria-label="Printer Connection Type">
+                            <button type="button"
+                                    class="btn @(IsUsbMode ? "btn-outline-secondary text-light" : "btn-info fw-bold")"
+                                    @onclick='() => SelectConnectionModeAsync(PrinterConnectionModes.Ethernet)'>
+                                <i class="bi bi-hdd-network me-1"></i> Ethernet / LAN (TCP/IP)
+                            </button>
+                            <button type="button"
+                                    class="btn @(IsUsbMode ? "btn-info fw-bold" : "btn-outline-secondary text-light")"
+                                    @onclick='() => SelectConnectionModeAsync(PrinterConnectionModes.Usb)'>
+                                <i class="bi bi-usb-plug me-1"></i> USB / OTG Printer
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (!IsUsbMode)
+                    {
+                        <div class="row g-3 mb-3">
+                            <div class="col-12 col-sm-8">
+                                <label class="form-label fw-semibold small text-secondary" for="printerIp">Ethernet Printer IP / Hostname</label>
+                                <input id="printerIp" type="text" maxlength="64" class="form-control font-monospace"
+                                       @bind="printerIpAddress" placeholder="e.g. 192.168.1.100" />
+                                <small class="text-muted">Static LAN IP of the Xprinter/ESC-POS thermal printer connected on Wi-Fi/Router.</small>
+                            </div>
+                            <div class="col-12 col-sm-4">
+                                <label class="form-label fw-semibold small text-secondary" for="printerPort">TCP Port</label>
+                                <input id="printerPort" type="number" min="1" max="65535" class="form-control font-monospace"
+                                       @bind="printerPort" />
+                                <small class="text-muted">Default: 9100</small>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="mb-3 p-3 rounded-3 bg-dark border border-secondary border-opacity-50">
+                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                <label class="form-label fw-semibold small text-secondary mb-0" for="usbSelect">USB Printer Device</label>
+                                <div class="d-flex gap-2">
+                                    <button type="button" class="btn btn-sm btn-outline-info" @onclick="DiscoverUsbAsync" disabled="@isBusy">
+                                        <i class="bi bi-search me-1"></i> Discover USB Printers
+                                    </button>
+                                    @if (SelectedUsbNeedsPermission)
+                                    {
+                                        <button type="button" class="btn btn-sm btn-warning text-dark fw-semibold" @onclick="GrantUsbPermissionAsync" disabled="@isBusy">
+                                            <i class="bi bi-shield-check me-1"></i> Grant USB Permission
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+
+                            <select id="usbSelect" class="form-select font-monospace" value="@usbDeviceId" @onchange="OnUsbSelectionChanged">
+                                <option value="">-- Select Connected USB Thermal Printer --</option>
+                                @foreach (var dev in discoveredUsbPrinters)
+                                {
+                                    <option value="@dev.DeviceId">
+                                        @dev.DisplayName (@dev.TransportKind@(dev.RequiresPermission && !dev.HasPermission ? " - Permission Needed" : ""))
+                                    </option>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(usbDeviceId) &&
+                                     !discoveredUsbPrinters.Any(d => string.Equals(d.DeviceId, usbDeviceId, StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    <option value="@usbDeviceId">
+                                        @(string.IsNullOrWhiteSpace(usbDeviceName) ? usbDeviceId : usbDeviceName) (Saved - Currently Disconnected)
+                                    </option>
+                                }
+                            </select>
+                            <small class="text-muted d-block mt-1">
+                                Uses direct platform raw USB (Windows <code>usbprint.sys</code> / Android USB Host). Avoids non-RAW print drivers.
+                            </small>
+                        </div>
+                    }
+
+                    <!-- Receipt & ESC/POS Capability Settings -->
+                    <hr class="border-secondary border-opacity-25 my-3" />
+                    <div class="form-check form-switch mb-3">
+                        <input id="chkEnablePrinter" class="form-check-input" type="checkbox" @bind="printerEnabled" />
+                        <label class="form-check-label fw-semibold text-light" for="chkEnablePrinter">
+                            Enable Direct ESC/POS Receipt Printing (Off = OS WebView2 / PrintManager Fallback)
+                        </label>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-6 col-sm-3">
+                            <label class="form-label fw-semibold small text-secondary" for="paperWidth">Paper Width</label>
+                            <select id="paperWidth" class="form-select" @bind="paperWidthMm">
+                                <option value="80">80mm (48 cols)</option>
+                                <option value="58">58mm (32 cols)</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <label class="form-label fw-semibold small text-secondary" for="printDensity">Print Density</label>
+                            <select id="printDensity" class="form-select" @bind="printDensity">
+                                <option value="Normal">Normal (Default)</option>
+                                <option value="Light">Light</option>
+                                <option value="Dark">Dark</option>
+                            </select>
+                            <small class="text-muted" style="font-size:0.7rem;">Firmware GS ( K</small>
+                        </div>
+                        <div class="col-12 col-sm-4">
+                            <label class="form-label fw-semibold small text-secondary" for="charEncoding">Character Encoding</label>
+                            <select id="charEncoding" class="form-select" @bind="characterEncoding">
+                                <option value="PC437">PC437 (USA Standard)</option>
+                                <option value="PC850">PC850 (Multilingual)</option>
+                                <option value="WPC1252">WPC1252 (Latin 1)</option>
+                                <option value="UTF-8">UTF-8 (Unicode FW)</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-2 d-flex align-items-center pt-sm-4">
+                            <div class="form-check form-switch">
+                                <input id="chkAutoCut" class="form-check-input" type="checkbox" @bind="autoCutEnabled" />
+                                <label class="form-check-label small fw-semibold text-light" for="chkAutoCut">Auto Cut</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cash Drawer RJ11/RJ12 DK Port Settings -->
+                    <hr class="border-secondary border-opacity-25 my-3" />
+                    <div class="form-check form-switch mb-3">
+                        <input id="chkEnableDrawer" class="form-check-input" type="checkbox" @bind="cashDrawerEnabled" />
+                        <label class="form-check-label fw-semibold text-light" for="chkEnableDrawer">
+                            Enable Automatic Cash Drawer Opening (Finalized Cash &amp; Cash-Split Sales)
+                        </label>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-sm-4">
+                            <label class="form-label fw-semibold small text-secondary" for="kickPin">Drawer Kick Pin</label>
+                            <select id="kickPin" class="form-select" @bind="kickPin">
+                                <option value="0">Pin 2 (0x00 - Default)</option>
+                                <option value="1">Pin 5 (0x01)</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-sm-4">
+                            <label class="form-label fw-semibold small text-secondary" for="pulseOn">Pulse ON (t1 × 2ms)</label>
+                            <input id="pulseOn" type="number" min="1" max="255" class="form-control font-monospace" @bind="pulseOnUnits" />
+                            <small class="text-muted">Default: 25 (50ms)</small>
+                        </div>
+                        <div class="col-6 col-sm-4">
+                            <label class="form-label fw-semibold small text-secondary" for="pulseOff">Pulse OFF (t2 × 2ms)</label>
+                            <input id="pulseOff" type="number" min="1" max="255" class="form-control font-monospace" @bind="pulseOffUnits" />
+                            <small class="text-muted">Default: 250 (500ms)</small>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-sm-5">
+                            <label class="form-label fw-semibold small text-secondary" for="timeoutMs">I/O Timeout (ms)</label>
+                            <input id="timeoutMs" type="number" min="500" max="10000" step="100" class="form-control font-monospace" @bind="connectTimeoutMs" />
+                        </div>
+                        <div class="col-12 col-sm-7 d-flex flex-column justify-content-end">
+                            <div class="p-2 rounded-3 bg-dark border border-secondary border-opacity-50 small">
+                                <span class="text-secondary">Drawer Command:</span>
+                                <code class="text-info ms-1 fw-bold">@PreviewCommandHex</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    @if (!ShiftSession.IsSupervisorRole(Session.Role))
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold small text-warning" for="hwSupervisorPin">
+                                Supervisor / Manager PIN (Required to Save or Test Cash Drawer) *
+                            </label>
+                            <input id="hwSupervisorPin" type="password" maxlength="20" class="form-control"
+                                   @bind="supervisorPin" placeholder="Enter Admin / Manager / Senior Cashier PIN" />
+                        </div>
+                    }
+
+                    <div class="d-flex flex-wrap gap-2 pt-2">
+                        <button type="button" class="btn btn-primary fw-bold px-3 rounded-3" @onclick="SaveSettingsAsync" disabled="@isBusy">
+                            <i class="bi bi-save me-1"></i> Save Settings
+                        </button>
+                        <button type="button" class="btn btn-outline-light fw-semibold px-3 rounded-3" @onclick="TestConnectionAsync" disabled="@isBusy">
+                            <i class="bi bi-activity me-1"></i> Test Connection
+                        </button>
+                        <button type="button" class="btn btn-outline-info fw-semibold px-3 rounded-3" @onclick="TestPrinterAsync" disabled="@isBusy">
+                            <i class="bi bi-receipt me-1"></i> Print Test Receipt
+                        </button>
+                        <button type="button" class="btn btn-outline-warning fw-semibold px-3 rounded-3" @onclick="TestCashDrawerAsync" disabled="@isBusy">
+                            <i class="bi bi-safe2 me-1"></i> Test Cash Drawer
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 col-lg-5">
+                <div class="hw-card rounded-4 p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-light mb-0"><i class="bi bi-journal-check me-2 text-info"></i>Terminal Hardware Audit Log</h5>
+                        <button type="button" class="btn btn-sm btn-outline-secondary rounded-3" @onclick="LoadDataAsync" disabled="@isBusy">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+
+                    @if (recentEvents.Count == 0)
+                    {
+                        <p class="text-secondary small mb-0">No printer or cash drawer hardware events recorded on this terminal yet.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive" style="max-height: 460px;">
+                            <table class="table table-sm table-dark align-middle mb-0" style="font-size: 0.78rem;">
+                                <thead>
+                                    <tr>
+                                        <th>Time (PHT)</th>
+                                        <th>Action</th>
+                                        <th>By</th>
+                                        <th>Status</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var ev in recentEvents)
+                                    {
+                                        <tr>
+                                            <td class="text-nowrap font-monospace">@POS.Shared.Services.BusinessDayClock.FormatManila(ev.CreatedAtUtc, "MM-dd HH:mm:ss")</td>
+                                            <td class="fw-semibold">@ev.ActionType</td>
+                                            <td>@(ev.AuthorizedBy ?? ev.RequestedBy)</td>
+                                            <td>
+                                                <span class="badge @(ev.Status == "OPENED" ? "bg-success" : ev.Status == "UNAUTHORIZED" ? "bg-warning text-dark" : "bg-danger")">
+                                                    @ev.Status
+                                                </span>
+                                            </td>
+                                            <td class="text-break">
+                                                @(ev.Reason ?? "-")
+                                                @if (!string.IsNullOrWhiteSpace(ev.TargetEndpoint))
+                                                {
+                                                    <div class="text-secondary" style="font-size:0.7rem;">@ev.TargetEndpoint</div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(ev.ErrorMessage))
+                                                {
+                                                    <div class="text-warning">@ev.ErrorMessage</div>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .pos-hw-page {
+        color: var(--pos-text-primary, #f8fafc);
+    }
+    .hw-card {
+        background-color: var(--pos-bg-card, #1e293b);
+        border: 1px solid var(--pos-border-color, #334155);
+        box-shadow: var(--pos-shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.25));
+    }
+</style>
+
+@code {
+    private bool printerEnabled;
+    private string connectionType = PrinterConnectionModes.Ethernet;
+    private bool cashDrawerEnabled;
+    private string? printerIpAddress;
+    private int printerPort = EscPosCommands.DefaultPort;
+    private string? usbDeviceId;
+    private string? usbDeviceName;
+    private int paperWidthMm = EscPosCommands.PaperWidth80Mm;
+    private string printDensity = "Normal";
+    private string characterEncoding = "PC437";
+    private bool autoCutEnabled = true;
+    private int connectTimeoutMs = EscPosCommands.DefaultTimeoutMs;
+    private int kickPin = EscPosCommands.DefaultKickPin;
+    private int pulseOnUnits = EscPosCommands.DefaultPulseOnUnits;
+    private int pulseOffUnits = EscPosCommands.DefaultPulseOffUnits;
+    private string supervisorPin = string.Empty;
+
+    private bool isBusy;
+    private string? statusMessage;
+    private bool statusIsError;
+    private PrinterConnectionStatus? connectionStatus;
+    private List<DiscoveredUsbPrinter> discoveredUsbPrinters = new();
+    private List<LocalCashDrawerHardwareEvent> recentEvents = new();
+
+    private bool IsUsbMode => PrinterConnectionModes.Parse(connectionType) == PrinterConnectionMode.Usb;
+
+    private bool SelectedUsbNeedsPermission =>
+        !string.IsNullOrWhiteSpace(usbDeviceId) &&
+        discoveredUsbPrinters.Any(d => string.Equals(d.DeviceId, usbDeviceId, StringComparison.OrdinalIgnoreCase) && d.RequiresPermission && !d.HasPermission);
+
+    private string PreviewCommandHex
+    {
+        get
+        {
+            try
+            {
+                return EscPosCommands.FormatHex(EscPosCommands.BuildCashDrawerKick(kickPin, pulseOnUnits, pulseOffUnits));
+            }
+            catch
+            {
+                return "Invalid kick parameters";
+            }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Session.IsAuthenticated || Session.Terminal == null) return;
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        if (Session.Terminal == null) return;
+        var cfg = await PrinterService.GetConfigAsync(Session.Terminal.TerminalId);
+        printerEnabled = cfg.PrinterEnabled;
+        connectionType = PrinterConnectionModes.Normalize(cfg.ConnectionType);
+        cashDrawerEnabled = cfg.CashDrawerEnabled;
+        printerIpAddress = cfg.PrinterIpAddress;
+        printerPort = cfg.PrinterPort;
+        usbDeviceId = cfg.UsbDeviceId;
+        usbDeviceName = cfg.UsbDeviceName;
+        paperWidthMm = EscPosCommands.NormalizePaperWidthMm(cfg.PaperWidthMm);
+        printDensity = EscPosCommands.NormalizeDensity(cfg.PrintDensity);
+        characterEncoding = EscPosCommands.NormalizeEncoding(cfg.CharacterEncoding);
+        autoCutEnabled = cfg.AutoCutEnabled;
+        connectTimeoutMs = cfg.ConnectTimeoutMs;
+        kickPin = cfg.KickPin;
+        pulseOnUnits = cfg.PulseOnUnits;
+        pulseOffUnits = cfg.PulseOffUnits;
+
+        if (IsUsbMode)
+        {
+            discoveredUsbPrinters = (await PrinterService.DiscoverUsbPrintersAsync()).ToList();
+        }
+        connectionStatus = await PrinterService.GetConnectionStatusAsync(cfg);
+        recentEvents = await PrinterService.GetRecentEventsAsync(Session.Terminal.TerminalId);
+    }
+
+    private async Task SelectConnectionModeAsync(string mode)
+    {
+        connectionType = PrinterConnectionModes.Normalize(mode);
+        if (IsUsbMode && discoveredUsbPrinters.Count == 0)
+        {
+            discoveredUsbPrinters = (await PrinterService.DiscoverUsbPrintersAsync()).ToList();
+        }
+        connectionStatus = await PrinterService.GetConnectionStatusAsync(BuildConfigModel());
+    }
+
+    private async Task DiscoverUsbAsync()
+    {
+        if (isBusy) return;
+        isBusy = true;
+        try
+        {
+            discoveredUsbPrinters = (await PrinterService.DiscoverUsbPrintersAsync()).ToList();
+            if (discoveredUsbPrinters.Count == 0)
+            {
+                SetStatus("No USB printers detected. Check USB/OTG cable and printer power.", isError: true);
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(usbDeviceId))
+                {
+                    usbDeviceId = discoveredUsbPrinters[0].DeviceId;
+                    usbDeviceName = discoveredUsbPrinters[0].DisplayName;
+                }
+                SetStatus($"Detected {discoveredUsbPrinters.Count} USB printer(s).", isError: false);
+            }
+            connectionStatus = await PrinterService.GetConnectionStatusAsync(BuildConfigModel());
+        }
+        finally { isBusy = false; }
+    }
+
+    private async Task GrantUsbPermissionAsync()
+    {
+        if (isBusy || string.IsNullOrWhiteSpace(usbDeviceId)) return;
+        isBusy = true;
+        try
+        {
+            var res = await PrinterService.RequestUsbPermissionAsync(usbDeviceId);
+            SetStatus(res.Message, isError: !res.Success);
+            discoveredUsbPrinters = (await PrinterService.DiscoverUsbPrintersAsync()).ToList();
+            connectionStatus = await PrinterService.GetConnectionStatusAsync(BuildConfigModel());
+        }
+        finally { isBusy = false; }
+    }
+
+    private void OnUsbSelectionChanged(ChangeEventArgs e)
+    {
+        usbDeviceId = e.Value?.ToString();
+        var match = discoveredUsbPrinters.FirstOrDefault(d => string.Equals(d.DeviceId, usbDeviceId, StringComparison.OrdinalIgnoreCase));
+        usbDeviceName = match?.DisplayName ?? usbDeviceName;
+    }
+
+    private async Task<bool> SaveConfigCoreAsync()
+    {
+        var cfg = BuildConfigModel();
+        var res = await PrinterService.SaveConfigAsync(cfg, supervisorPin);
+        if (!res.Success)
+        {
+            SetStatus(res.Message, isError: true);
+            return false;
+        }
+        return true;
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        if (isBusy || Session.Terminal == null) return;
+        isBusy = true;
+        try
+        {
+            var res = await PrinterService.SaveConfigAsync(BuildConfigModel(), supervisorPin);
+            SetStatus(res.Message, isError: !res.Success);
+            if (res.Success)
+            {
+                supervisorPin = string.Empty;
+                await LoadDataAsync();
+            }
+        }
+        finally { isBusy = false; }
+    }
+
+    private async Task TestConnectionAsync()
+    {
+        if (isBusy || Session.Terminal == null) return;
+        isBusy = true;
+        try
+        {
+            if (ShiftSession.IsSupervisorRole(Session.Role) || !string.IsNullOrWhiteSpace(supervisorPin))
+            {
+                if (!await SaveConfigCoreAsync()) return;
+            }
+            var res = await PrinterService.TestConnectionAsync();
+            SetStatus(res.Message, isError: !res.Success);
+            connectionStatus = await PrinterService.GetConnectionStatusAsync();
+            await LoadDataAsync();
+        }
+        finally { isBusy = false; }
+    }
+
+    private async Task TestPrinterAsync()
+    {
+        if (isBusy || Session.Terminal == null) return;
+        isBusy = true;
+        try
+        {
+            if (ShiftSession.IsSupervisorRole(Session.Role) || !string.IsNullOrWhiteSpace(supervisorPin))
+            {
+                if (!await SaveConfigCoreAsync()) return;
+            }
+            var res = await PrinterService.PrintTestReceiptAsync();
+            SetStatus(res.Message, isError: !res.Success);
+            await LoadDataAsync();
+        }
+        finally { isBusy = false; }
+    }
+
+    private async Task TestCashDrawerAsync()
+    {
+        if (isBusy || Session.Terminal == null) return;
+        isBusy = true;
+        try
+        {
+            if (!await SaveConfigCoreAsync()) return;
+            var res = await PrinterService.TestCashDrawerAsync(supervisorPin);
+            SetStatus(res.Message, isError: !res.Success);
+            if (res.Success) supervisorPin = string.Empty;
+            await LoadDataAsync();
+        }
+        finally { isBusy = false; }
+    }
+
+    private LocalPrinterHardwareConfig BuildConfigModel() => new()
+    {
+        TerminalId = Session.Terminal?.TerminalId ?? 1,
+        PrinterEnabled = printerEnabled,
+        ConnectionType = PrinterConnectionModes.Normalize(connectionType),
+        CashDrawerEnabled = cashDrawerEnabled,
+        PrinterIpAddress = printerIpAddress,
+        PrinterPort = printerPort,
+        UsbDeviceId = usbDeviceId,
+        UsbDeviceName = usbDeviceName,
+        PaperWidthMm = paperWidthMm,
+        PrintDensity = printDensity,
+        CharacterEncoding = characterEncoding,
+        AutoCutEnabled = autoCutEnabled,
+        ConnectTimeoutMs = connectTimeoutMs,
+        KickPin = kickPin,
+        PulseOnUnits = pulseOnUnits,
+        PulseOffUnits = pulseOffUnits
+    };
+
+    private void SetStatus(string message, bool isError)
+    {
+        statusMessage = message;
+        statusIsError = isError;
+    }
+}

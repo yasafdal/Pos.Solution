@@ -9,6 +9,7 @@
 @inject POS.Client.Services.IPosConnectivityService ConnectivityService
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
+@using POS.Shared.Services
 @using POS.Client.Data
 @using Microsoft.EntityFrameworkCore
 
@@ -19,9 +20,22 @@
 else
 {
     <div class="transaction-page p-4">
-        <div class="d-flex justify-content-between align-items-center mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
             <div>
-                <h3 class="fw-bold text-dark mb-1">Transaction History</h3>
+                <h3 class="fw-bold text-dark mb-1">
+                    @if (activeMode == "reprint")
+                    {
+                        <i class="bi bi-printer-fill text-primary me-2"></i><span>Reprint Receipt</span>
+                    }
+                    else if (activeMode == "void")
+                    {
+                        <i class="bi bi-x-circle-fill text-danger me-2"></i><span>Void Transaction</span>
+                    }
+                    else
+                    {
+                        <i class="bi bi-receipt text-info me-2"></i><span>Transaction History</span>
+                    }
+                </h3>
                 <p class="text-secondary small mb-0">
                     Sales since @currentBusinessDayStartLocal.ToString("MMM dd, yyyy 04:00 tt") for Terminal #@(Session.Terminal?.TerminalId.ToString() ?? "—") (@(Session.Terminal?.TerminalName ?? "Terminal"))
                     @if (isOfflineMode)
@@ -34,12 +48,36 @@ else
                     <div class="alert alert-warning py-2 px-3 mt-2 mb-0 small" role="alert">@loadError</div>
                 }
             </div>
-            <div class="d-flex gap-2">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <div class="btn-group" role="group" aria-label="Transaction Workspace Mode">
+                    <button type="button" class="btn btn-sm @(activeMode == "all" ? "btn-primary fw-bold" : "btn-outline-secondary text-light") px-3" @onclick='() => SetWorkspaceMode("all")'>
+                        <i class="bi bi-list-ul me-1"></i>All
+                    </button>
+                    <button type="button" class="btn btn-sm @(activeMode == "reprint" ? "btn-primary fw-bold" : "btn-outline-secondary text-light") px-3" @onclick='() => SetWorkspaceMode("reprint")'>
+                        <i class="bi bi-printer me-1"></i>Reprint
+                    </button>
+                    <button type="button" class="btn btn-sm @(activeMode == "void" ? "btn-danger fw-bold" : "btn-outline-secondary text-light") px-3" @onclick='() => SetWorkspaceMode("void")'>
+                        <i class="bi bi-x-circle me-1"></i>Void
+                    </button>
+                </div>
                 <button class="btn btn-outline-primary btn-sm px-3 fw-medium rounded-3" @onclick="LoadTransactions">
                     <i class="bi bi-arrow-repeat me-1"></i> Refresh
                 </button>
             </div>
         </div>
+
+        @if (activeMode == "reprint")
+        {
+            <div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-center justify-content-between small rounded-3 border-0" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd;">
+                <span><i class="bi bi-printer-fill me-2"></i><strong>Reprint Mode:</strong> Showing paid transactions for the current business day. Tap <strong>Reprint</strong> on any row or open <strong>View</strong> to reprint preparation tickets.</span>
+            </div>
+        }
+        else if (activeMode == "void")
+        {
+            <div class="alert alert-danger py-2 px-3 mb-3 d-flex align-items-center justify-content-between small rounded-3 border-0" style="background: rgba(239, 68, 68, 0.15); color: #fca5a5;">
+                <span><i class="bi bi-shield-lock-fill me-2"></i><strong>Void Mode:</strong> Select a paid transaction and tap <strong>Void</strong> to enter the void reason and Supervisor / Manager PIN authorization.</span>
+            </div>
+        }
 
         <!-- Filter Card -->
         <div class="transaction-filter-card card p-3 mb-4">
@@ -103,7 +141,7 @@ else
                     @foreach (var t in transactions)
                     {
                         <tr>
-                            <td class="transaction-date px-4 small">@t.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")<span>@t.CreatedAt.ToLocalTime().ToString("HH:mm")</span></td>
+                            <td class="transaction-date px-4 small">@POS.Shared.Services.BusinessDayClock.FormatManila(t.CreatedAt, "MMM dd, yyyy")<span>@POS.Shared.Services.BusinessDayClock.FormatManila(t.CreatedAt, "HH:mm")</span></td>
                             <td class="transaction-invoice fw-semibold font-monospace">@(t.InvoiceNumber ?? "—")</td>
                             <td>@t.OrderNumber</td>
                             <td>@t.CashierId</td>
@@ -129,9 +167,15 @@ else
                                     </button>
                                     @if (t.PaymentStatus == "PAID")
                                     {
-                                        <button type="button" class="btn btn-sm btn-secondary text-white rounded-3 px-3" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint">
+                                        <button type="button" class="btn btn-sm @(activeMode == "reprint" ? "btn-primary fw-bold shadow-sm" : "btn-secondary") text-white rounded-3 px-3" @onclick="() => ReprintInvoice(t.OrderId)" title="Reprint Receipt">
                                             <i class="bi bi-printer"></i> Reprint
                                         </button>
+                                        @if (t.OrderStatus != "VOIDED")
+                                        {
+                                            <button type="button" class="btn btn-sm @(activeMode == "void" ? "btn-danger fw-bold shadow-sm text-white" : "btn-outline-danger") rounded-3 px-3" @onclick="() => OpenVoidModal(t)" title="Void Transaction">
+                                                <i class="bi bi-x-circle"></i> Void
+                                            </button>
+                                        }
                                     }
                                 </div>
                             </td>
@@ -153,15 +197,25 @@ else
                     <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
                         <div>
                             <h5 class="fw-bold text-dark mb-0">Transaction Receipt (#@selectedOrder.OrderNumber)</h5>
-                            <small class="text-secondary">Invoice: @(selectedOrder.InvoiceNumber ?? "N/A") | Time: @selectedOrder.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</small>
+                            <small class="text-secondary">Invoice: @(selectedOrder.InvoiceNumber ?? "N/A") | Time: @POS.Shared.Services.BusinessDayClock.FormatManila(selectedOrder.CreatedAt, "yyyy-MM-dd HH:mm")</small>
                         </div>
                         <button type="button" class="btn-close shadow-none" @onclick="CloseDetailModal" aria-label="Close"></button>
                     </div>
                     <div class="modal-body px-4 py-3 bg-light">
                         <div class="card border-0 shadow-sm rounded-4 p-4 bg-white">
                             <div class="text-center mb-3">
-                                <h5 class="fw-bold mb-1">Terminal Terminal #@selectedOrder.TerminalId</h5>
-                                <small class="text-muted">Cashier: @selectedOrder.CashierId</small>
+                                @if (!string.IsNullOrWhiteSpace(Session.Terminal?.ReceiptLogoDataUri))
+                                {
+                                    <div class="mb-2">
+                                        <img src="@Session.Terminal!.ReceiptLogoDataUri" alt="Receipt Logo" style="max-width: 160px; max-height: 70px; width: auto; height: auto; object-fit: contain; filter: grayscale(100%) contrast(135%);" />
+                                    </div>
+                                }
+                                <h5 class="fw-bold mb-1">@(Session.Terminal?.BranchName ?? $"Terminal #{selectedOrder.TerminalId}")</h5>
+                                @if (!string.IsNullOrWhiteSpace(Session.Terminal?.BranchTagline))
+                                {
+                                    <div class="text-secondary small mb-1" style="font-size: 0.85rem;">@Session.Terminal.BranchTagline</div>
+                                }
+                                <small class="text-muted">Terminal #@selectedOrder.TerminalId &bull; Cashier: @selectedOrder.CashierId</small>
                             </div>
                             <hr />
                             <div class="mb-3">
@@ -169,14 +223,14 @@ else
                                 {
                                     <div class="d-flex justify-content-between mb-2">
                                         <div>
-                                            <span class="fw-semibold text-dark">@item.ProductName</span><br />
-                                            <small class="text-secondary">@item.Quantity.ToString("0.###") × ₱@item.UnitPrice.ToString("N2")</small>
+                                            <span class="fw-semibold text-dark">@(item.IsComplimentary ? $"{item.ProductName} [COMPLIMENTARY]" : item.ProductName)</span><br />
+                                            <small class="text-secondary">@ReceiptPresentationHelper.FormatItemSubline(item, "₱")</small>
                                             @if (item.Modifiers != null && item.Modifiers.Any())
                                             {
                                                 <div class="ps-2 mt-1">
                                                     @foreach (var mod in item.Modifiers)
                                                     {
-                                                        <div class="text-secondary" style="font-size: 0.78rem;">+ @mod.ModifierName @(mod.AdditionalPrice > 0 ? $"(+₱{mod.AdditionalPrice:N2})" : "")</div>
+                                                        <div class="text-secondary" style="font-size: 0.78rem;">+ @mod.ModifierName @(mod.AdditionalPrice > 0 ? $"(+₱{mod.AdditionalPrice:N2})" : (ReceiptPresentationHelper.ShouldShowFreeModifierLabel(item, mod) ? "(Free)" : ""))</div>
                                                     }
                                                 </div>
                                             }
@@ -195,7 +249,7 @@ else
                             </div>
                             <hr />
                             <div class="d-flex justify-content-between mb-1"><span>Subtotal</span><span>₱@selectedOrder.Subtotal.ToString("N2")</span></div>
-                            @if (selectedOrder.VatAmount > 0)
+                            @if ((Session.Terminal?.VatDisplay ?? true) && (selectedOrder.VatAmount > 0 || selectedOrder.VatableSales > 0 || selectedOrder.VatExemptSales > 0 || selectedOrder.ZeroRatedSales > 0))
                             {
                                 @if (selectedOrder.VatableSales > 0)
                                 {
@@ -205,6 +259,10 @@ else
                                 {
                                     <div class="d-flex justify-content-between text-muted small"><span>VAT-Exempt Sales</span><span>₱@selectedOrder.VatExemptSales.ToString("N2")</span></div>
                                 }
+                                @if (selectedOrder.ZeroRatedSales > 0)
+                                {
+                                    <div class="d-flex justify-content-between text-muted small"><span>Zero-Rated Sales</span><span>₱@selectedOrder.ZeroRatedSales.ToString("N2")</span></div>
+                                }
                                 <div class="d-flex justify-content-between text-muted small"><span>VAT (12%)</span><span>₱@selectedOrder.VatAmount.ToString("N2")</span></div>
                             }
                             @if (selectedOrder.DiscountAmount > 0)
@@ -212,6 +270,24 @@ else
                                 <div class="d-flex justify-content-between text-success"><span>Discount @(!string.IsNullOrWhiteSpace(selectedOrder.DiscountCode) ? $"({selectedOrder.DiscountCode})" : "")</span><span>₱-@selectedOrder.DiscountAmount.ToString("N2")</span></div>
                             }
                             <div class="d-flex justify-content-between fw-bold fs-5 mt-2 pt-2 border-top"><span>Total Paid</span><span>₱@selectedOrder.TotalAmount.ToString("N2")</span></div>
+                            @{
+                                var summary = ReceiptPresentationHelper.SummarizeItems(selectedOrder.Items);
+                            }
+                            <div class="d-flex justify-content-between text-muted small mt-2 pt-2 border-top"><span>Total Items</span><span>@summary.TotalItemsDisplay</span></div>
+                            @if (summary.HasWeightTotals)
+                            {
+                                @if (summary.WeightTotals.Count == 1)
+                                {
+                                    <div class="d-flex justify-content-between text-muted small"><span>Total Weight</span><span>@summary.WeightTotals[0].FormattedWithUnit</span></div>
+                                }
+                                else
+                                {
+                                    @foreach (var wt in summary.WeightTotals)
+                                    {
+                                        <div class="d-flex justify-content-between text-muted small"><span>Total Weight (@wt.Unit)</span><span>@wt.FormattedWithUnit</span></div>
+                                    }
+                                }
+                            }
                         </div>
                     </div>
                     <div class="modal-footer border-top bg-white px-4 py-3 d-flex justify-content-end gap-2">
@@ -342,6 +418,12 @@ else
 }
 
 @code {
+    [SupplyParameterFromQuery(Name = "mode")]
+    public string? Mode { get; set; }
+
+    private string activeMode = "all";
+    private string? lastAppliedMode = null;
+
     private List<OrderResponseDto>? transactions;
     private TransactionFilterDto filter = new();
 
@@ -360,16 +442,41 @@ else
         return baseDate.AddHours(4);
     }
 
-    protected override async Task OnInitializedAsync() => await LoadTransactions();
+    protected override async Task OnParametersSetAsync()
+    {
+        var targetMode = string.IsNullOrWhiteSpace(Mode) ? "all" : Mode.Trim().ToLowerInvariant();
+        if (targetMode != "reprint" && targetMode != "void")
+        {
+            targetMode = "all";
+        }
+
+        if (lastAppliedMode != targetMode)
+        {
+            lastAppliedMode = targetMode;
+            activeMode = targetMode;
+            filter.PaymentStatus = (activeMode == "reprint" || activeMode == "void") ? "PAID" : "";
+            isDetailModalOpen = false;
+            isVoidModalOpen = false;
+            isReturnModalOpen = false;
+            await LoadTransactions();
+        }
+    }
+
+    private void SetWorkspaceMode(string mode)
+    {
+        var url = mode == "all" ? "/transactions" : $"/transactions?mode={mode}";
+        Navigation.NavigateTo(url);
+    }
 
     // Cashier scope is fixed: this terminal's branch + outlet, current business day only (4:00 AM cutoff).
     // The user-editable filter fields (invoice #, status) never override it.
     private void ApplyTerminalScope()
     {
-        currentBusinessDayStartLocal = GetBusinessDayStart(DateTime.Now);
+        var startLocal = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDayStartLocal();
+        currentBusinessDayStartLocal = startLocal;
         filter.BranchId = Session.Terminal?.BranchId;
         filter.TerminalId = Session.Terminal?.TerminalId;
-        filter.DateFrom = currentBusinessDayStartLocal.ToUniversalTime();
+        filter.DateFrom = startLocal;
         filter.DateTo = null;
         filter.Page = 1;
         filter.PageSize = 100;
@@ -424,13 +531,13 @@ else
             using var db = new POS.Client.Data.LocalPosDbContext();
             db.InitializeDatabase();
 
-            var startUtc = currentBusinessDayStartLocal.ToUniversalTime();
+            var startLocal = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDayStartLocal();
             var targetTerminalId = Session.Terminal!.TerminalId;
             var targetCashier = Session.Username;
             bool isSupervisor = Session.Role == "Admin" || Session.Role == "Manager" || Session.Role == "SeniorCashier";
 
             var query = db.Orders.AsNoTracking()
-                .Where(o => o.TerminalId == targetTerminalId && o.CreatedAt >= startUtc);
+                .Where(o => o.TerminalId == targetTerminalId && o.CreatedAt >= startLocal);
 
             if (!isSupervisor && !string.IsNullOrWhiteSpace(targetCashier))
             {
@@ -455,10 +562,14 @@ else
             var orderGuids = localOrders.Select(o => o.OrderId).ToList();
             var localItems = await db.OrderItems.AsNoTracking()
                 .Where(i => orderGuids.Contains(i.OrderId))
+                .OrderBy(i => i.OrderItemId)
                 .ToListAsync();
             var localPayments = await db.Payments.AsNoTracking()
                 .Where(p => orderGuids.Contains(p.OrderId))
                 .ToListAsync();
+            var productMetadata = await OfflineCheckoutService.LoadLocalProductMetadataAsync(
+                db,
+                localItems.Select(i => i.ProductId));
 
             var mappedList = new List<OrderResponseDto>();
             long syntheticId = 1;
@@ -472,40 +583,33 @@ else
                     BranchId = lo.BranchId,
                     TerminalId = lo.TerminalId,
                     CashierId = lo.CashierId,
+                    OrderType = lo.OrderType,
+                    TableNumber = lo.TableNumber,
+                    HeadCount = lo.HeadCount,
                     OrderStatus = lo.OrderStatus,
                     PaymentStatus = lo.PaymentStatus,
                     Subtotal = lo.Subtotal,
                     DiscountAmount = lo.DiscountAmount,
                     DiscountCode = lo.DiscountCode,
+                    CustomerName = lo.CustomerName,
+                    CustomerAddress = lo.CustomerAddress,
+                    CustomerTin = lo.CustomerTin,
+                    CustomerBusinessStyle = lo.CustomerBusinessStyle,
                     TotalAmount = lo.TotalAmount,
                     VatableSales = lo.VatableSales,
                     VatExemptSales = lo.VatExemptSales,
                     ZeroRatedSales = lo.ZeroRatedSales,
                     VatAmount = lo.VatAmount,
-                    CreatedAt = lo.CreatedAt,
-                    Items = localItems.Where(i => i.OrderId == lo.OrderId).Select(i =>
-                    {
-                        List<OrderItemModifierResponseDto> mods = new();
-                        if (!string.IsNullOrWhiteSpace(i.ModifiersJson))
-                        {
-                            try { mods = System.Text.Json.JsonSerializer.Deserialize<List<OrderItemModifierResponseDto>>(i.ModifiersJson) ?? new(); }
-                            catch { mods = new(); }
-                        }
-                        return new OrderItemResponseDto
-                        {
-                            OrderItemId = i.OrderItemId,
-                            ProductId = i.ProductId,
-                            ProductName = i.ProductName,
-                            ProductShortCode = i.ProductShortCode,
-                            Quantity = i.Quantity,
-                            UnitPrice = i.UnitPrice,
-                            LineTotal = i.LineTotal,
-                            IsKitchenItem = i.IsKitchenItem,
-                            IsBarItem = i.IsBarItem,
-                            SpecialInstructions = i.SpecialInstructions,
-                            Modifiers = mods
-                        };
-                    }).ToList(),
+                    CreatedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(lo.CreatedAt),
+                    TransactionTimestamp = new DateTimeOffset(
+                        POS.Shared.Services.BusinessDayClock.NormalizeLocal(lo.CreatedAt),
+                        TimeSpan.FromMinutes(lo.DeviceUtcOffsetMinutes ?? POS.Shared.Services.BusinessDayClock.GetDeviceUtcOffsetMinutes())),
+                    DeviceTimeZoneId = lo.DeviceTimeZoneId,
+                    DeviceUtcOffsetMinutes = lo.DeviceUtcOffsetMinutes,
+                    ServerReceivedAtUtc = lo.ServerReceivedAtUtc.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(lo.ServerReceivedAtUtc.Value) : null,
+                    Items = OfflineCheckoutService.MapLocalOrderItems(
+                        localItems.Where(i => i.OrderId == lo.OrderId),
+                        productMetadata),
                     Payments = localPayments.Where(p => p.OrderId == lo.OrderId).Select(p => new PaymentResponseDto
                     {
                         PaymentId = p.PaymentId,
@@ -514,7 +618,7 @@ else
                         AmountTendered = p.TenderedAmount,
                         ChangeAmount = p.ChangeAmount,
                         PaymentStatus = p.PaymentStatus,
-                        PaidAt = p.PaidAt
+                        PaidAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(p.PaidAt)
                     }).ToList()
                 };
                 mappedList.Add(dto);
@@ -626,9 +730,13 @@ else
                     InvoiceIssuedAt = target.CreatedAt,
                     BranchId = target.BranchId,
                     BranchName = Session.Terminal?.BranchName ?? "Store",
+                    BranchTagline = Session.Terminal?.BranchTagline,
                     BranchCode = Session.Terminal?.BranchCode ?? string.Empty,
                     BranchAddress = Session.Terminal?.BranchAddress ?? string.Empty,
                     BranchPhone = Session.Terminal?.BranchPhone ?? string.Empty,
+                    ReceiptLogoUrl = Session.Terminal?.ReceiptLogoUrl,
+                    ReceiptLogoDataUri = Session.Terminal?.ReceiptLogoDataUri,
+                    VatDisplay = Session.Terminal?.VatDisplay ?? true,
                     TerminalId = target.TerminalId,
                     TerminalName = Session.Terminal?.TerminalName ?? "Terminal",
                     CashierId = target.CashierId,
@@ -645,6 +753,10 @@ else
                     VatExemptSales = target.VatExemptSales,
                     ZeroRatedSales = target.ZeroRatedSales,
                     VatAmount = target.VatAmount,
+                    CustomerName = target.CustomerName,
+                    CustomerAddress = target.CustomerAddress,
+                    CustomerTin = target.CustomerTin,
+                    CustomerBusinessStyle = target.CustomerBusinessStyle,
                     IsReprint = true,
                     Items = target.Items,
                     Payments = target.Payments
@@ -693,6 +805,7 @@ else
             var receipt = await TransactionService.GetTransactionReceiptAsync(orderId, true);
             if (receipt != null)
             {
+                PosSessionService.EnsureReceiptLogoPopulated(receipt, Session);
                 await ReceiptPrinter.PrintAsync(receipt);
                 await Swal.FireAsync("Success", "Receipt sent to printer successfully.", SweetAlertIcon.Success);
             }

@@ -31,12 +31,12 @@ namespace POS.Client.Services
 
         public static bool IsRetryableStatusCode(int statusCode)
         {
-            return statusCode == 429 || statusCode >= 500;
+            return statusCode == 401 || statusCode == 403 || statusCode == 408 || statusCode == 429 || statusCode >= 500;
         }
 
         public static bool IsPermanentFailureStatusCode(int statusCode)
         {
-            return statusCode is 400 or 401 or 403 or 409 or 422;
+            return statusCode is 400 or 409 or 422;
         }
     }
 }

@@ -83,6 +83,16 @@
                         <p class="mb-0">Terminal Management</p>
                     </NavLink>
                 </li>
+                <AuthorizeView Roles="Admin">
+                    <Authorized>
+                        <li class="nav-item">
+                            <NavLink class="nav-link submenu-link" href="licensing" Match="NavLinkMatch.Prefix" title="Terminal Licensing & Security" @onclick="HandleNavClick">
+                                <i class="nav-icon bi bi-shield-lock-fill"></i>
+                                <p class="mb-0">Terminal Licensing</p>
+                            </NavLink>
+                        </li>
+                    </Authorized>
+                </AuthorizeView>
             </ul>
         </li>
 
@@ -160,6 +170,17 @@
 
         <AuthorizeView Roles="Admin, Manager">
             <Authorized>
+                <li class="nav-item">
+                    <NavLink class="nav-link" href="receipt-branding" Match="NavLinkMatch.Prefix" title="Receipt Branding" @onclick="HandleNavClick">
+                        <i class="nav-icon bi bi-printer-fill"></i>
+                        <p>Receipt Branding</p>
+                    </NavLink>
+                </li>
+            </Authorized>
+        </AuthorizeView>
+
+        <AuthorizeView Roles="Admin, Manager">
+            <Authorized>
                 <li class="nav-header text-uppercase text-secondary fw-bold small px-3 mb-1 mt-2">Admin</li>
                 <li class="nav-item">
                     <NavLink class="nav-link" href="users" Match="NavLinkMatch.Prefix" title="Users" @onclick="HandleNavClick">
@@ -214,7 +235,9 @@
         url.StartsWith("outlets", StringComparison.OrdinalIgnoreCase) ||
         url.StartsWith("manage-outlets", StringComparison.OrdinalIgnoreCase) ||
         url.StartsWith("terminals", StringComparison.OrdinalIgnoreCase) ||
-        url.StartsWith("manage-terminals", StringComparison.OrdinalIgnoreCase);
+        url.StartsWith("manage-terminals", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("licensing", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("manage-licenses", StringComparison.OrdinalIgnoreCase);
 
     private bool IsProductActive() => IsProductRoute(currentUrl);
     private bool IsBranchActive() => IsBranchRoute(currentUrl);

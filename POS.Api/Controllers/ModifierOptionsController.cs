@@ -18,9 +18,22 @@ public class ModifierOptionsController(PosDbContext context) : ControllerBase
         if (!await context.ModifierGroups.AnyAsync(x => x.ModifierGroupId == dto.ModifierGroupId))
             return BadRequest("Modifier group does not exist.");
 
+        int? linkedProductId = dto.ProductId.HasValue && dto.ProductId.Value > 0 ? dto.ProductId.Value : null;
+        string? linkedProductName = null;
+        if (linkedProductId.HasValue)
+        {
+            var product = await context.Products.FirstOrDefaultAsync(p => p.ProductId == linkedProductId.Value && !p.IsDeleted);
+            if (product == null)
+                return BadRequest("Linked product does not exist or has been deleted.");
+            if (!product.IsActive)
+                return BadRequest("Linked product is currently inactive.");
+            linkedProductName = product.Name;
+        }
+
         var option = new ModifierOption
         {
             ModifierGroupId = dto.ModifierGroupId,
+            ProductId = linkedProductId,
             Name = dto.Name.Trim(),
             Price = dto.Price,
             DisplayOrder = dto.DisplayOrder,
@@ -31,6 +44,8 @@ public class ModifierOptionsController(PosDbContext context) : ControllerBase
         await context.SaveChangesAsync();
 
         dto.ModifierOptionId = option.ModifierOptionId;
+        dto.ProductId = linkedProductId;
+        dto.ProductName = linkedProductName;
         return Ok(dto);
     }
 
@@ -41,6 +56,17 @@ public class ModifierOptionsController(PosDbContext context) : ControllerBase
         var option = await context.ModifierOptions.FindAsync(id);
         if (option == null) return NotFound();
 
+        int? linkedProductId = dto.ProductId.HasValue && dto.ProductId.Value > 0 ? dto.ProductId.Value : null;
+        if (linkedProductId.HasValue)
+        {
+            var product = await context.Products.FirstOrDefaultAsync(p => p.ProductId == linkedProductId.Value && !p.IsDeleted);
+            if (product == null)
+                return BadRequest("Linked product does not exist or has been deleted.");
+            if (!product.IsActive)
+                return BadRequest("Linked product is currently inactive.");
+        }
+
+        option.ProductId = linkedProductId;
         option.Name = dto.Name.Trim();
         option.Price = dto.Price;
         option.DisplayOrder = dto.DisplayOrder;

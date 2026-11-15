@@ -76,6 +76,15 @@ public partial class HeldSaleItem
 
     public decimal LineTotal { get; set; }
 
+    [MaxLength(20)]
+    public string? PricingMethod { get; set; }
+
+    public decimal? TargetAmount { get; set; }
+
+    public bool IsComplimentary { get; set; } = false;
+
+    public int? ParentProductId { get; set; }
+
     [Required]
     [MaxLength(50)]
     public string TaxName { get; set; } = "VATable";
@@ -95,6 +104,8 @@ public partial class HeldSaleItemModifier
 
     public int ModifierOptionId { get; set; }
 
+    public int? ProductId { get; set; }
+
     [Required]
     [MaxLength(100)]
     public string ModifierName { get; set; } = null!;
@@ -103,4 +114,7 @@ public partial class HeldSaleItemModifier
 
     [ForeignKey("HeldSaleItemId")]
     public virtual HeldSaleItem? HeldSaleItem { get; set; }
+
+    [ForeignKey("ProductId")]
+    public virtual Product? Product { get; set; }
 }

@@ -85,7 +85,9 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
                         PaymentStatus = POS.Shared.Constants.PaymentStatuses.Paid,
                         ReferenceNumber = split.ReferenceNumber,
                         ProcessedBy = dto.ProcessedBy ?? "system",
-                        PaidAt = DateTime.UtcNow
+                        PaidAt = order.CreatedAt != default
+                            ? POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.CreatedAt)
+                            : POS.Shared.Services.BusinessDayClock.DeviceNow()
                     };
 
                     context.Payments.Add(payment);
@@ -117,7 +119,9 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
                     PaymentStatus = POS.Shared.Constants.PaymentStatuses.Paid,
                     ReferenceNumber = dto.ReferenceNumber,
                     ProcessedBy = dto.ProcessedBy ?? "system",
-                    PaidAt = DateTime.UtcNow
+                    PaidAt = order.CreatedAt != default
+                        ? POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.CreatedAt)
+                        : POS.Shared.Services.BusinessDayClock.DeviceNow()
                 };
 
                 context.Payments.Add(payment);

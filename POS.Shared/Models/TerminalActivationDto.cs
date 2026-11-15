@@ -14,6 +14,9 @@ public class TerminalActivationRequestDto
 
     [StringLength(100)]
     public string? DeviceIdentifier { get; set; }
+
+    [StringLength(120)]
+    public string? DeviceId { get; set; }
 }
 
 public class TerminalActivationResponseDto
@@ -24,6 +27,7 @@ public class TerminalActivationResponseDto
     public TerminalDto? Terminal { get; set; }
     public TerminalConfigDto? Config { get; set; }
     public List<OfflineCashierDto> Cashiers { get; set; } = new();
+    public SignedLicensePackageDto? LicensePackage { get; set; }
 }
 
 public class TerminalSessionTokenRequestDto

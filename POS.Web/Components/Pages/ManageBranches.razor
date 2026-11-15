@@ -52,7 +52,15 @@
             <div class="commercial-grid table-responsive w-100">
                 <QuickGrid Items="@FilteredBranches" Pagination="@pagination" Theme="commercial">
                     <PropertyColumn Property="@(b => b.Code)" Title="Code" Sortable="true" Align="Align.Left" />
-                    <PropertyColumn Property="@(b => b.Name)" Title="Branch Name" Sortable="true" Align="Align.Left" />
+                    <TemplateColumn Title="Branch Name" Context="branch" SortBy="@(GridSort<BranchDto>.ByAscending(b => b.Name))" Sortable="true" Align="Align.Left">
+                        <div>
+                            <div class="fw-semibold text-dark">@branch.Name</div>
+                            @if (!string.IsNullOrWhiteSpace(branch.BranchTagline))
+                            {
+                                <div class="text-secondary small" style="font-size: 0.78rem;">@branch.BranchTagline</div>
+                            }
+                        </div>
+                    </TemplateColumn>
                     <PropertyColumn Property="@(b => b.Phone)" Title="Phone" Align="Align.Left" />
                     <PropertyColumn Property="@(b => b.Address)" Title="Address" Align="Align.Left" />
                     <TemplateColumn Title="Business Type" Context="branch" Align="Align.Left">@(branch.BusinessTypeName ?? "Unassigned")</TemplateColumn>
@@ -63,6 +71,22 @@
                         <span class="text-dark fw-medium">
                             @branch.OutletCount
                         </span>
+                    </TemplateColumn>
+
+                    <!-- VAT Display -->
+                    <TemplateColumn Context="branch" Title="VAT Display" Align="Align.Center">
+                        @if (branch.VatDisplay)
+                        {
+                            <span class="status-badge active" title="VAT breakdown is displayed on customer-facing receipts">
+                                Enabled
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="status-badge inactive" title="VAT breakdown is hidden on customer-facing receipts">
+                                Disabled
+                            </span>
+                        }
                     </TemplateColumn>
 
                     <!-- Status -->
@@ -198,6 +222,19 @@
                             <label class="form-label text-dark fw-semibold small mb-1">Branch Name <span class="text-danger">*</span></label>
                             <InputText @bind-Value="currentBranch.Name" class="form-control rounded" placeholder="e.g. Main Branch" />
                         </div>
+                        <div class="col-12">
+                            <label class="form-label text-secondary fw-medium small mb-1">
+                                Branch Tagline <span class="text-muted fw-normal">(Optional)</span>
+                            </label>
+                            <InputText @bind-Value="currentBranch.BranchTagline"
+                                       type="text"
+                                       maxlength="200"
+                                       class="form-control form-control-sm rounded bg-light-subtle"
+                                       placeholder="Enter branch tagline or slogan (optional)" />
+                            <div class="form-text text-muted" style="font-size: 0.75rem;">
+                                Displayed directly underneath the Branch Name on customer receipts when provided.
+                            </div>
+                        </div>
                         <div class="col-12 col-md-6">
                             <label class="form-label text-dark fw-semibold small mb-1">Phone Number</label>
                             <InputText @bind-Value="currentBranch.Phone"
@@ -226,23 +263,39 @@
                                 <label class="form-check-label fw-semibold text-dark mb-0" for="branchActive">Active Branch</label>
                             </div>
                         </div>
-                        <!-- Inventory Tracking Toggle Container -->
-                        <div class="p-3 bg-light rounded border mb-3">
-
-                            <div class="d-flex justify-content-between align-items-center gap-3">
-                                <div>
-                                    <span class="fw-bold text-dark d-block mb-1">Track Inventory</span>
-                                    <p class="text-secondary small mb-0" style="line-height: 1.45;">
-                                        Applies to every item and is saved as soon as you switch it. When on, stock is counted and items with no stock cannot be sold until stocked in.
-                                    </p>
+                        <!-- VAT Display Toggle Container -->
+                        <div class="col-12">
+                            <div class="p-3 bg-light rounded border">
+                                <div class="d-flex justify-content-between align-items-center gap-3">
+                                    <div>
+                                        <span class="fw-bold text-dark d-block mb-1">VAT Display on Customer Receipts</span>
+                                        <p class="text-secondary small mb-0" style="line-height: 1.45;">
+                                            When enabled, customer-facing receipts and previews display the VAT breakdown (Vatable Sales, VAT-Exempt, Zero-Rated, and 12% VAT). Disabling hides the breakdown on customer receipts without altering VAT computation or accounting reports.
+                                        </p>
+                                    </div>
+                                    <div class="form-check form-switch fs-4 mb-0 flex-shrink-0">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="vatDisplaySwitch" @bind="currentBranch.VatDisplay" style="cursor: pointer;" />
+                                    </div>
                                 </div>
-                                <div class="form-check form-switch fs-4 mb-0 flex-shrink-0">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="trackInventorySwitch" @bind="isTrackInventoryEnabled" style="cursor: pointer;" />
+                            </div>
+                        </div>
+                        <!-- Inventory Tracking Toggle Container -->
+                        <div class="col-12">
+                            <div class="p-3 bg-light rounded border mb-2">
+                                <div class="d-flex justify-content-between align-items-center gap-3">
+                                    <div>
+                                        <span class="fw-bold text-dark d-block mb-1">Track Inventory</span>
+                                        <p class="text-secondary small mb-0" style="line-height: 1.45;">
+                                            Applies to every item and is saved as soon as you switch it. When on, stock is counted and items with no stock cannot be sold until stocked in.
+                                        </p>
+                                    </div>
+                                    <div class="form-check form-switch fs-4 mb-0 flex-shrink-0">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="trackInventorySwitch" @bind="currentBranch.TrackInventory" style="cursor: pointer;" />
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    }
                 </div>
 
                 <!-- Modal Footer -->
@@ -274,12 +327,6 @@
     private bool isEditingBranch = false;
     private bool isSaving = false;
     private BranchDto currentBranch = new();
-
-
-
-
-
-    private bool isTrackInventoryEnabled = false;
 
     private IQueryable<BranchDto>? FilteredBranches =>
         string.IsNullOrWhiteSpace(searchTerm)
@@ -349,7 +396,7 @@
 
     private void OpenNewBranchModal()
     {
-        currentBranch = new BranchDto { IsActive = true };
+        currentBranch = new BranchDto { IsActive = true, VatDisplay = true };
         isEditingBranch = false;
         isBranchModalOpen = true;
     }
@@ -362,10 +409,12 @@
             BusinessTypeId = branch.BusinessTypeId,
             ServiceModeId = branch.ServiceModeId,
             Name = branch.Name,
+            BranchTagline = branch.BranchTagline,
             Code = branch.Code,
             Address = branch.Address,
             Phone = !string.IsNullOrEmpty(branch.Phone) ? new string(branch.Phone.Where(char.IsDigit).ToArray()) : branch.Phone,
             TaxType = string.IsNullOrWhiteSpace(branch.TaxType) ? "VAT-Registered" : branch.TaxType,
+            VatDisplay = branch.VatDisplay,
             IsActive = branch.IsActive,
             TrackInventory = branch.TrackInventory
         };
@@ -381,6 +430,9 @@
         {
             currentBranch.Phone = new string(currentBranch.Phone.Where(char.IsDigit).ToArray());
         }
+        currentBranch.BranchTagline = string.IsNullOrWhiteSpace(currentBranch.BranchTagline)
+            ? null
+            : currentBranch.BranchTagline.Trim();
 
         if (string.IsNullOrWhiteSpace(currentBranch.Name))
         {
@@ -533,10 +585,12 @@
                 BusinessTypeId = branch.BusinessTypeId,
                 ServiceModeId = branch.ServiceModeId,
                 Name = branch.Name,
+                BranchTagline = branch.BranchTagline,
                 Code = branch.Code,
                 Address = branch.Address,
                 Phone = branch.Phone,
                 TaxType = branch.TaxType,
+                VatDisplay = branch.VatDisplay,
                 IsActive = !branch.IsActive,
                 TrackInventory = branch.TrackInventory
             };

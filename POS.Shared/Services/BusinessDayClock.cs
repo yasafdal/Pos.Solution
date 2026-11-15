@@ -12,8 +12,17 @@ namespace POS.Shared.Services;
 /// </summary>
 public static class BusinessDayClock
 {
+    public const string DefaultTimeZoneId = "Asia/Manila";
+    public const string WindowsManilaTimeZoneId = "Singapore Standard Time";
+    public const int SuspiciousClockSkewThresholdSeconds = 300; // 5 minutes
+    public static readonly TimeSpan BusinessDayCutoffTimeOfDay = TimeSpan.FromHours(4); // 04:00 AM Philippine Time
+
+    public static TimeZoneInfo ManilaTimeZone { get; } = ResolveManilaTimeZone();
+
     private static Func<DateTime> _utcNowProvider = static () => DateTime.UtcNow;
     private static Func<long> _tickCount64Provider = static () => Environment.TickCount64;
+    private static Func<DateTimeOffset>? _deviceNowOffsetProvider;
+    private static Func<TimeZoneInfo>? _deviceTimeZoneProvider;
 
     public static Func<DateTime> UtcNowProvider
     {
@@ -27,31 +36,213 @@ public static class BusinessDayClock
         set => _tickCount64Provider = value ?? (static () => Environment.TickCount64);
     }
 
+    public static Func<DateTimeOffset>? DeviceNowOffsetProvider
+    {
+        get => _deviceNowOffsetProvider;
+        set => _deviceNowOffsetProvider = value;
+    }
+
+    public static Func<TimeZoneInfo>? DeviceTimeZoneProvider
+    {
+        get => _deviceTimeZoneProvider;
+        set => _deviceTimeZoneProvider = value;
+    }
+
     public static void ResetProviders()
     {
         _utcNowProvider = static () => DateTime.UtcNow;
         _tickCount64Provider = static () => Environment.TickCount64;
+        _deviceNowOffsetProvider = null;
+        _deviceTimeZoneProvider = null;
+    }
+
+    private static TimeZoneInfo ResolveManilaTimeZone()
+    {
+        foreach (var candidateId in new[] { DefaultTimeZoneId, WindowsManilaTimeZoneId })
+        {
+            try
+            {
+                var tz = TimeZoneInfo.FindSystemTimeZoneById(candidateId);
+                if (tz.BaseUtcOffset == TimeSpan.FromHours(8))
+                    return tz;
+            }
+            catch
+            {
+                // Continue to fallback candidate
+            }
+        }
+
+        return TimeZoneInfo.CreateCustomTimeZone(
+            DefaultTimeZoneId,
+            TimeSpan.FromHours(8),
+            "Philippine Standard Time (Asia/Manila)",
+            "Philippine Standard Time");
+    }
+
+    public static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
+    {
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+            return ManilaTimeZone;
+
+        var trimmed = timeZoneId.Trim();
+        if (trimmed.Equals(DefaultTimeZoneId, StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals(WindowsManilaTimeZoneId, StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Philippine Standard Time", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("PHT", StringComparison.OrdinalIgnoreCase))
+        {
+            return ManilaTimeZone;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(trimmed);
+        }
+        catch
+        {
+            return ManilaTimeZone;
+        }
     }
 
     public static DateTime UtcNow() => DateTime.SpecifyKind(_utcNowProvider(), DateTimeKind.Utc);
 
     public static long TickCount64() => _tickCount64Provider();
 
-    /// <summary>
-    /// Converts a UTC timestamp to its Asia/Manila (UTC+08) 4:00 AM cutoff business date.
-    /// Subtracting 4 hours from Manila time (UTC+8 - 4h = UTC+4) maps [04:00 Manila, next day 03:59:59.999 Manila] to the same calendar date.
-    /// </summary>
-    public static DateOnly GetBusinessDate(DateTime utc) =>
-        DateOnly.FromDateTime(DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(4));
+    public static TimeZoneInfo GetDeviceTimeZone() =>
+        _deviceTimeZoneProvider?.Invoke() ?? TimeZoneInfo.Local;
 
-    public static string GetBusinessDateString(DateTime utc) =>
-        GetBusinessDate(utc).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-
-    public static (DateTime StartUtc, DateTime EndUtc) GetPeriodUtc(DateOnly businessDate)
+    public static string GetDeviceTimeZoneId()
     {
-        var startUtc = DateTime.SpecifyKind(businessDate.ToDateTime(new TimeOnly(4, 0)).AddHours(-8), DateTimeKind.Utc);
-        return (startUtc, startUtc.AddDays(1));
+        var tz = GetDeviceTimeZone();
+        return string.IsNullOrWhiteSpace(tz.Id) ? DefaultTimeZoneId : tz.Id;
     }
+
+    public static DateTimeOffset DeviceNowOffset()
+    {
+        if (_deviceNowOffsetProvider != null)
+            return _deviceNowOffsetProvider();
+
+        var utc = UtcNow();
+        var tz = GetDeviceTimeZone();
+        var offset = tz.GetUtcOffset(utc);
+        var local = TimeZoneInfo.ConvertTimeFromUtc(utc, tz);
+        return new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), offset);
+    }
+
+    public static int GetDeviceUtcOffsetMinutes() =>
+        (int)Math.Round(DeviceNowOffset().Offset.TotalMinutes);
+
+    /// <summary>
+    /// Returns the POS device's current local wall-clock date and time as DateTimeKind.Unspecified
+    /// so it is stored, serialized, and displayed verbatim without UTC offset conversion.
+    /// </summary>
+    public static DateTime DeviceNow() =>
+        DateTime.SpecifyKind(DeviceNowOffset().DateTime, DateTimeKind.Unspecified);
+
+    /// <summary>
+    /// Preserves device-local wall-clock timestamps (DateTimeKind.Unspecified or DateTimeKind.Local) verbatim.
+    /// Only converts timestamps that are explicitly tagged as DateTimeKind.Utc.
+    /// </summary>
+    public static DateTime NormalizeLocal(DateTime value) =>
+        value.Kind == DateTimeKind.Utc
+            ? DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeFromUtc(value, ManilaTimeZone), DateTimeKind.Unspecified)
+            : DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
+
+    public static DateTime NormalizeLocal(DateTimeOffset value) =>
+        DateTime.SpecifyKind(value.DateTime, DateTimeKind.Unspecified);
+
+    /// <summary>
+    /// Normalizes a DateTime to canonical UTC without double-converting values materialized from SQLite/PostgreSQL as Unspecified.
+    /// </summary>
+    public static DateTime NormalizeUtc(DateTime value) =>
+        value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
+
+    public static DateTime NormalizeUtc(DateTimeOffset value) =>
+        value.UtcDateTime;
+
+    public static DateTimeOffset ToManilaOffset(DateTime value)
+    {
+        var local = NormalizeLocal(value);
+        var offset = ManilaTimeZone.GetUtcOffset(local);
+        return new DateTimeOffset(local, offset);
+    }
+
+    public static DateTimeOffset ToManilaOffset(DateTimeOffset timestamp) =>
+        timestamp;
+
+    public static DateTime ToManilaTime(DateTime value) =>
+        NormalizeLocal(value);
+
+    public static DateTime ToManilaTime(DateTimeOffset timestamp) =>
+        DateTime.SpecifyKind(timestamp.DateTime, DateTimeKind.Unspecified);
+
+    public static DateTime ToBranchTime(DateTime value, string? branchTimeZoneId = null)
+    {
+        if (value.Kind == DateTimeKind.Utc)
+        {
+            var tz = ResolveTimeZone(branchTimeZoneId);
+            return DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeFromUtc(value, tz), DateTimeKind.Unspecified);
+        }
+
+        return DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
+    }
+
+    public static DateTime ToBranchTime(DateTimeOffset timestamp, string? branchTimeZoneId = null) =>
+        DateTime.SpecifyKind(timestamp.DateTime, DateTimeKind.Unspecified);
+
+    /// <summary>
+    /// Applies the 4:00 AM business-day cutoff to a local transaction timestamp (or converts an explicit UTC timestamp first).
+    /// Transactions before 04:00 AM belong to the previous business date; transactions at or after 04:00 AM belong to that calendar date.
+    /// </summary>
+    public static DateOnly GetBusinessDate(DateTime value) =>
+        GetBusinessDate(value, null);
+
+    public static DateOnly GetBusinessDate(DateTime value, string? branchTimeZoneId)
+    {
+        var branchLocal = ToBranchTime(value, branchTimeZoneId);
+        var businessDateLocal = branchLocal.TimeOfDay < BusinessDayCutoffTimeOfDay
+            ? branchLocal.Date.AddDays(-1)
+            : branchLocal.Date;
+        return DateOnly.FromDateTime(businessDateLocal);
+    }
+
+    public static DateOnly GetBusinessDate(DateTimeOffset timestamp, string? branchTimeZoneId = null) =>
+        GetBusinessDate(DateTime.SpecifyKind(timestamp.DateTime, DateTimeKind.Unspecified), branchTimeZoneId);
+
+    public static DateOnly GetCurrentBusinessDate(string? branchTimeZoneId = null) =>
+        _deviceNowOffsetProvider != null
+            ? GetBusinessDate(DeviceNowOffset(), branchTimeZoneId)
+            : GetBusinessDate(UtcNow(), branchTimeZoneId);
+
+    public static string GetBusinessDateString(DateTime value) =>
+        GetBusinessDate(value).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    public static (DateTime StartLocal, DateTime EndLocal) GetPeriodLocal(DateOnly businessDate) =>
+        (DateTime.SpecifyKind(businessDate.ToDateTime(new TimeOnly(4, 0)), DateTimeKind.Unspecified),
+         DateTime.SpecifyKind(businessDate.AddDays(1).ToDateTime(new TimeOnly(4, 0)), DateTimeKind.Unspecified));
+
+    public static DateTime GetCurrentBusinessDayStartLocal(string? branchTimeZoneId = null) =>
+        GetPeriodLocal(GetCurrentBusinessDate(branchTimeZoneId)).StartLocal;
+
+    public static (DateTime StartUtc, DateTime EndUtc) GetPeriodUtc(DateOnly businessDate) =>
+        GetPeriodUtc(businessDate, null);
+
+    public static (DateTime StartUtc, DateTime EndUtc) GetPeriodUtc(DateOnly businessDate, string? branchTimeZoneId)
+    {
+        var tz = ResolveTimeZone(branchTimeZoneId);
+        var startLocal = DateTime.SpecifyKind(businessDate.ToDateTime(new TimeOnly(4, 0)), DateTimeKind.Unspecified);
+        var endLocal = DateTime.SpecifyKind(businessDate.AddDays(1).ToDateTime(new TimeOnly(4, 0)), DateTimeKind.Unspecified);
+        var startUtc = TimeZoneInfo.ConvertTimeToUtc(startLocal, tz);
+        var endUtc = TimeZoneInfo.ConvertTimeToUtc(endLocal, tz);
+        return (DateTime.SpecifyKind(startUtc, DateTimeKind.Utc), DateTime.SpecifyKind(endUtc, DateTimeKind.Utc));
+    }
+
+    public static DateTime GetCurrentBusinessDayStartUtc(string? branchTimeZoneId = null) =>
+        GetPeriodUtc(GetCurrentBusinessDate(branchTimeZoneId), branchTimeZoneId).StartUtc;
 
     public static DateTime GetNextBusinessDayStartUtc(DateOnly businessDate) =>
         GetPeriodUtc(businessDate).EndUtc;
@@ -59,11 +250,78 @@ public static class BusinessDayClock
     public static DateTime GetNextBusinessDayStartUtc(DateTime closedAtUtc) =>
         GetNextBusinessDayStartUtc(GetBusinessDate(closedAtUtc));
 
-    public static DateTime ToManilaTime(DateTime utc) =>
-        DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(8);
+    public static string FormatManila(DateTime value, string format = "yyyy-MM-dd HH:mm") =>
+        ToManilaTime(value).ToString(format, CultureInfo.InvariantCulture);
 
-    public static string FormatManilaDateTime(DateTime utc) =>
-        ToManilaTime(utc).ToString("yyyy-MM-dd hh:mm:ss tt", CultureInfo.InvariantCulture) + " (Asia/Manila)";
+    public static string FormatManila(DateTime? value, string format = "yyyy-MM-dd HH:mm", string fallback = "N/A") =>
+        value.HasValue ? ToManilaTime(value.Value).ToString(format, CultureInfo.InvariantCulture) : fallback;
+
+    public static string FormatManilaDateTime(DateTime value) =>
+        ToManilaTime(value).ToString("yyyy-MM-dd hh:mm:ss tt", CultureInfo.InvariantCulture) + " (Asia/Manila)";
+
+    /// <summary>
+    /// Compares device transaction/transmission timestamps against authoritative server receipt time
+    /// to detect significant device clock skew without overwriting the original local occurrence timestamp.
+    /// </summary>
+    public static (int ClockSkewSeconds, bool IsSuspicious, string? WarningMessage) EvaluateClockDiscrepancy(
+        DateTime transactionOccurredAt,
+        DateTime serverReceivedAtUtc,
+        DateTime? clientSentAtUtc = null,
+        DateTime? shiftOpenedAt = null,
+        int? deviceUtcOffsetMinutes = null)
+    {
+        int offsetMins = deviceUtcOffsetMinutes ?? GetDeviceUtcOffsetMinutes();
+        var occurredUtc = transactionOccurredAt.Kind == DateTimeKind.Utc
+            ? transactionOccurredAt
+            : DateTime.SpecifyKind(transactionOccurredAt.AddMinutes(-offsetMins), DateTimeKind.Utc);
+        var receivedUtc = NormalizeUtc(serverReceivedAtUtc);
+
+        DateTime? shiftOpenedUtc = null;
+        if (shiftOpenedAt.HasValue && shiftOpenedAt.Value != default)
+        {
+            if (shiftOpenedAt.Value.Kind == DateTimeKind.Utc)
+            {
+                shiftOpenedUtc = shiftOpenedAt.Value;
+            }
+            else
+            {
+                var asLocalDiff = Math.Abs((shiftOpenedAt.Value - transactionOccurredAt).TotalHours);
+                var asUtcDiff = Math.Abs((shiftOpenedAt.Value - receivedUtc).TotalHours);
+                shiftOpenedUtc = asLocalDiff < asUtcDiff
+                    ? DateTime.SpecifyKind(shiftOpenedAt.Value.AddMinutes(-offsetMins), DateTimeKind.Utc)
+                    : DateTime.SpecifyKind(shiftOpenedAt.Value, DateTimeKind.Utc);
+            }
+        }
+
+        int skewSeconds = 0;
+        if (clientSentAtUtc.HasValue && clientSentAtUtc.Value != default)
+        {
+            var sentUtc = NormalizeUtc(clientSentAtUtc.Value);
+            skewSeconds = (int)Math.Round((sentUtc - receivedUtc).TotalSeconds);
+        }
+        else if (occurredUtc > receivedUtc)
+        {
+            // Device transaction timestamp is in the future relative to server receipt time
+            skewSeconds = (int)Math.Round((occurredUtc - receivedUtc).TotalSeconds);
+        }
+        else if (shiftOpenedUtc.HasValue && occurredUtc < shiftOpenedUtc.Value)
+        {
+            // Device transaction timestamp precedes the shift opening timestamp
+            skewSeconds = (int)Math.Round((occurredUtc - shiftOpenedUtc.Value).TotalSeconds);
+        }
+
+        if (Math.Abs(skewSeconds) < SuspiciousClockSkewThresholdSeconds && occurredUtc > receivedUtc.AddSeconds(SuspiciousClockSkewThresholdSeconds))
+        {
+            skewSeconds = (int)Math.Round((occurredUtc - receivedUtc).TotalSeconds);
+        }
+
+        bool isSuspicious = Math.Abs(skewSeconds) >= SuspiciousClockSkewThresholdSeconds;
+        string? warning = isSuspicious
+            ? $"[CLOCK_SKEW_DETECTED] Device clock discrepancy of {skewSeconds}s ({skewSeconds / 60.0:F1} min) detected. Original local occurrence timestamp ({transactionOccurredAt:yyyy-MM-dd HH:mm:ss}) preserved; ServerReceivedAtUtc=({receivedUtc:O})."
+            : null;
+
+        return (skewSeconds, isSuspicious, warning);
+    }
 
     public static TerminalClosingLockDto EvaluateLock(
         int terminalId,

@@ -18,6 +18,10 @@ public class OfflineTransactionSyncRequest
     public string? TableNumber { get; set; }
     public int? HeadCount { get; set; }
     public DateTime TransactionDate { get; set; }
+    public DateTimeOffset? TransactionTimestamp { get; set; }
+    public string? DeviceTimeZoneId { get; set; }
+    public int? DeviceUtcOffsetMinutes { get; set; }
+    public DateTime? ClientSentAtUtc { get; set; }
     public string SchemaVersion { get; set; } = "1.0";
     public string FinancialCalculationVersion { get; set; } = "1.0";
     public string ReferenceDataVersion { get; set; } = null!;
@@ -27,6 +31,11 @@ public class OfflineTransactionSyncRequest
     public decimal Subtotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public string? DiscountCode { get; set; }
+    public string? CustomerCardNumber { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerAddress { get; set; }
+    public string? CustomerTin { get; set; }
+    public string? CustomerBusinessStyle { get; set; }
     public decimal VatableSales { get; set; }
     public decimal VatExemptSales { get; set; }
     public decimal ZeroRatedSales { get; set; }
@@ -41,9 +50,12 @@ public class OfflineTransactionItemDto
 {
     public int ProductId { get; set; }
     public string ProductName { get; set; } = null!;
-    public int Quantity { get; set; }
+    public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal LineTotal { get; set; }
+    public string? PricingMethod { get; set; }
+    public bool IsComplimentary { get; set; } = false;
+    public int? ParentProductId { get; set; }
     public string TaxName { get; set; } = "VATable";
     public string? SpecialInstructions { get; set; }
     public List<OfflineModifierDto> Modifiers { get; set; } = new();
@@ -52,6 +64,7 @@ public class OfflineTransactionItemDto
 public class OfflineModifierDto
 {
     public int OptionId { get; set; }
+    public int? ProductId { get; set; }
     public string Name { get; set; } = null!;
     public decimal AdditionalPrice { get; set; }
 }
@@ -63,6 +76,7 @@ public class OfflinePaymentDto
     public decimal ChangeAmount { get; set; }
     public string PaymentMethod { get; set; } = "CASH";
     public string PaymentStatus { get; set; } = POS.Shared.Constants.PaymentStatuses.Paid;
+    public string? ReferenceNumber { get; set; }
     public DateTime PaidAt { get; set; }
 }
 
@@ -74,6 +88,9 @@ public class OfflineTransactionSyncResponse
     public string InvoiceNumber { get; set; } = null!;
     public long ServerOrderId { get; set; }
     public DateTime AcknowledgedAt { get; set; }
+    public DateTime? ServerReceivedAtUtc { get; set; }
+    public int? ClockSkewSeconds { get; set; }
+    public string? ClockSkewWarning { get; set; }
 }
 
 public class OfflineTransactionStatusDto
@@ -90,6 +107,7 @@ public class OfflineCashMovementSyncRequest
 {
     public string ClientMovementId { get; set; } = string.Empty;
     public long ShiftId { get; set; }
+    public string? ClientShiftId { get; set; }
     public int BranchId { get; set; }
     public int TerminalId { get; set; }
     public string MovementType { get; set; } = "PETTY_CASH";

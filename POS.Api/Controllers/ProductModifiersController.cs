@@ -18,10 +18,10 @@ public class ProductModifiersController(PosDbContext context) : ControllerBase
             return NotFound("Product not found.");
 
         var pmgList = await context.ProductModifierGroups
-            .Include(pmg => pmg.ModifierGroup)
-                .ThenInclude(mg => mg.ModifierOptions.OrderBy(o => o.DisplayOrder))
+            .AsNoTracking()
             .Where(pmg => pmg.ProductId == productId)
             .OrderBy(pmg => pmg.DisplayOrder)
+            .ThenBy(pmg => pmg.ProductModifierGroupId)
             .Select(pmg => new ProductModifierGroupDto
             {
                 ProductModifierGroupId = pmg.ProductModifierGroupId,
@@ -33,15 +33,21 @@ public class ProductModifiersController(PosDbContext context) : ControllerBase
                 MaxSelections = pmg.ModifierGroup != null ? pmg.ModifierGroup.MaxSelections : 1,
                 DisplayOrder = pmg.DisplayOrder,
                 Options = pmg.ModifierGroup != null && pmg.ModifierGroup.ModifierOptions != null
-                    ? pmg.ModifierGroup.ModifierOptions.Select(o => new ModifierOptionDto
-                    {
-                        ModifierOptionId = o.ModifierOptionId,
-                        ModifierGroupId = o.ModifierGroupId,
-                        Name = o.Name,
-                        Price = o.Price,
-                        DisplayOrder = o.DisplayOrder,
-                        IsActive = o.IsActive
-                    }).ToList()
+                    ? pmg.ModifierGroup.ModifierOptions
+                        .OrderBy(o => o.DisplayOrder)
+                        .ThenBy(o => o.ModifierOptionId)
+                        .Select(o => new ModifierOptionDto
+                        {
+                            ModifierOptionId = o.ModifierOptionId,
+                            ModifierGroupId = o.ModifierGroupId,
+                            ProductId = o.ProductId,
+                            ProductName = o.Product != null ? o.Product.Name : null,
+                            Name = o.Name,
+                            Price = o.Price,
+                            DisplayOrder = o.DisplayOrder,
+                            IsActive = o.IsActive
+                        })
+                        .ToList()
                     : new()
             })
             .ToListAsync();

@@ -85,9 +85,9 @@
                 Terminal &amp; closing cashier restrictions reset automatically at 4:00 AM (Asia/Manila).
             </div>
             <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
-                <small class="text-secondary font-monospace" style="font-size: 0.72rem;">
-                    UAT Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "https://dev-uat.agressolutions.com")
-                </small>
+                <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
+                    <i class="bi bi-hdd-network me-1"></i>Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032") <i class="bi bi-pencil-square ms-1"></i>
+                </button>
             </div>
         </div>
     }
@@ -119,19 +119,6 @@
             <div class="pin-dot @(isFilled ? "filled" : "")"></div>
         }
     </div>
-
-    <!-- Hidden Input for Physical Keyboard / Barcode Support -->
-    <input @ref="hiddenInput"
-           type="password"
-           inputmode="numeric"
-           maxlength="4"
-           @bind:get="pin"
-           @bind:set="OnInputChanged"
-           @bind:event="oninput"
-           readonly="@isLoading"
-           @onkeydown="OnKeyDown"
-           class="hidden-pin-input"
-           autofocus />
 
     <!-- POS Numpad Grid -->
     <div class="numpad-grid">
@@ -167,12 +154,12 @@
         }
         else
         {
-            <div class="helper-text">Tap keypad or use physical numpad</div>
+            <div class="helper-text">Tap keypad to enter PIN</div>
         }
         <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
-            <small class="text-secondary font-monospace" style="font-size: 0.72rem;">
-                UAT Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "https://dev-uat.agressolutions.com")
-            </small>
+            <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
+                <i class="bi bi-hdd-network me-1"></i>Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032") <i class="bi bi-pencil-square ms-1"></i>
+            </button>
         </div>
     </div>
     }
@@ -378,8 +365,6 @@
     private string pin = string.Empty;
     private bool isLoading = false;
     private string? errorMessage;
-    private ElementReference hiddenInput;
-    private bool restoreInputFocus;
     private TerminalClosingLockDto? lockStatus;
     private string? provisionedTerminalName;
     private int provisionedTerminalId;
@@ -407,7 +392,6 @@
                     if (wasLocked && lockStatus?.IsTerminalLocked != true)
                     {
                         errorMessage = null;
-                        restoreInputFocus = true;
                     }
                     StateHasChanged();
                 });
@@ -435,32 +419,50 @@
         catch { }
     }
 
+    private async Task ToggleServerEndpointAsync()
+    {
+        var current = Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032";
+        var isLocal = current.Contains("localhost", StringComparison.OrdinalIgnoreCase) || current.Contains("127.0.0.1");
+        var nextTarget = isLocal ? "https://dev-uat.agressolutions.com/" : "http://localhost:5032/";
+        var nextLabel = isLocal ? "UAT Cloud (https://dev-uat.agressolutions.com/)" : "Local API (http://localhost:5032/)";
+
+        var confirm = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Switch Backend Server",
+            Html = $"Current server:<br><code>{current}</code><br><br>Switch to:<br><strong>{nextLabel}</strong>?",
+            Icon = SweetAlertIcon.Question,
+            ShowCancelButton = true,
+            ConfirmButtonText = "Switch & Reconnect",
+            CancelButtonText = "Cancel"
+        });
+
+        if (confirm.IsConfirmed)
+        {
+            Microsoft.Maui.Storage.Preferences.Default.Set("UAT_ApiBaseUrl", nextTarget);
+            Http.BaseAddress = new Uri(nextTarget);
+            await RefreshTerminalLockStatusAsync();
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Toast = true,
+                Position = SweetAlertPosition.TopEnd,
+                ShowConfirmButton = false,
+                Timer = 2500,
+                Icon = SweetAlertIcon.Success,
+                Title = $"Target set to {nextTarget}"
+            });
+            StateHasChanged();
+        }
+    }
+
     public void Dispose()
     {
         _lockCheckTimer?.Dispose();
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender || restoreInputFocus)
-        {
-            restoreInputFocus = false;
-            try
-            {
-                await hiddenInput.FocusAsync();
-            }
-            catch
-            {
-                // In headless tests or non-JS environments, ignore focus failure
-            }
-        }
     }
 
     private async Task AppendDigit(char digit)
     {
         if (pin.Length >= 4 || isLoading) return;
 
-        restoreInputFocus = true;
         errorMessage = null;
         pin += digit;
 
@@ -473,7 +475,6 @@
     private void ClearPin()
     {
         if (isLoading) return;
-        restoreInputFocus = true;
         pin = string.Empty;
         errorMessage = null;
     }
@@ -481,38 +482,8 @@
     private void Backspace()
     {
         if (isLoading) return;
-        restoreInputFocus = true;
         if (pin.Length > 0) pin = pin[..^1];
         errorMessage = null;
-    }
-
-    private async Task OnInputChanged(string inputVal)
-    {
-        if (isLoading) return;
-        var digitsOnly = new string(inputVal.Where(char.IsDigit).Take(4).ToArray());
-        pin = digitsOnly;
-        errorMessage = null;
-
-        if (pin.Length == 4)
-        {
-            await SubmitPinAsync();
-        }
-    }
-
-    private async Task OnKeyDown(KeyboardEventArgs e)
-    {
-        if (isLoading) return;
-
-        // Native input owns digits and deletions; handling them here as well
-        // would process the same physical keystroke twice.
-        if (e.Key is "Escape")
-        {
-            ClearPin();
-        }
-        else if (e.Key is "Enter" && pin.Length == 4)
-        {
-            await SubmitPinAsync();
-        }
     }
 
     private static string ComputePinHash(string rawPin) =>
@@ -577,6 +548,55 @@
                     }
                 }
 
+                var existingBranch = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                    db.Branches, b => b.BranchId == outlet.BranchId);
+                if (existingBranch != null)
+                {
+                    existingBranch.Name = outlet.BranchName;
+                    existingBranch.BranchTagline = outlet.BranchTagline;
+                    existingBranch.Code = outlet.BranchCode;
+                    existingBranch.Address = outlet.BranchAddress;
+                    existingBranch.Phone = outlet.BranchPhone;
+                    existingBranch.TaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType;
+                    existingBranch.VatDisplay = outlet.VatDisplay;
+                    existingBranch.BusinessTypeId = outlet.BusinessTypeId ?? 1;
+                    existingBranch.BusinessType = outlet.BusinessType ?? "FNB";
+                    existingBranch.ReceiptLogoUrl = outlet.ReceiptLogoUrl;
+                    if (string.IsNullOrWhiteSpace(outlet.ReceiptLogoUrl))
+                    {
+                        existingBranch.ReceiptLogoDataUri = null;
+                        existingBranch.ReceiptLogoUpdatedAt = null;
+                    }
+                    else
+                    {
+                        if (!string.IsNullOrWhiteSpace(outlet.ReceiptLogoDataUri))
+                            existingBranch.ReceiptLogoDataUri = outlet.ReceiptLogoDataUri;
+                        existingBranch.ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt;
+                    }
+                    existingBranch.UpdatedAt = DateTime.UtcNow;
+                }
+                else if (outlet.BranchId > 0)
+                {
+                    db.Branches.Add(new POS.Client.Data.LocalBranch
+                    {
+                        BranchId = outlet.BranchId,
+                        Name = outlet.BranchName,
+                        BranchTagline = outlet.BranchTagline,
+                        Code = outlet.BranchCode,
+                        Address = outlet.BranchAddress,
+                        Phone = outlet.BranchPhone,
+                        TaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType,
+                        VatDisplay = outlet.VatDisplay,
+                        BusinessTypeId = outlet.BusinessTypeId ?? 1,
+                        BusinessType = outlet.BusinessType ?? "FNB",
+                        ReceiptLogoUrl = outlet.ReceiptLogoUrl,
+                        ReceiptLogoDataUri = outlet.ReceiptLogoDataUri,
+                        ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt,
+                        IsActive = true,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+
                 var existingOutlet = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
                     db.TerminalConfigs, o => o.TerminalId == outlet.TerminalId);
                 if (existingOutlet != null)
@@ -588,9 +608,26 @@
                     existingOutlet.BusinessTypeId = outlet.BusinessTypeId ?? 1;
                     existingOutlet.BusinessType = outlet.BusinessType ?? "FNB";
                     existingOutlet.BranchName = outlet.BranchName;
+                    existingOutlet.BranchTagline = outlet.BranchTagline;
                     existingOutlet.BranchCode = outlet.BranchCode;
                     existingOutlet.BranchAddress = outlet.BranchAddress;
                     existingOutlet.BranchPhone = outlet.BranchPhone;
+                    existingOutlet.BranchTaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType;
+                    existingOutlet.VatDisplay = outlet.VatDisplay;
+                    existingOutlet.ReceiptLogoUrl = outlet.ReceiptLogoUrl;
+                    if (string.IsNullOrWhiteSpace(outlet.ReceiptLogoUrl))
+                    {
+                        existingOutlet.ReceiptLogoDataUri = null;
+                        existingOutlet.ReceiptLogoUpdatedAt = null;
+                    }
+                    else
+                    {
+                        if (!string.IsNullOrWhiteSpace(outlet.ReceiptLogoDataUri))
+                        {
+                            existingOutlet.ReceiptLogoDataUri = outlet.ReceiptLogoDataUri;
+                        }
+                        existingOutlet.ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt;
+                    }
                     existingOutlet.TerminalName = outlet.TerminalName;
                     existingOutlet.TerminalIdentifier = address;
                 }
@@ -607,11 +644,16 @@
                         MenuDisplayMode = outlet.MenuDisplayMode == MenuDisplayMode.ImageAndText
                             ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
                         BranchName = outlet.BranchName,
+                        BranchTagline = outlet.BranchTagline,
                         BranchCode = outlet.BranchCode,
                         BranchAddress = outlet.BranchAddress,
                         BranchPhone = outlet.BranchPhone,
+                        ReceiptLogoUrl = outlet.ReceiptLogoUrl,
+                        ReceiptLogoDataUri = outlet.ReceiptLogoDataUri,
+                        ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt,
+                        VatDisplay = outlet.VatDisplay,
                         TerminalName = outlet.TerminalName,
-                        BranchTaxType = "VAT-Registered",
+                        BranchTaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType,
                         TerminalIdentifier = address
                     });
                 }
@@ -653,20 +695,30 @@
                     "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
             }
 
+            var localBranch = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+                Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Branches),
+                b => b.BranchId == localOutlet.BranchId);
+
             var outletDto = new TerminalConfigDto
             {
                 TerminalId = localOutlet.TerminalId,
                 OutletId = localOutlet.OutletId, OutletName = localOutlet.OutletName, TerminalCode = localOutlet.TerminalCode,
                 IpAddress = localOutlet.IpAddress, PTUNumber = localOutlet.PTUNumber, MINNumber = localOutlet.MINNumber, SerialNumber = localOutlet.SerialNumber,
                 BranchId = localOutlet.BranchId,
-                BusinessTypeId = localOutlet.BusinessTypeId ?? 1,
-                BusinessType = localOutlet.BusinessType ?? "FNB",
+                BusinessTypeId = localBranch?.BusinessTypeId ?? localOutlet.BusinessTypeId ?? 1,
+                BusinessType = localBranch?.BusinessType ?? localOutlet.BusinessType ?? "FNB",
                 MenuDisplayMode = localOutlet.MenuDisplayMode == MenuDisplayMode.ImageAndText
                     ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
-                BranchName = localOutlet.BranchName ?? localOutlet.TerminalName,
-                BranchCode = localOutlet.BranchCode ?? $"BR-{localOutlet.BranchId:D2}",
-                BranchAddress = localOutlet.BranchAddress,
-                BranchPhone = localOutlet.BranchPhone,
+                BranchName = !string.IsNullOrWhiteSpace(localBranch?.Name) ? localBranch.Name : (localOutlet.BranchName ?? localOutlet.TerminalName),
+                BranchTagline = localBranch != null ? localBranch.BranchTagline : localOutlet.BranchTagline,
+                BranchCode = !string.IsNullOrWhiteSpace(localBranch?.Code) ? localBranch.Code : (localOutlet.BranchCode ?? $"BR-{localOutlet.BranchId:D2}"),
+                BranchAddress = localBranch?.Address ?? localOutlet.BranchAddress,
+                BranchPhone = localBranch?.Phone ?? localOutlet.BranchPhone,
+                BranchTaxType = !string.IsNullOrWhiteSpace(localBranch?.TaxType) ? localBranch.TaxType : localOutlet.BranchTaxType,
+                VatDisplay = localBranch?.VatDisplay ?? localOutlet.VatDisplay,
+                ReceiptLogoUrl = localBranch?.ReceiptLogoUrl ?? localOutlet.ReceiptLogoUrl,
+                ReceiptLogoDataUri = localBranch?.ReceiptLogoDataUri ?? localOutlet.ReceiptLogoDataUri,
+                ReceiptLogoUpdatedAt = localBranch?.ReceiptLogoUpdatedAt ?? localOutlet.ReceiptLogoUpdatedAt,
                 TerminalName = localOutlet.TerminalName
             };
 
@@ -880,7 +932,6 @@
                 pin = string.Empty;
             }
             isLoading = false;
-            restoreInputFocus = true;
         }
     }
 }

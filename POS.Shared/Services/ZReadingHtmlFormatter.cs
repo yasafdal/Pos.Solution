@@ -159,5 +159,5 @@ public static class ZReadingHtmlFormatter
     private static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
     private static string Qty(decimal value) => value.ToString("0.###", CultureInfo.InvariantCulture);
     private static string Money(decimal value) => (value < 0 ? "-PHP " : "PHP ") + Math.Abs(value).ToString("N2", CultureInfo.InvariantCulture);
-    private static string Stamp(DateTime utc) => DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(8).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " Asia/Manila";
+    private static string Stamp(DateTime utc) => BusinessDayClock.ToManilaTime(utc).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " Asia/Manila";
 }

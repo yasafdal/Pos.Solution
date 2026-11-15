@@ -36,6 +36,10 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
             return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
 
+        var licCheck = await new POS.Api.Services.LicensingService(context).VerifyTerminalCanOperateAsync(dto.TerminalId);
+        if (!licCheck.Allowed)
+            return Conflict(licCheck.ErrorMessage ?? "Terminal license is not valid for processing new sales.");
+
         using var transaction = await context.Database.BeginTransactionAsync();
         try
         {
@@ -62,6 +66,25 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
 
             var calcRes = discountCalculator.CalculateOrder(calcReq);
 
+            var serverReceivedAtUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
+            var occurredAtLocal = dto.TransactionTimestamp.HasValue
+                ? DateTime.SpecifyKind(dto.TransactionTimestamp.Value.DateTime, DateTimeKind.Unspecified)
+                : POS.Shared.Services.BusinessDayClock.DeviceNow();
+            int resolvedOffsetMinutes = dto.DeviceUtcOffsetMinutes
+                ?? (dto.TransactionTimestamp.HasValue
+                    ? (int)Math.Round(dto.TransactionTimestamp.Value.Offset.TotalMinutes)
+                    : POS.Shared.Services.BusinessDayClock.GetDeviceUtcOffsetMinutes());
+            var clockEval = POS.Shared.Services.BusinessDayClock.EvaluateClockDiscrepancy(
+                occurredAtLocal,
+                serverReceivedAtUtc,
+                dto.TransactionTimestamp?.UtcDateTime,
+                null,
+                resolvedOffsetMinutes);
+            if (clockEval.IsSuspicious && !string.IsNullOrWhiteSpace(clockEval.WarningMessage))
+            {
+                Console.WriteLine($"[OrdersController] Order={orderNumber} Terminal={dto.TerminalId}: {clockEval.WarningMessage}");
+            }
+
             var order = new Order
             {
                 OrderNumber = orderNumber,
@@ -87,7 +110,11 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 CustomerAddress = string.IsNullOrWhiteSpace(dto.CustomerAddress) ? null : dto.CustomerAddress.Trim(),
                 CustomerTin = string.IsNullOrWhiteSpace(dto.CustomerTin) ? null : dto.CustomerTin.Trim(),
                 CustomerBusinessStyle = string.IsNullOrWhiteSpace(dto.CustomerBusinessStyle) ? null : dto.CustomerBusinessStyle.Trim(),
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = occurredAtLocal,
+                ServerReceivedAtUtc = serverReceivedAtUtc,
+                DeviceTimeZoneId = !string.IsNullOrWhiteSpace(dto.DeviceTimeZoneId) ? dto.DeviceTimeZoneId : POS.Shared.Services.BusinessDayClock.GetDeviceTimeZoneId(),
+                DeviceUtcOffsetMinutes = resolvedOffsetMinutes,
+                ClockSkewSeconds = clockEval.ClockSkewSeconds != 0 ? clockEval.ClockSkewSeconds : null
             };
 
             decimal subtotal = 0m;
@@ -105,14 +132,17 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                         itemModifiers.Add(new OrderItemModifier
                         {
                             ModifierOptionId = mod.ModifierOptionId,
+                            ProductId = mod.ProductId,
                             ModifierName = mod.ModifierName ?? "Modifier",
                             AdditionalPrice = mod.AdditionalPrice
                         });
                     }
                 }
 
-                decimal unitPrice = itemDto.BasePrice + modifierTotal;
-                decimal lineTotal = unitPrice * itemDto.Quantity;
+                decimal unitPrice = itemDto.IsComplimentary ? 0m : (itemDto.BasePrice + modifierTotal);
+                decimal lineTotal = itemDto.IsComplimentary ? 0m : (itemDto.TargetAmount.HasValue && itemDto.TargetAmount.Value > 0
+                    ? itemDto.TargetAmount.Value
+                    : Math.Round(unitPrice * itemDto.Quantity, 2, MidpointRounding.AwayFromZero));
                 subtotal += lineTotal;
 
                 var calcItem = calcRes.CalculatedItems.FirstOrDefault(ci => ci.ProductId == itemDto.ProductId);
@@ -123,9 +153,12 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                     ProductName = itemDto.ProductName ?? "Product",
                     ProductShortCode = itemDto.ProductShortCode,
                     SpecialInstructions = CartItem.NormalizeSpecialInstructions(itemDto.SpecialInstructions),
+                    PricingMethod = itemDto.PricingMethod,
+                    IsComplimentary = itemDto.IsComplimentary,
+                    ParentProductId = itemDto.ParentProductId,
                     Quantity = itemDto.Quantity,
-                    BasePrice = itemDto.BasePrice,
-                    ModifierTotal = modifierTotal,
+                    BasePrice = itemDto.IsComplimentary ? 0m : itemDto.BasePrice,
+                    ModifierTotal = itemDto.IsComplimentary ? 0m : modifierTotal,
                     UnitPrice = unitPrice,
                     LineTotal = lineTotal,
                     DiscountAmount = calcItem?.DiscountAmount ?? 0m,
@@ -176,6 +209,7 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         var order = await context.Orders
             .Include(o => o.OrderItems)
                 .ThenInclude(i => i.OrderItemModifiers)
+                    .ThenInclude(m => m.Product)
             .FirstOrDefaultAsync(o => o.OrderId == id);
 
         if (order == null) return NotFound();
@@ -217,7 +251,11 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             CustomerAddress = order.CustomerAddress,
             CustomerTin = order.CustomerTin,
             CustomerBusinessStyle = order.CustomerBusinessStyle,
-            CreatedAt = order.CreatedAt,
+            CreatedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.CreatedAt),
+            ServerReceivedAtUtc = order.ServerReceivedAtUtc.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(order.ServerReceivedAtUtc.Value) : null,
+            DeviceTimeZoneId = order.DeviceTimeZoneId,
+            DeviceUtcOffsetMinutes = order.DeviceUtcOffsetMinutes,
+            ClockSkewSeconds = order.ClockSkewSeconds,
             Items = order.OrderItems.Select(i => new OrderItemResponseDto
             {
                 OrderItemId = i.OrderItemId,
@@ -229,6 +267,9 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 ModifierTotal = i.ModifierTotal,
                 UnitPrice = i.UnitPrice,
                 LineTotal = i.LineTotal,
+                PricingMethod = i.PricingMethod,
+                IsComplimentary = i.IsComplimentary,
+                ParentProductId = i.ParentProductId,
                 IsKitchenItem = routing.TryGetValue(i.ProductId, out var r) && r.IsKitchenItem,
                 IsBarItem = routing.TryGetValue(i.ProductId, out var r2) && r2.IsBarItem,
                 SpecialInstructions = i.SpecialInstructions,
@@ -236,6 +277,8 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 {
                     OrderItemModifierId = m.OrderItemModifierId,
                     ModifierOptionId = m.ModifierOptionId,
+                    ProductId = m.ProductId,
+                    ProductName = m.Product != null ? m.Product.Name : null,
                     ModifierName = m.ModifierName,
                     AdditionalPrice = m.AdditionalPrice
                 }).ToList()

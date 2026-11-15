@@ -321,7 +321,9 @@ public static partial class Program
         var html = POS.Client.Services.ReceiptHtmlFormatter.Format(receipt);
         Assert(!html.Contains(".Append("), "Formatted receipt must not contain raw C# source artifacts like .Append(");
         Assert(html.Contains("Main Branch"), "Receipt must contain branch name.");
-        Assert(html.Contains("Type: DINING | Table: 12 | Guests: 4"), "Receipt must render service mode, table number, and guest count.");
+        Assert(html.Contains("<span class=\"meta-label\">Order:</span><span class=\"meta-val\">ORD-0001</span>"), "Receipt must align Order label and value.");
+        Assert(html.Contains("<span class=\"meta-label\">Invoice:</span><span class=\"meta-val\">INV-0000105</span>"), "Receipt must align Invoice label and value.");
+        Assert(html.Contains("<span class=\"meta-label\">Type:</span><span class=\"meta-val\">DINING | Table: 12 | 4</span>"), "Receipt must align Type label with service mode, table number, and head count.");
         Assert(html.Contains("Total Items"), "Receipt must contain Total Items row.");
         Assert(html.Contains("BURGER-DLX"), "Receipt must render item short code / name.");
         Assert(html.Contains("PHP 310.00"), "Receipt must format currency totals.");

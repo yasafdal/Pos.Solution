@@ -10,7 +10,9 @@ public class ReceiptService(PosDbContext context) : IReceiptService
     public async Task<ReceiptDto?> GetReceiptAsync(long orderId, bool isReprint = false)
     {
         var order = await context.Orders.AsNoTracking()
-            .Include(o => o.OrderItems).ThenInclude(i => i.OrderItemModifiers)
+            .Include(o => o.OrderItems)
+                .ThenInclude(i => i.OrderItemModifiers)
+                    .ThenInclude(m => m.Product)
             .Include(o => o.Payments)
             .SingleOrDefaultAsync(o => o.OrderId == orderId);
         if (order == null) return null;
@@ -20,12 +22,13 @@ public class ReceiptService(PosDbContext context) : IReceiptService
         if (order.PaymentStatus != "PAID" || payments.Count == 0 || payments.Sum(p => p.Amount) < order.TotalAmount)
             throw new InvalidOperationException("A receipt is only available for a fully paid order with successful payments.");
         // Branch/outlet labels are current metadata; monetary and item data are sale snapshots.
+        await ReceiptLogoStorage.EnsureBranchColumnsAsync(context);
         var branch = await context.Branches.AsNoTracking().SingleOrDefaultAsync(b => b.BranchId == order.BranchId);
         var outlet = await context.Terminals.AsNoTracking().Include(t => t.Outlet).SingleOrDefaultAsync(o => o.TerminalId == order.TerminalId);
         var productIds = order.OrderItems.Select(i => i.ProductId).Distinct().ToList();
         var productRouting = await context.Products.AsNoTracking()
             .Where(p => productIds.Contains(p.ProductId))
-            .Select(p => new { p.ProductId, p.IsKitchenItem, p.IsBarItem })
+            .Select(p => new { p.ProductId, p.IsKitchenItem, p.IsBarItem, p.UnitOfMeasure, p.PricingMethod })
             .ToDictionaryAsync(p => p.ProductId);
 
         return new ReceiptDto
@@ -34,9 +37,13 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             OrderNumber = order.OrderNumber,
             BranchId = order.BranchId,
             BranchName = branch?.Name ?? string.Empty,
+            BranchTagline = branch?.BranchTagline,
             BranchCode = branch?.Code,
             BranchAddress = branch?.Address,
             BranchPhone = branch?.Phone,
+            ReceiptLogoUrl = branch?.ReceiptLogoUrl,
+            ReceiptLogoDataUri = ReceiptLogoStorage.GetDataUri(branch?.ReceiptLogoUrl),
+            VatDisplay = branch?.VatDisplay ?? true,
             TerminalId = order.TerminalId,
             OutletId = outlet?.OutletId ?? 0, OutletName = outlet?.Outlet.Name ?? string.Empty,
             PTUNumber = outlet?.Ptunumber, MINNumber = outlet?.Minnumber, SerialNumber = outlet?.SerialNumber,
@@ -45,8 +52,11 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             OrderType = order.OrderType,
             TableNumber = order.TableNumber,
             HeadCount = order.HeadCount,
-            CreatedAt = order.CreatedAt,
-            PaidAt = payments.Max(p => p.PaidAt),
+            CreatedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.CreatedAt),
+            PaidAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(payments.Max(p => p.PaidAt)),
+            ServerReceivedAtUtc = order.ServerReceivedAtUtc.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(order.ServerReceivedAtUtc.Value) : null,
+            DeviceTimeZoneId = order.DeviceTimeZoneId,
+            DeviceUtcOffsetMinutes = order.DeviceUtcOffsetMinutes,
             Subtotal = order.Subtotal,
             VatableSales = order.VatableSales,
             VatExemptSales = order.VatExemptSales,
@@ -57,33 +67,45 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             DiscountAmount = order.DiscountAmount,
             TotalAmount = order.TotalAmount,
             InvoiceNumber = order.InvoiceNumber,
-            InvoiceIssuedAt = order.InvoiceIssuedAt,
+            InvoiceIssuedAt = order.InvoiceIssuedAt.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.InvoiceIssuedAt.Value) : null,
             CustomerName = order.CustomerName,
             CustomerAddress = order.CustomerAddress,
             CustomerTin = order.CustomerTin,
             CustomerBusinessStyle = order.CustomerBusinessStyle,
             IsReprint = isReprint,
-            Items = order.OrderItems.OrderBy(i => i.OrderItemId).Select(i => new OrderItemResponseDto
+            Items = order.OrderItems.OrderBy(i => i.OrderItemId).Select(i =>
             {
-                OrderItemId = i.OrderItemId,
-                ProductId = i.ProductId,
-                ProductName = i.ProductName,
-                ProductShortCode = i.ProductShortCode,
-                Quantity = i.Quantity,
-                BasePrice = i.BasePrice,
-                ModifierTotal = i.ModifierTotal,
-                UnitPrice = i.UnitPrice,
-                LineTotal = i.LineTotal,
-                IsKitchenItem = productRouting.TryGetValue(i.ProductId, out var pr) && pr.IsKitchenItem,
-                IsBarItem = productRouting.TryGetValue(i.ProductId, out var pr2) && pr2.IsBarItem,
-                SpecialInstructions = i.SpecialInstructions,
-                Modifiers = i.OrderItemModifiers.OrderBy(m => m.OrderItemModifierId).Select(m => new OrderItemModifierResponseDto
+                productRouting.TryGetValue(i.ProductId, out var prod);
+                return new OrderItemResponseDto
                 {
-                    OrderItemModifierId = m.OrderItemModifierId,
-                    ModifierOptionId = m.ModifierOptionId,
-                    ModifierName = m.ModifierName,
-                    AdditionalPrice = m.AdditionalPrice
-                }).ToList()
+                    OrderItemId = i.OrderItemId,
+                    ProductId = i.ProductId,
+                    ProductName = i.ProductName,
+                    ProductShortCode = i.ProductShortCode,
+                    Quantity = i.Quantity,
+                    BasePrice = i.BasePrice,
+                    ModifierTotal = i.ModifierTotal,
+                    UnitPrice = i.UnitPrice,
+                    LineTotal = i.LineTotal,
+                    PricingMethod = !string.IsNullOrWhiteSpace(i.PricingMethod)
+                        ? i.PricingMethod
+                        : (!i.IsComplimentary ? prod?.PricingMethod : null),
+                    UnitOfMeasure = prod?.UnitOfMeasure,
+                    IsComplimentary = i.IsComplimentary,
+                    ParentProductId = i.ParentProductId,
+                    IsKitchenItem = prod != null && prod.IsKitchenItem,
+                    IsBarItem = prod != null && prod.IsBarItem,
+                    SpecialInstructions = i.SpecialInstructions,
+                    Modifiers = i.OrderItemModifiers.OrderBy(m => m.OrderItemModifierId).Select(m => new OrderItemModifierResponseDto
+                    {
+                        OrderItemModifierId = m.OrderItemModifierId,
+                        ModifierOptionId = m.ModifierOptionId,
+                        ProductId = m.ProductId,
+                        ProductName = m.Product != null ? m.Product.Name : null,
+                        ModifierName = m.ModifierName,
+                        AdditionalPrice = m.AdditionalPrice
+                    }).ToList()
+                };
             }).ToList(),
             Payments = payments.Select(p => new PaymentResponseDto
             {

@@ -230,11 +230,7 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
         return report;
     }
 
-    // Manila is UTC+08 throughout the supported fiscal dates; never use host Local timezone.
-    public static DateOnly BusinessDate(DateTime utc) => DateOnly.FromDateTime(DateTime.SpecifyKind(utc, DateTimeKind.Utc).AddHours(4));
-    public static (DateTime StartUtc, DateTime EndUtc) Period(DateOnly date)
-    {
-        var start = DateTime.SpecifyKind(date.ToDateTime(new TimeOnly(4, 0)).AddHours(-8), DateTimeKind.Utc);
-        return (start, start.AddDays(1));
-    }
+    // Manila is UTC+08 via TimeZoneInfo throughout supported fiscal dates; never use host Local timezone.
+    public static DateOnly BusinessDate(DateTime utc) => POS.Shared.Services.BusinessDayClock.GetBusinessDate(utc);
+    public static (DateTime StartUtc, DateTime EndUtc) Period(DateOnly date) => POS.Shared.Services.BusinessDayClock.GetPeriodUtc(date);
 }

@@ -28,6 +28,9 @@ namespace POS.Api.Controllers
                 .Include(p => p.Category)
                 .Include(p => p.Tax)
                 .Where(p => p.IsDeleted == false)
+                .OrderBy(p => p.CategoryId)
+                .ThenBy(p => p.DisplayOrder)
+                .ThenBy(p => p.ProductId)
                 .Select(p => new ProductDto
                 {
                     ProductId = p.ProductId,
@@ -41,13 +44,15 @@ namespace POS.Api.Controllers
                     SKU = p.Sku,
                     ImageUrl = p.ImageUrl,
                     Price = p.Price,
-                    CostPrice = p.CostPrice.Value,
+                    CostPrice = p.CostPrice ?? 0m,
                     TaxId = p.TaxId,
                     TaxName = p.Tax != null ? p.Tax.Name : "No Tax",
                     ProductType = p.ProductType,
+                    PricingMethod = p.PricingMethod ?? POS.Shared.Constants.PricingMethods.Fixed,
                     IsActive = p.IsActive,
                     IsKitchenItem = p.IsKitchenItem,
-                    IsBarItem = p.IsBarItem
+                    IsBarItem = p.IsBarItem,
+                    DisplayOrder = p.DisplayOrder
                 })
                 .ToListAsync();
 
@@ -59,6 +64,15 @@ namespace POS.Api.Controllers
         [Authorize(Roles = "Admin,Manager")]
         public async Task<ActionResult<ProductDto>> CreateProduct(ProductDto dto)
         {
+            int displayOrder = dto.DisplayOrder;
+            if (displayOrder <= 0)
+            {
+                var maxOrder = await _context.Products
+                    .Where(p => p.CategoryId == dto.CategoryId && !p.IsDeleted)
+                    .MaxAsync(p => (int?)p.DisplayOrder) ?? 0;
+                displayOrder = maxOrder + 1;
+            }
+
             var product = new Product
             {
                 CategoryId = dto.CategoryId,
@@ -73,15 +87,18 @@ namespace POS.Api.Controllers
                 CostPrice = dto.CostPrice,
                 TaxId = dto.TaxId,
                 ProductType = dto.ProductType,
+                PricingMethod = POS.Shared.Constants.PricingMethods.Normalize(dto.PricingMethod),
                 IsActive = dto.IsActive,
                 IsKitchenItem = dto.IsKitchenItem,
-                IsBarItem = dto.IsBarItem
+                IsBarItem = dto.IsBarItem,
+                DisplayOrder = displayOrder
             };
 
             _context.Products.Add(product);
             await _context.SaveChangesAsync();
 
             dto.ProductId = product.ProductId;
+            dto.DisplayOrder = product.DisplayOrder;
             return CreatedAtAction(nameof(GetProducts), new { id = product.ProductId }, dto);
         }
 
@@ -105,12 +122,45 @@ namespace POS.Api.Controllers
             product.CostPrice = dto.CostPrice;
             product.TaxId = dto.TaxId;
             product.ProductType = dto.ProductType;
+            product.PricingMethod = POS.Shared.Constants.PricingMethods.Normalize(dto.PricingMethod);
             product.IsActive = dto.IsActive;
             product.IsKitchenItem = dto.IsKitchenItem;
             product.IsBarItem = dto.IsBarItem;
+            if (dto.DisplayOrder > 0)
+            {
+                product.DisplayOrder = dto.DisplayOrder;
+            }
 
             await _context.SaveChangesAsync();
             return NoContent();
+        }
+
+        // PUT: api/Products/category/5/reorder
+        [HttpPut("category/{categoryId}/reorder")]
+        [Authorize(Roles = "Admin,Manager")]
+        public async Task<IActionResult> ReorderProducts(int categoryId, [FromBody] List<int> orderedProductIds)
+        {
+            if (orderedProductIds == null || orderedProductIds.Count == 0)
+            {
+                return BadRequest("Product IDs list cannot be empty.");
+            }
+
+            var products = await _context.Products
+                .Where(p => p.CategoryId == categoryId && !p.IsDeleted && orderedProductIds.Contains(p.ProductId))
+                .ToListAsync();
+
+            var productMap = products.ToDictionary(p => p.ProductId);
+            for (int i = 0; i < orderedProductIds.Count; i++)
+            {
+                var id = orderedProductIds[i];
+                if (productMap.TryGetValue(id, out var prod))
+                {
+                    prod.DisplayOrder = i + 1;
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok();
         }
 
         // DELETE: api/Products/remove-product/5

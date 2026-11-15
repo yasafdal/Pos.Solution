@@ -76,6 +76,7 @@ builder.Services.AddScoped<POS.Shared.Interfaces.IReceiptService, POS.Api.Servic
 builder.Services.AddScoped<POS.Shared.Interfaces.ISequenceService, POS.Api.Services.SequenceService>();
 builder.Services.AddScoped<POS.Api.Services.IDiscountCalculationService, POS.Api.Services.DiscountCalculationService>();
 builder.Services.AddScoped<POS.Shared.Interfaces.ISalesReportService, POS.Api.Services.SalesReportService>();
+builder.Services.AddScoped<POS.Api.Services.ILicensingService, POS.Api.Services.LicensingService>();
 
 // Fix for Npgsql DateTime handling if using local DateTime values
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -94,6 +95,46 @@ if (builder.Configuration.GetValue<bool>("Database:RunLegacyMigrations"))
 {
     POS.Api.MigrationRunner.Run(builder.Configuration.GetConnectionString("DefaultConnection"));
 }
+else
+{
+    try
+    {
+        var connStr = builder.Configuration.GetConnectionString("DefaultConnection");
+        if (!string.IsNullOrWhiteSpace(connStr))
+        {
+            using var conn = new Npgsql.NpgsqlConnection(connStr);
+            conn.Open();
+            using var cmd = new Npgsql.NpgsqlCommand(@"
+                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUrl"" VARCHAR(255) NULL;
+                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""VatDisplay"" BOOLEAN NOT NULL DEFAULT TRUE;
+                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""BranchTagline"" VARCHAR(200) NULL;
+                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ServerReceivedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
+                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceTimeZoneId"" VARCHAR(100) NULL;
+                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceUtcOffsetMinutes"" INT NULL;
+                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ClockSkewSeconds"" INT NULL;
+                UPDATE ""Payments"" p
+                SET ""paid_at"" = p.""paid_at"" + (o.""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute')
+                FROM ""Orders"" o
+                WHERE p.""order_id"" = o.""order_id""
+                  AND o.""DeviceUtcOffsetMinutes"" IS NOT NULL
+                  AND ABS(o.""DeviceUtcOffsetMinutes"") >= 180
+                  AND o.""ServerReceivedAtUtc"" IS NOT NULL
+                  AND ABS(EXTRACT(EPOCH FROM (o.""created_at"" - o.""ServerReceivedAtUtc""))) < 7200;
+                UPDATE ""Orders""
+                SET ""created_at"" = ""created_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute'),
+                    ""invoice_issued_at"" = CASE WHEN ""invoice_issued_at"" IS NOT NULL THEN ""invoice_issued_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute') ELSE NULL END
+                WHERE ""DeviceUtcOffsetMinutes"" IS NOT NULL
+                  AND ABS(""DeviceUtcOffsetMinutes"") >= 180
+                  AND ""ServerReceivedAtUtc"" IS NOT NULL
+                  AND ABS(EXTRACT(EPOCH FROM (""created_at"" - ""ServerReceivedAtUtc""))) < 7200;
+            ", conn);
+            cmd.ExecuteNonQuery();
+            POS.Api.MigrationRunner.ApplyLicensingSchema(conn);
+        }
+    }
+    catch { /* Non-fatal if DB is unreachable at startup */ }
+}
 
 // Security headers middleware
 app.Use(async (context, next) =>
@@ -106,12 +147,18 @@ app.Use(async (context, next) =>
 });
 
 var webRootPath = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+POS.Api.Services.ReceiptLogoStorage.ConfigureWebRoot(webRootPath, app.Environment.ContentRootPath);
 try
 {
     var uploadsDir = Path.Combine(webRootPath, "uploads", "products");
     if (!Directory.Exists(uploadsDir))
     {
         Directory.CreateDirectory(uploadsDir);
+    }
+    var logosDir = Path.Combine(webRootPath, "uploads", "logos");
+    if (!Directory.Exists(logosDir))
+    {
+        Directory.CreateDirectory(logosDir);
     }
 }
 catch { /* Non-fatal if folder already managed by host */ }

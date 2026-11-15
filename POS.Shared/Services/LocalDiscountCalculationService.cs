@@ -17,8 +17,10 @@ public class LocalDiscountCalculationService
 
         foreach (var item in request.Items)
         {
-            decimal itemEffectivePrice = item.UnitPrice + item.ModifierTotal;
-            decimal lineGross = Math.Round(itemEffectivePrice * item.Quantity, 2);
+            decimal itemEffectivePrice = item.IsComplimentary ? 0m : (item.UnitPrice + item.ModifierTotal);
+            decimal lineGross = item.IsComplimentary ? 0m : (item.TargetAmount.HasValue && item.TargetAmount.Value > 0
+                ? item.TargetAmount.Value
+                : Math.Round(itemEffectivePrice * item.Quantity, 2, MidpointRounding.AwayFromZero));
             
             string taxName = (item.TaxName ?? "VATable").ToUpperInvariant();
             bool isVatExempt = taxName.Contains("EXEMPT");

@@ -426,7 +426,7 @@
                                     {
                                         <div class="small text-muted mt-2" style="font-size: 0.72rem;">
                                             Last cash fund update by <strong>@currentTerminal.CashFundUpdatedBy</strong>
-                                            @(currentTerminal.CashFundUpdatedAt.HasValue ? $"on {currentTerminal.CashFundUpdatedAt.Value.ToLocalTime():MMM d, yyyy HH:mm}" : "")
+                                            @(currentTerminal.CashFundUpdatedAt.HasValue ? $"on {POS.Shared.Services.BusinessDayClock.FormatManila(currentTerminal.CashFundUpdatedAt.Value, "MMM d, yyyy HH:mm")}" : "")
                                         </div>
                                     }
                                     <div class="form-text" style="font-size: 0.74rem;">

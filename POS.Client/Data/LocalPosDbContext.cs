@@ -14,6 +14,7 @@ public class LocalPosDbContext : DbContext
     public DbSet<LocalTax> Taxes => Set<LocalTax>();
     public DbSet<LocalDiscount> Discounts => Set<LocalDiscount>();
     public DbSet<LocalPaymentMethod> PaymentMethods => Set<LocalPaymentMethod>();
+    public DbSet<LocalBranch> Branches => Set<LocalBranch>();
     public DbSet<LocalTerminalConfig> TerminalConfigs => Set<LocalTerminalConfig>();
     public DbSet<LocalOrderSequence> OrderSequences => Set<LocalOrderSequence>();
     public DbSet<LocalInvoiceSequence> InvoiceSequences => Set<LocalInvoiceSequence>();
@@ -27,6 +28,10 @@ public class LocalPosDbContext : DbContext
     public DbSet<LocalCashMovementCategory> CashMovementCategories => Set<LocalCashMovementCategory>();
     public DbSet<LocalCashDrawerShift> CashDrawerShifts => Set<LocalCashDrawerShift>();
     public DbSet<LocalCashDrawerMovement> CashDrawerMovements => Set<LocalCashDrawerMovement>();
+    public DbSet<LocalTerminalLicense> TerminalLicenses => Set<LocalTerminalLicense>();
+    public DbSet<LocalPrinterHardwareConfig> PrinterHardwareConfigs => Set<LocalPrinterHardwareConfig>();
+    public DbSet<LocalCashDrawerHardwareEvent> CashDrawerHardwareEvents => Set<LocalCashDrawerHardwareEvent>();
+    public DbSet<LocalReceiptPrintJob> ReceiptPrintJobs => Set<LocalReceiptPrintJob>();
 
     private readonly string _dbPath;
     private static readonly System.Collections.Generic.HashSet<string> InitializedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -78,12 +83,19 @@ public class LocalPosDbContext : DbContext
         modelBuilder.Entity<LocalTax>().ToTable("LocalTaxes");
         modelBuilder.Entity<LocalDiscount>().ToTable("LocalDiscounts");
         modelBuilder.Entity<LocalPaymentMethod>().ToTable("LocalPaymentMethods");
+        modelBuilder.Entity<LocalBranch>(entity =>
+        {
+            entity.ToTable("LocalBranches");
+            entity.Property(e => e.VatDisplay).HasDefaultValue(true);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+        });
         modelBuilder.Entity<LocalTerminalConfig>(entity =>
         {
             entity.ToTable("LocalTerminalConfigs");
             entity.Property(e => e.IsInitialized).HasDefaultValue(false);
             entity.Property(e => e.IsActivated).HasDefaultValue(false);
             entity.Property(e => e.AllowSync).HasDefaultValue(true);
+            entity.Property(e => e.VatDisplay).HasDefaultValue(true);
             entity.Property(e => e.MenuDisplayMode).HasDefaultValue(POS.Shared.Models.MenuDisplayMode.TextOnly);
         });
         modelBuilder.Entity<LocalOrderSequence>().ToTable("LocalOrderSequences");
@@ -103,6 +115,18 @@ public class LocalPosDbContext : DbContext
         modelBuilder.Entity<LocalCashMovementCategory>().ToTable("LocalCashMovementCategories");
         modelBuilder.Entity<LocalCashDrawerShift>().ToTable("LocalCashDrawerShifts");
         modelBuilder.Entity<LocalCashDrawerMovement>().ToTable("LocalCashDrawerMovements");
+        modelBuilder.Entity<LocalTerminalLicense>().ToTable("LocalTerminalLicenses");
+        modelBuilder.Entity<LocalPrinterHardwareConfig>().ToTable("LocalPrinterHardwareConfigs");
+        modelBuilder.Entity<LocalCashDrawerHardwareEvent>(entity =>
+        {
+            entity.ToTable("LocalCashDrawerHardwareEvents");
+            entity.HasIndex(e => e.TransactionId).IsUnique().HasFilter("\"TransactionId\" IS NOT NULL");
+        });
+        modelBuilder.Entity<LocalReceiptPrintJob>(entity =>
+        {
+            entity.ToTable("LocalReceiptPrintJobs");
+            entity.HasIndex(e => e.TransactionId).IsUnique();
+        });
     }
 
     public void InitializeDatabase()
@@ -128,21 +152,90 @@ public class LocalPosDbContext : DbContext
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN OrderType TEXT NOT NULL DEFAULT 'DINING';"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN TableNumber TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN HeadCount INTEGER NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN CustomerCardNumber TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN CustomerName TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN CustomerAddress TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN CustomerTin TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN CustomerBusinessStyle TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN DeviceTimeZoneId TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN DeviceUtcOffsetMinutes INTEGER NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalOrders ADD COLUMN ServerReceivedAtUtc TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalPayments ADD COLUMN ReferenceNumber TEXT NULL;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalSyncOutboxes ADD COLUMN SyncedAt TEXT NULL;"); } catch { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalProducts ADD COLUMN IsBarItem INTEGER NOT NULL DEFAULT 0;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalProducts ADD COLUMN PricingMethod TEXT DEFAULT 'Fixed';"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalCategories ADD COLUMN DisplayOrder INTEGER NOT NULL DEFAULT 0;"); } catch { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalProducts ADD COLUMN DisplayOrder INTEGER NOT NULL DEFAULT 0;"); } catch { }
                 Database.ExecuteSqlRaw(@"
                     CREATE TABLE IF NOT EXISTS LocalOrderSequences (
                         TerminalId INTEGER PRIMARY KEY,
                         LastIssuedNumber INTEGER NOT NULL DEFAULT 0,
                         UpdatedAt TEXT NOT NULL
                     );");
-                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT", "DeviceUuid TEXT", "IsActivated INTEGER NOT NULL DEFAULT 0", "AllowSync INTEGER NOT NULL DEFAULT 1", "ActivatedAt TEXT", "DefaultOpeningFund TEXT NULL", "OpeningFundOverride TEXT NULL", "EffectiveOpeningFund TEXT NULL", "OpeningFundSource TEXT NULL", "ClosedBusinessDate TEXT NULL", "ClosingLockedByCashier TEXT NULL", "ClosingLockedAtUtc TEXT NULL", "ClosingUnlockAtUtc TEXT NULL", "ClosingLockedTickCount64 INTEGER NULL", "LastKnownServerUtc TEXT NULL", "LastKnownServerTickCount64 INTEGER NULL" })
+                Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS LocalBranches (
+                        BranchId INTEGER PRIMARY KEY,
+                        Name TEXT NOT NULL DEFAULT '',
+                        BranchTagline TEXT NULL,
+                        Code TEXT NOT NULL DEFAULT '',
+                        Address TEXT NULL,
+                        Phone TEXT NULL,
+                        TaxType TEXT NOT NULL DEFAULT 'VAT-Registered',
+                        VatDisplay INTEGER NOT NULL DEFAULT 1,
+                        TrackInventory INTEGER NOT NULL DEFAULT 0,
+                        BusinessTypeId INTEGER NULL DEFAULT 1,
+                        BusinessType TEXT NULL DEFAULT 'FNB',
+                        ServiceModeId INTEGER NULL,
+                        ReceiptLogoUrl TEXT NULL,
+                        ReceiptLogoDataUri TEXT NULL,
+                        ReceiptLogoUpdatedAt TEXT NULL,
+                        IsActive INTEGER NOT NULL DEFAULT 1,
+                        UpdatedAt TEXT NOT NULL
+                    );");
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalBranches ADD COLUMN BranchTagline TEXT NULL;"); } catch { }
+                foreach (var col in new[] { "BusinessTypeId INTEGER", "BusinessType TEXT", "BranchName TEXT", "BranchTagline TEXT NULL", "BranchCode TEXT", "BranchAddress TEXT", "BranchPhone TEXT", "ReceiptLogoUrl TEXT NULL", "ReceiptLogoDataUri TEXT NULL", "ReceiptLogoUpdatedAt TEXT NULL", "VatDisplay INTEGER NOT NULL DEFAULT 1", "ReceiptPrinterName TEXT", "KitchenPrinterName TEXT", "BarPrinterName TEXT", "IsInitialized INTEGER NOT NULL DEFAULT 0", "LastSyncVersion TEXT", "LastSyncAt TEXT", "DeviceUuid TEXT", "IsActivated INTEGER NOT NULL DEFAULT 0", "AllowSync INTEGER NOT NULL DEFAULT 1", "ActivatedAt TEXT", "DefaultOpeningFund TEXT NULL", "OpeningFundOverride TEXT NULL", "EffectiveOpeningFund TEXT NULL", "OpeningFundSource TEXT NULL", "ClosedBusinessDate TEXT NULL", "ClosingLockedByCashier TEXT NULL", "ClosingLockedAtUtc TEXT NULL", "ClosingUnlockAtUtc TEXT NULL", "ClosingLockedTickCount64 INTEGER NULL", "LastKnownServerUtc TEXT NULL", "LastKnownServerTickCount64 INTEGER NULL" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalTerminalConfigs ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
                 }
-                foreach (var col in new[] { "ProductShortCode TEXT", "IsKitchenItem INTEGER NOT NULL DEFAULT 0", "IsBarItem INTEGER NOT NULL DEFAULT 0", "SpecialInstructions TEXT NULL", "ModifiersJson TEXT" })
+                try
+                {
+                    Database.ExecuteSqlRaw(@"
+                        INSERT OR IGNORE INTO LocalBranches (
+                            BranchId, Name, BranchTagline, Code, Address, Phone, TaxType, VatDisplay, TrackInventory,
+                            BusinessTypeId, BusinessType, ServiceModeId, ReceiptLogoUrl, ReceiptLogoDataUri,
+                            ReceiptLogoUpdatedAt, IsActive, UpdatedAt
+                        )
+                        SELECT
+                            BranchId,
+                            COALESCE(BranchName, TerminalName, ''),
+                            BranchTagline,
+                            COALESCE(BranchCode, 'BR-' || printf('%02d', BranchId)),
+                            BranchAddress,
+                            BranchPhone,
+                            COALESCE(BranchTaxType, 'VAT-Registered'),
+                            COALESCE(VatDisplay, 1),
+                            0,
+                            COALESCE(BusinessTypeId, 1),
+                            COALESCE(BusinessType, 'FNB'),
+                            NULL,
+                            ReceiptLogoUrl,
+                            ReceiptLogoDataUri,
+                            ReceiptLogoUpdatedAt,
+                            1,
+                            COALESCE(LastSyncAt, CURRENT_TIMESTAMP)
+                        FROM LocalTerminalConfigs
+                        WHERE BranchId > 0;");
+                }
+                catch { }
+                foreach (var col in new[] { "ProductShortCode TEXT", "IsKitchenItem INTEGER NOT NULL DEFAULT 0", "IsBarItem INTEGER NOT NULL DEFAULT 0", "SpecialInstructions TEXT NULL", "ModifiersJson TEXT", "PricingMethod TEXT NULL", "TargetAmount REAL NULL", "IsComplimentary INTEGER NOT NULL DEFAULT 0", "ParentProductId INTEGER NULL" })
                 {
                     try { Database.ExecuteSqlRaw($"ALTER TABLE LocalOrderItems ADD COLUMN {col};"); }
+                    catch { /* Column already exists */ }
+                }
+                foreach (var col in new[] { "ProductId INTEGER NULL", "ProductName TEXT NULL" })
+                {
+                    try { Database.ExecuteSqlRaw($"ALTER TABLE LocalModifierOptions ADD COLUMN {col};"); }
                     catch { /* Column already exists */ }
                 }
 
@@ -280,6 +373,125 @@ public class LocalPosDbContext : DbContext
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN ExpectedOpeningFund TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDiscrepancy TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
                 try { Database.ExecuteSqlRaw("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDenominationsJson TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+
+                Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS LocalTerminalLicenses (
+                        TerminalId INTEGER PRIMARY KEY,
+                        LicenseId TEXT NOT NULL DEFAULT '',
+                        LicenseKey TEXT NOT NULL DEFAULT '',
+                        DeviceId TEXT NOT NULL DEFAULT '',
+                        BranchId INTEGER NOT NULL DEFAULT 0,
+                        OutletId INTEGER NOT NULL DEFAULT 0,
+                        LicenseStatus TEXT NOT NULL DEFAULT 'PENDING_ACTIVATION',
+                        IssuedAtUtc TEXT NOT NULL,
+                        ActivatedAtUtc TEXT NULL,
+                        ExpiresAtUtc TEXT NULL,
+                        LicenseVersion INTEGER NOT NULL DEFAULT 1,
+                        DurationValue INTEGER NOT NULL DEFAULT 5,
+                        DurationUnit TEXT NOT NULL DEFAULT 'YEARS',
+                        OriginalDurationValue INTEGER NOT NULL DEFAULT 5,
+                        OriginalDurationUnit TEXT NOT NULL DEFAULT 'YEARS',
+                        RenewalCount INTEGER NOT NULL DEFAULT 0,
+                        LastRenewedAtUtc TEXT NULL,
+                        OfflineGracePeriodDays INTEGER NOT NULL DEFAULT 30,
+                        EnvironmentType TEXT NOT NULL DEFAULT 'Production',
+                        Signature TEXT NOT NULL DEFAULT '',
+                        LastValidatedServerUtc TEXT NULL,
+                        LastValidatedTickCount64 INTEGER NULL,
+                        HighWaterMarkUtc TEXT NULL,
+                        HighWaterMarkTickCount64 INTEGER NULL,
+                        RevocationReason TEXT NULL,
+                        RevokedAtUtc TEXT NULL,
+                        SuspensionReason TEXT NULL,
+                        SuspendedAtUtc TEXT NULL,
+                        UpdatedAtUtc TEXT NOT NULL
+                    );");
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalTerminalLicenses ADD COLUMN DurationValue INTEGER NOT NULL DEFAULT 5;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalTerminalLicenses ADD COLUMN DurationUnit TEXT NOT NULL DEFAULT 'YEARS';"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalTerminalLicenses ADD COLUMN OriginalDurationValue INTEGER NOT NULL DEFAULT 5;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalTerminalLicenses ADD COLUMN OriginalDurationUnit TEXT NOT NULL DEFAULT 'YEARS';"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalTerminalLicenses ADD COLUMN RenewalCount INTEGER NOT NULL DEFAULT 0;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+                try { Database.ExecuteSqlRaw("ALTER TABLE LocalTerminalLicenses ADD COLUMN LastRenewedAtUtc TEXT NULL;"); } catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.Message.Contains("duplicate column")) { }
+
+                Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS LocalPrinterHardwareConfigs (
+                        TerminalId INTEGER PRIMARY KEY,
+                        PrinterEnabled INTEGER NOT NULL DEFAULT 0,
+                        ConnectionType TEXT NOT NULL DEFAULT 'Ethernet',
+                        CashDrawerEnabled INTEGER NOT NULL DEFAULT 0,
+                        PrinterIpAddress TEXT NULL,
+                        PrinterPort INTEGER NOT NULL DEFAULT 9100,
+                        UsbDeviceId TEXT NULL,
+                        UsbDeviceName TEXT NULL,
+                        PaperWidthMm INTEGER NOT NULL DEFAULT 80,
+                        PrintDensity TEXT NOT NULL DEFAULT 'Normal',
+                        CharacterEncoding TEXT NOT NULL DEFAULT 'PC437',
+                        AutoCutEnabled INTEGER NOT NULL DEFAULT 1,
+                        ConnectTimeoutMs INTEGER NOT NULL DEFAULT 2000,
+                        KickPin INTEGER NOT NULL DEFAULT 0,
+                        PulseOnUnits INTEGER NOT NULL DEFAULT 25,
+                        PulseOffUnits INTEGER NOT NULL DEFAULT 250,
+                        UpdatedBy TEXT NULL,
+                        UpdatedAtUtc TEXT NOT NULL
+                    );");
+                foreach (var col in new[]
+                {
+                    "PrinterEnabled INTEGER NOT NULL DEFAULT 0",
+                    "ConnectionType TEXT NOT NULL DEFAULT 'Ethernet'",
+                    "UsbDeviceId TEXT NULL",
+                    "UsbDeviceName TEXT NULL",
+                    "PaperWidthMm INTEGER NOT NULL DEFAULT 80",
+                    "PrintDensity TEXT NOT NULL DEFAULT 'Normal'",
+                    "CharacterEncoding TEXT NOT NULL DEFAULT 'PC437'",
+                    "AutoCutEnabled INTEGER NOT NULL DEFAULT 1"
+                })
+                {
+                    try { Database.ExecuteSqlRaw($"ALTER TABLE LocalPrinterHardwareConfigs ADD COLUMN {col};"); }
+                    catch { /* Column already exists */ }
+                }
+
+                Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS LocalCashDrawerHardwareEvents (
+                        EventId INTEGER PRIMARY KEY AUTOINCREMENT,
+                        TerminalId INTEGER NOT NULL,
+                        BranchId INTEGER NOT NULL DEFAULT 0,
+                        TransactionId TEXT NULL,
+                        InvoiceNumber TEXT NULL,
+                        ActionType TEXT NOT NULL,
+                        RequestedBy TEXT NOT NULL,
+                        AuthorizedBy TEXT NULL,
+                        AuthorizedRole TEXT NULL,
+                        Reason TEXT NULL,
+                        TargetEndpoint TEXT NULL,
+                        CommandHex TEXT NULL,
+                        Status TEXT NOT NULL,
+                        ErrorMessage TEXT NULL,
+                        CreatedAtUtc TEXT NOT NULL
+                    );");
+                Database.ExecuteSqlRaw("CREATE UNIQUE INDEX IF NOT EXISTS UX_LocalCashDrawerHardwareEvents_TransactionId ON LocalCashDrawerHardwareEvents (TransactionId) WHERE TransactionId IS NOT NULL;");
+                Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS IX_LocalCashDrawerHardwareEvents_Terminal_CreatedAt ON LocalCashDrawerHardwareEvents (TerminalId, CreatedAtUtc DESC);");
+
+                Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS LocalReceiptPrintJobs (
+                        PrintJobId INTEGER PRIMARY KEY AUTOINCREMENT,
+                        TransactionId TEXT NOT NULL,
+                        OrderNumber TEXT NULL,
+                        InvoiceNumber TEXT NULL,
+                        TerminalId INTEGER NOT NULL,
+                        BranchId INTEGER NOT NULL DEFAULT 0,
+                        ConnectionType TEXT NOT NULL DEFAULT 'Ethernet',
+                        TargetEndpoint TEXT NULL,
+                        Status TEXT NOT NULL DEFAULT 'PENDING',
+                        AttemptCount INTEGER NOT NULL DEFAULT 0,
+                        ErrorMessage TEXT NULL,
+                        CreatedAtUtc TEXT NOT NULL,
+                        LastAttemptAtUtc TEXT NULL,
+                        PrintedAtUtc TEXT NULL,
+                        UpdatedAtUtc TEXT NOT NULL
+                    );");
+                Database.ExecuteSqlRaw("CREATE UNIQUE INDEX IF NOT EXISTS UX_LocalReceiptPrintJobs_TransactionId ON LocalReceiptPrintJobs (TransactionId);");
+                Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS IX_LocalReceiptPrintJobs_Terminal_UpdatedAt ON LocalReceiptPrintJobs (TerminalId, UpdatedAtUtc DESC);");
+
                 // Enable WAL mode and busy_timeout for high concurrency and durability
                 Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
                 Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");

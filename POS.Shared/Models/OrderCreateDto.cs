@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace POS.Shared.Models;
@@ -23,5 +24,9 @@ public class OrderCreateDto
     public string? CustomerBusinessStyle { get; set; }
     public string? OfflineOrderNumber { get; set; } // Preserves offline-issued sequential order number during sync
     public string? OfflineInvoiceNumber { get; set; } // Preserves offline-issued invoice number during sync
+    public DateTimeOffset? TransactionTimestamp { get; set; }
+    public string? DeviceTimeZoneId { get; set; }
+    public int? DeviceUtcOffsetMinutes { get; set; }
     public List<OrderItemCreateDto> Items { get; set; } = new();
+    public List<PaymentSplitDto>? Splits { get; set; }
 }

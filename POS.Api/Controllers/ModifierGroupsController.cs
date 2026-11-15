@@ -15,6 +15,7 @@ public class ModifierGroupsController(PosDbContext context) : ControllerBase
     public async Task<ActionResult<IEnumerable<ModifierGroupDto>>> GetModifierGroups() =>
         Ok(await context.ModifierGroups
             .Include(mg => mg.ModifierOptions.OrderBy(o => o.DisplayOrder))
+                .ThenInclude(mo => mo.Product)
             .AsNoTracking()
             .OrderBy(mg => mg.DisplayOrder)
             .ThenBy(mg => mg.Name)
@@ -26,6 +27,7 @@ public class ModifierGroupsController(PosDbContext context) : ControllerBase
     {
         var mg = await context.ModifierGroups
             .Include(mg => mg.ModifierOptions.OrderBy(o => o.DisplayOrder))
+                .ThenInclude(mo => mo.Product)
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.ModifierGroupId == id);
 
@@ -39,6 +41,8 @@ public class ModifierGroupsController(PosDbContext context) : ControllerBase
             return NotFound("Modifier group not found.");
 
         var options = await context.ModifierOptions
+            .Include(o => o.Product)
+            .AsNoTracking()
             .Where(o => o.ModifierGroupId == groupId)
             .OrderBy(o => o.DisplayOrder)
             .ThenBy(o => o.Name)
@@ -115,6 +119,8 @@ public class ModifierGroupsController(PosDbContext context) : ControllerBase
     {
         ModifierOptionId = o.ModifierOptionId,
         ModifierGroupId = o.ModifierGroupId,
+        ProductId = o.ProductId,
+        ProductName = o.Product != null ? o.Product.Name : null,
         Name = o.Name,
         Price = o.Price,
         DisplayOrder = o.DisplayOrder,

@@ -305,12 +305,22 @@ public class CashDrawerController : ControllerBase
         });
     }
 
+    private static DateTime NormalizeUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
     [HttpPost("open-shift")]
     public async Task<IActionResult> OpenShift([FromBody] OpenShiftDto request, CancellationToken cancellationToken = default)
     {
-        var cashierId = GetAuthenticatedUsername();
-        if (string.IsNullOrEmpty(cashierId)) return Unauthorized();
-        if (request.CashierId != null && request.CashierId != cashierId) return Forbid();
+        var caller = GetAuthenticatedUsername();
+        if (string.IsNullOrEmpty(caller)) return Unauthorized();
+        bool isTerminalTokenForTerminal = string.Equals(GetAuthenticatedRole(), "Terminal", StringComparison.OrdinalIgnoreCase)
+            && User.FindFirst("terminal_id")?.Value == request.TerminalId.ToString();
+        if (!isTerminalTokenForTerminal && request.CashierId != null && request.CashierId != caller) return Forbid();
+        var cashierId = isTerminalTokenForTerminal && !string.IsNullOrWhiteSpace(request.CashierId)
+            ? request.CashierId.Trim()
+            : caller;
+        if (request.OpenedAt.HasValue)
+            request.OpenedAt = NormalizeUtc(request.OpenedAt.Value);
 
         List<CashDenominationLineDto>? validatedOpeningDenoms = null;
         if (request.OpeningDenominations is { Count: > 0 })
@@ -326,8 +336,13 @@ public class CashDrawerController : ControllerBase
         if (request.ExpectedOpeningFund.HasValue && request.ExpectedOpeningFund.Value < 0m)
             return BadRequest("Expected opening fund cannot be negative.");
         if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
-        if (request.ClientShiftId?.Length > 100 || request.OpenedAt > DateTime.UtcNow.AddMinutes(1))
+        if (request.ClientShiftId?.Length > 100 || request.OpenedAt > DateTime.UtcNow.AddMinutes(5))
             return BadRequest("Invalid opening identity or timestamp.");
+
+        var licCheck = await new POS.Api.Services.LicensingService(_context).VerifyTerminalCanOperateAsync(request.TerminalId, null, cancellationToken);
+        if (!licCheck.Allowed)
+            return Conflict(licCheck.ErrorMessage ?? "Terminal license is not valid for opening a new shift.");
+
         using var tx = await _context.Database.BeginTransactionAsync(_context.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable, cancellationToken);
         // Serialize opening with payment, replay and closing on the terminal row.
         await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(_context, request.TerminalId, cancellationToken);
@@ -338,7 +353,7 @@ public class CashDrawerController : ControllerBase
             {
                 if (previous.TerminalId != request.TerminalId || (request.BranchId > 0 && previous.BranchId != request.BranchId)
                     || previous.CashierId != cashierId || previous.OpeningFloat != Math.Round(request.OpeningFloat.Value, 2)
-                    || (request.OpenedAt.HasValue && previous.OpenedAt.ToUniversalTime().Ticks / 10 != request.OpenedAt.Value.ToUniversalTime().Ticks / 10))
+                    || (request.OpenedAt.HasValue && NormalizeUtc(previous.OpenedAt).Ticks / 10 != request.OpenedAt.Value.Ticks / 10))
                     return Conflict("Opening retry does not match the original shift.");
                 var prevSnap = await ReadSnapshotAsync(_context, previous.ShiftId, cancellationToken);
                 return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? prevSnap : RedactForCashier(prevSnap));
@@ -351,7 +366,7 @@ public class CashDrawerController : ControllerBase
             _context, request.TerminalId, cashierId, cancellationToken);
         bool isHistoricalOfflineOpen = request.OpenedAt.HasValue &&
             lockState.LockedAtUtc.HasValue &&
-            request.OpenedAt.Value.ToUniversalTime() < lockState.LockedAtUtc.Value.ToUniversalTime();
+            request.OpenedAt.Value < NormalizeUtc(lockState.LockedAtUtc.Value);
         if (!isHistoricalOfflineOpen)
         {
             if (lockState.IsCashierRestricted)
@@ -1967,11 +1982,14 @@ public class CashDrawerController : ControllerBase
                 .SumAsync(r => (decimal?)r.RefundAmount, cancellationToken) ?? 0m
             : 0m;
 
-        var periodEnd = shift.ClosedAt ?? DateTime.UtcNow;
-        var businessDayStart = periodEnd.TimeOfDay < TimeSpan.FromHours(4)
-            ? periodEnd.Date.AddDays(-1).AddHours(4)
-            : periodEnd.Date.AddHours(4);
-        var reportStart = shift.OpenedAt < businessDayStart ? shift.OpenedAt : businessDayStart;
+        var periodEndUtc = BusinessDayClock.NormalizeUtc(shift.ClosedAt ?? BusinessDayClock.UtcNow());
+        var shiftOpenedUtc = BusinessDayClock.NormalizeUtc(shift.OpenedAt);
+        var businessDate = BusinessDayClock.GetBusinessDate(periodEndUtc);
+        var (businessDayStartUtc, _) = BusinessDayClock.GetPeriodUtc(businessDate);
+        var periodEnd = DateTime.SpecifyKind(periodEndUtc, DateTimeKind.Unspecified);
+        var businessDayStart = DateTime.SpecifyKind(businessDayStartUtc, DateTimeKind.Unspecified);
+        var shiftOpenedUnspecified = DateTime.SpecifyKind(shiftOpenedUtc, DateTimeKind.Unspecified);
+        var reportStart = shiftOpenedUnspecified < businessDayStart ? shiftOpenedUnspecified : businessDayStart;
 
         var periodOrders = await context.Orders.AsNoTracking()
             .Where(o => o.TerminalId == shift.TerminalId && o.CreatedAt >= reportStart && o.CreatedAt <= periodEnd)

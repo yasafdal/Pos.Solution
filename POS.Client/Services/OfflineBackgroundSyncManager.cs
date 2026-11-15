@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using POS.Client.Data;
@@ -11,7 +12,7 @@ namespace POS.Client.Workers
 {
     public interface IOfflineBackgroundSyncService
     {
-        Task TriggerManualSyncAsync(CancellationToken cancellationToken = default);
+        Task<bool> TriggerManualSyncAsync(CancellationToken cancellationToken = default);
     }
 
     public class OfflineBackgroundSyncManager : BackgroundService, IOfflineBackgroundSyncService
@@ -19,6 +20,7 @@ namespace POS.Client.Workers
         private readonly IServiceProvider _serviceProvider;
         private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(30);
         private readonly SemaphoreSlim _syncLock = new(1, 1);
+        private TerminalConnectivityState _lastConnectivityState = TerminalConnectivityState.Unknown;
 
         public OfflineBackgroundSyncManager(IServiceProvider serviceProvider)
         {
@@ -30,12 +32,14 @@ namespace POS.Client.Workers
             // Initial startup delay allowing local DB initialization
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
-            // Recover any stale UPLOADING records left over from previous crash/restart
+            // Recover any stale UPLOADING records and re-queue previously stuck NEEDS_ATTENTION/FAILED records on startup
             try
             {
                 using var scope = _serviceProvider.CreateScope();
                 var coordinator = scope.ServiceProvider.GetRequiredService<IOfflineSyncCoordinator>();
                 await coordinator.RecoverStaleUploadingRecordsAsync(TimeSpan.FromMinutes(2));
+                var syncService = scope.ServiceProvider.GetRequiredService<IOfflineTransactionSyncService>();
+                await syncService.ResetFailedOutboxItemsForRetryAsync();
             }
             catch
             {
@@ -44,21 +48,21 @@ namespace POS.Client.Workers
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                await RunSyncCycleAsync(stoppingToken);
+                await RunSyncCycleAsync(stoppingToken, includeReferenceSync: false, resetFailedItems: false, lockTimeout: TimeSpan.Zero);
                 await Task.Delay(_pollInterval, stoppingToken);
             }
         }
 
-        public async Task TriggerManualSyncAsync(CancellationToken cancellationToken = default)
+        public async Task<bool> TriggerManualSyncAsync(CancellationToken cancellationToken = default)
         {
-            await RunSyncCycleAsync(cancellationToken, includeReferenceSync: true);
+            return await RunSyncCycleAsync(cancellationToken, includeReferenceSync: true, resetFailedItems: true, lockTimeout: TimeSpan.FromSeconds(10));
         }
 
-        private async Task RunSyncCycleAsync(CancellationToken cancellationToken, bool includeReferenceSync = false)
+        private async Task<bool> RunSyncCycleAsync(CancellationToken cancellationToken, bool includeReferenceSync, bool resetFailedItems, TimeSpan lockTimeout)
         {
-            if (!await _syncLock.WaitAsync(0, cancellationToken))
+            if (!await _syncLock.WaitAsync(lockTimeout, cancellationToken))
             {
-                return; // Sync cycle already running
+                return false; // Sync cycle already running or timed out
             }
 
             try
@@ -66,18 +70,33 @@ namespace POS.Client.Workers
                 using var scope = _serviceProvider.CreateScope();
                 var connectivityService = scope.ServiceProvider.GetRequiredService<IPosConnectivityService>();
                 var state = await connectivityService.CheckConnectivityAsync(cancellationToken);
+                bool reconnected = _lastConnectivityState != TerminalConnectivityState.OnlineAndHealthy
+                    && state == TerminalConnectivityState.OnlineAndHealthy;
+                _lastConnectivityState = state;
 
                 if (state != TerminalConnectivityState.OnlineAndHealthy)
                 {
-                    return; // Backend not ready
+                    return false; // Backend not ready
                 }
 
                 var syncService = scope.ServiceProvider.GetRequiredService<IOfflineTransactionSyncService>();
                 var coordinator = scope.ServiceProvider.GetRequiredService<IOfflineSyncCoordinator>();
                 var httpClient = scope.ServiceProvider.GetRequiredService<HttpClient>();
                 var session = scope.ServiceProvider.GetRequiredService<PosSessionService>();
-                if (!await DeviceActivationService.EnsureOnlineBearerTokenAsync(httpClient, session)) return;
 
+                await coordinator.RecoverStaleUploadingRecordsAsync(TimeSpan.FromMinutes(2));
+                if (resetFailedItems || reconnected)
+                {
+                    await syncService.ResetFailedOutboxItemsForRetryAsync();
+                }
+
+                if (!await DeviceActivationService.EnsureOnlineBearerTokenAsync(httpClient, session, forceRefresh: resetFailedItems))
+                {
+                    if (!await DeviceActivationService.EnsureOnlineBearerTokenAsync(httpClient, session, forceRefresh: false))
+                        return false;
+                }
+
+                bool allOutboxSucceeded = true;
                 var pendingItems = await syncService.GetPendingOutboxItemsAsync();
                 foreach (var item in pendingItems)
                 {
@@ -87,27 +106,59 @@ namespace POS.Client.Workers
                     {
                         if (await coordinator.AcquireLeaseAsync(item.OutboxId, "OfflineBackgroundSyncManager", TimeSpan.FromMinutes(2)))
                         {
-                            await syncService.UploadTransactionAsync(item, httpClient);
+                            bool uploaded = await syncService.UploadTransactionAsync(item, httpClient);
+                            if (!uploaded)
+                            {
+                                allOutboxSucceeded = false;
+                            }
                         }
                     }
                     catch
                     {
-                        // Log or suppress individual sync failure to continue batch
+                        allOutboxSucceeded = false;
                     }
                 }
 
-                if (includeReferenceSync && session.Terminal?.TerminalId > 0)
+                int terminalId = session.Terminal?.TerminalId ?? 0;
+                if (terminalId <= 0)
+                {
+                    using var localDb = new POS.Client.Data.LocalPosDbContext();
+                    localDb.InitializeDatabase();
+                    var cfg = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(localDb.TerminalConfigs.AsNoTracking());
+                    terminalId = cfg?.TerminalId ?? 0;
+                }
+
+                bool refSyncSuccess = true;
+                if (includeReferenceSync && terminalId > 0)
                 {
                     var refSync = scope.ServiceProvider.GetService<IReferenceDataSyncService>();
                     if (refSync != null)
                     {
-                        await refSync.SyncReferenceDataAsync(session.Terminal.TerminalId, httpClient);
+                        refSyncSuccess = await refSync.SyncReferenceDataAsync(terminalId, httpClient);
                     }
                 }
+
+                if ((reconnected || includeReferenceSync) && terminalId > 0)
+                {
+                    var licService = scope.ServiceProvider.GetService<IClientLicenseService>();
+                    if (licService != null)
+                    {
+                        try
+                        {
+                            await licService.ValidateOnlineAsync(httpClient, terminalId, force: true);
+                        }
+                        catch
+                        {
+                            // Non-fatal: license retry cooldown handles temporary server issues
+                        }
+                    }
+                }
+
+                return allOutboxSucceeded && refSyncSuccess;
             }
             catch
             {
-                // Suppress background poll errors
+                return false;
             }
             finally
             {

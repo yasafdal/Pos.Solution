@@ -68,7 +68,7 @@ else
                         <div>
                             <h5 class="fw-bold text-light mb-0">Shift #@shift.ShiftId • Cashier: @shift.CashierId</h5>
                             <span class="text-secondary small">
-                                Opened @shift.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") • Terminal: @(Session.Terminal?.TerminalName ?? $"#{shift.TerminalId}")
+                                Opened @POS.Shared.Services.BusinessDayClock.FormatManila(shift.OpenedAt, "yyyy-MM-dd HH:mm") • Terminal: @(Session.Terminal?.TerminalName ?? $"#{shift.TerminalId}")
                             </span>
                         </div>
                     </div>
@@ -479,13 +479,57 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        if (!Session.IsAuthenticated || Session.Terminal == null) return;
+        if (!Session.IsAuthenticated) return;
+        if (string.IsNullOrWhiteSpace(Session.Username) ||
+            Session.Terminal == null || Session.Terminal.TerminalId <= 0 || Session.Terminal.BranchId <= 0)
+        {
+            error = "Cashier session or assigned terminal is invalid. Please sign in again.";
+            return;
+        }
         ResetDenominations();
         try
         {
+            var terminalId = Session.Terminal.TerminalId;
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
-            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, Session.Terminal.TerminalId, Session.Username, isOffline);
+            if (!isOffline)
+            {
+                var tokenResult = await DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(Http, Session);
+                if (!tokenResult.Success)
+                {
+                    if (tokenResult.RejectionStatus == System.Net.HttpStatusCode.Locked)
+                    {
+                        Session.ClearSession();
+                        Http.DefaultRequestHeaders.Authorization = null;
+                        Navigation.NavigateTo("/terminal-locked", replace: true);
+                        return;
+                    }
+                    if (tokenResult.RejectionStatus == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        var serverLock = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, Session.Username, offline: false);
+                        if (serverLock.IsCashierRestricted || serverLock.IsTerminalLocked)
+                        {
+                            Session.ClearSession();
+                            Http.DefaultRequestHeaders.Authorization = null;
+                            Navigation.NavigateTo("/terminal-locked", replace: true);
+                            return;
+                        }
+                        error = tokenResult.ErrorMessage ?? "Online session authorization was denied (HTTP 403 Forbidden). Please re-authenticate online.";
+                        return;
+                    }
+                    if (tokenResult.RejectionStatus is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.BadRequest)
+                    {
+                        error = tokenResult.ErrorMessage ?? $"Online session authorization was rejected (HTTP {(int)tokenResult.RejectionStatus.Value}). Please sign in again online.";
+                        return;
+                    }
+                    if (tokenResult.IsTransientError || !DeviceActivationService.HasValidOnlineBearerToken(Http, Session))
+                    {
+                        isOffline = true;
+                    }
+                }
+            }
+
+            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, Session.Username, isOffline);
             if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
             {
                 Session.ClearSession();
@@ -493,7 +537,17 @@ else
                 Navigation.NavigateTo("/terminal-locked", replace: true);
                 return;
             }
-            shift = await ShiftSession.CurrentDtoAsync(Http, Session.Terminal.TerminalId, isOffline);
+
+            try
+            {
+                shift = await ShiftSession.CurrentDtoAsync(Http, terminalId, isOffline);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
+            {
+                isOffline = true;
+                shift = await ShiftSession.CurrentDtoAsync(Http, terminalId, offline: true);
+            }
+
             if (shift != null)
             {
                 var configured = shift.ConfiguredNonCashMethods.Count > 0
@@ -518,12 +572,26 @@ else
             }
             else
             {
-                lastClosedShift = await ShiftSession.LastClosedDtoAsync(Http, Session.Terminal.TerminalId, isOffline);
+                try
+                {
+                    lastClosedShift = await ShiftSession.LastClosedDtoAsync(Http, terminalId, isOffline);
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
+                {
+                    isOffline = true;
+                    lastClosedShift = await ShiftSession.LastClosedDtoAsync(Http, terminalId, offline: true);
+                }
             }
         }
-        catch
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
         {
-            error = "Unable to load shift.";
+            error = $"Unable to read local shift database: {ex.Message}.";
+        }
+        catch (Exception ex)
+        {
+            error = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Unable to load shift details. Please check your session or drawer status and retry."
+                : ex.Message;
         }
     }
 

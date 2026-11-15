@@ -16,5 +16,7 @@ public class CategoryDto
     public bool IsActive { get; set; }
     public bool IsDeleted { get; set; }
 
+    public int DisplayOrder { get; set; }
+
     public int ProductCount { get; set; }
 }

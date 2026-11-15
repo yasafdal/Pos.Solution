@@ -7,11 +7,15 @@
 @inject POS.Shared.Interfaces.IUserService UserService
 @inject POS.Client.Data.LocalPosDbContext LocalDb
 @inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
+@inject POS.Client.Services.IOfflineTransactionSyncService TransactionSyncService
 @inject POS.Client.Services.IReferenceDataSyncService ReferenceDataSync
+@inject POS.Client.Services.IClientLicenseService LicenseService
+@inject POS.Client.Services.CartService Cart
+@inject POS.Shared.Interfaces.IHeldSaleService HeldSaleService
 @using Microsoft.EntityFrameworkCore
 @implements IDisposable
 
-<div class="page @(IsNewSalePage ? "page-new-sale" : "")">
+<div class="page @(IsNewSalePage ? "page-new-sale" : "") @(ShowWorkspaceBottomNav ? "has-bottom-nav" : "")">
     @if (Session.IsAuthenticated && !IsNewSalePage)
     {
         <header class="app-header-bar d-flex justify-content-between align-items-center px-4">
@@ -37,29 +41,29 @@
                     </span>
                 }
 
-                @if (_pendingCount > 0)
+                @if (_pendingCount > 0 || _uploadingCount > 0)
                 {
-                    <span class="badge bg-primary text-white d-inline-flex align-items-center gap-1 py-1 px-2" title="@_pendingCount transaction(s) pending sync">
-                        <i class="bi bi-arrow-repeat @(_isSyncing ? "spinner-border spinner-border-sm" : "")"></i> @_pendingCount pending
+                    <span class="badge bg-primary text-white d-inline-flex align-items-center gap-1 py-1 px-2" title="@(_pendingCount + _uploadingCount) transaction(s) pending sync">
+                        <i class="bi bi-arrow-repeat @(_isSyncing || _uploadingCount > 0 ? "spinner-border spinner-border-sm" : "")"></i> @(_pendingCount + _uploadingCount) pending
                     </span>
                 }
                 else if (_failedCount > 0)
                 {
-                    <span class="badge bg-danger text-white d-inline-flex align-items-center gap-1 py-1 px-2" title="@_failedCount sync failure(s)">
+                    <span class="badge bg-danger text-white d-inline-flex align-items-center gap-1 py-1 px-2" title="@(_lastFailedError ?? $"{_failedCount} sync failure(s)")">
                         <i class="bi bi-exclamation-octagon"></i> @_failedCount failed
                     </span>
                 }
                 else
                 {
-                    <span class="badge bg-secondary bg-opacity-25 text-secondary border d-inline-flex align-items-center gap-1 py-1 px-2" title="All transactions synchronized">
+                    <span class="badge bg-secondary bg-opacity-25 text-secondary border d-inline-flex align-items-center gap-1 py-1 px-2" title="@(_lastSyncTime.HasValue ? $"All transactions synchronized • Last sync: {POS.Shared.Services.BusinessDayClock.FormatManila(_lastSyncTime.Value, "hh:mm tt")}" : "All transactions synchronized")">
                         <i class="bi bi-check2-all text-success"></i> <span class="d-none d-sm-inline">Synced</span>
                     </span>
                 }
 
                 <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 d-inline-flex align-items-center gap-1 text-white border-secondary"
-                        disabled="@(_isSyncing || _connectivityState != TerminalConnectivityState.OnlineAndHealthy)"
+                        disabled="@_isSyncing"
                         @onclick="TriggerSyncNowAsync"
-                        title="Synchronize pending transactions immediately">
+                        title="Synchronize catalog and pending transactions immediately">
                     <i class="bi bi-arrow-clockwise @(_isSyncing ? "spinner-border spinner-border-sm" : "")"></i>
                     <span class="d-none d-md-inline">Sync Now</span>
                 </button>
@@ -85,6 +89,31 @@
                 <span class="badge bg-secondary">Offline Ready</span>
             </div>
         }
+
+        @if (_licenseEvaluation != null && !_licenseEvaluation.IsValidForNewSales && _licenseEvaluation.BlockReasonCode != "LICENSE_MISSING")
+        {
+            <div class="alert alert-danger rounded-0 m-0 py-2 px-4 d-flex justify-content-between align-items-center shadow-sm" role="alert">
+                <div class="d-flex align-items-center gap-2 small fw-semibold">
+                    <i class="bi bi-shield-exclamation fs-5"></i>
+                    <span>License Status (@_licenseEvaluation.EffectiveStatus): @_licenseEvaluation.BlockMessage</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-light fw-bold py-0 px-2" @onclick='() => NavigateWorkspace("/license-info")'>
+                    License Details
+                </button>
+            </div>
+        }
+        else if (_licenseEvaluation != null && !string.IsNullOrWhiteSpace(_licenseEvaluation.WarningMessage))
+        {
+            <div class="alert alert-warning rounded-0 m-0 py-1 px-4 d-flex justify-content-between align-items-center shadow-sm" role="alert">
+                <div class="d-flex align-items-center gap-2 small fw-medium">
+                    <i class="bi bi-shield-lock-fill text-warning"></i>
+                    <span>@_licenseEvaluation.WarningMessage</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-dark fw-semibold py-0 px-2" @onclick='() => NavigateWorkspace("/license-info")'>
+                    License Info
+                </button>
+            </div>
+        }
     }
 
     <div class="main-body @(IsNewSalePage ? "main-body-new-sale" : "")">
@@ -99,20 +128,116 @@
         <main class="content-area @(IsNewSalePage ? "content-area-new-sale" : "")">
             <article class="content @(IsNewSalePage ? "content-new-sale" : "px-4 py-3")">
                 <CascadingValue Value="this">
-                    @Body
+                    @if (ShowWorkspaceBottomNav)
+                    {
+                        <div class="workspace-new-sale-host @(IsNewSalePage ? "workspace-panel-active" : "d-none")">
+                            <POS.Client.Components.Pages.NewSale />
+                        </div>
+                    }
+                    @if (!ShowWorkspaceBottomNav || !IsNewSalePage)
+                    {
+                        <div class="workspace-body-host @(IsNewSalePage && ShowWorkspaceBottomNav ? "d-none" : "workspace-panel-active")">
+                            @Body
+                        </div>
+                    }
                 </CascadingValue>
             </article>
         </main>
     </div>
+
+    @if (ShowWorkspaceBottomNav)
+    {
+        <nav class="cashier-bottom-nav" aria-label="Cashier Workspace Navigation">
+            <button type="button"
+                    class="workspace-nav-btn @(IsDashboardActive ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/")'
+                    title="Operational Dashboard">
+                <i class="bi bi-grid-fill workspace-nav-icon"></i>
+                <span class="workspace-nav-label">Dashboard</span>
+            </button>
+
+            <button type="button"
+                    class="workspace-nav-btn workspace-nav-btn-primary @(IsNewSalePage ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/new-sale")'
+                    title="New Sale Register">
+                <div class="workspace-nav-icon-wrap">
+                    <i class="bi bi-cart-fill workspace-nav-icon"></i>
+                    @if (Cart.TotalItems > 0)
+                    {
+                        <span class="workspace-nav-badge badge-primary">@CartItem.FormatQuantity(Cart.TotalItems)</span>
+                    }
+                </div>
+                <span class="workspace-nav-label">New Sale</span>
+            </button>
+
+            <button type="button"
+                    class="workspace-nav-btn @(IsTransactionsAllActive ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/transactions")'
+                    title="Transaction History">
+                <i class="bi bi-receipt workspace-nav-icon"></i>
+                <span class="workspace-nav-label">Transactions</span>
+            </button>
+
+            <button type="button"
+                    class="workspace-nav-btn @(IsHeldSalesActive ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/held-sales")'
+                    title="Held / Parked Sales">
+                <div class="workspace-nav-icon-wrap">
+                    <i class="bi bi-pause-circle-fill workspace-nav-icon"></i>
+                    @if (_heldCount > 0)
+                    {
+                        <span class="workspace-nav-badge badge-warning">@_heldCount</span>
+                    }
+                </div>
+                <span class="workspace-nav-label">Held Sales</span>
+            </button>
+
+            <button type="button"
+                    class="workspace-nav-btn @(IsReprintActive ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/transactions?mode=reprint")'
+                    title="Find and Reprint Receipts">
+                <i class="bi bi-printer-fill workspace-nav-icon"></i>
+                <span class="workspace-nav-label">Reprint</span>
+            </button>
+
+            <button type="button"
+                    class="workspace-nav-btn workspace-nav-btn-danger @(IsVoidActive ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/transactions?mode=void")'
+                    title="Void Transaction (Supervisor PIN Required)">
+                <i class="bi bi-x-circle-fill workspace-nav-icon"></i>
+                <span class="workspace-nav-label">Void</span>
+            </button>
+
+            <button type="button"
+                    class="workspace-nav-btn @(IsCashierActive ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/cash-drawer")'
+                    title="Cashier Session, Paid-In/Paid-Out & Blind Closing">
+                <i class="bi bi-cash-stack workspace-nav-icon"></i>
+                <span class="workspace-nav-label">Cashier</span>
+            </button>
+
+            <button type="button"
+                    class="workspace-nav-btn @(IsReadingsActive ? "active" : "")"
+                    @onclick='() => NavigateWorkspace("/z-reading")'
+                    title="X-Reading & Z-Reading Reports">
+                <i class="bi bi-file-earmark-bar-graph-fill workspace-nav-icon"></i>
+                <span class="workspace-nav-label">Readings</span>
+            </button>
+        </nav>
+    }
 </div>
 
 @code {
     private bool isNavVisible = false;
     private TerminalConnectivityState _connectivityState = TerminalConnectivityState.OnlineAndHealthy;
+    private TerminalConnectivityState _previousConnectivityState = TerminalConnectivityState.Unknown;
     private int _pendingCount = 0;
+    private int _uploadingCount = 0;
     private int _failedCount = 0;
+    private string? _lastFailedError = null;
     private bool _isSyncing = false;
     private DateTime? _lastSyncTime;
+    private POS.Shared.Models.LicenseEvaluationResultDto? _licenseEvaluation;
     private System.Threading.Timer? _statusTimer;
 
     public TerminalConnectivityState ConnectivityState => _connectivityState;
@@ -125,10 +250,67 @@
         StateHasChanged();
         try
         {
-            await BackgroundSyncService.TriggerManualSyncAsync();
+            _connectivityState = await ConnectivityService.CheckConnectivityAsync();
+            if (_connectivityState != TerminalConnectivityState.OnlineAndHealthy)
+            {
+                var serverUrl = Http.BaseAddress?.ToString().TrimEnd('/') ?? "server";
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Toast = true,
+                    Position = SweetAlertPosition.TopEnd,
+                    ShowConfirmButton = false,
+                    Timer = 4000,
+                    Icon = SweetAlertIcon.Warning,
+                    Title = $"Server unreachable ({serverUrl}). Verify POS.Api is running."
+                });
+                return;
+            }
+
+            var success = await BackgroundSyncService.TriggerManualSyncAsync();
+            if (Session.Terminal != null)
+            {
+                await LicenseService.ValidateOnlineAsync(Http, Session.Terminal.TerminalId, force: true);
+            }
+            await Session.RefreshCachedMenuDisplayModeAsync();
             await CheckStatusAsync();
+
+            if (success)
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Toast = true,
+                    Position = SweetAlertPosition.TopEnd,
+                    ShowConfirmButton = false,
+                    Timer = 3000,
+                    Icon = SweetAlertIcon.Success,
+                    Title = "Sync completed! Catalog and reference data updated."
+                });
+            }
+            else
+            {
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Toast = true,
+                    Position = SweetAlertPosition.TopEnd,
+                    ShowConfirmButton = false,
+                    Timer = 4000,
+                    Icon = SweetAlertIcon.Warning,
+                    Title = "Sync could not be completed. Check server connection."
+                });
+            }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Toast = true,
+                Position = SweetAlertPosition.TopEnd,
+                ShowConfirmButton = false,
+                Timer = 4000,
+                Icon = SweetAlertIcon.Error,
+                Title = $"Sync error: {ex.Message}"
+            });
+        }
         finally
         {
             _isSyncing = false;
@@ -136,7 +318,85 @@
         }
     }
 
-    private bool IsNewSalePage => Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("new-sale", StringComparison.OrdinalIgnoreCase);
+    private int _heldCount = 0;
+
+    private string CurrentRelativePath
+    {
+        get
+        {
+            var rel = Navigation.ToBaseRelativePath(Navigation.Uri);
+            var qIdx = rel.IndexOfAny(new[] { '?', '#' });
+            return (qIdx >= 0 ? rel[..qIdx] : rel).Trim('/');
+        }
+    }
+
+    private string CurrentTransactionMode
+    {
+        get
+        {
+            try
+            {
+                var uri = new Uri(Navigation.Uri);
+                var query = uri.Query;
+                if (string.IsNullOrWhiteSpace(query)) return string.Empty;
+                foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var kv = part.Split('=', 2);
+                    if (kv.Length == 2 && kv[0].Equals("mode", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return Uri.UnescapeDataString(kv[1]).Trim().ToLowerInvariant();
+                    }
+                }
+            }
+            catch { }
+            return string.Empty;
+        }
+    }
+
+    private bool IsNonWorkspacePage =>
+        CurrentRelativePath.Equals("login", StringComparison.OrdinalIgnoreCase) ||
+        CurrentRelativePath.Equals("activate", StringComparison.OrdinalIgnoreCase) ||
+        CurrentRelativePath.Equals("initialization", StringComparison.OrdinalIgnoreCase) ||
+        CurrentRelativePath.Equals("terminal-locked", StringComparison.OrdinalIgnoreCase);
+
+    private bool ShowWorkspaceBottomNav => Session.IsAuthenticated && !IsNonWorkspacePage;
+
+    private bool IsNewSalePage => CurrentRelativePath.Equals("new-sale", StringComparison.OrdinalIgnoreCase);
+    private bool IsDashboardActive => string.IsNullOrEmpty(CurrentRelativePath) || CurrentRelativePath.Equals("dashboard", StringComparison.OrdinalIgnoreCase);
+    private bool IsHeldSalesActive => CurrentRelativePath.Equals("held-sales", StringComparison.OrdinalIgnoreCase);
+    private bool IsTransactionsAllActive => CurrentRelativePath.Equals("transactions", StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(CurrentTransactionMode);
+    private bool IsReprintActive => CurrentRelativePath.Equals("transactions", StringComparison.OrdinalIgnoreCase) && CurrentTransactionMode == "reprint";
+    private bool IsVoidActive => CurrentRelativePath.Equals("transactions", StringComparison.OrdinalIgnoreCase) && CurrentTransactionMode == "void";
+    private bool IsCashierActive => CurrentRelativePath.Equals("cash-drawer", StringComparison.OrdinalIgnoreCase) || CurrentRelativePath.Equals("my-shift", StringComparison.OrdinalIgnoreCase);
+    private bool IsReadingsActive => CurrentRelativePath.Equals("z-reading", StringComparison.OrdinalIgnoreCase);
+
+    private void NavigateWorkspace(string targetUrl)
+    {
+        isNavVisible = false;
+        Navigation.NavigateTo(targetUrl);
+    }
+
+    private void OnCartStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnReferenceSyncCompleted() => _ = InvokeAsync(async () =>
+    {
+        await Session.RefreshCachedMenuDisplayModeAsync();
+        await CheckStatusAsync();
+    });
+
+    private void OnTransactionSyncStateChanged() => _ = InvokeAsync(CheckStatusAsync);
+
+    private async Task RefreshHeldCountAsync()
+    {
+        if (!Session.IsAuthenticated || Session.Terminal == null || _connectivityState != TerminalConnectivityState.OnlineAndHealthy)
+            return;
+        try
+        {
+            var held = await HeldSaleService.GetHeldSalesAsync(null, Session.Terminal.TerminalId);
+            _heldCount = held?.Count ?? 0;
+        }
+        catch { }
+    }
 
     public void ToggleNavMenu()
     {
@@ -157,6 +417,9 @@
     protected override async Task OnInitializedAsync()
     {
         Navigation.LocationChanged += OnLocationChanged;
+        Cart.OnChange += OnCartStateChanged;
+        ReferenceDataSync.OnSyncCompleted += OnReferenceSyncCompleted;
+        TransactionSyncService.OnSyncStateChanged += OnTransactionSyncStateChanged;
         try
         {
             LocalDb.InitializeDatabase();
@@ -172,7 +435,11 @@
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
-        InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshHeldCountAsync();
+            StateHasChanged();
+        });
     }
 
     private async Task CheckStatusAsync()
@@ -180,12 +447,27 @@
         try
         {
             _connectivityState = await ConnectivityService.CheckConnectivityAsync();
+            bool reconnected = _previousConnectivityState != TerminalConnectivityState.Unknown
+                               && _previousConnectivityState != TerminalConnectivityState.OnlineAndHealthy
+                               && _connectivityState == TerminalConnectivityState.OnlineAndHealthy;
+            _previousConnectivityState = _connectivityState;
+
             if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy && Session.IsAuthenticated)
             {
                 await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
             }
             if (Session.IsAuthenticated && Session.Terminal != null)
             {
+                if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy)
+                {
+                    await LicenseService.ValidateOnlineAsync(Http, Session.Terminal.TerminalId, force: reconnected);
+                }
+                else
+                {
+                    await LicenseService.EvaluateLocalLicenseAsync(Session.Terminal.TerminalId);
+                }
+                _licenseEvaluation = LicenseService.LastEvaluation;
+
                 var lockState = await POS.Client.Services.ShiftSession.GetTerminalLockStatusAsync(
                     Http,
                     Session.Terminal.TerminalId,
@@ -202,12 +484,27 @@
             using var db = new POS.Client.Data.LocalPosDbContext();
             db.InitializeDatabase();
             _pendingCount = db.SyncOutboxes.Count(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING");
+            _uploadingCount = db.SyncOutboxes.Count(o => o.Status == "UPLOADING");
             _failedCount = db.SyncOutboxes.Count(o => o.Status == "FAILED" || o.Status == "NEEDS_ATTENTION");
-            _lastSyncTime = await ReferenceDataSync.GetLastSuccessfulSyncAsync();
+            _lastFailedError = db.SyncOutboxes
+                .Where(o => o.Status == "FAILED" || o.Status == "NEEDS_ATTENTION")
+                .OrderByDescending(o => o.OutboxId)
+                .Select(o => o.LastError)
+                .FirstOrDefault();
+            var lastOutboxSync = db.SyncOutboxes
+                .Where(o => o.Status == "SYNCED")
+                .OrderByDescending(o => o.SyncedAt ?? o.CreatedAt)
+                .Select(o => o.SyncedAt ?? o.CreatedAt)
+                .FirstOrDefault();
+            var refSync = await ReferenceDataSync.GetLastSuccessfulSyncAsync();
+            _lastSyncTime = lastOutboxSync != default && (!refSync.HasValue || lastOutboxSync > refSync.Value)
+                ? lastOutboxSync
+                : refSync;
             if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy && db.Cashiers.Count() <= 1)
             {
                 await EnsureCashiersCachedAsync();
             }
+            await RefreshHeldCountAsync();
             StateHasChanged();
         }
         catch
@@ -219,6 +516,9 @@
     public void Dispose()
     {
         Navigation.LocationChanged -= OnLocationChanged;
+        Cart.OnChange -= OnCartStateChanged;
+        ReferenceDataSync.OnSyncCompleted -= OnReferenceSyncCompleted;
+        TransactionSyncService.OnSyncStateChanged -= OnTransactionSyncStateChanged;
         _statusTimer?.Dispose();
     }
 
@@ -291,8 +591,12 @@
                         BranchCode = outlet.BranchCode,
                         BranchAddress = outlet.BranchAddress,
                         BranchPhone = outlet.BranchPhone,
+                        ReceiptLogoUrl = outlet.ReceiptLogoUrl,
+                        ReceiptLogoDataUri = outlet.ReceiptLogoDataUri,
+                        ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt,
+                        VatDisplay = outlet.VatDisplay,
                         TerminalName = outlet.TerminalName,
-                        BranchTaxType = "VAT-Registered",
+                        BranchTaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType,
                         TerminalIdentifier = outlet.TerminalName
                     });
                     await db.SaveChangesAsync();

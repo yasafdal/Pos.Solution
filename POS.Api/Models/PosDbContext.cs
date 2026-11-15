@@ -40,8 +40,12 @@ public partial class PosDbContext : DbContext
     {
         if (!optionsBuilder.IsConfigured)
         {
-#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
-            optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=pos_db;Username=postgres;Password=p@$$w0rd");
+            var envConn = Environment.GetEnvironmentVariable("POS_DB_CONNECTION")
+                ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
+            if (!string.IsNullOrWhiteSpace(envConn))
+            {
+                optionsBuilder.UseNpgsql(envConn);
+            }
         }
     }
 
@@ -55,10 +59,14 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.Code).HasMaxLength(20);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
             entity.Property(e => e.Name).HasMaxLength(100);
+            entity.Property(e => e.BranchTagline).HasMaxLength(200);
             entity.Property(e => e.Phone).HasMaxLength(50);
             entity.Property(e => e.TaxType)
                 .HasMaxLength(30)
                 .HasDefaultValueSql("'VAT-Registered'::character varying");
+            entity.Property(e => e.VatDisplay).HasDefaultValue(true);
+            entity.Property(e => e.ReceiptLogoUrl).HasMaxLength(255);
+            entity.Property(e => e.ReceiptLogoUpdatedAt).HasColumnType("timestamp without time zone");
         });
 
         modelBuilder.Entity<BranchInventory>(entity =>
@@ -90,6 +98,7 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.Description).HasMaxLength(255);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
             entity.Property(e => e.Name).HasMaxLength(50);
+            entity.Property(e => e.DisplayOrder).HasColumnName("display_order").HasDefaultValue(0);
         });
 
         modelBuilder.Entity<Terminal>(entity =>
@@ -122,6 +131,7 @@ public partial class PosDbContext : DbContext
             entity.Property(e => e.IsActive).HasDefaultValue(true);
             entity.Property(e => e.IsKitchenItem).HasDefaultValue(false);
             entity.Property(e => e.IsBarItem).HasDefaultValue(false);
+            entity.Property(e => e.DisplayOrder).HasColumnName("display_order").HasDefaultValue(0);
             entity.Property(e => e.IsDeleted).HasColumnName("isDeleted");
             entity.Property(e => e.Name).HasMaxLength(100);
             entity.Property(e => e.ShortCode).HasColumnName("ShortCode").HasMaxLength(30);

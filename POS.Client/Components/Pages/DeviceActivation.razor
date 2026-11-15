@@ -56,9 +56,9 @@
         <small class="text-secondary d-block mb-1" style="font-size: 0.78rem;">
             Generates a permanent hardware UUID locally and downloads BIR registration details (PTU, MIN, Serial #) into local SQLite storage.
         </small>
-        <small class="text-secondary font-monospace" style="font-size: 0.72rem;">
-            Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "https://dev-uat.agressolutions.com")
-        </small>
+        <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
+            <i class="bi bi-hdd-network me-1"></i>Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032") <i class="bi bi-pencil-square ms-1"></i>
+        </button>
     </div>
 </div>
 
@@ -187,6 +187,40 @@
         finally
         {
             isActivating = false;
+        }
+    }
+
+    private async Task ToggleServerEndpointAsync()
+    {
+        var current = Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032";
+        var isLocal = current.Contains("localhost", StringComparison.OrdinalIgnoreCase) || current.Contains("127.0.0.1");
+        var nextTarget = isLocal ? "https://dev-uat.agressolutions.com/" : "http://localhost:5032/";
+        var nextLabel = isLocal ? "UAT Cloud (https://dev-uat.agressolutions.com/)" : "Local API (http://localhost:5032/)";
+
+        var confirm = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Switch Backend Server",
+            Html = $"Current server:<br><code>{current}</code><br><br>Switch to:<br><strong>{nextLabel}</strong>?",
+            Icon = SweetAlertIcon.Question,
+            ShowCancelButton = true,
+            ConfirmButtonText = "Switch & Reconnect",
+            CancelButtonText = "Cancel"
+        });
+
+        if (confirm.IsConfirmed)
+        {
+            Microsoft.Maui.Storage.Preferences.Default.Set("UAT_ApiBaseUrl", nextTarget);
+            Http.BaseAddress = new Uri(nextTarget);
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Toast = true,
+                Position = SweetAlertPosition.TopEnd,
+                ShowConfirmButton = false,
+                Timer = 2500,
+                Icon = SweetAlertIcon.Success,
+                Title = $"Target set to {nextTarget}"
+            });
+            StateHasChanged();
         }
     }
 }

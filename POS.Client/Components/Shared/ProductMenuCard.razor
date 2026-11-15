@@ -2,30 +2,46 @@
 @using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Web
 @using POS.Shared.Models
+@using POS.Shared.Helpers
 
 <button type="button"
-        class="product-card @(CartQuantity > 0 ? "in-cart" : "") @(ShowImage ? "has-image" : "")"
+        class="product-card @(CartQuantity > 0 ? "in-cart" : "") @(ShowImage ? "has-image" : "text-only") @(HasValidImage ? "with-photo" : "no-photo")"
         style="--category-color: @CategoryColor;"
         title="@Product.Name"
         @onclick="OnSelect">
     @if (ShowImage)
     {
-        <span class="product-image-frame" aria-hidden="true">
-            @if (imageSource != null && !imageFailed)
+        <div class="product-media-container" aria-hidden="true">
+            @if (HasValidImage)
             {
-                <img src="@imageSource" alt="" width="240" height="160" loading="lazy" decoding="async" @onerror="() => imageFailed = true" />
+                <img src="@imageSource"
+                     alt=""
+                     class="product-image"
+                     loading="lazy"
+                     decoding="async"
+                     @onerror="() => imageFailed = true" />
             }
             else
             {
-                <span class="product-image-placeholder"><i class="bi bi-image"></i></span>
+                <div class="product-placeholder">
+                    <i class="bi bi-image placeholder-icon"></i>
+                </div>
             }
-        </span>
+        </div>
+        <div class="product-label-overlay">
+            <span class="product-name">@Product.Name</span>
+        </div>
     }
+    else
+    {
+        <span class="product-name">@Product.Name</span>
+    }
+
     @if (CartQuantity > 0)
     {
-        <span class="product-qty" aria-label="@CartQuantity in order">@CartQuantity</span>
+        var qtyLabel = CartItem.FormatProductCardQuantity(CartQuantity, Product.PricingMethod);
+        <span class="product-qty" aria-label="@qtyLabel in order" title="@qtyLabel in order">@qtyLabel</span>
     }
-    <span class="product-name">@Product.Name</span>
 </button>
 
 @code {
@@ -36,6 +52,7 @@
     [Parameter] public Uri? ApiBaseAddress { get; set; }
     [Parameter] public EventCallback OnSelect { get; set; }
     private bool ShowImage => DisplayMode == MenuDisplayMode.ImageAndText;
+    private bool HasValidImage => ShowImage && !string.IsNullOrWhiteSpace(imageSource) && !imageFailed;
     private string? imageSource;
     private bool imageFailed;
 
@@ -44,12 +61,20 @@
         string? source = null;
         if (ShowImage && !string.IsNullOrWhiteSpace(Product.ImageUrl))
         {
-            Uri? uri;
-            if (ApiBaseAddress != null
-                ? Uri.TryCreate(ApiBaseAddress, Product.ImageUrl, out uri)
-                : Uri.TryCreate(Product.ImageUrl, UriKind.Absolute, out uri))
+            var resolved = ProductImageUrl.Resolve(Product.ImageUrl, ApiBaseAddress?.ToString());
+            if (!string.IsNullOrWhiteSpace(resolved))
             {
-                if (uri?.Scheme is "http" or "https") source = uri.AbsoluteUri;
+                source = resolved;
+            }
+            else
+            {
+                Uri? uri;
+                if (ApiBaseAddress != null
+                    ? Uri.TryCreate(ApiBaseAddress, Product.ImageUrl, out uri)
+                    : Uri.TryCreate(Product.ImageUrl, UriKind.Absolute, out uri))
+                {
+                    if (uri?.Scheme is "http" or "https") source = uri.AbsoluteUri;
+                }
             }
         }
         if (source != imageSource) imageFailed = false;

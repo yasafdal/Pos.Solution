@@ -1,14 +1,772 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using POS.Client.Data;
 using POS.Shared.Models;
+using POS.Shared.Services;
 
 namespace POS.Client.Services;
 
+public enum ShiftVerificationIssue
+{
+    None = 0,
+    InvalidSession = 1,
+    LocalDatabaseError = 2,
+    Locked = 3,
+    BranchMismatch = 4,
+    DifferentCashierOpen = 5,
+    ClosedShift = 6,
+    NoActiveShift = 7,
+    OpeningNotConfirmed = 8,
+    MissingOpeningConfig = 9,
+    AuthorizationRejected = 10
+}
+
+public class ShiftVerificationResult
+{
+    public bool IsReady { get; set; }
+    public bool Offline { get; set; }
+    public ShiftVerificationIssue Issue { get; set; } = ShiftVerificationIssue.None;
+    public LocalCashDrawerShift? Shift { get; set; }
+    public TerminalClosingLockDto? LockStatus { get; set; }
+    public TerminalCashFundConfigDto? OpeningFundConfig { get; set; }
+    public string? ErrorMessage { get; set; }
+}
+
 public static class ShiftSession
 {
+    private readonly record struct CurrentShiftFetchResult(
+        bool UseLocalFallback,
+        bool IsNotFound,
+        CashDrawerShiftDto? Dto,
+        HttpStatusCode? AuthoritativeRejectionStatus = null,
+        string? ErrorMessage = null);
+
+    private readonly record struct OnlineOperationOutcome<T>(
+        bool SucceededOnline,
+        bool UseLocalFallback,
+        T? Result,
+        HttpStatusCode? RejectionStatus = null,
+        string? RejectionMessage = null);
+
+    public static async Task<LocalCashDrawerShift?> GetLocalActiveOpenShiftAsync(
+        LocalPosDbContext db,
+        int terminalId,
+        bool asNoTracking = false)
+    {
+        var query = asNoTracking
+            ? db.CashDrawerShifts.AsNoTracking()
+            : db.CashDrawerShifts.AsQueryable();
+
+        var openShifts = (await query
+            .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
+            .ToListAsync())
+            .OrderByDescending(s => s.ShiftId > 0)
+            .ThenByDescending(s => s.OpenedAt)
+            .ThenByDescending(s => s.ShiftId)
+            .ToList();
+
+        if (openShifts.Count == 0)
+            return null;
+
+        if (openShifts.Count == 1)
+            return openShifts[0];
+
+        var firstClientShiftId = openShifts[0].ClientShiftId?.Trim();
+        if (!string.IsNullOrWhiteSpace(firstClientShiftId) &&
+            openShifts.All(s => string.Equals(s.ClientShiftId?.Trim(), firstClientShiftId, StringComparison.Ordinal)))
+        {
+            return openShifts[0];
+        }
+
+        throw new InvalidOperationException("Multiple conflicting open shifts detected in local database for this terminal. Reconcile or close duplicate shifts before continuing.");
+    }
+
+    private static string BuildHttpErrorMessage(string prefix, HttpStatusCode statusCode, string? body)
+    {
+        var detail = string.IsNullOrWhiteSpace(body) ? statusCode.ToString() : body.Trim();
+        return $"{prefix} (HTTP {(int)statusCode} {statusCode}): {detail}";
+    }
+
+    private static async Task<string> SafeReadErrorMessageAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            return (await response.Content.ReadAsStringAsync()).Trim();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void AttachActiveTerminalTokenIfMissing(HttpClient http)
+    {
+        if (http.DefaultRequestHeaders.Authorization == null &&
+            !string.IsNullOrWhiteSpace(DeviceActivationService.ActiveTerminalToken) &&
+            !string.Equals(DeviceActivationService.ActiveTerminalToken, "OFFLINE-SESSION-TOKEN", StringComparison.OrdinalIgnoreCase))
+        {
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", DeviceActivationService.ActiveTerminalToken);
+        }
+    }
+
+    private static bool IsTransientStatusCode(HttpStatusCode statusCode) =>
+        (int)statusCode >= 500 || statusCode == HttpStatusCode.RequestTimeout;
+
+    private static async Task<CurrentShiftFetchResult> FetchCurrentShiftOnlineAsync(HttpClient http, int terminalId)
+    {
+        if (string.Equals(http.DefaultRequestHeaders.Authorization?.Parameter, "OFFLINE-SESSION-TOKEN", StringComparison.OrdinalIgnoreCase))
+            return new CurrentShiftFetchResult(UseLocalFallback: true, IsNotFound: false, Dto: null);
+
+        AttachActiveTerminalTokenIfMissing(http);
+
+        HttpResponseMessage? response = null;
+        try
+        {
+            response = await http.GetAsync($"api/cash-drawer/current?terminalId={terminalId}");
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                var refreshed = await DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(http, null, forceRefresh: true);
+                if (refreshed.RejectionStatus is HttpStatusCode.Forbidden or HttpStatusCode.Locked)
+                {
+                    return new CurrentShiftFetchResult(
+                        UseLocalFallback: false,
+                        IsNotFound: false,
+                        Dto: null,
+                        AuthoritativeRejectionStatus: refreshed.RejectionStatus,
+                        ErrorMessage: BuildHttpErrorMessage("Shift verification rejected", refreshed.RejectionStatus.Value, refreshed.ErrorMessage));
+                }
+
+                if (refreshed.IsTransientError)
+                    return new CurrentShiftFetchResult(UseLocalFallback: true, IsNotFound: false, Dto: null);
+
+                if (refreshed.Success)
+                {
+                    response.Dispose();
+                    response = await http.GetAsync($"api/cash-drawer/current?terminalId={terminalId}");
+                }
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                var dto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                if (dto == null)
+                    throw new InvalidOperationException("Current shift response is empty.");
+                if (dto.TerminalId != terminalId || dto.Status != "OPEN")
+                    throw new InvalidOperationException("Current shift response does not match this drawer.");
+                return new CurrentShiftFetchResult(UseLocalFallback: false, IsNotFound: false, Dto: dto);
+            }
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return new CurrentShiftFetchResult(UseLocalFallback: false, IsNotFound: true, Dto: null);
+
+            if (IsTransientStatusCode(response.StatusCode))
+                return new CurrentShiftFetchResult(UseLocalFallback: true, IsNotFound: false, Dto: null);
+
+            string errBody = await SafeReadErrorMessageAsync(response);
+            return new CurrentShiftFetchResult(
+                UseLocalFallback: false,
+                IsNotFound: false,
+                Dto: null,
+                AuthoritativeRejectionStatus: response.StatusCode,
+                ErrorMessage: BuildHttpErrorMessage("Shift verification failed", response.StatusCode, errBody));
+        }
+        catch (HttpRequestException)
+        {
+            return new CurrentShiftFetchResult(UseLocalFallback: true, IsNotFound: false, Dto: null);
+        }
+        catch (TaskCanceledException)
+        {
+            return new CurrentShiftFetchResult(UseLocalFallback: true, IsNotFound: false, Dto: null);
+        }
+        catch (TimeoutException)
+        {
+            return new CurrentShiftFetchResult(UseLocalFallback: true, IsNotFound: false, Dto: null);
+        }
+        catch (JsonException)
+        {
+            return new CurrentShiftFetchResult(UseLocalFallback: true, IsNotFound: false, Dto: null);
+        }
+        finally
+        {
+            response?.Dispose();
+        }
+    }
+
+    private static async Task<LocalCashDrawerShift?> RetireStaleLocalOpenShiftsAsync(int terminalId)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext(); db.InitializeDatabase();
+            // A negative ID is a locally confirmed opening still awaiting acknowledgement.
+            var pending = await db.CashDrawerShifts
+                .Where(s => s.TerminalId == terminalId && s.Status == "OPEN" && s.ShiftId < 0)
+                .OrderByDescending(s => s.OpenedAt)
+                .ThenByDescending(s => s.ShiftId)
+                .FirstOrDefaultAsync();
+            if (pending != null) return pending;
+            foreach (var stale in await db.CashDrawerShifts.Where(s => s.TerminalId == terminalId && s.Status == "OPEN").ToListAsync())
+                stale.Status = "CLOSED";
+            await db.SaveChangesAsync();
+            return null;
+        }
+        finally { LocalPosDbContext.WriteLock.Release(); }
+    }
+
+    private static bool IsClosedInCurrentBusinessDay(LocalCashDrawerShift? closedShift, DateTime utcNow)
+    {
+        if (closedShift == null || !string.Equals(closedShift.Status, "CLOSED", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        DateTime closedRefUtc = BusinessDayClock.NormalizeUtc(closedShift.ClosedAt ?? closedShift.OpenedAt);
+        DateTime nextDayStartUtc = BusinessDayClock.GetNextBusinessDayStartUtc(closedRefUtc);
+        return utcNow < nextDayStartUtc;
+    }
+
+    private static OpenShiftDto BuildOpenShiftDtoFromLocal(LocalCashDrawerShift localShift)
+    {
+        List<CashDenominationLineDto>? openDenoms = null;
+        if (!string.IsNullOrWhiteSpace(localShift.OpeningDenominationsJson))
+        {
+            try { openDenoms = JsonSerializer.Deserialize<List<CashDenominationLineDto>>(localShift.OpeningDenominationsJson); }
+            catch { openDenoms = null; }
+        }
+
+        return new OpenShiftDto
+        {
+            TerminalId = localShift.TerminalId,
+            BranchId = localShift.BranchId,
+            OpeningFloat = localShift.OpeningFloat,
+            ExpectedOpeningFund = localShift.ExpectedOpeningFund,
+            OpeningDiscrepancy = localShift.OpeningDiscrepancy,
+            OpeningDenominations = openDenoms,
+            ClientShiftId = localShift.ClientShiftId,
+            CashierId = localShift.CashierId,
+            OpenedAt = localShift.OpenedAt,
+            Notes = localShift.Notes
+        };
+    }
+
+    public static async Task<ShiftVerificationResult> VerifyPaymentShiftLocalFirstAsync(
+        HttpClient http,
+        PosSessionService session,
+        IPosConnectivityService connectivity)
+    {
+        if (session == null || !session.IsAuthenticated || string.IsNullOrWhiteSpace(session.Username) ||
+            session.Terminal == null || session.Terminal.TerminalId <= 0 || session.Terminal.BranchId <= 0 || session.Terminal.OutletId <= 0)
+        {
+            return new ShiftVerificationResult
+            {
+                IsReady = false,
+                Issue = ShiftVerificationIssue.InvalidSession,
+                ErrorMessage = "Cashier session or assigned terminal, branch, and outlet are invalid. Please sign in again."
+            };
+        }
+
+        int terminalId = session.Terminal.TerminalId;
+        int branchId = session.Terminal.BranchId;
+        int outletId = session.Terminal.OutletId;
+        string username = session.Username.Trim();
+
+        LocalTerminalConfig? localTerm;
+        TerminalClosingLockDto localLock;
+        LocalCashDrawerShift? localOpenShift;
+        LocalCashDrawerShift? localLatestClosedShift = null;
+        bool localClosedForCurrentDay = false;
+
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+
+            localTerm = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == terminalId)
+                        ?? await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
+
+            if (localTerm != null &&
+                (localTerm.TerminalId != terminalId || localTerm.BranchId != branchId || (localTerm.OutletId > 0 && localTerm.OutletId != outletId)))
+            {
+                return new ShiftVerificationResult
+                {
+                    IsReady = false,
+                    Offline = true,
+                    Issue = ShiftVerificationIssue.BranchMismatch,
+                    ErrorMessage = "Terminal branch or outlet ownership does not match local device configuration. Refresh terminal data online."
+                };
+            }
+
+            DateTime nowUtc = BusinessDayClock.UtcNow();
+            long nowTicks = BusinessDayClock.TickCount64();
+            localLock = localTerm != null
+                ? BusinessDayClock.EvaluateLock(
+                    terminalId: localTerm.TerminalId,
+                    closedBusinessDate: localTerm.ClosedBusinessDate,
+                    lockedByCashier: localTerm.ClosingLockedByCashier,
+                    lockedAtUtc: localTerm.ClosingLockedAtUtc,
+                    unlockAtUtc: localTerm.ClosingUnlockAtUtc,
+                    candidateCashierUsername: username,
+                    authoritativeServerUtc: null,
+                    deviceUtcNow: nowUtc,
+                    currentTickCount64: nowTicks,
+                    lockedAtTickCount64: localTerm.ClosingLockedTickCount64,
+                    lastKnownServerUtc: localTerm.LastKnownServerUtc,
+                    lastKnownServerTickCount64: localTerm.LastKnownServerTickCount64)
+                : new TerminalClosingLockDto
+                {
+                    TerminalId = terminalId,
+                    CurrentBusinessDate = BusinessDayClock.GetBusinessDateString(nowUtc)
+                };
+
+            if (localLock.IsCashierRestricted || localLock.IsTerminalLocked)
+            {
+                return new ShiftVerificationResult
+                {
+                    IsReady = false,
+                    Offline = true,
+                    Issue = ShiftVerificationIssue.Locked,
+                    LockStatus = localLock,
+                    ErrorMessage = localLock.CashierRestrictionMessage ?? localLock.LockMessage ?? "POS Terminal is locked for the current business day."
+                };
+            }
+
+            localOpenShift = await GetLocalActiveOpenShiftAsync(db, terminalId, asNoTracking: true);
+            if (localOpenShift != null)
+            {
+                if (localOpenShift.BranchId != branchId)
+                {
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = false,
+                        Offline = true,
+                        Issue = ShiftVerificationIssue.BranchMismatch,
+                        Shift = localOpenShift,
+                        LockStatus = localLock,
+                        ErrorMessage = "Open shift branch does not match the active terminal branch."
+                    };
+                }
+
+                if (!string.Equals(localOpenShift.CashierId, username, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = false,
+                        Offline = true,
+                        Issue = ShiftVerificationIssue.DifferentCashierOpen,
+                        Shift = localOpenShift,
+                        LockStatus = localLock,
+                        ErrorMessage = $"This drawer is currently open under cashier '{localOpenShift.CashierId}'. Close that shift before opening your own."
+                    };
+                }
+            }
+            else
+            {
+                localLatestClosedShift = (await db.CashDrawerShifts.AsNoTracking()
+                    .Where(s => s.TerminalId == terminalId && s.Status == "CLOSED")
+                    .ToListAsync())
+                    .OrderByDescending(s => s.ClosedAt ?? s.OpenedAt)
+                    .ThenByDescending(s => s.ShiftId)
+                    .FirstOrDefault();
+
+                localClosedForCurrentDay = IsClosedInCurrentBusinessDay(localLatestClosedShift, nowUtc);
+            }
+        }
+        catch (Exception ex)
+        {
+            return new ShiftVerificationResult
+            {
+                IsReady = false,
+                Offline = true,
+                Issue = ShiftVerificationIssue.LocalDatabaseError,
+                ErrorMessage = $"Unable to read local shift database: {ex.Message}"
+            };
+        }
+
+        TerminalConnectivityState connectivityState;
+        try
+        {
+            connectivityState = await connectivity.CheckConnectivityAsync();
+        }
+        catch
+        {
+            connectivityState = TerminalConnectivityState.InternetConnectedApiUnavailable;
+        }
+
+        bool offline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
+        if (!offline)
+        {
+            var tokenResult = await DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(http, session, forceRefresh: false);
+            if (!tokenResult.Success)
+            {
+                if (tokenResult.RejectionStatus == HttpStatusCode.Locked)
+                {
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = false,
+                        Offline = false,
+                        Issue = ShiftVerificationIssue.Locked,
+                        ErrorMessage = tokenResult.ErrorMessage ?? "POS Terminal is locked for the current business day."
+                    };
+                }
+
+                if (tokenResult.RejectionStatus is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized or HttpStatusCode.BadRequest)
+                {
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = false,
+                        Offline = false,
+                        Issue = ShiftVerificationIssue.AuthorizationRejected,
+                        ErrorMessage = tokenResult.ErrorMessage ?? "Online session authorization was rejected by the server."
+                    };
+                }
+
+                if (tokenResult.IsTransientError || !DeviceActivationService.HasValidOnlineBearerToken(http, session))
+                {
+                    offline = true;
+                }
+            }
+        }
+
+        if (!offline)
+        {
+            var remoteLock = await GetTerminalLockStatusAsync(http, terminalId, username, offline: false);
+            if (remoteLock.IsCashierRestricted || remoteLock.IsTerminalLocked)
+            {
+                return new ShiftVerificationResult
+                {
+                    IsReady = false,
+                    Offline = false,
+                    Issue = ShiftVerificationIssue.Locked,
+                    LockStatus = remoteLock,
+                    Shift = localLatestClosedShift,
+                    ErrorMessage = remoteLock.CashierRestrictionMessage ?? remoteLock.LockMessage ?? "POS Terminal is locked for the current business day."
+                };
+            }
+
+            if (localOpenShift != null && localOpenShift.OpeningConfirmed)
+            {
+                var fetch = await FetchCurrentShiftOnlineAsync(http, terminalId);
+                if (fetch.AuthoritativeRejectionStatus.HasValue)
+                {
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = false,
+                        Offline = false,
+                        Issue = fetch.AuthoritativeRejectionStatus == HttpStatusCode.Locked
+                            ? ShiftVerificationIssue.Locked
+                            : ShiftVerificationIssue.AuthorizationRejected,
+                        LockStatus = remoteLock,
+                        ErrorMessage = fetch.ErrorMessage ?? "Shift verification rejected by server."
+                    };
+                }
+
+                if (fetch.UseLocalFallback)
+                {
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = true,
+                        Offline = true,
+                        Issue = ShiftVerificationIssue.None,
+                        Shift = localOpenShift,
+                        LockStatus = remoteLock
+                    };
+                }
+
+                if (fetch.Dto != null)
+                {
+                    if (fetch.Dto.BranchId != branchId)
+                    {
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.BranchMismatch,
+                            LockStatus = remoteLock,
+                            ErrorMessage = "Server shift branch does not match the active terminal branch."
+                        };
+                    }
+
+                    if (!string.Equals(fetch.Dto.CashierId, username, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.DifferentCashierOpen,
+                            LockStatus = remoteLock,
+                            ErrorMessage = $"This drawer is open on the server under cashier '{fetch.Dto.CashierId}'."
+                        };
+                    }
+
+                    var synced = await CacheAsync(fetch.Dto, reconcileCurrent: true);
+                    if (!synced.OpeningConfirmed)
+                    {
+                        var cfg = await GetOpeningFundConfigAsync(http, terminalId, offline: false);
+                        return BuildUnconfiguredOrOpeningResult(synced, cfg, remoteLock, offline: false, ShiftVerificationIssue.OpeningNotConfirmed);
+                    }
+
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = true,
+                        Offline = false,
+                        Issue = ShiftVerificationIssue.None,
+                        Shift = synced,
+                        LockStatus = remoteLock
+                    };
+                }
+
+                if (fetch.IsNotFound)
+                {
+                    if (localOpenShift.ShiftId < 0)
+                    {
+                        var openOutcome = await TryOpenOnlineWithRetryAsync(http, BuildOpenShiftDtoFromLocal(localOpenShift), username);
+                        if (openOutcome.SucceededOnline && openOutcome.Result != null)
+                        {
+                            return new ShiftVerificationResult
+                            {
+                                IsReady = true,
+                                Offline = false,
+                                Issue = ShiftVerificationIssue.None,
+                                Shift = openOutcome.Result,
+                                LockStatus = remoteLock
+                            };
+                        }
+
+                        if (openOutcome.UseLocalFallback)
+                        {
+                            return new ShiftVerificationResult
+                            {
+                                IsReady = true,
+                                Offline = true,
+                                Issue = ShiftVerificationIssue.None,
+                                Shift = localOpenShift,
+                                LockStatus = remoteLock
+                            };
+                        }
+
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = openOutcome.RejectionStatus == HttpStatusCode.Locked
+                                ? ShiftVerificationIssue.Locked
+                                : (openOutcome.RejectionStatus is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                                    ? ShiftVerificationIssue.AuthorizationRejected
+                                    : ShiftVerificationIssue.NoActiveShift),
+                            LockStatus = remoteLock,
+                            ErrorMessage = openOutcome.RejectionMessage ?? "Unable to confirm offline shift opening on server."
+                        };
+                    }
+
+                    await RetireStaleLocalOpenShiftsAsync(terminalId);
+                    if (localClosedForCurrentDay)
+                    {
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.ClosedShift,
+                            Shift = localLatestClosedShift,
+                            LockStatus = remoteLock,
+                            ErrorMessage = "The shift on this drawer has already been closed. Reconcile in My Shift or wait until the next business day."
+                        };
+                    }
+
+                    var cfgAfterRetire = await GetOpeningFundConfigAsync(http, terminalId, offline: false);
+                    return BuildUnconfiguredOrOpeningResult(null, cfgAfterRetire, remoteLock, offline: false, ShiftVerificationIssue.NoActiveShift);
+                }
+            }
+            else
+            {
+                var fetch = await FetchCurrentShiftOnlineAsync(http, terminalId);
+                if (fetch.AuthoritativeRejectionStatus.HasValue)
+                {
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = false,
+                        Offline = false,
+                        Issue = fetch.AuthoritativeRejectionStatus == HttpStatusCode.Locked
+                            ? ShiftVerificationIssue.Locked
+                            : ShiftVerificationIssue.AuthorizationRejected,
+                        LockStatus = remoteLock,
+                        ErrorMessage = fetch.ErrorMessage ?? "Shift verification rejected by server."
+                    };
+                }
+
+                if (fetch.Dto != null)
+                {
+                    if (fetch.Dto.BranchId != branchId)
+                    {
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.BranchMismatch,
+                            LockStatus = remoteLock,
+                            ErrorMessage = "Server shift branch does not match the active terminal branch."
+                        };
+                    }
+
+                    if (!string.Equals(fetch.Dto.CashierId, username, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.DifferentCashierOpen,
+                            LockStatus = remoteLock,
+                            ErrorMessage = $"This drawer is open on the server under cashier '{fetch.Dto.CashierId}'."
+                        };
+                    }
+
+                    var cached = await CacheAsync(fetch.Dto, reconcileCurrent: true);
+                    if (cached.Status != "OPEN")
+                    {
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.ClosedShift,
+                            Shift = cached,
+                            LockStatus = remoteLock,
+                            ErrorMessage = "The acknowledged shift is closed. Reconcile the drawer in My Shift before opening a new shift."
+                        };
+                    }
+
+                    if (!cached.OpeningConfirmed)
+                    {
+                        var cfgUnconfirmed = await GetOpeningFundConfigAsync(http, terminalId, offline: false);
+                        return BuildUnconfiguredOrOpeningResult(cached, cfgUnconfirmed, remoteLock, offline: false, ShiftVerificationIssue.OpeningNotConfirmed);
+                    }
+
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = true,
+                        Offline = false,
+                        Issue = ShiftVerificationIssue.None,
+                        Shift = cached,
+                        LockStatus = remoteLock
+                    };
+                }
+
+                if (fetch.UseLocalFallback)
+                {
+                    offline = true;
+                    localLock = remoteLock;
+                }
+                else if (fetch.IsNotFound)
+                {
+                    var pending = await RetireStaleLocalOpenShiftsAsync(terminalId);
+                    if (pending != null)
+                    {
+                        localOpenShift = pending;
+                        if (!pending.OpeningConfirmed)
+                        {
+                            var cfgPending = await GetOpeningFundConfigAsync(http, terminalId, offline: false);
+                            return BuildUnconfiguredOrOpeningResult(pending, cfgPending, remoteLock, offline: false, ShiftVerificationIssue.OpeningNotConfirmed);
+                        }
+
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = true,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.None,
+                            Shift = pending,
+                            LockStatus = remoteLock
+                        };
+                    }
+
+                    if (localClosedForCurrentDay)
+                    {
+                        return new ShiftVerificationResult
+                        {
+                            IsReady = false,
+                            Offline = false,
+                            Issue = ShiftVerificationIssue.ClosedShift,
+                            Shift = localLatestClosedShift,
+                            LockStatus = remoteLock,
+                            ErrorMessage = "The current business day's shift on this drawer is closed. Reconcile in My Shift or wait until the next business day."
+                        };
+                    }
+
+                    var cfgNoShift = await GetOpeningFundConfigAsync(http, terminalId, offline: false);
+                    return BuildUnconfiguredOrOpeningResult(null, cfgNoShift, remoteLock, offline: false, ShiftVerificationIssue.NoActiveShift);
+                }
+            }
+        }
+
+        // Offline / local fallback evaluation
+        if (localOpenShift != null)
+        {
+            if (!localOpenShift.OpeningConfirmed)
+            {
+                var cfgLocalUnconfirmed = await GetOpeningFundConfigAsync(http, terminalId, offline: true);
+                return BuildUnconfiguredOrOpeningResult(localOpenShift, cfgLocalUnconfirmed, localLock, offline: true, ShiftVerificationIssue.OpeningNotConfirmed);
+            }
+
+            return new ShiftVerificationResult
+            {
+                IsReady = true,
+                Offline = true,
+                Issue = ShiftVerificationIssue.None,
+                Shift = localOpenShift,
+                LockStatus = localLock
+            };
+        }
+
+        if (localClosedForCurrentDay)
+        {
+            return new ShiftVerificationResult
+            {
+                IsReady = false,
+                Offline = true,
+                Issue = ShiftVerificationIssue.ClosedShift,
+                Shift = localLatestClosedShift,
+                LockStatus = localLock,
+                ErrorMessage = "The current business day's shift on this drawer is already closed. Reconcile in My Shift or wait until the next business day."
+            };
+        }
+
+        var localFundCfg = await GetOpeningFundConfigAsync(http, terminalId, offline: true);
+        return BuildUnconfiguredOrOpeningResult(null, localFundCfg, localLock, offline: true, ShiftVerificationIssue.NoActiveShift);
+    }
+
+    private static ShiftVerificationResult BuildUnconfiguredOrOpeningResult(
+        LocalCashDrawerShift? shift,
+        TerminalCashFundConfigDto cfg,
+        TerminalClosingLockDto lockStatus,
+        bool offline,
+        ShiftVerificationIssue configuredIssue)
+    {
+        if (!cfg.IsConfigured || !cfg.EffectiveOpeningFund.HasValue)
+        {
+            return new ShiftVerificationResult
+            {
+                IsReady = false,
+                Offline = offline,
+                Issue = ShiftVerificationIssue.MissingOpeningConfig,
+                Shift = shift,
+                LockStatus = lockStatus,
+                OpeningFundConfig = cfg,
+                ErrorMessage = "Initial Cash Fund is not configured for this Terminal or Outlet. Please contact an Administrator."
+            };
+        }
+
+        return new ShiftVerificationResult
+        {
+            IsReady = false,
+            Offline = offline,
+            Issue = configuredIssue,
+            Shift = shift,
+            LockStatus = lockStatus,
+            OpeningFundConfig = cfg,
+            ErrorMessage = configuredIssue == ShiftVerificationIssue.OpeningNotConfirmed
+                ? "Confirm the opening cash float before processing payment."
+                : "No active open shift found. Open a shift and confirm the opening float before payment."
+        };
+    }
+
     public static bool IsSupervisorRole(string? role)
     {
         if (string.IsNullOrWhiteSpace(role)) return false;
@@ -53,70 +811,43 @@ public static class ShiftSession
     {
         if (!offline)
         {
-            var response = await http.GetAsync($"api/cash-drawer/current?terminalId={terminalId}");
-            if (response.IsSuccessStatusCode)
-            {
-                var dto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
-                if (dto != null)
-                {
-                    if (dto.TerminalId != terminalId || dto.Status != "OPEN") throw new InvalidOperationException("Current shift response does not match this drawer.");
-                    return await CacheAsync(dto, reconcileCurrent: true);
-                }
-                throw new InvalidOperationException("Current shift response is empty.");
-            }
-            else if (response.StatusCode != HttpStatusCode.NotFound)
-                throw new InvalidOperationException("Unable to verify current shift.");
-            await LocalPosDbContext.WriteLock.WaitAsync();
-            try
-            {
-                using var db = new LocalPosDbContext(); db.InitializeDatabase();
-                // A negative ID is a locally confirmed opening still awaiting acknowledgement.
-                var pending = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.Status == "OPEN" && s.ShiftId < 0);
-                if (pending != null) return pending;
-                foreach (var stale in await db.CashDrawerShifts.Where(s => s.TerminalId == terminalId && s.Status == "OPEN").ToListAsync()) stale.Status = "CLOSED";
-                await db.SaveChangesAsync(); return null;
-            }
-            finally { LocalPosDbContext.WriteLock.Release(); }
+            var fetch = await FetchCurrentShiftOnlineAsync(http, terminalId);
+            if (fetch.AuthoritativeRejectionStatus.HasValue)
+                throw new InvalidOperationException(fetch.ErrorMessage ?? $"Shift verification failed with HTTP {(int)fetch.AuthoritativeRejectionStatus.Value}.");
+            if (fetch.Dto != null)
+                return await CacheAsync(fetch.Dto, reconcileCurrent: true);
+            if (fetch.IsNotFound)
+                return await RetireStaleLocalOpenShiftsAsync(terminalId);
         }
+
         using var local = new LocalPosDbContext(); local.InitializeDatabase();
-        return await local.CashDrawerShifts.AsNoTracking().SingleOrDefaultAsync(s => s.TerminalId == terminalId && s.Status == "OPEN");
+        return await GetLocalActiveOpenShiftAsync(local, terminalId, asNoTracking: true);
     }
 
     public static async Task<CashDrawerShiftDto?> CurrentDtoAsync(HttpClient http, int terminalId, bool offline, bool isSupervisor = false)
     {
         if (!offline)
         {
-            var response = await http.GetAsync($"api/cash-drawer/current?terminalId={terminalId}");
-            if (response.IsSuccessStatusCode)
+            var fetch = await FetchCurrentShiftOnlineAsync(http, terminalId);
+            if (fetch.AuthoritativeRejectionStatus.HasValue)
+                throw new InvalidOperationException(fetch.ErrorMessage ?? $"Shift verification failed with HTTP {(int)fetch.AuthoritativeRejectionStatus.Value}.");
+            if (fetch.Dto != null)
             {
-                var dto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
-                if (dto != null)
-                {
-                    if (dto.TerminalId != terminalId || dto.Status != "OPEN") throw new InvalidOperationException("Current shift response does not match this drawer.");
-                    var cached = await CacheAsync(dto, reconcileCurrent: true);
-                    using var db = new LocalPosDbContext(); db.InitializeDatabase();
-                    return await BuildLocalShiftDtoAsync(db, cached, dto, isReprint: false, includeSupervisorReconciliation: isSupervisor);
-                }
-                throw new InvalidOperationException("Current shift response is empty.");
-            }
-            else if (response.StatusCode != HttpStatusCode.NotFound)
-                throw new InvalidOperationException("Unable to verify current shift.");
-
-            await LocalPosDbContext.WriteLock.WaitAsync();
-            try
-            {
+                var cached = await CacheAsync(fetch.Dto, reconcileCurrent: true);
                 using var db = new LocalPosDbContext(); db.InitializeDatabase();
-                var pending = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.Status == "OPEN" && s.ShiftId < 0);
-                if (pending != null) return await BuildLocalShiftDtoAsync(db, pending, includeSupervisorReconciliation: isSupervisor);
-                foreach (var stale in await db.CashDrawerShifts.Where(s => s.TerminalId == terminalId && s.Status == "OPEN").ToListAsync()) stale.Status = "CLOSED";
-                await db.SaveChangesAsync();
-                return null;
+                return await BuildLocalShiftDtoAsync(db, cached, fetch.Dto, isReprint: false, includeSupervisorReconciliation: isSupervisor);
             }
-            finally { LocalPosDbContext.WriteLock.Release(); }
+            if (fetch.IsNotFound)
+            {
+                var pending = await RetireStaleLocalOpenShiftsAsync(terminalId);
+                if (pending == null) return null;
+                using var db = new LocalPosDbContext(); db.InitializeDatabase();
+                return await BuildLocalShiftDtoAsync(db, pending, includeSupervisorReconciliation: isSupervisor);
+            }
         }
 
         using var local = new LocalPosDbContext(); local.InitializeDatabase();
-        var localShift = await local.CashDrawerShifts.AsNoTracking().SingleOrDefaultAsync(s => s.TerminalId == terminalId && s.Status == "OPEN");
+        var localShift = await GetLocalActiveOpenShiftAsync(local, terminalId, asNoTracking: true);
         return localShift == null ? null : await BuildLocalShiftDtoAsync(local, localShift, includeSupervisorReconciliation: isSupervisor);
     }
 
@@ -287,7 +1018,7 @@ public static class ShiftSession
                                     string.CompareOrdinal(
                                         localTerm.ClosedBusinessDate,
                                         POS.Shared.Services.BusinessDayClock.GetBusinessDateString(remoteLock.ServerUtcNow ?? POS.Shared.Services.BusinessDayClock.UtcNow())) >= 0 &&
-                                    await db.SyncOutboxes.AnyAsync(o => o.EntityType == "SHIFT_CLOSE" && o.Status != "COMPLETED");
+                                    await db.SyncOutboxes.AnyAsync(o => o.EntityType == "SHIFT_CLOSE" && o.Status != "SYNCED");
 
                                 if (!hasPendingLocalClose)
                                 {
@@ -369,8 +1100,106 @@ public static class ShiftSession
         finally { LocalPosDbContext.WriteLock.Release(); }
     }
 
+    private static async Task<OnlineOperationOutcome<CashDrawerShiftDto>> PostShiftJsonWithRetryAsync<TRequest>(
+        HttpClient http,
+        string url,
+        TRequest request,
+        string actionLabel)
+    {
+        if (!DeviceActivationService.HasValidOnlineBearerToken(http, null))
+            return new OnlineOperationOutcome<CashDrawerShiftDto>(false, UseLocalFallback: true, null);
+
+        AttachActiveTerminalTokenIfMissing(http);
+
+        HttpResponseMessage? response = null;
+        try
+        {
+            response = await http.PostAsJsonAsync(url, request);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                var refreshed = await DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(http, null, forceRefresh: true);
+                if (refreshed.RejectionStatus is HttpStatusCode.Forbidden or HttpStatusCode.Locked)
+                {
+                    return new OnlineOperationOutcome<CashDrawerShiftDto>(
+                        false,
+                        UseLocalFallback: false,
+                        null,
+                        refreshed.RejectionStatus,
+                        BuildHttpErrorMessage($"{actionLabel} rejected", refreshed.RejectionStatus.Value, refreshed.ErrorMessage));
+                }
+
+                if (refreshed.IsTransientError)
+                    return new OnlineOperationOutcome<CashDrawerShiftDto>(false, UseLocalFallback: true, null);
+
+                if (refreshed.Success)
+                {
+                    response.Dispose();
+                    response = await http.PostAsJsonAsync(url, request);
+                }
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                var dto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                if (dto == null)
+                    throw new InvalidOperationException($"{actionLabel} response was empty.");
+                return new OnlineOperationOutcome<CashDrawerShiftDto>(true, UseLocalFallback: false, dto);
+            }
+
+            if (IsTransientStatusCode(response.StatusCode))
+                return new OnlineOperationOutcome<CashDrawerShiftDto>(false, UseLocalFallback: true, null);
+
+            string errBody = await SafeReadErrorMessageAsync(response);
+            return new OnlineOperationOutcome<CashDrawerShiftDto>(
+                false,
+                UseLocalFallback: false,
+                null,
+                response.StatusCode,
+                string.IsNullOrWhiteSpace(errBody)
+                    ? BuildHttpErrorMessage($"{actionLabel} failed", response.StatusCode, null)
+                    : errBody);
+        }
+        catch (HttpRequestException)
+        {
+            return new OnlineOperationOutcome<CashDrawerShiftDto>(false, UseLocalFallback: true, null);
+        }
+        catch (TaskCanceledException)
+        {
+            return new OnlineOperationOutcome<CashDrawerShiftDto>(false, UseLocalFallback: true, null);
+        }
+        catch (TimeoutException)
+        {
+            return new OnlineOperationOutcome<CashDrawerShiftDto>(false, UseLocalFallback: true, null);
+        }
+        catch (JsonException)
+        {
+            return new OnlineOperationOutcome<CashDrawerShiftDto>(false, UseLocalFallback: true, null);
+        }
+        finally
+        {
+            response?.Dispose();
+        }
+    }
+
+    private static async Task<OnlineOperationOutcome<LocalCashDrawerShift>> TryOpenOnlineWithRetryAsync(
+        HttpClient http,
+        OpenShiftDto request,
+        string cashier)
+    {
+        var postResult = await PostShiftJsonWithRetryAsync(http, "api/cash-drawer/open-shift", request, "Open shift");
+        if (!postResult.SucceededOnline || postResult.Result == null)
+            return new OnlineOperationOutcome<LocalCashDrawerShift>(false, postResult.UseLocalFallback, null, postResult.RejectionStatus, postResult.RejectionMessage);
+
+        var cached = await CacheAsync(postResult.Result);
+        return new OnlineOperationOutcome<LocalCashDrawerShift>(true, UseLocalFallback: false, cached);
+    }
+
     public static async Task<LocalCashDrawerShift> OpenAsync(HttpClient http, OpenShiftDto request, string cashier, bool offline)
     {
+        var licenseGate = await ClientLicenseService.CheckOperationalGateAsync(request.TerminalId);
+        if (!licenseGate.Allowed)
+            throw new InvalidOperationException(licenseGate.ErrorMessage ?? "Terminal license is not valid for opening a new shift.");
+
         if (request.OpeningDenominations is { Count: > 0 })
         {
             if (!CashDenominationCatalog.TryValidateAndCalculate(request.OpeningDenominations, out var normDenoms, out decimal countedOpeningCash, out string? denomErr))
@@ -384,9 +1213,11 @@ public static class ShiftSession
         if (string.IsNullOrWhiteSpace(request.ClientShiftId)) throw new InvalidOperationException("Opening identity is required.");
         if (!offline)
         {
-            var response = await http.PostAsJsonAsync("api/cash-drawer/open-shift", request);
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await response.Content.ReadAsStringAsync());
-            return await CacheAsync((await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>())!);
+            var openResult = await TryOpenOnlineWithRetryAsync(http, request, cashier);
+            if (openResult.SucceededOnline && openResult.Result != null)
+                return openResult.Result;
+            if (!openResult.UseLocalFallback)
+                throw new InvalidOperationException(openResult.RejectionMessage ?? "Unable to open shift on server.");
         }
         await LocalPosDbContext.WriteLock.WaitAsync();
         try
@@ -424,13 +1255,39 @@ public static class ShiftSession
                 : configuredFund;
             if (request.RequireConfiguredFund && !resolvedExpected.HasValue)
                 throw new InvalidOperationException("Initial Cash Fund is not configured for this Terminal or Outlet. Please contact an Administrator.");
-            var existing = await db.CashDrawerShifts.SingleOrDefaultAsync(s => s.TerminalId == request.TerminalId && s.Status == "OPEN");
-            if (existing != null) throw new InvalidOperationException("This drawer already has an open shift.");
+            var existing = await GetLocalActiveOpenShiftAsync(db, request.TerminalId, asNoTracking: false);
+            if (existing != null)
+            {
+                if (!string.IsNullOrWhiteSpace(request.ClientShiftId) &&
+                    string.Equals(existing.ClientShiftId, request.ClientShiftId, StringComparison.Ordinal) &&
+                    existing.BranchId == request.BranchId &&
+                    string.Equals(existing.CashierId, cashier, StringComparison.OrdinalIgnoreCase))
+                {
+                    bool hasOutbox = await db.SyncOutboxes.AnyAsync(o => o.EntityType == "SHIFT_OPEN" && o.EntityId == existing.ClientShiftId);
+                    if (!hasOutbox)
+                    {
+                        db.SyncOutboxes.Add(new LocalSyncOutbox { EntityType = "SHIFT_OPEN", EntityId = existing.ClientShiftId!, PayloadJson = JsonSerializer.Serialize(request), Status = "PENDING", CreatedAt = existing.OpenedAt });
+                        await db.SaveChangesAsync();
+                        await tx.CommitAsync();
+                    }
+                    else
+                    {
+                        await tx.RollbackAsync();
+                    }
+                    return existing;
+                }
+                throw new InvalidOperationException("This drawer already has an open shift.");
+            }
             decimal openingFloat = Math.Round(request.OpeningFloat.Value, 2, MidpointRounding.AwayFromZero);
             decimal expectedOpening = resolvedExpected ?? openingFloat;
             decimal openingDiscrepancy = Math.Round(openingFloat - expectedOpening, 2, MidpointRounding.AwayFromZero);
             request.ExpectedOpeningFund = expectedOpening;
             request.OpeningDiscrepancy = openingDiscrepancy;
+            var openedAtUtc = request.OpenedAt.HasValue
+                ? (request.OpenedAt.Value.Kind == DateTimeKind.Local ? request.OpenedAt.Value.ToUniversalTime() : DateTime.SpecifyKind(request.OpenedAt.Value, DateTimeKind.Utc))
+                : POS.Shared.Services.BusinessDayClock.UtcNow();
+            request.OpenedAt = openedAtUtc;
+            request.CashierId = cashier;
             var shift = new LocalCashDrawerShift
             {
                 ShiftId = -DateTime.UtcNow.Ticks,
@@ -444,7 +1301,7 @@ public static class ShiftSession
                 OpeningDiscrepancy = openingDiscrepancy,
                 OpeningDenominationsJson = request.OpeningDenominations != null ? JsonSerializer.Serialize(request.OpeningDenominations) : null,
                 ExpectedBalance = openingFloat,
-                OpenedAt = request.OpenedAt ?? POS.Shared.Services.BusinessDayClock.UtcNow(),
+                OpenedAt = openedAtUtc,
                 Notes = request.Notes
             };
             db.CashDrawerShifts.Add(shift);
@@ -511,25 +1368,26 @@ public static class ShiftSession
 
         if (!offline)
         {
-            var response = await http.PostAsJsonAsync("api/cash-drawer/close-shift", request);
-            if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException(await response.Content.ReadAsStringAsync());
-
-            var serverDto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
-            if (serverDto == null)
-                throw new InvalidOperationException("Shift closing response was empty.");
-            await CacheAsync(serverDto);
-            await LocalPosDbContext.WriteLock.WaitAsync();
-            try
+            var closeResult = await PostShiftJsonWithRetryAsync(http, "api/cash-drawer/close-shift", request, "Close shift");
+            if (closeResult.SucceededOnline && closeResult.Result != null)
             {
-                using var lockDb = new LocalPosDbContext(); lockDb.InitializeDatabase();
-                var lockTerm = await lockDb.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == serverDto.TerminalId)
-                               ?? await lockDb.TerminalConfigs.FirstOrDefaultAsync();
-                ApplyLocalClosingLock(lockTerm, serverDto.CashierId, serverDto.ClosedAt ?? request.ClosedAt ?? POS.Shared.Services.BusinessDayClock.UtcNow());
-                await lockDb.SaveChangesAsync();
+                var serverDto = closeResult.Result;
+                await CacheAsync(serverDto);
+                await LocalPosDbContext.WriteLock.WaitAsync();
+                try
+                {
+                    using var lockDb = new LocalPosDbContext(); lockDb.InitializeDatabase();
+                    var lockTerm = await lockDb.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == serverDto.TerminalId)
+                                   ?? await lockDb.TerminalConfigs.FirstOrDefaultAsync();
+                    ApplyLocalClosingLock(lockTerm, serverDto.CashierId, serverDto.ClosedAt ?? request.ClosedAt ?? POS.Shared.Services.BusinessDayClock.UtcNow());
+                    await lockDb.SaveChangesAsync();
+                }
+                finally { LocalPosDbContext.WriteLock.Release(); }
+                return serverDto;
             }
-            finally { LocalPosDbContext.WriteLock.Release(); }
-            return serverDto;
+
+            if (!closeResult.UseLocalFallback)
+                throw new InvalidOperationException(closeResult.RejectionMessage ?? "Shift closing rejected by server.");
         }
 
         await LocalPosDbContext.WriteLock.WaitAsync();
@@ -849,17 +1707,49 @@ public static class ShiftSession
     {
         var shift = await db.CashDrawerShifts.FindAsync(dto.ShiftId);
         if (shift == null) { shift = new LocalCashDrawerShift { ShiftId = dto.ShiftId }; db.CashDrawerShifts.Add(shift); }
+
+        bool preserveLocalPositiveClose = shift.ShiftId > 0
+            && string.Equals(shift.Status, "CLOSED", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(shift.ClientCloseId)
+            && string.IsNullOrWhiteSpace(dto.ClientCloseId)
+            && !string.Equals(dto.Status, "CLOSED", StringComparison.OrdinalIgnoreCase);
+
         // Historical opening ACKs never retire a different opening. Only an authoritative
         // current endpoint can retire other acknowledged shifts on this terminal.
-        LocalCashDrawerShift? closedLocalPlaceholder = null;
-        if (!string.IsNullOrWhiteSpace(dto.ClientShiftId))
+        var matchingNegatives = !string.IsNullOrWhiteSpace(dto.ClientShiftId)
+            ? await db.CashDrawerShifts
+                .Where(s => s.TerminalId == dto.TerminalId && s.ShiftId < 0 && s.ShiftId != dto.ShiftId && s.ClientShiftId == dto.ClientShiftId)
+                .ToListAsync()
+            : new List<LocalCashDrawerShift>();
+
+        var closedLocalPlaceholder = matchingNegatives
+            .FirstOrDefault(s => s.Status == "CLOSED" && !string.IsNullOrWhiteSpace(s.ClientCloseId));
+
+        var migratedMovements = new List<LocalCashDrawerMovement>();
+        foreach (var neg in matchingNegatives)
         {
-            closedLocalPlaceholder = await db.CashDrawerShifts
-                .FirstOrDefaultAsync(s => s.TerminalId == dto.TerminalId && s.ShiftId < 0 && s.ClientShiftId == dto.ClientShiftId && s.Status == "CLOSED" && !string.IsNullOrWhiteSpace(s.ClientCloseId));
+            if (neg.Status == "OPEN")
+                neg.Status = "CLOSED";
+
+            if (dto.ShiftId > 0 && neg.ShiftId != dto.ShiftId)
+            {
+                var negMovements = await db.CashDrawerMovements.Where(m => m.ShiftId == neg.ShiftId).ToListAsync();
+                foreach (var mov in negMovements)
+                {
+                    mov.ShiftId = dto.ShiftId;
+                    migratedMovements.Add(mov);
+                }
+
+                var negOrders = await db.Orders.Where(o => o.ShiftId == neg.ShiftId).ToListAsync();
+                foreach (var ord in negOrders)
+                    ord.ShiftId = dto.ShiftId;
+            }
         }
+
         foreach (var old in await db.CashDrawerShifts.Where(s => s.TerminalId == dto.TerminalId && s.ShiftId != dto.ShiftId && s.Status == "OPEN").ToListAsync())
             if ((old.ShiftId < 0 && !string.IsNullOrWhiteSpace(dto.ClientShiftId) && old.ClientShiftId == dto.ClientShiftId)
                 || (reconcileCurrent && old.ShiftId > 0)) old.Status = "CLOSED";
+
         shift.BranchId = dto.BranchId; shift.TerminalId = dto.TerminalId; shift.CashierId = dto.CashierId;
         shift.OpeningFloat = dto.OpeningFloat;
         shift.ExpectedOpeningFund = dto.ExpectedOpeningFund ?? shift.ExpectedOpeningFund ?? dto.OpeningFloat;
@@ -867,13 +1757,22 @@ public static class ShiftSession
         if (dto.OpeningDenominations != null && dto.OpeningDenominations.Count > 0)
             shift.OpeningDenominationsJson = JsonSerializer.Serialize(dto.OpeningDenominations);
         shift.OpeningConfirmed = dto.OpeningConfirmed; shift.ClientShiftId = dto.ClientShiftId;
-        if (!string.IsNullOrWhiteSpace(dto.ClientCloseId)) shift.ClientCloseId = dto.ClientCloseId;
-        else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.ClientCloseId)) shift.ClientCloseId = closedLocalPlaceholder.ClientCloseId;
-        shift.OpenedAt = dto.OpenedAt;
-        shift.ClosedAt = dto.ClosedAt ?? closedLocalPlaceholder?.ClosedAt;
-        shift.Status = closedLocalPlaceholder != null ? "CLOSED" : dto.Status;
-        if (dto.Notes != null) shift.Notes = dto.Notes;
-        else if (closedLocalPlaceholder?.Notes != null) shift.Notes = closedLocalPlaceholder.Notes;
+
+        if (!preserveLocalPositiveClose)
+        {
+            if (!string.IsNullOrWhiteSpace(dto.ClientCloseId)) shift.ClientCloseId = dto.ClientCloseId;
+            else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.ClientCloseId)) shift.ClientCloseId = closedLocalPlaceholder.ClientCloseId;
+            shift.OpenedAt = dto.OpenedAt;
+            shift.ClosedAt = dto.ClosedAt ?? closedLocalPlaceholder?.ClosedAt;
+            shift.Status = closedLocalPlaceholder != null ? "CLOSED" : dto.Status;
+            if (dto.Notes != null) shift.Notes = dto.Notes;
+            else if (closedLocalPlaceholder?.Notes != null) shift.Notes = closedLocalPlaceholder.Notes;
+        }
+        else
+        {
+            shift.OpenedAt = dto.OpenedAt;
+        }
+
         if (!dto.IsBlindCloseRedacted)
         {
             shift.TotalCashSales = dto.TotalCashSales + await UnacknowledgedCashAsync(db, dto);
@@ -884,36 +1783,74 @@ public static class ShiftSession
             var unacked = await UnacknowledgedCashAsync(db, dto);
             if (unacked > 0) shift.TotalCashSales = Math.Max(shift.TotalCashSales, unacked);
         }
-        shift.TotalCashIn = dto.TotalCashIn; shift.TotalCashOut = dto.TotalCashOut; shift.TotalCashDrops = dto.TotalCashDrops;
+
+        var existingMovementsForShift = await db.CashDrawerMovements.AsNoTracking()
+            .Where(m => m.ShiftId == dto.ShiftId)
+            .ToListAsync();
+        var serverMovementIds = (dto.Movements ?? new List<CashMovementResponseDto>())
+            .Select(m => m.ClientMovementId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal);
+        var seenMovementKeys = new HashSet<string>(StringComparer.Ordinal);
+        decimal unsyncedCashIn = 0m;
+        decimal unsyncedCashOut = 0m;
+        decimal unsyncedCashDrops = 0m;
+
+        foreach (var mov in migratedMovements.Concat(existingMovementsForShift))
+        {
+            string key = !string.IsNullOrWhiteSpace(mov.ClientMovementId)
+                ? $"C:{mov.ClientMovementId}"
+                : $"M:{mov.MovementId}";
+            if (!seenMovementKeys.Add(key)) continue;
+            if (!string.Equals(mov.Status, "POSTED", StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.Equals(mov.SyncStatus, "SYNCED", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.IsNullOrWhiteSpace(mov.ClientMovementId) && serverMovementIds.Contains(mov.ClientMovementId)) continue;
+
+            string movType = (mov.MovementType ?? string.Empty).Trim().ToUpperInvariant();
+            if (movType == "CASH_IN") unsyncedCashIn += mov.Amount;
+            else if (movType is "CASH_OUT" or "PETTY_CASH") unsyncedCashOut += mov.Amount;
+            else if (movType == "CASH_DROP") unsyncedCashDrops += mov.Amount;
+        }
+
+        shift.TotalCashIn = dto.TotalCashIn + unsyncedCashIn;
+        shift.TotalCashOut = dto.TotalCashOut + unsyncedCashOut;
+        shift.TotalCashDrops = dto.TotalCashDrops + unsyncedCashDrops;
         shift.ExpectedBalance = shift.OpeningFloat + shift.TotalCashSales - shift.TotalCashRefunds + shift.TotalCashIn - shift.TotalCashOut - shift.TotalCashDrops;
         if (dto.ActualCountedBalance.HasValue)
         {
             shift.ActualCountedBalance = dto.ActualCountedBalance;
             shift.Discrepancy = Math.Round(dto.ActualCountedBalance.Value - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
         }
+        else if (preserveLocalPositiveClose && shift.ActualCountedBalance.HasValue)
+        {
+            shift.Discrepancy = Math.Round(shift.ActualCountedBalance.Value - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+        }
         else if (closedLocalPlaceholder?.ActualCountedBalance != null)
         {
             shift.ActualCountedBalance = closedLocalPlaceholder.ActualCountedBalance;
             shift.Discrepancy = Math.Round(closedLocalPlaceholder.ActualCountedBalance.Value - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
         }
-        if (dto.Denominations != null && dto.Denominations.Count > 0)
-            shift.ClosingDenominationsJson = JsonSerializer.Serialize(dto.Denominations);
-        else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingDenominationsJson))
-            shift.ClosingDenominationsJson = closedLocalPlaceholder.ClosingDenominationsJson;
-        if (dto.OriginalDeclaration != null)
-            shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(dto.OriginalDeclaration);
-        else if (dto.CashierDeclaration != null && string.IsNullOrWhiteSpace(shift.ClosingOriginalDeclarationJson))
-            shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(dto.CashierDeclaration);
-        else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingOriginalDeclarationJson))
-            shift.ClosingOriginalDeclarationJson = closedLocalPlaceholder.ClosingOriginalDeclarationJson;
-        if (dto.PaymentReconciliations != null && dto.PaymentReconciliations.Count > 0)
-            shift.ClosingPaymentReconciliationsJson = JsonSerializer.Serialize(dto.PaymentReconciliations);
-        else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingPaymentReconciliationsJson))
-            shift.ClosingPaymentReconciliationsJson = closedLocalPlaceholder.ClosingPaymentReconciliationsJson;
-        if (dto.RecountHistory != null && dto.RecountHistory.Count > 0)
-            shift.ClosingRecountHistoryJson = JsonSerializer.Serialize(dto.RecountHistory);
-        else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingRecountHistoryJson))
-            shift.ClosingRecountHistoryJson = closedLocalPlaceholder.ClosingRecountHistoryJson;
+        if (!preserveLocalPositiveClose)
+        {
+            if (dto.Denominations != null && dto.Denominations.Count > 0)
+                shift.ClosingDenominationsJson = JsonSerializer.Serialize(dto.Denominations);
+            else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingDenominationsJson))
+                shift.ClosingDenominationsJson = closedLocalPlaceholder.ClosingDenominationsJson;
+            if (dto.OriginalDeclaration != null)
+                shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(dto.OriginalDeclaration);
+            else if (dto.CashierDeclaration != null && string.IsNullOrWhiteSpace(shift.ClosingOriginalDeclarationJson))
+                shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(dto.CashierDeclaration);
+            else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingOriginalDeclarationJson))
+                shift.ClosingOriginalDeclarationJson = closedLocalPlaceholder.ClosingOriginalDeclarationJson;
+            if (dto.PaymentReconciliations != null && dto.PaymentReconciliations.Count > 0)
+                shift.ClosingPaymentReconciliationsJson = JsonSerializer.Serialize(dto.PaymentReconciliations);
+            else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingPaymentReconciliationsJson))
+                shift.ClosingPaymentReconciliationsJson = closedLocalPlaceholder.ClosingPaymentReconciliationsJson;
+            if (dto.RecountHistory != null && dto.RecountHistory.Count > 0)
+                shift.ClosingRecountHistoryJson = JsonSerializer.Serialize(dto.RecountHistory);
+            else if (!string.IsNullOrWhiteSpace(closedLocalPlaceholder?.ClosingRecountHistoryJson))
+                shift.ClosingRecountHistoryJson = closedLocalPlaceholder.ClosingRecountHistoryJson;
+        }
         return shift;
     }
 
@@ -1014,6 +1951,29 @@ public static class ShiftSession
         return list.OrderBy(r => r.IsCash ? 0 : 1).ThenBy(r => r.DisplayOrder).ThenBy(r => r.PaymentMethodName).ToList();
     }
 
+    private static CashMovementResponseDto MapLocalMovementToDto(LocalCashDrawerMovement m) => new()
+    {
+        MovementId = m.MovementId,
+        ShiftId = m.ShiftId,
+        BranchId = m.BranchId,
+        TerminalId = m.TerminalId,
+        MovementType = m.MovementType,
+        CategoryId = m.CategoryId,
+        CategoryName = m.CategoryName,
+        Amount = m.Amount,
+        Reason = m.Reason,
+        ReferenceNumber = m.ReferenceNumber,
+        ClientMovementId = m.ClientMovementId,
+        Status = m.Status,
+        CreatedBy = m.CreatedBy,
+        AuthorizedBy = m.AuthorizedBy,
+        ApprovedBy = m.ApprovedBy,
+        CreatedAt = m.CreatedAt,
+        ApprovedAt = m.ApprovedAt,
+        PostedAt = m.PostedAt,
+        SyncStatus = m.SyncStatus
+    };
+
     public static async Task<CashDrawerShiftDto> BuildLocalShiftDtoAsync(
         LocalPosDbContext db,
         LocalCashDrawerShift shift,
@@ -1026,30 +1986,28 @@ public static class ShiftSession
             .OrderByDescending(m => m.CreatedAt)
             .ToListAsync();
 
-        var movements = serverSnapshot?.Movements != null && serverSnapshot.Movements.Count > 0
-            ? serverSnapshot.Movements
-            : localMovements.Select(m => new CashMovementResponseDto
+        List<CashMovementResponseDto> movements;
+        if (serverSnapshot?.Movements != null && serverSnapshot.Movements.Count > 0)
+        {
+            movements = new List<CashMovementResponseDto>(serverSnapshot.Movements);
+            var serverIds = serverSnapshot.Movements
+                .Select(m => m.ClientMovementId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var localMov in localMovements)
             {
-                MovementId = m.MovementId,
-                ShiftId = m.ShiftId,
-                BranchId = m.BranchId,
-                TerminalId = m.TerminalId,
-                MovementType = m.MovementType,
-                CategoryId = m.CategoryId,
-                CategoryName = m.CategoryName,
-                Amount = m.Amount,
-                Reason = m.Reason,
-                ReferenceNumber = m.ReferenceNumber,
-                ClientMovementId = m.ClientMovementId,
-                Status = m.Status,
-                CreatedBy = m.CreatedBy,
-                AuthorizedBy = m.AuthorizedBy,
-                ApprovedBy = m.ApprovedBy,
-                CreatedAt = m.CreatedAt,
-                ApprovedAt = m.ApprovedAt,
-                PostedAt = m.PostedAt,
-                SyncStatus = m.SyncStatus
-            }).ToList();
+                if (!string.Equals(localMov.SyncStatus, "SYNCED", StringComparison.OrdinalIgnoreCase) &&
+                    (string.IsNullOrWhiteSpace(localMov.ClientMovementId) || !serverIds.Contains(localMov.ClientMovementId)))
+                {
+                    movements.Add(MapLocalMovementToDto(localMov));
+                }
+            }
+            movements = movements.OrderByDescending(m => m.CreatedAt).ToList();
+        }
+        else
+        {
+            movements = localMovements.Select(MapLocalMovementToDto).ToList();
+        }
 
         List<CashDenominationLineDto> openingDenoms = new();
         if (!string.IsNullOrWhiteSpace(shift.OpeningDenominationsJson))

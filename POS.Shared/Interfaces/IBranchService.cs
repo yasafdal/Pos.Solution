@@ -16,5 +16,9 @@ namespace POS.Shared.Interfaces
         Task<bool> CreateTerminalAsync(TerminalDto outlet);
         Task<bool> UpdateTerminalAsync(int id, TerminalDto outlet);
         Task<bool> DeleteTerminalAsync(int id);
+
+        Task<ReceiptBrandingDto?> GetReceiptBrandingAsync(int branchId);
+        Task<ReceiptBrandingResultDto> UploadReceiptLogoAsync(int branchId, byte[] fileBytes, string fileName, string contentType, bool applyToAllBranches = false);
+        Task<ReceiptBrandingResultDto> RemoveReceiptLogoAsync(int branchId, bool applyToAllBranches = false);
     }
 }

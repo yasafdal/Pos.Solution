@@ -331,7 +331,7 @@ public static class XReadingHtmlFormatter
             : "-PHP " + Math.Abs(value).ToString("N2", CultureInfo.InvariantCulture);
 
     private static string Timestamp(DateTime value) =>
-        value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        POS.Shared.Services.BusinessDayClock.ToManilaTime(value).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
     private static void Line(StringBuilder html, string? text)
     {

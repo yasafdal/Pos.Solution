@@ -58,5 +58,52 @@ namespace POS.Shared.Services
             var response = await _http.DeleteAsync($"api/Terminals/{id}");
             return response.IsSuccessStatusCode;
         }
+
+        public async Task<ReceiptBrandingDto?> GetReceiptBrandingAsync(int branchId)
+        {
+            return await _http.GetFromJsonAsync<ReceiptBrandingDto>($"api/receipt-branding/{branchId}");
+        }
+
+        public async Task<ReceiptBrandingResultDto> UploadReceiptLogoAsync(int branchId, byte[] fileBytes, string fileName, string contentType, bool applyToAllBranches = false)
+        {
+            using var content = new MultipartFormDataContent();
+            var byteContent = new ByteArrayContent(fileBytes);
+            byteContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType);
+            content.Add(byteContent, "file", string.IsNullOrWhiteSpace(fileName) ? "logo.png" : fileName);
+
+            var url = $"api/receipt-branding/{branchId}/logo?applyToAllBranches={applyToAllBranches.ToString().ToLowerInvariant()}";
+            var response = await _http.PostAsync(url, content);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ReceiptBrandingResultDto>();
+                return result ?? new ReceiptBrandingResultDto { Success = true, Message = "Receipt logo updated." };
+            }
+
+            var errorText = await response.Content.ReadAsStringAsync();
+            return new ReceiptBrandingResultDto
+            {
+                Success = false,
+                Message = string.IsNullOrWhiteSpace(errorText) ? $"Upload failed ({(int)response.StatusCode})." : errorText.Trim('"')
+            };
+        }
+
+        public async Task<ReceiptBrandingResultDto> RemoveReceiptLogoAsync(int branchId, bool applyToAllBranches = false)
+        {
+            var url = $"api/receipt-branding/{branchId}/logo?applyToAllBranches={applyToAllBranches.ToString().ToLowerInvariant()}";
+            var response = await _http.DeleteAsync(url);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ReceiptBrandingResultDto>();
+                return result ?? new ReceiptBrandingResultDto { Success = true, Message = "Receipt logo removed." };
+            }
+
+            var errorText = await response.Content.ReadAsStringAsync();
+            return new ReceiptBrandingResultDto
+            {
+                Success = false,
+                Message = string.IsNullOrWhiteSpace(errorText) ? $"Remove failed ({(int)response.StatusCode})." : errorText.Trim('"')
+            };
+        }
     }
 }

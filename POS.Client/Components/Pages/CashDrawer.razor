@@ -10,15 +10,16 @@
 @inject IPosConnectivityService ConnectivityService
 @inject IOfflineBackgroundSyncService SyncManager
 @inject IReceiptPrinter ReceiptPrinter
+@inject ICashDrawerHardwareService CashDrawerHardware
 @inject CurrieTechnologies.Razor.SweetAlert2.SweetAlertService Swal
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
 <PageTitle>Cash Drawer &amp; Blind Shift Closing - POS</PageTitle>
 
-<div class="w-100 py-3 px-3 px-md-4 pos-closing-page">
+<div class="w-100 py-1 px-1 pos-closing-page">
     <!-- Top Header -->
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
         <div>
             <div class="d-flex align-items-center gap-2">
                 <h2 class="fw-bolder mb-0 text-light" style="letter-spacing: -0.5px;">Cash Drawer &amp; Blind Shift Closing</h2>
@@ -48,6 +49,12 @@
                     <i class="bi bi-printer me-1"></i> Supervisor X-Reading (Shift #@lastClosedShift.ShiftId)
                 </button>
             }
+            <button type="button" class="btn btn-outline-warning rounded-3 px-3 py-2 fw-semibold" @onclick="OpenManualDrawerModal">
+                <i class="bi bi-safe2 me-1"></i> Open Cash Drawer
+            </button>
+            <button type="button" class="btn btn-outline-info rounded-3 px-3 py-2 fw-semibold" @onclick='() => Navigation.NavigateTo("/printer-settings")'>
+                <i class="bi bi-printer me-1"></i> Printer &amp; Drawer Setup
+            </button>
             <button type="button" class="btn btn-outline-secondary rounded-3 px-3 py-2 fw-semibold" @onclick="TriggerSyncAndReloadAsync" disabled="@isLoading">
                 <i class="bi bi-cloud-arrow-up me-1"></i> Sync &amp; Refresh
             </button>
@@ -96,8 +103,8 @@
     }
     else if (currentShift == null)
     {
-        <div class="row g-4 justify-content-center">
-            <div class="col-12 @(lastClosedShift != null ? "col-lg-6" : "col-lg-8")">
+        <div class="row g-3">
+            <div class="col-12 @(lastClosedShift != null ? "col-lg-6" : "col-12")">
                 <!-- Open Shift Card (Admin-Configured Initial Cash Fund Verification) -->
                 <div class="pos-panel-card rounded-4 p-4 h-100 text-start">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
@@ -129,11 +136,14 @@
 
                     @if (openingFundConfig == null || !openingFundConfig.IsConfigured || !openingFundConfig.EffectiveOpeningFund.HasValue)
                     {
-                        <div class="alert alert-danger mb-0">
-                            <div class="fw-bold mb-1"><i class="bi bi-exclamation-octagon-fill me-2"></i>Initial Cash Fund Not Configured</div>
-                            <div class="small">
-                                An Initial Cash Fund has not been configured for this Terminal or its Outlet.
-                                Please ask an Administrator to configure the Outlet Default or Terminal Override Initial Cash Fund in the Admin module before opening a cashier session.
+                        <div class="alert alert-danger mb-0 d-flex align-items-start gap-2">
+                            <i class="bi bi-exclamation-octagon-fill fs-5 flex-shrink-0 mt-1"></i>
+                            <div>
+                                <div class="fw-bold mb-1">Initial Cash Fund Not Configured</div>
+                                <div class="small">
+                                    An Initial Cash Fund has not been configured for this Terminal or its Outlet.
+                                    Please ask an Administrator to configure the Outlet Default or Terminal Override Initial Cash Fund in the Admin module before opening a cashier session.
+                                </div>
                             </div>
                         </div>
                     }
@@ -227,11 +237,13 @@
 
                         @if (OpeningDiscrepancyAmount != 0m)
                         {
-                            <div class="alert alert-warning py-2 small mb-3">
-                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
-                                <strong>Opening Discrepancy:</strong> Actual counted cash (<strong>₱@OpeningCountedCash.ToString("N2")</strong>) differs from expected fund (<strong>₱@ExpectedOpeningFundAmount.ToString("N2")</strong>) by
-                                <strong>@FormatSignedCurrency(OpeningDiscrepancyAmount) (@(OpeningDiscrepancyAmount > 0m ? "Overage" : "Shortage"))</strong>.
-                                Both expected and actual counted amounts will be recorded for audit.
+                            <div class="alert alert-warning py-2 px-3 small mb-3 d-flex align-items-center gap-2">
+                                <i class="bi bi-exclamation-triangle-fill fs-5 flex-shrink-0"></i>
+                                <div>
+                                    <strong>Opening Discrepancy:</strong> Actual counted cash (<strong>₱@OpeningCountedCash.ToString("N2")</strong>) differs from expected fund (<strong>₱@ExpectedOpeningFundAmount.ToString("N2")</strong>) by
+                                    <strong>@FormatSignedCurrency(OpeningDiscrepancyAmount) (@(OpeningDiscrepancyAmount > 0m ? "Overage" : "Shortage"))</strong>.
+                                    Both expected and actual counted amounts will be recorded for audit.
+                                </div>
                             </div>
                         }
 
@@ -272,7 +284,7 @@
 
                             <div class="small text-secondary mb-3">
                                 <div>Cashier: <strong class="text-light">@lastClosedShift.CashierId</strong></div>
-                                <div>Opened: @lastClosedShift.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") • Submitted: @(lastClosedShift.ClosedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "N/A")</div>
+                                <div>Opened: @POS.Shared.Services.BusinessDayClock.FormatManila(lastClosedShift.OpenedAt, "yyyy-MM-dd HH:mm") • Submitted: @POS.Shared.Services.BusinessDayClock.FormatManila(lastClosedShift.ClosedAt, "yyyy-MM-dd HH:mm", "N/A")</div>
                             </div>
 
                             <div class="pos-subpanel rounded-3 p-3 mb-3 small">
@@ -411,7 +423,7 @@
                                                     <div class="p-2 rounded-2 bg-dark bg-opacity-50 mb-1" style="font-size: 0.76rem;">
                                                         <div class="d-flex justify-content-between fw-bold text-light">
                                                             <span>Recount #@rec.RecountNumber by @rec.CorrectedBy</span>
-                                                            <span>@rec.CorrectedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                                            <span>@POS.Shared.Services.BusinessDayClock.FormatManila(rec.CorrectedAt, "yyyy-MM-dd HH:mm")</span>
                                                         </div>
                                                         <div class="text-secondary">
                                                             Cash: ₱@rec.OriginalCountedCash.ToString("N2") → ₱@rec.RevisedCountedCash.ToString("N2")
@@ -1188,7 +1200,7 @@
                                         </td>
                                         <td>
                                             <div class="small text-light">@m.Reason</div>
-                                            <small class="text-secondary">By @m.CreatedBy • @m.CreatedAt.ToLocalTime().ToString("HH:mm")</small>
+                                            <small class="text-secondary">By @m.CreatedBy • @POS.Shared.Services.BusinessDayClock.FormatManila(m.CreatedAt, "HH:mm")</small>
                                         </td>
                                         <td>
                                             <span class="badge @GetStatusBadgeClass(m.Status)">@m.Status</span>
@@ -1340,7 +1352,7 @@
                         </div>
                         <div class="d-flex justify-content-between">
                             <span>Date/Time:</span>
-                            <span>@selectedVoucher.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</span>
+                            <span>@POS.Shared.Services.BusinessDayClock.FormatManila(selectedVoucher.CreatedAt, "yyyy-MM-dd HH:mm:ss")</span>
                         </div>
                         <div class="d-flex justify-content-between">
                             <span>Status:</span>
@@ -1409,8 +1421,8 @@
 
                         <div class="d-flex justify-content-between"><span>Shift ID:</span><span>#@selectedDeclaration.ShiftId</span></div>
                         <div class="d-flex justify-content-between"><span>Cashier:</span><span>@selectedDeclaration.CashierId</span></div>
-                        <div class="d-flex justify-content-between"><span>Opened:</span><span>@selectedDeclaration.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span></div>
-                        <div class="d-flex justify-content-between"><span>Submitted:</span><span>@selectedDeclaration.SubmittedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span></div>
+                        <div class="d-flex justify-content-between"><span>Opened:</span><span>@POS.Shared.Services.BusinessDayClock.FormatManila(selectedDeclaration.OpenedAt, "yyyy-MM-dd HH:mm")</span></div>
+                        <div class="d-flex justify-content-between"><span>Submitted:</span><span>@POS.Shared.Services.BusinessDayClock.FormatManila(selectedDeclaration.SubmittedAt, "yyyy-MM-dd HH:mm")</span></div>
 
                         <div class="border-top mt-2 pt-2">
                             <div class="fw-bold">DECLARED CASH DENOMINATIONS</div>
@@ -1514,14 +1526,14 @@
 
                         <div class="d-flex justify-content-between"><span>Shift ID:</span><span>#@selectedXReading.ShiftId</span></div>
                         <div class="d-flex justify-content-between"><span>Cashier:</span><span>@selectedXReading.CashierId</span></div>
-                        <div class="d-flex justify-content-between"><span>Opened:</span><span>@selectedXReading.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span></div>
-                        <div class="d-flex justify-content-between"><span>Closed:</span><span>@(selectedXReading.ClosedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "OPEN")</span></div>
+                        <div class="d-flex justify-content-between"><span>Opened:</span><span>@POS.Shared.Services.BusinessDayClock.FormatManila(selectedXReading.OpenedAt, "yyyy-MM-dd HH:mm")</span></div>
+                        <div class="d-flex justify-content-between"><span>Closed:</span><span>@POS.Shared.Services.BusinessDayClock.FormatManila(selectedXReading.ClosedAt, "yyyy-MM-dd HH:mm", "OPEN")</span></div>
 
                         @if (!selectedXReading.ReportingPeriodMatchesShift)
                         {
                             <div class="border-top mt-1 pt-1">
                                 <div class="fw-bold">X-Reading Period (4AM Business Day)</div>
-                                <div>@selectedXReading.ReportingPeriodStart.ToLocalTime().ToString("yyyy-MM-dd HH:mm") to @selectedXReading.ReportingPeriodEnd.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</div>
+                                <div>@POS.Shared.Services.BusinessDayClock.FormatManila(selectedXReading.ReportingPeriodStart, "yyyy-MM-dd HH:mm") to @POS.Shared.Services.BusinessDayClock.FormatManila(selectedXReading.ReportingPeriodEnd, "yyyy-MM-dd HH:mm")</div>
                             </div>
                         }
 
@@ -1597,7 +1609,7 @@
                                 @foreach (var rec in selectedXReading.RecountHistory)
                                 {
                                     <div class="mt-1">
-                                        <div class="fw-bold">#@rec.RecountNumber by @rec.CorrectedBy (@rec.CorrectedAt.ToLocalTime().ToString("MM-dd HH:mm"))</div>
+                                        <div class="fw-bold">#@rec.RecountNumber by @rec.CorrectedBy (@POS.Shared.Services.BusinessDayClock.FormatManila(rec.CorrectedAt, "MM-dd HH:mm"))</div>
                                         <div>Cash: ₱@rec.OriginalCountedCash.ToString("N2") -> ₱@rec.RevisedCountedCash.ToString("N2")</div>
                                         <div>Reason: @rec.Reason</div>
                                     </div>
@@ -1736,6 +1748,67 @@
                     <button type="button" class="btn btn-outline-secondary rounded-3" @onclick="() => showRecountModal = false" disabled="@isSubmittingRecount">Cancel</button>
                     <button type="button" class="btn btn-warning fw-bold text-dark rounded-3 px-4" @onclick="SubmitRecountAsync" disabled="@isSubmittingRecount">
                         <i class="bi bi-check2-circle me-1"></i> @(isSubmittingRecount ? "Recording Recount..." : "Save Authorized Recount")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Manual Open Cash Drawer Modal (Supervisor-Authorized, Audited) -->
+@if (showManualOpenDrawerModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(15, 23, 42, 0.82);" role="dialog" aria-modal="true" aria-labelledby="manual-drawer-title">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg bg-dark text-light">
+                <div class="modal-header border-secondary border-opacity-25">
+                    <div>
+                        <h5 id="manual-drawer-title" class="modal-title fw-bold mb-0">
+                            <i class="bi bi-safe2 text-warning me-2"></i>Manual Open Cash Drawer
+                        </h5>
+                        <small class="text-secondary">
+                            Sends an ESC/POS drawer kick directly to the configured Xprinter XP-80T without creating a sale. Every attempt is audited locally.
+                        </small>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseManualDrawerModal" disabled="@isOpeningDrawer"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrWhiteSpace(manualOpenError))
+                    {
+                        <div class="alert alert-danger py-2 px-3 small mb-3" role="alert">
+                            <i class="bi bi-exclamation-octagon-fill me-1"></i> @manualOpenError
+                        </div>
+                    }
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small text-warning" for="manualDrawerReason">
+                            Reason for Opening Drawer (Required) *
+                        </label>
+                        <input id="manualDrawerReason" type="text" maxlength="250" class="form-control rounded-3"
+                               @bind="manualOpenReason" @bind:event="oninput"
+                               placeholder="e.g. Change bills, float inspection, emergency payout" />
+                    </div>
+                    @if (!IsSupervisorRole(Session.Role))
+                    {
+                        <div class="mb-2">
+                            <label class="form-label fw-semibold small" for="manualDrawerPin">
+                                Supervisor / Manager PIN (Required for Cashier Role) *
+                            </label>
+                            <input id="manualDrawerPin" type="password" maxlength="20" class="form-control rounded-3"
+                                   @bind="manualOpenSupervisorPin" @bind:event="oninput"
+                                   placeholder="Enter Admin / Manager / Senior Cashier PIN" />
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="small text-info">
+                            <i class="bi bi-shield-check me-1"></i>Authorized directly as <strong>@Session.Username</strong> (@Session.Role).
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-secondary rounded-3" @onclick="CloseManualDrawerModal" disabled="@isOpeningDrawer">Cancel</button>
+                    <button type="button" class="btn btn-warning fw-bold text-dark rounded-3 px-4" @onclick="ConfirmManualOpenDrawerAsync" disabled="@isOpeningDrawer">
+                        <i class="bi bi-unlock-fill me-1"></i> @(isOpeningDrawer ? "Opening..." : "Open Cash Drawer")
                     </button>
                 </div>
             </div>
@@ -1990,7 +2063,14 @@
         }
         InitializeOpeningDenominationRows();
         InitializeDenominationRows();
-        await LoadShiftData();
+        try
+        {
+            await LoadShiftData();
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
     }
 
     private void InitializeOpeningDenominationRows()
@@ -2631,7 +2711,12 @@
         unlockedSupervisorPin = null;
         selectedXReading = null;
         showRecountModal = false;
-        var terminalId = Session.Terminal?.TerminalId ?? 1;
+        var terminalId = Session.Terminal?.TerminalId ?? lastClosedShift?.TerminalId ?? 0;
+        if (terminalId <= 0)
+        {
+            lastClosedShift = null;
+            return;
+        }
         lastClosedShift = await ShiftSession.LastClosedDtoAsync(Http, terminalId, isOffline, isSupervisor: false);
     }
 
@@ -2807,7 +2892,14 @@
             await SyncManager.TriggerManualSyncAsync();
         }
         catch { }
-        await LoadShiftData();
+        try
+        {
+            await LoadShiftData();
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
     }
 
     private async Task LoadShiftData()
@@ -2815,9 +2907,52 @@
         isLoading = true;
         try
         {
-            var terminalId = Session.Terminal?.TerminalId ?? 1;
+            if (!Session.IsAuthenticated || string.IsNullOrWhiteSpace(Session.Username) ||
+                Session.Terminal == null || Session.Terminal.TerminalId <= 0 || Session.Terminal.BranchId <= 0)
+            {
+                ShowAlert("Cashier session or assigned terminal is invalid. Please sign in again.", isError: true);
+                currentShift = null;
+                return;
+            }
+
+            var terminalId = Session.Terminal.TerminalId;
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            if (!isOffline)
+            {
+                var tokenResult = await DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(Http, Session);
+                if (!tokenResult.Success)
+                {
+                    if (tokenResult.RejectionStatus == System.Net.HttpStatusCode.Locked)
+                    {
+                        Session.ClearSession();
+                        Http.DefaultRequestHeaders.Authorization = null;
+                        Navigation.NavigateTo("/terminal-locked", replace: true);
+                        return;
+                    }
+                    if (tokenResult.RejectionStatus == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        var serverLock = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, Session.Username, offline: false);
+                        if (serverLock.IsCashierRestricted || serverLock.IsTerminalLocked)
+                        {
+                            Session.ClearSession();
+                            Http.DefaultRequestHeaders.Authorization = null;
+                            Navigation.NavigateTo("/terminal-locked", replace: true);
+                            return;
+                        }
+                        throw new InvalidOperationException(tokenResult.ErrorMessage ?? "Online session authorization was denied (HTTP 403 Forbidden).");
+                    }
+                    if (tokenResult.RejectionStatus is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.BadRequest)
+                    {
+                        throw new InvalidOperationException(tokenResult.ErrorMessage ?? $"Online session authorization was rejected (HTTP {(int)tokenResult.RejectionStatus.Value}).");
+                    }
+                    if (tokenResult.IsTransientError || !DeviceActivationService.HasValidOnlineBearerToken(Http, Session))
+                    {
+                        isOffline = true;
+                    }
+                }
+            }
 
             var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, Session.Username, isOffline);
             if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
@@ -2851,7 +2986,7 @@
             {
                 currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, isOffline);
             }
-            catch
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
             {
                 isOffline = true;
                 currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, offline: true);
@@ -2871,6 +3006,10 @@
             {
                 selectedCategoryId = FilteredCategories.First().CategoryId;
             }
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
         }
         finally
         {
@@ -2948,15 +3087,60 @@
             return;
         }
 
+        if (!Session.IsAuthenticated || string.IsNullOrWhiteSpace(Session.Username) ||
+            Session.Terminal == null || Session.Terminal.TerminalId <= 0 || Session.Terminal.BranchId <= 0)
+        {
+            ShowAlert("Cashier session or assigned terminal is invalid. Please sign in again.", isError: true);
+            return;
+        }
+
         isSubmittingShift = true;
         try
         {
-            var branchId = Session.Terminal?.BranchId ?? 1;
-            var terminalId = Session.Terminal?.TerminalId ?? 1;
+            var branchId = Session.Terminal.BranchId;
+            var terminalId = Session.Terminal.TerminalId;
+            var cashierUsername = Session.Username.Trim();
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
 
-            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, Session.Username, isOffline);
+            if (!isOffline)
+            {
+                var tokenResult = await DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(Http, Session);
+                if (!tokenResult.Success)
+                {
+                    if (tokenResult.RejectionStatus == System.Net.HttpStatusCode.Locked)
+                    {
+                        Session.ClearSession();
+                        Http.DefaultRequestHeaders.Authorization = null;
+                        Navigation.NavigateTo("/terminal-locked", replace: true);
+                        return;
+                    }
+                    if (tokenResult.RejectionStatus == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        var serverLock = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, cashierUsername, offline: false);
+                        if (serverLock.IsCashierRestricted || serverLock.IsTerminalLocked)
+                        {
+                            Session.ClearSession();
+                            Http.DefaultRequestHeaders.Authorization = null;
+                            Navigation.NavigateTo("/terminal-locked", replace: true);
+                            return;
+                        }
+                        ShowAlert(tokenResult.ErrorMessage ?? "Online session authorization was denied (HTTP 403 Forbidden).", isError: true);
+                        return;
+                    }
+                    if (tokenResult.RejectionStatus is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.BadRequest)
+                    {
+                        ShowAlert(tokenResult.ErrorMessage ?? $"Online session authorization was rejected (HTTP {(int)tokenResult.RejectionStatus.Value}).", isError: true);
+                        return;
+                    }
+                    if (tokenResult.IsTransientError || !DeviceActivationService.HasValidOnlineBearerToken(Http, Session))
+                    {
+                        isOffline = true;
+                    }
+                }
+            }
+
+            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, terminalId, cashierUsername, isOffline);
             if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
             {
                 Session.ClearSession();
@@ -2969,7 +3153,7 @@
             {
                 BranchId = branchId,
                 TerminalId = terminalId,
-                CashierId = Session.Username,
+                CashierId = cashierUsername,
                 ClientShiftId = pendingOpenShiftId,
                 OpenedAt = DateTime.UtcNow,
                 OpeningFloat = OpeningCountedCash,
@@ -2986,7 +3170,7 @@
                 Notes = shiftNotes
             };
 
-            await ShiftSession.OpenAsync(Http, dto, Session.Username ?? "cashier", isOffline);
+            await ShiftSession.OpenAsync(Http, dto, cashierUsername, isOffline);
             pendingOpenShiftId = Guid.NewGuid().ToString("N");
             ResetOpeningDenominationCounts();
             ResetDenominationCounts();
@@ -3040,24 +3224,62 @@
             var state = await ConnectivityService.CheckConnectivityAsync();
             isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
 
-            if (!isOffline)
+            if (isOffline || currentShift.ShiftId < 0)
             {
-                var dto = new CashDrawerMovementDto
-                {
-                    ShiftId = currentShift.ShiftId,
-                    BranchId = currentShift.BranchId,
-                    TerminalId = currentShift.TerminalId,
-                    MovementType = movementType,
-                    CategoryId = selectedCategoryId > 0 ? selectedCategoryId : null,
-                    CategoryName = SelectedCategory?.Name,
-                    Amount = movementAmount,
-                    Reason = movementReason.Trim(),
-                    ClientMovementId = pendingClientMovementId,
-                    SupervisorPin = string.IsNullOrWhiteSpace(supervisorPin) ? null : supervisorPin.Trim()
-                };
+                await RecordOfflineMovementAsync();
+                return;
+            }
 
-                string endpoint = movementType == "CASH_IN" ? "api/cash-drawer/paid-in" : "api/cash-drawer/paid-out";
-                var response = await Http.PostAsJsonAsync(endpoint, dto);
+            var tokenResult = await DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(Http, Session);
+            if (!tokenResult.Success)
+            {
+                if (tokenResult.RejectionStatus is System.Net.HttpStatusCode.BadRequest
+                    or System.Net.HttpStatusCode.Unauthorized
+                    or System.Net.HttpStatusCode.Forbidden
+                    or System.Net.HttpStatusCode.Locked)
+                {
+                    showConfirmModal = false;
+                    ShowAlert(tokenResult.ErrorMessage ?? $"Authorization rejected (HTTP {(int)tokenResult.RejectionStatus.Value}).", isError: true);
+                    return;
+                }
+
+                if (tokenResult.IsTransientError || !DeviceActivationService.HasValidOnlineBearerToken(Http, Session))
+                {
+                    isOffline = true;
+                    await RecordOfflineMovementAsync();
+                    return;
+                }
+            }
+
+            var dto = new CashDrawerMovementDto
+            {
+                ShiftId = currentShift.ShiftId,
+                BranchId = currentShift.BranchId,
+                TerminalId = currentShift.TerminalId,
+                MovementType = movementType,
+                CategoryId = selectedCategoryId > 0 ? selectedCategoryId : null,
+                CategoryName = SelectedCategory?.Name,
+                Amount = movementAmount,
+                Reason = movementReason.Trim(),
+                ClientMovementId = pendingClientMovementId,
+                SupervisorPin = string.IsNullOrWhiteSpace(supervisorPin) ? null : supervisorPin.Trim()
+            };
+
+            string endpoint = movementType == "CASH_IN" ? "api/cash-drawer/paid-in" : "api/cash-drawer/paid-out";
+            HttpResponseMessage? response = null;
+            try
+            {
+                response = await Http.PostAsJsonAsync(endpoint, dto);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
+            {
+                isOffline = true;
+                await RecordOfflineMovementAsync();
+                return;
+            }
+
+            using (response)
+            {
                 if (response.IsSuccessStatusCode)
                 {
                     var created = await response.Content.ReadFromJsonAsync<CashMovementResponseDto>();
@@ -3071,16 +3293,17 @@
                         ShowAlert($"Recorded {created.ReferenceNumber} ({created.Status}).", isError: false);
                     }
                 }
+                else if ((int)response.StatusCode >= 500 || response.StatusCode == System.Net.HttpStatusCode.RequestTimeout)
+                {
+                    isOffline = true;
+                    await RecordOfflineMovementAsync();
+                }
                 else
                 {
                     var err = await response.Content.ReadAsStringAsync();
                     showConfirmModal = false;
-                    ShowAlert(err, isError: true);
+                    ShowAlert(string.IsNullOrWhiteSpace(err) ? $"Server rejected cash movement (HTTP {(int)response.StatusCode})." : err, isError: true);
                 }
-            }
-            else
-            {
-                await RecordOfflineMovementAsync();
             }
         }
         catch (Exception ex)
@@ -3097,6 +3320,20 @@
     private async Task RecordOfflineMovementAsync()
     {
         if (currentShift == null) return;
+        if (!Session.IsAuthenticated || string.IsNullOrWhiteSpace(Session.Username) ||
+            Session.Terminal == null || Session.Terminal.TerminalId <= 0 || Session.Terminal.BranchId <= 0)
+        {
+            showConfirmModal = false;
+            ShowAlert("Cashier session or assigned terminal is invalid. Please sign in again.", isError: true);
+            return;
+        }
+
+        string cashierUsername = Session.Username.Trim();
+        int terminalId = Session.Terminal.TerminalId;
+        int branchId = Session.Terminal.BranchId;
+        string? savedClientMovementId = null;
+        string? savedRefNumber = null;
+        string? savedStatus = null;
 
         await LocalPosDbContext.WriteLock.WaitAsync();
         try
@@ -3107,6 +3344,7 @@
 
             if (await db.CashDrawerMovements.AnyAsync(m => m.ClientMovementId == pendingClientMovementId))
             {
+                await tx.RollbackAsync();
                 showConfirmModal = false;
                 ShowAlert("Duplicate movement submission prevented.", isError: false);
                 return;
@@ -3115,13 +3353,25 @@
             var localShift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == currentShift.ShiftId && s.Status == "OPEN");
             if (localShift == null)
             {
+                await tx.RollbackAsync();
                 showConfirmModal = false;
                 ShowAlert("No active open shift found in local database.", isError: true);
                 return;
             }
 
+            if (localShift.TerminalId != terminalId ||
+                localShift.BranchId != branchId ||
+                !string.Equals(localShift.CashierId, cashierUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                await tx.RollbackAsync();
+                showConfirmModal = false;
+                ShowAlert("Drawer ownership mismatch: only the active shift owner on this terminal and branch can record movements offline.", isError: true);
+                return;
+            }
+
             if (IsOutflow(movementType) && movementAmount > localShift.ExpectedBalance)
             {
+                await tx.RollbackAsync();
                 showConfirmModal = false;
                 ShowAlert("Insufficient cash in drawer for the requested paid-out/drop amount.", isError: true);
                 return;
@@ -3155,7 +3405,7 @@
             }
             else
             {
-                verifiedApprover = Session.Username ?? "offline_cashier";
+                verifiedApprover = cashierUsername;
             }
 
             string status = (CurrentSelectionRequiresApproval && verifiedApprover == null) ? "PENDING_APPROVAL" : "POSTED";
@@ -3184,8 +3434,8 @@
                 Reason = movementReason.Trim(),
                 ReferenceNumber = refNumber,
                 Status = status,
-                CreatedBy = Session.Username ?? localShift.CashierId,
-                AuthorizedBy = verifiedApprover ?? (Session.Username ?? localShift.CashierId),
+                CreatedBy = cashierUsername,
+                AuthorizedBy = verifiedApprover ?? cashierUsername,
                 ApprovedBy = verifiedApprover,
                 SupervisorPinHash = verifiedPinHash,
                 CreatedAt = now,
@@ -3223,18 +3473,25 @@
             await db.SaveChangesAsync();
             await tx.CommitAsync();
 
-            showConfirmModal = false;
-            ResetMovementForm();
-            MarkCashMovementPostedDuringCounting();
-            await LoadShiftData();
-
-            selectedVoucher = currentShift?.Movements.FirstOrDefault(m => m.ClientMovementId == localMovement.ClientMovementId);
-            ShowAlert($"Saved offline voucher {refNumber} ({status}). Will synchronize automatically on reconnection.", isError: false);
+            savedClientMovementId = localMovement.ClientMovementId;
+            savedRefNumber = refNumber;
+            savedStatus = status;
         }
         finally
         {
             LocalPosDbContext.WriteLock.Release();
         }
+
+        if (string.IsNullOrWhiteSpace(savedClientMovementId))
+            return;
+
+        showConfirmModal = false;
+        ResetMovementForm();
+        MarkCashMovementPostedDuringCounting();
+        await LoadShiftData();
+
+        selectedVoucher = currentShift?.Movements.FirstOrDefault(m => m.ClientMovementId == savedClientMovementId);
+        ShowAlert($"Saved offline voucher {savedRefNumber} ({savedStatus}). Will synchronize automatically on reconnection.", isError: false);
     }
 
     private static bool IsSupervisorRole(string? role)
@@ -3352,5 +3609,56 @@
     {
         statusAlertMessage = message;
         statusAlertIsError = isError;
+    }
+
+    private bool showManualOpenDrawerModal;
+    private string manualOpenReason = string.Empty;
+    private string manualOpenSupervisorPin = string.Empty;
+    private string? manualOpenError;
+    private bool isOpeningDrawer;
+
+    private void OpenManualDrawerModal()
+    {
+        manualOpenReason = string.Empty;
+        manualOpenSupervisorPin = string.Empty;
+        manualOpenError = null;
+        showManualOpenDrawerModal = true;
+    }
+
+    private void CloseManualDrawerModal()
+    {
+        if (isOpeningDrawer) return;
+        showManualOpenDrawerModal = false;
+        manualOpenSupervisorPin = string.Empty;
+        manualOpenError = null;
+    }
+
+    private async Task ConfirmManualOpenDrawerAsync()
+    {
+        if (isOpeningDrawer) return;
+        isOpeningDrawer = true;
+        manualOpenError = null;
+        try
+        {
+            var result = await CashDrawerHardware.ManualOpenAsync(manualOpenReason, manualOpenSupervisorPin);
+            if (result.Success)
+            {
+                showManualOpenDrawerModal = false;
+                manualOpenSupervisorPin = string.Empty;
+                ShowAlert(result.Message, isError: false);
+            }
+            else
+            {
+                manualOpenError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            manualOpenError = ex.Message;
+        }
+        finally
+        {
+            isOpeningDrawer = false;
+        }
     }
 }

@@ -31,7 +31,11 @@
             </span>
         </div>
         
-        <div>
+        <div class="d-flex gap-2">
+            <!-- Manage Product Order Button -->
+            <button type="button" class="btn btn-outline-secondary rounded px-3 py-2 fw-semibold shadow-sm text-nowrap" @onclick="OpenReorderModal">
+                <i class="bi bi-arrow-down-up me-1"></i> Manage Product Order
+            </button>
             <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenAddModal">
                 Add New Product
             </button>
@@ -107,6 +111,9 @@
                         </div>
                     </TemplateColumn>
 
+                    <!-- Display Order Column -->
+                    <PropertyColumn Property="@(p => p.DisplayOrder)" Title="Order" Sortable="true" Align="Align.Center" />
+
                     <!-- Product Type Column -->
                     <TemplateColumn Context="product" Title="Product Type" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.ProductType))" Sortable="true" Align="Align.Left">
                         <span class="text-secondary fw-medium">
@@ -162,7 +169,15 @@
 
                     <PropertyColumn Property="@(p => p.CategoryName)" Title="Category" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(p => p.CostPrice)" Title="Cost Price" Format="C2" Sortable="true" Align="Align.Left" />
-                    <PropertyColumn Property="@(p => p.Price)" Title="Price" Format="C2" Sortable="true" Align="Align.Left" />
+                    <TemplateColumn Context="product" Title="Price" SortBy="@(GridSort<ProductDto>.ByAscending(p => p.Price))" Sortable="true" Align="Align.Left">
+                        <div class="d-flex align-items-center gap-1">
+                            <span class="fw-semibold text-dark">₱@product.Price.ToString("N2")</span>
+                            @if (POS.Shared.Constants.PricingMethods.IsWeightBased(product.PricingMethod))
+                            {
+                                <span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle" style="font-size: 0.65rem;" title="Weight-based pricing">per kg</span>
+                            }
+                        </div>
+                    </TemplateColumn>
                     
                     <TemplateColumn Context="product" Title="Status" Align="Align.Center">
                         @if (product.IsActive)
@@ -345,7 +360,17 @@
                             </div>
                         </div>
                         <div class="row g-3">
-                            <div class="col-12 col-md-4">
+                            <div class="col-12 col-md-3">
+                                <label class="form-label text-dark fw-semibold small mb-1">Pricing Method</label>
+                                <InputSelect @bind-Value="currentProduct.PricingMethod" class="form-select rounded" @bind-Value:after="OnPricingMethodChanged">
+                                    <option value="Fixed">Standard (Fixed Price)</option>
+                                    <option value="WeightBased">Weight-Based (Per KG)</option>
+                                </InputSelect>
+                                <small class="text-secondary" style="font-size: 0.72rem;">
+                                    @(POS.Shared.Constants.PricingMethods.IsWeightBased(currentProduct.PricingMethod) ? "Sold by weight (₱/kg)" : "Fixed price per piece")
+                                </small>
+                            </div>
+                            <div class="col-12 col-md-3">
                                 <label class="form-label text-dark fw-semibold small mb-1">Cost Price</label>
                                 <div class="input-group">
                                     <span class="input-group-text bg-light text-muted border-end-0">₱</span>
@@ -353,15 +378,23 @@
                                 </div>
                                 <small class="text-secondary" style="font-size: 0.72rem;">Acquisition / Supplier cost</small>
                             </div>
-                            <div class="col-12 col-md-4">
-                                <label class="form-label text-dark fw-semibold small mb-1">Selling Price <span class="text-danger">*</span></label>
+                            <div class="col-12 col-md-3">
+                                <label class="form-label text-dark fw-semibold small mb-1">
+                                    @(POS.Shared.Constants.PricingMethods.IsWeightBased(currentProduct.PricingMethod) ? "Price Per KG" : "Selling Price") <span class="text-danger">*</span>
+                                </label>
                                 <div class="input-group">
                                     <span class="input-group-text bg-light text-muted border-end-0">₱</span>
                                     <InputNumber @bind-Value="currentProduct.Price" class="form-control rounded-end" placeholder="0.00" />
+                                    @if (POS.Shared.Constants.PricingMethods.IsWeightBased(currentProduct.PricingMethod))
+                                    {
+                                        <span class="input-group-text bg-light text-muted border-start-0 small">/ kg</span>
+                                    }
                                 </div>
-                                <small class="text-secondary" style="font-size: 0.72rem;">Retail price charged to customer</small>
+                                <small class="text-secondary" style="font-size: 0.72rem;">
+                                    @(POS.Shared.Constants.PricingMethods.IsWeightBased(currentProduct.PricingMethod) ? "Selling price per 1.0 kg" : "Retail price charged to customer")
+                                </small>
                             </div>
-                            <div class="col-12 col-md-4">
+                            <div class="col-12 col-md-3">
                                 <label class="form-label text-dark fw-semibold small mb-1">Tax Class</label>
                                 <InputSelect @bind-Value="currentProduct.TaxId" class="form-select rounded">
                                     <option value="">Exempt / No Tax</option>
@@ -652,6 +685,130 @@
     </div>
 }
 
+<!-- Reorder Products Modal Dialog -->
+@if (isReorderModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Manage Product Display Order</h5>
+                        <small class="text-secondary" style="font-size: 0.85rem;">
+                            Drag items or use the up/down arrows to configure product display sequence for the selected category.
+                        </small>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseReorderModal" aria-label="Close"></button>
+                </div>
+
+                <div class="modal-body px-4 py-3">
+                    <!-- Category Selector -->
+                    <div class="mb-3">
+                        <label class="form-label text-dark fw-semibold small mb-1">Select Category to Reorder</label>
+                        <select class="form-select rounded-3 shadow-none" value="@reorderCategoryId" @onchange="OnReorderCategorySelectionChanged">
+                            @foreach (var cat in categories.Where(c => !c.IsDeleted).OrderBy(c => c.DisplayOrder).ThenBy(c => c.CategoryId))
+                            {
+                                <option value="@cat.CategoryId">@cat.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (isLoadingReorderProducts)
+                    {
+                        <div class="text-center py-4 text-muted">
+                            <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                            Loading products for category...
+                        </div>
+                    }
+                    else if (reorderProductList == null || !reorderProductList.Any())
+                    {
+                        <div class="text-center py-4 text-muted">No products found in this category.</div>
+                    }
+                    else
+                    {
+                        <div class="list-group list-group-flush gap-2">
+                            @for (int i = 0; i < reorderProductList.Count; i++)
+                            {
+                                var index = i;
+                                var prod = reorderProductList[index];
+                                <div class="list-group-item d-flex align-items-center justify-content-between p-2 rounded-3 border bg-white @(draggedProductIndex == index ? "border-primary opacity-50" : "")"
+                                     draggable="true"
+                                     @ondragstart="() => OnProductDragStart(index)"
+                                     @ondragover:preventDefault
+                                     @ondrop="() => OnProductDrop(index)"
+                                     style="cursor: grab;">
+                                    <div class="d-flex align-items-center gap-3">
+                                        <i class="bi bi-grip-vertical text-secondary fs-5" title="Drag to reorder"></i>
+                                        <span class="badge bg-secondary text-white rounded-pill px-2 py-1" style="min-width: 28px;">
+                                            @(index + 1)
+                                        </span>
+                                        @if (!string.IsNullOrWhiteSpace(prod.ImageUrl))
+                                        {
+                                            <img src="@ImageUrls.Resolve(prod.ImageUrl)" onerror="@ImageUrls.OnError"
+                                                 alt="@prod.Name"
+                                                 class="rounded-2 border object-fit-cover"
+                                                 style="width: 38px; height: 38px;" />
+                                        }
+                                        else
+                                        {
+                                            <div class="bg-light border rounded-2 d-flex align-items-center justify-content-center text-secondary"
+                                                 style="width: 38px; height: 38px;">
+                                                <i class="bi bi-image text-muted"></i>
+                                            </div>
+                                        }
+                                        <div>
+                                            <span class="fw-semibold text-dark">@prod.Name</span>
+                                            <div class="d-flex align-items-center gap-2 small text-muted">
+                                                <span>₱@prod.Price.ToString("N2")</span>
+                                                @if (!prod.IsActive)
+                                                {
+                                                    <span class="badge bg-secondary-subtle text-secondary border" style="font-size: 0.68rem;">Inactive</span>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-1">
+                                        <button type="button" class="btn btn-sm btn-light border px-2 py-1"
+                                                disabled="@(index == 0)"
+                                                @onclick="() => MoveProductUp(index)"
+                                                title="Move Up">
+                                            <i class="bi bi-chevron-up"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-light border px-2 py-1"
+                                                disabled="@(index == reorderProductList.Count - 1)"
+                                                @onclick="() => MoveProductDown(index)"
+                                                title="Move Down">
+                                            <i class="bi bi-chevron-down"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">
+                        <i class="bi bi-info-circle me-1"></i> Changes only affect products inside this category.
+                    </span>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseReorderModal">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-primary rounded px-4 fw-bold shadow-sm" @onclick="SaveReorderedProducts" disabled="@(isSavingProductReorder || !reorderProductList.Any())">
+                            @if (isSavingProductReorder)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            }
+                            Save Product Order
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter]
     public int? FilterCategoryId { get; set; }
@@ -672,6 +829,14 @@
     private ProductRecipeDto newRecipeItem = new();
     private List<ModifierGroupDto> availableModifierGroups = new();
     private HashSet<int> selectedModifierGroupIds = new();
+
+    // Reorder State
+    private bool isReorderModalOpen = false;
+    private bool isSavingProductReorder = false;
+    private bool isLoadingReorderProducts = false;
+    private int reorderCategoryId;
+    private List<ProductDto> reorderProductList = new();
+    private int? draggedProductIndex = null;
 
     // Modal State
     private bool isModalOpen = false;
@@ -779,7 +944,11 @@
                 rawProducts = rawProducts.Where(p => p.CategoryId == FilterCategoryId.Value).ToList();
             }
 
-            products = rawProducts.OrderByDescending(p => p.ProductId).ToList();
+            products = rawProducts
+                .OrderBy(p => p.CategoryId)
+                .ThenBy(p => p.DisplayOrder)
+                .ThenBy(p => p.ProductId)
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -794,6 +963,147 @@
         }
     }
 
+    private async Task OpenReorderModal()
+    {
+        if (FilterCategoryId.HasValue)
+        {
+            reorderCategoryId = FilterCategoryId.Value;
+        }
+        else if (categories.Any())
+        {
+            reorderCategoryId = categories.First().CategoryId;
+        }
+        else
+        {
+            reorderCategoryId = 0;
+        }
+
+        await LoadCategoryProductsForReorder();
+        draggedProductIndex = null;
+        isReorderModalOpen = true;
+    }
+
+    private async Task OnReorderCategorySelectionChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var newCatId))
+        {
+            reorderCategoryId = newCatId;
+            await LoadCategoryProductsForReorder();
+        }
+    }
+
+    private async Task LoadCategoryProductsForReorder()
+    {
+        if (reorderCategoryId <= 0)
+        {
+            reorderProductList = new();
+            return;
+        }
+
+        try
+        {
+            isLoadingReorderProducts = true;
+            var allProds = await ProductService.GetProductsAsync();
+            reorderProductList = allProds
+                .Where(p => p.CategoryId == reorderCategoryId)
+                .OrderBy(p => p.DisplayOrder)
+                .ThenBy(p => p.ProductId)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to load products: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        finally
+        {
+            isLoadingReorderProducts = false;
+        }
+    }
+
+    private void CloseReorderModal()
+    {
+        isReorderModalOpen = false;
+        draggedProductIndex = null;
+    }
+
+    private void OnProductDragStart(int index)
+    {
+        draggedProductIndex = index;
+    }
+
+    private void OnProductDrop(int targetIndex)
+    {
+        if (!draggedProductIndex.HasValue || draggedProductIndex.Value == targetIndex)
+            return;
+
+        int sourceIndex = draggedProductIndex.Value;
+        if (sourceIndex < 0 || sourceIndex >= reorderProductList.Count || targetIndex < 0 || targetIndex >= reorderProductList.Count)
+            return;
+
+        var item = reorderProductList[sourceIndex];
+        reorderProductList.RemoveAt(sourceIndex);
+        reorderProductList.Insert(targetIndex, item);
+        draggedProductIndex = null;
+    }
+
+    private void MoveProductUp(int index)
+    {
+        if (index <= 0 || index >= reorderProductList.Count) return;
+        var item = reorderProductList[index];
+        reorderProductList.RemoveAt(index);
+        reorderProductList.Insert(index - 1, item);
+    }
+
+    private void MoveProductDown(int index)
+    {
+        if (index < 0 || index >= reorderProductList.Count - 1) return;
+        var item = reorderProductList[index];
+        reorderProductList.RemoveAt(index);
+        reorderProductList.Insert(index + 1, item);
+    }
+
+    private async Task SaveReorderedProducts()
+    {
+        try
+        {
+            isSavingProductReorder = true;
+            var orderedIds = reorderProductList.Select(p => p.ProductId).ToList();
+            await ProductService.ReorderProductsAsync(reorderCategoryId, orderedIds);
+            await LoadProducts();
+            CloseReorderModal();
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Order Saved!",
+                Text = "Product display order updated successfully.",
+                Icon = SweetAlertIcon.Success,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to save product order: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        finally
+        {
+            isSavingProductReorder = false;
+        }
+    }
+
     private void OpenAddModal()
     {
         isEditing = false;
@@ -802,6 +1112,7 @@
         {
             IsActive = true,
             ProductType = "Standard",
+            PricingMethod = POS.Shared.Constants.PricingMethods.Fixed,
             UnitValue = 1,
             UnitOfMeasure = "pc",
             CategoryId = FilterCategoryId ?? 0,
@@ -831,6 +1142,7 @@
             CostPrice = product.CostPrice,
             TaxId = product.TaxId,
             ProductType = string.IsNullOrWhiteSpace(product.ProductType) ? "Standard" : product.ProductType,
+            PricingMethod = string.IsNullOrWhiteSpace(product.PricingMethod) ? POS.Shared.Constants.PricingMethods.Fixed : product.PricingMethod,
             IsActive = product.IsActive,
             IsKitchenItem = product.IsKitchenItem,
             IsBarItem = product.IsBarItem
@@ -872,6 +1184,21 @@
         isModalOpen = false;
     }
 
+    private void OnPricingMethodChanged()
+    {
+        if (POS.Shared.Constants.PricingMethods.IsWeightBased(currentProduct.PricingMethod))
+        {
+            if (string.IsNullOrWhiteSpace(currentProduct.UnitOfMeasure) || currentProduct.UnitOfMeasure.Equals("pc", StringComparison.OrdinalIgnoreCase))
+            {
+                currentProduct.UnitOfMeasure = "kg";
+            }
+            if (!currentProduct.UnitValue.HasValue || currentProduct.UnitValue.Value <= 0)
+            {
+                currentProduct.UnitValue = 1m;
+            }
+        }
+    }
+
     private async Task SaveProduct()
     {
         if (isSaving) return;
@@ -908,6 +1235,21 @@
             {
                 Title = "Invalid Price",
                 Text = "Selling price cannot be negative.",
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
+        currentProduct.PricingMethod = POS.Shared.Constants.PricingMethods.Normalize(currentProduct.PricingMethod);
+
+        if (POS.Shared.Constants.PricingMethods.IsWeightBased(currentProduct.PricingMethod) && currentProduct.Price <= 0)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Invalid Price Per KG",
+                Text = "Weight-based products must have a price per KG greater than ₱0.00.",
                 Icon = SweetAlertIcon.Warning,
                 ConfirmButtonText = "OK",
                 ConfirmButtonColor = "#2563eb"

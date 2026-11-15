@@ -195,7 +195,7 @@ public static class PreparationTicketHtmlFormatter
         }
         MetaRow(html, "Terminal:", ticket.TerminalName);
         MetaRow(html, "Server:", ticket.CashierId);
-        MetaRow(html, "Time:", ticket.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+        MetaRow(html, "Time:", POS.Shared.Services.BusinessDayClock.ToManilaTime(ticket.CreatedAt).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
         html.Append("</div>");
         html.Append("<hr class=\"dash\">");
 

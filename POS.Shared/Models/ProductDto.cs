@@ -26,6 +26,9 @@ public class ProductDto
     public int? TaxId { get; set; }
     public string? TaxName { get; set; } = "VATable";
     public string ProductType { get; set; } = string.Empty;
+    public string PricingMethod { get; set; } = POS.Shared.Constants.PricingMethods.Fixed;
+
+    public int DisplayOrder { get; set; }
 
     public bool IsActive { get; set; }
     public bool IsKitchenItem { get; set; }

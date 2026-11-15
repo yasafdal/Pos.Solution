@@ -1,4 +1,5 @@
 @inject IDiscountService DiscountService
+@inject PosSessionService Session
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
 @using Microsoft.AspNetCore.Components.Web
@@ -246,7 +247,7 @@
         {
             var req = new OrderCalculationRequestDto
             {
-                BranchTaxType = "VAT-Registered",
+                BranchTaxType = Session.Terminal?.BranchTaxType ?? "VAT-Registered",
                 DiscountCode = selectedDiscountCode,
                 ManualDiscountPercentage = manualPercentage,
                 Items = Cart.Items.Select(ci => new CartItemCalculationDto
@@ -256,7 +257,7 @@
                     Quantity = ci.Quantity,
                     UnitPrice = ci.BasePrice,
                     ModifierTotal = ci.SelectedModifiers.Sum(m => m.Price),
-                    TaxName = "VATable",
+                    TaxName = ci.TaxName ?? "VATable",
                     IsEligibleForStatutoryDiscount = true
                 }).ToList()
             };

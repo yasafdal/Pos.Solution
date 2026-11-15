@@ -14,11 +14,40 @@ namespace POS.Api.Controllers;
 [Authorize]
 public class OfflineSyncController(PosDbContext context) : ControllerBase
 {
+    private static DateTime NormalizeUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
     [AllowAnonymous]
     [HttpGet("health")]
-    public IActionResult GetSyncHealth()
+    public async Task<IActionResult> GetSyncHealth(CancellationToken cancellationToken = default)
     {
-        return Ok(new { Status = "ONLINE", Timestamp = DateTime.UtcNow, Message = "Offline sync endpoint is ready." });
+        try
+        {
+            if (context.Database.IsRelational() && !await context.Database.CanConnectAsync(cancellationToken))
+            {
+                return StatusCode(503, new
+                {
+                    Status = "DB_UNAVAILABLE",
+                    Timestamp = DateTime.UtcNow,
+                    Message = "Database connection is unavailable."
+                });
+            }
+
+            return Ok(new { Status = "ONLINE", Timestamp = DateTime.UtcNow, Message = "Offline sync endpoint is ready." });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(503, new
+            {
+                Status = "DB_UNAVAILABLE",
+                Timestamp = DateTime.UtcNow,
+                Message = $"Database health check failed: {ex.Message}"
+            });
+        }
     }
 
     [HttpPost("transactions")]
@@ -27,6 +56,22 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
         if (request == null || string.IsNullOrWhiteSpace(request.LocalTransactionId))
         {
             return BadRequest("Invalid transaction synchronization request.");
+        }
+
+        var serverReceivedAtUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
+        if (request.TransactionDate == default && request.TransactionTimestamp.HasValue)
+        {
+            request.TransactionDate = DateTime.SpecifyKind(request.TransactionTimestamp.Value.DateTime, DateTimeKind.Unspecified);
+        }
+        request.TransactionDate = DateTime.SpecifyKind(request.TransactionDate, DateTimeKind.Unspecified);
+        if (request.Payments != null)
+        {
+            foreach (var p in request.Payments)
+            {
+                p.PaidAt = p.PaidAt == default
+                    ? request.TransactionDate
+                    : DateTime.SpecifyKind(p.PaidAt, DateTimeKind.Unspecified);
+            }
         }
 
         if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
@@ -86,14 +131,75 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             var recoveryError = await ValidateHistoricalRecovery(outlet, request.TransactionDate, request.LocalTransactionId, "SALE", recoveryReason);
             if (recoveryError != null) return Conflict(recoveryError);
             var shiftQuery = context.CashDrawerShifts.Where(s => s.TerminalId == request.TerminalId && s.BranchId == request.BranchId && s.CashierId == request.CashierId && s.OpeningConfirmed);
-            if (!string.IsNullOrEmpty(request.ClientShiftId)) shiftQuery = shiftQuery.Where(s => s.ClientShiftId == request.ClientShiftId);
-            else if (request.ShiftId.HasValue) shiftQuery = shiftQuery.Where(s => s.ShiftId == request.ShiftId);
-            // Legacy pending payloads may resolve only an unambiguous historical interval.
-            var historical = await shiftQuery.Where(s => s.OpenedAt <= request.TransactionDate && (s.ClosedAt == null || request.TransactionDate <= s.ClosedAt)).ToListAsync();
-            if (historical.Count != 1 || request.TransactionDate > DateTime.UtcNow.AddMinutes(1)) return Conflict("Sale has no matching confirmed shift lifecycle.");
+            bool hasExplicitShiftIdentity = !string.IsNullOrEmpty(request.ClientShiftId) || (request.ShiftId.HasValue && request.ShiftId.Value > 0);
+            if (!string.IsNullOrEmpty(request.ClientShiftId) && request.ShiftId.HasValue && request.ShiftId.Value > 0)
+                shiftQuery = shiftQuery.Where(s => s.ClientShiftId == request.ClientShiftId || (s.ClientShiftId == null && s.ShiftId == request.ShiftId));
+            else if (!string.IsNullOrEmpty(request.ClientShiftId))
+                shiftQuery = shiftQuery.Where(s => s.ClientShiftId == request.ClientShiftId);
+            else if (request.ShiftId.HasValue && request.ShiftId.Value > 0)
+                shiftQuery = shiftQuery.Where(s => s.ShiftId == request.ShiftId);
+
+            // Legacy pending payloads may resolve only an unambiguous historical interval; explicit shift identity allows device clock-skew tolerance on OPEN shifts while strictly enforcing closed shift boundaries.
+            int? reqOffsetMinutes = request.DeviceUtcOffsetMinutes
+                ?? (request.TransactionTimestamp.HasValue ? (int)Math.Round(request.TransactionTimestamp.Value.Offset.TotalMinutes) : null);
+
+            static DateTime AlignToShiftDomain(DateTime localOrRawTime, DateTime shiftAnchor, int? offsetMinutes)
+            {
+                var raw = DateTime.SpecifyKind(localOrRawTime, DateTimeKind.Unspecified);
+                var anchor = DateTime.SpecifyKind(shiftAnchor, DateTimeKind.Unspecified);
+                if (!offsetMinutes.HasValue || offsetMinutes.Value == 0)
+                    return raw;
+                var convertedUtc = raw.AddMinutes(-offsetMinutes.Value);
+                return Math.Abs((convertedUtc - anchor).TotalHours) < Math.Abs((raw - anchor).TotalHours)
+                    ? convertedUtc
+                    : raw;
+            }
+
+            var candidateShifts = await shiftQuery.ToListAsync();
+            var historical = candidateShifts
+                .Where(s =>
+                {
+                    var openedVal = DateTime.SpecifyKind(s.OpenedAt, DateTimeKind.Unspecified);
+                    var alignedTxDate = AlignToShiftDomain(request.TransactionDate, openedVal, reqOffsetMinutes);
+                    var minOpenedVal = hasExplicitShiftIdentity
+                        ? (s.Status == "OPEN" && !s.ClosedAt.HasValue ? openedVal.AddHours(-24) : openedVal.AddMinutes(-5))
+                        : openedVal;
+                    var closedVal = s.ClosedAt.HasValue ? DateTime.SpecifyKind(s.ClosedAt.Value, DateTimeKind.Unspecified) : (DateTime?)null;
+                    return alignedTxDate >= minOpenedVal && (closedVal == null || alignedTxDate <= closedVal.Value);
+                })
+                .ToList();
+            var serverReceivedComparison = DateTime.SpecifyKind(serverReceivedAtUtc, DateTimeKind.Unspecified);
+            var alignedTxForFutureCheck = AlignToShiftDomain(request.TransactionDate, serverReceivedComparison, reqOffsetMinutes);
+            var maxAllowedFuture = (hasExplicitShiftIdentity && historical.Count == 1 && historical[0].Status == "OPEN" && !historical[0].ClosedAt.HasValue)
+                ? serverReceivedComparison.AddHours(24)
+                : serverReceivedComparison.AddMinutes(5);
+            if (historical.Count != 1 || alignedTxForFutureCheck > maxAllowedFuture) return Conflict("Sale has no matching confirmed shift lifecycle.");
             var saleShift = historical[0];
             if (saleShift.Status != "OPEN" && saleShift.Status != "CLOSED") return Conflict("Invalid shift lifecycle.");
-            if (request.Payments.Any(p => p.PaidAt.ToUniversalTime() < saleShift.OpenedAt.ToUniversalTime() || (saleShift.ClosedAt.HasValue && p.PaidAt.ToUniversalTime() > saleShift.ClosedAt.Value.ToUniversalTime()))) return Conflict("Payment is outside the shift lifecycle.");
+            var shiftOpenedVal = DateTime.SpecifyKind(saleShift.OpenedAt, DateTimeKind.Unspecified);
+            var shiftMinOpenedVal = hasExplicitShiftIdentity
+                ? (saleShift.Status == "OPEN" && !saleShift.ClosedAt.HasValue ? shiftOpenedVal.AddHours(-24) : shiftOpenedVal.AddMinutes(-5))
+                : shiftOpenedVal;
+            var shiftClosedVal = saleShift.ClosedAt.HasValue ? DateTime.SpecifyKind(saleShift.ClosedAt.Value, DateTimeKind.Unspecified) : (DateTime?)null;
+            if ((request.Payments ?? []).Any(p =>
+                {
+                    var alignedPaidAt = AlignToShiftDomain(p.PaidAt, shiftOpenedVal, reqOffsetMinutes);
+                    return alignedPaidAt < shiftMinOpenedVal || (shiftClosedVal.HasValue && alignedPaidAt > shiftClosedVal.Value);
+                }))
+            {
+                return Conflict("Payment is outside the shift lifecycle.");
+            }
+
+            var clockDiscrepancy = POS.Shared.Services.BusinessDayClock.EvaluateClockDiscrepancy(
+                request.TransactionDate,
+                serverReceivedAtUtc,
+                request.ClientSentAtUtc,
+                saleShift.OpenedAt,
+                reqOffsetMinutes);
+            if (clockDiscrepancy.IsSuspicious && !string.IsNullOrWhiteSpace(clockDiscrepancy.WarningMessage))
+            {
+                Console.WriteLine($"[OfflineSyncController] LocalTransactionId={request.LocalTransactionId} Invoice={request.InvoiceNumber} Terminal={request.TerminalId}: {clockDiscrepancy.WarningMessage}");
+            }
             bool isTerminalTokenForTerminal = string.Equals(User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, "Terminal", StringComparison.OrdinalIgnoreCase)
                 && User.FindFirst("terminal_id")?.Value == request.TerminalId.ToString();
             if (User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value != request.CashierId && !User.IsInRole("Admin") && !User.IsInRole("Manager") && !isTerminalTokenForTerminal) return Forbid();
@@ -139,15 +245,36 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             var sequences = context.Database.IsNpgsql()
                 ? await context.InvoiceSequences.FromSqlInterpolated($"SELECT * FROM \"InvoiceSequences\" WHERE \"terminal_id\" = {request.TerminalId} FOR UPDATE").ToListAsync()
                 : await context.InvoiceSequences.Where(s => s.TerminalId == request.TerminalId).ToListAsync();
-            var matches = sequences.Select(s => new { Sequence = s, Prefix = s.Prefix ?? string.Empty })
-                .Where(x => request.InvoiceNumber.StartsWith(x.Prefix, StringComparison.Ordinal)
-                    && long.TryParse(request.InvoiceNumber[x.Prefix.Length..], out var number)
-                    && number >= x.Sequence.StartingNumber && (!x.Sequence.EndingNumber.HasValue || number <= x.Sequence.EndingNumber))
+            var matches = sequences
+                .Select(s =>
+                {
+                    var pfx = s.Prefix ?? string.Empty;
+                    var fallbackPfx = string.IsNullOrWhiteSpace(s.Prefix) ? $"INV{request.TerminalId:D2}-" : pfx;
+                    string? matchedPrefix = null;
+                    long parsedNumber = 0;
+                    if (request.InvoiceNumber.StartsWith(pfx, StringComparison.Ordinal)
+                        && long.TryParse(request.InvoiceNumber[pfx.Length..], out var n1)
+                        && n1 >= s.StartingNumber && (!s.EndingNumber.HasValue || n1 <= s.EndingNumber))
+                    {
+                        matchedPrefix = pfx;
+                        parsedNumber = n1;
+                    }
+                    else if (fallbackPfx != pfx
+                        && request.InvoiceNumber.StartsWith(fallbackPfx, StringComparison.Ordinal)
+                        && long.TryParse(request.InvoiceNumber[fallbackPfx.Length..], out var n2)
+                        && n2 >= s.StartingNumber && (!s.EndingNumber.HasValue || n2 <= s.EndingNumber))
+                    {
+                        matchedPrefix = fallbackPfx;
+                        parsedNumber = n2;
+                    }
+                    return new { Sequence = s, MatchedPrefix = matchedPrefix, ParsedNumber = parsedNumber };
+                })
+                .Where(x => x.MatchedPrefix != null)
                 .ToList();
             if (matches.Count != 1) return Conflict("Offline invoice does not uniquely match a configured terminal invoice series. No number was regenerated.");
             var activeSeq = matches[0].Sequence;
             int? matchedSequenceId = activeSeq.InvoiceSequenceId;
-            var issuedNum = long.Parse(request.InvoiceNumber[matches[0].Prefix.Length..], System.Globalization.CultureInfo.InvariantCulture);
+            var issuedNum = matches[0].ParsedNumber;
             activeSeq.LastIssuedNumber = Math.Max(activeSeq.LastIssuedNumber, issuedNum);
             activeSeq.UpdatedAt = DateTime.UtcNow;
 
@@ -170,12 +297,21 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 Subtotal = request.Subtotal,
                 DiscountAmount = request.DiscountAmount,
                 DiscountCode = request.DiscountCode,
+                CustomerCardNumber = request.CustomerCardNumber,
+                CustomerName = request.CustomerName,
+                CustomerAddress = request.CustomerAddress,
+                CustomerTin = request.CustomerTin,
+                CustomerBusinessStyle = request.CustomerBusinessStyle,
                 VatableSales = request.VatableSales,
                 VatExemptSales = request.VatExemptSales,
                 ZeroRatedSales = request.ZeroRatedSales,
                 VatAmount = request.VatAmount,
                 TotalAmount = request.TotalAmount,
-                CreatedAt = request.TransactionDate
+                CreatedAt = request.TransactionDate,
+                ServerReceivedAtUtc = serverReceivedAtUtc,
+                DeviceTimeZoneId = !string.IsNullOrWhiteSpace(request.DeviceTimeZoneId) ? request.DeviceTimeZoneId : POS.Shared.Services.BusinessDayClock.GetDeviceTimeZoneId(),
+                DeviceUtcOffsetMinutes = reqOffsetMinutes,
+                ClockSkewSeconds = clockDiscrepancy.ClockSkewSeconds != 0 ? clockDiscrepancy.ClockSkewSeconds : null
             };
 
             context.Orders.Add(order);
@@ -183,19 +319,22 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
 
             foreach (var itemDto in request.Items)
             {
-                decimal modTotal = itemDto.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m;
-                decimal basePrice = Math.Max(0m, itemDto.UnitPrice - modTotal);
+                decimal modTotal = itemDto.IsComplimentary ? 0m : (itemDto.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m);
+                decimal basePrice = itemDto.IsComplimentary ? 0m : Math.Max(0m, itemDto.UnitPrice - modTotal);
                 var orderItem = new OrderItem
                 {
                     OrderId = order.OrderId,
                     ProductId = itemDto.ProductId,
                     ProductName = itemDto.ProductName,
                     SpecialInstructions = CartItem.NormalizeSpecialInstructions(itemDto.SpecialInstructions),
+                    PricingMethod = itemDto.PricingMethod,
+                    IsComplimentary = itemDto.IsComplimentary,
+                    ParentProductId = itemDto.ParentProductId,
                     Quantity = itemDto.Quantity,
-                    UnitPrice = itemDto.UnitPrice,
+                    UnitPrice = itemDto.IsComplimentary ? 0m : itemDto.UnitPrice,
                     BasePrice = basePrice,
                     ModifierTotal = modTotal,
-                    LineTotal = itemDto.LineTotal,
+                    LineTotal = itemDto.IsComplimentary ? 0m : itemDto.LineTotal,
                     VatType = "VATABLE",
                     VatAmount = 0m
                 };
@@ -207,6 +346,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                         orderItem.OrderItemModifiers.Add(new OrderItemModifier
                         {
                             ModifierOptionId = modDto.OptionId,
+                            ProductId = modDto.ProductId,
                             ModifierName = modDto.Name,
                             AdditionalPrice = modDto.AdditionalPrice
                         });
@@ -221,7 +361,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 if (branchInv != null)
                 {
                     int prevQty = branchInv.StockQuantity;
-                    int newQty = Math.Max(0, prevQty - itemDto.Quantity);
+                    int intQty = (int)Math.Round(itemDto.Quantity, MidpointRounding.AwayFromZero);
+                    if (intQty == 0 && itemDto.Quantity > 0m) intQty = 1; // At least 1 unit if fractional
+                    int newQty = Math.Max(0, prevQty - intQty);
                     branchInv.StockQuantity = newQty;
                     branchInv.LastUpdated = DateTime.UtcNow;
 
@@ -230,7 +372,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                         BranchId = request.BranchId,
                         ProductId = itemDto.ProductId,
                         AdjustmentType = "OFFLINE_SALE_SYNC",
-                        Quantity = itemDto.Quantity,
+                        Quantity = intQty,
                         PreviousQuantity = prevQty,
                         NewQuantity = newQty,
                         Reason = $"Offline Sale Sync [{request.InvoiceNumber}] by {request.CashierId}",
@@ -238,10 +380,48 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     };
                     context.StockAdjustments.Add(stockLog);
                 }
+
+                // Inventory deduction for linked modifier products (skip if already deducted as a line item)
+                if (itemDto.Modifiers != null)
+                {
+                    foreach (var modDto in itemDto.Modifiers)
+                    {
+                        if (modDto.ProductId.HasValue && modDto.ProductId.Value > 0)
+                        {
+                            bool alreadyInItems = request.Items.Any(it => it.ProductId == modDto.ProductId.Value);
+                            if (alreadyInItems) continue;
+
+                            var modInv = await context.BranchInventories
+                                .FirstOrDefaultAsync(bi => bi.BranchId == request.BranchId && bi.ProductId == modDto.ProductId.Value);
+
+                            if (modInv != null)
+                            {
+                                int prevModQty = modInv.StockQuantity;
+                                int modDeductQty = (int)Math.Max(1, Math.Round(itemDto.Quantity, MidpointRounding.AwayFromZero));
+                                int newModQty = Math.Max(0, prevModQty - modDeductQty);
+                                modInv.StockQuantity = newModQty;
+                                modInv.LastUpdated = DateTime.UtcNow;
+
+                                var modStockLog = new StockAdjustment
+                                {
+                                    BranchId = request.BranchId,
+                                    ProductId = modDto.ProductId.Value,
+                                    AdjustmentType = "OFFLINE_SALE_SYNC",
+                                    Quantity = modDeductQty,
+                                    PreviousQuantity = prevModQty,
+                                    NewQuantity = newModQty,
+                                    Reason = $"Modifier [{modDto.Name}] on Sale [{request.InvoiceNumber}] by {request.CashierId}",
+                                    CreatedAt = request.TransactionDate
+                                };
+                                context.StockAdjustments.Add(modStockLog);
+                            }
+                        }
+                    }
+                }
             }
 
             // Persist Payment
-            foreach (var payDto in request.Payments)
+            foreach (var payDto in request.Payments ?? [])
             {
                 var payment = new Payment
                 {
@@ -250,6 +430,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     Amount = payDto.Amount,
                     AmountTendered = payDto.TenderedAmount,
                     ChangeAmount = payDto.ChangeAmount,
+                    ReferenceNumber = payDto.ReferenceNumber,
                     PaymentStatus = string.IsNullOrWhiteSpace(payDto.PaymentStatus) || payDto.PaymentStatus.Equals("SUCCESS", StringComparison.OrdinalIgnoreCase)
                         ? POS.Shared.Constants.PaymentStatuses.Paid
                         : payDto.PaymentStatus,
@@ -309,7 +490,10 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 LocalTransactionId = request.LocalTransactionId,
                 InvoiceNumber = request.InvoiceNumber,
                 ServerOrderId = order.OrderId,
-                AcknowledgedAt = DateTime.UtcNow
+                AcknowledgedAt = serverReceivedAtUtc,
+                ServerReceivedAtUtc = serverReceivedAtUtc,
+                ClockSkewSeconds = clockDiscrepancy.ClockSkewSeconds != 0 ? clockDiscrepancy.ClockSkewSeconds : null,
+                ClockSkewWarning = clockDiscrepancy.WarningMessage
             });
         }
         catch (Exception ex)
@@ -356,6 +540,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
         }
 
         if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
+        if (request.CreatedAt != default) request.CreatedAt = NormalizeUtc(request.CreatedAt);
+        if (request.ApprovedAt.HasValue) request.ApprovedAt = NormalizeUtc(request.ApprovedAt.Value);
+        if (request.PostedAt.HasValue) request.PostedAt = NormalizeUtc(request.PostedAt.Value);
         string clientId = request.ClientMovementId.Trim();
 
         // 1. Server-side idempotency check
@@ -401,16 +588,48 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
 
             var recoveryError = await ValidateHistoricalRecovery(outlet, request.CreatedAt, request.ClientMovementId, "CASH_MOVEMENT", recoveryReason);
             if (recoveryError != null) return Conflict(recoveryError);
-            // Locate shift by ShiftId (if server shift ID was known) or active open shift for outlet
+            // Locate shift by ShiftId (if server shift ID was known), then ClientShiftId, before active open shift for terminal/branch
             CashDrawerShift? shift = null;
             if (request.ShiftId > 0)
             {
-                shift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId && s.TerminalId == request.TerminalId);
+                shift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId);
+                if (shift != null && (shift.TerminalId != request.TerminalId || shift.BranchId != request.BranchId))
+                {
+                    await tx.RollbackAsync();
+                    return Conflict(new OfflineCashMovementSyncResponse
+                    {
+                        Success = false,
+                        IsConflict = true,
+                        Message = "Conflict: Target shift does not belong to this terminal or branch.",
+                        ClientMovementId = clientId,
+                        ServerStatus = "CONFLICT"
+                    });
+                }
             }
-            if (shift == null)
+            if (shift == null && !string.IsNullOrWhiteSpace(request.ClientShiftId))
+            {
+                string trimmedClientShiftId = request.ClientShiftId.Trim();
+                shift = await context.CashDrawerShifts
+                    .OrderByDescending(s => s.OpenedAt)
+                    .FirstOrDefaultAsync(s => s.ClientShiftId == trimmedClientShiftId);
+                if (shift != null && (shift.TerminalId != request.TerminalId || shift.BranchId != request.BranchId))
+                {
+                    await tx.RollbackAsync();
+                    return Conflict(new OfflineCashMovementSyncResponse
+                    {
+                        Success = false,
+                        IsConflict = true,
+                        Message = "Conflict: Target client shift does not belong to this terminal or branch.",
+                        ClientMovementId = clientId,
+                        ServerStatus = "CONFLICT"
+                    });
+                }
+            }
+            bool hasExplicitShiftIdentity = request.ShiftId > 0 || !string.IsNullOrWhiteSpace(request.ClientShiftId);
+            if (shift == null && !hasExplicitShiftIdentity)
             {
                 shift = await context.CashDrawerShifts
-                    .Where(s => s.TerminalId == request.TerminalId && s.Status == "OPEN")
+                    .Where(s => s.TerminalId == request.TerminalId && s.BranchId == request.BranchId && s.Status == "OPEN")
                     .OrderByDescending(s => s.OpenedAt)
                     .FirstOrDefaultAsync();
             }
@@ -423,6 +642,22 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     Success = false,
                     IsConflict = true,
                     Message = "Conflict: No matching or open cash drawer shift exists on server for this outlet.",
+                    ClientMovementId = clientId,
+                    ServerStatus = "CONFLICT"
+                });
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.CreatedBy)
+                && !string.Equals(shift.CashierId, request.CreatedBy.Trim(), StringComparison.OrdinalIgnoreCase)
+                && !User.IsInRole("Admin")
+                && !User.IsInRole("Manager"))
+            {
+                await tx.RollbackAsync();
+                return Conflict(new OfflineCashMovementSyncResponse
+                {
+                    Success = false,
+                    IsConflict = true,
+                    Message = "Conflict: Cash movement creator does not match the shift owner.",
                     ClientMovementId = clientId,
                     ServerStatus = "CONFLICT"
                 });

@@ -37,6 +37,11 @@ public class OrderResponseDto
     public string? InvoiceNumber { get; set; }
     public DateTime? InvoiceIssuedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTimeOffset? TransactionTimestamp { get; set; }
+    public DateTime? ServerReceivedAtUtc { get; set; }
+    public string? DeviceTimeZoneId { get; set; }
+    public int? DeviceUtcOffsetMinutes { get; set; }
+    public int? ClockSkewSeconds { get; set; }
     public List<OrderItemResponseDto> Items { get; set; } = new();
     public List<PaymentResponseDto> Payments { get; set; } = new();
 }

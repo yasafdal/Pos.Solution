@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -9,6 +10,12 @@ using POS.Shared.Interfaces;
 using POS.Shared.Models;
 
 namespace POS.Client.Services;
+
+public readonly record struct BearerTokenResult(
+    bool Success,
+    HttpStatusCode? RejectionStatus = null,
+    string? ErrorMessage = null,
+    bool IsTransientError = false);
 
 public interface IDeviceActivationService
 {
@@ -94,7 +101,8 @@ public class DeviceActivationService : IDeviceActivationService
             response = await _terminalService.ActivateTerminalAsync(new TerminalActivationRequestDto
             {
                 ActivationCode = cleanCode,
-                DeviceUuid = deviceUuid
+                DeviceUuid = deviceUuid,
+                DeviceId = POS.Shared.Helpers.DeviceBindingHelper.ComputeDeviceId(deviceUuid)
             });
         }
         catch (Exception ex)
@@ -141,8 +149,35 @@ public class DeviceActivationService : IDeviceActivationService
             db.InitializeDatabase();
 
             var priorPrinter = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalBranches;");
             await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTerminalConfigs;");
             db.ChangeTracker.Clear();
+
+            string resolvedBranchCode = branchCode ?? $"BR-{branchId:D2}";
+            string resolvedBranchTaxType = !string.IsNullOrWhiteSpace(cfg?.BranchTaxType) ? cfg.BranchTaxType : "VAT-Registered";
+            bool resolvedVatDisplay = cfg?.VatDisplay ?? true;
+
+            if (branchId > 0)
+            {
+                db.Branches.Add(new LocalBranch
+                {
+                    BranchId = branchId,
+                    Name = branchName ?? terminalName,
+                    BranchTagline = cfg?.BranchTagline,
+                    Code = resolvedBranchCode,
+                    Address = cfg?.BranchAddress,
+                    Phone = cfg?.BranchPhone,
+                    TaxType = resolvedBranchTaxType,
+                    VatDisplay = resolvedVatDisplay,
+                    BusinessTypeId = cfg?.BusinessTypeId ?? 1,
+                    BusinessType = cfg?.BusinessType ?? "FNB",
+                    ReceiptLogoUrl = cfg?.ReceiptLogoUrl,
+                    ReceiptLogoDataUri = cfg?.ReceiptLogoDataUri,
+                    ReceiptLogoUpdatedAt = cfg?.ReceiptLogoUpdatedAt,
+                    IsActive = true,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
 
             db.TerminalConfigs.Add(new LocalTerminalConfig
             {
@@ -151,9 +186,14 @@ public class DeviceActivationService : IDeviceActivationService
                 OutletName = outletName,
                 BranchId = branchId,
                 BranchName = branchName,
-                BranchCode = branchCode ?? $"BR-{branchId:D2}",
+                BranchTagline = cfg?.BranchTagline,
+                BranchCode = resolvedBranchCode,
                 BranchAddress = cfg?.BranchAddress,
                 BranchPhone = cfg?.BranchPhone,
+                ReceiptLogoUrl = cfg?.ReceiptLogoUrl,
+                ReceiptLogoDataUri = cfg?.ReceiptLogoDataUri,
+                ReceiptLogoUpdatedAt = cfg?.ReceiptLogoUpdatedAt,
+                VatDisplay = resolvedVatDisplay,
                 BusinessTypeId = cfg?.BusinessTypeId ?? 1,
                 BusinessType = cfg?.BusinessType ?? "FNB",
                 TerminalCode = terminalCode,
@@ -169,7 +209,7 @@ public class DeviceActivationService : IDeviceActivationService
                 ActivatedAt = DateTime.UtcNow,
                 MenuDisplayMode = menuMode == MenuDisplayMode.ImageAndText
                     ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
-                BranchTaxType = "VAT-Registered",
+                BranchTaxType = resolvedBranchTaxType,
                 ReceiptPrinterName = priorPrinter?.ReceiptPrinterName,
                 KitchenPrinterName = priorPrinter?.KitchenPrinterName,
                 BarPrinterName = priorPrinter?.BarPrinterName,
@@ -209,6 +249,16 @@ public class DeviceActivationService : IDeviceActivationService
             LocalPosDbContext.WriteLock.Release();
         }
 
+        if (response.LicensePackage != null)
+        {
+            try
+            {
+                var clientLic = new ClientLicenseService();
+                await clientLic.SaveSignedLicensePackageAsync(response.LicensePackage);
+            }
+            catch { }
+        }
+
         // 4. Persist terminal token for offline-login sessions and run initial reference data sync
         if (!string.IsNullOrEmpty(response.Token))
         {
@@ -233,18 +283,60 @@ public class DeviceActivationService : IDeviceActivationService
         return response;
     }
 
-    public static async Task<bool> EnsureOnlineBearerTokenAsync(HttpClient httpClient, PosSessionService? session = null)
+    public static bool HasValidOnlineBearerToken(HttpClient? httpClient, PosSessionService? session)
     {
-        if (httpClient == null) return false;
+        string? expectedUsername = session?.Username;
+        if (TryGetValidToken(session?.Token, expectedUsername) != null)
+            return true;
+        if (TryGetValidToken(ActiveTerminalToken, expectedUsername) != null)
+            return true;
 
-        if (session != null && !string.IsNullOrWhiteSpace(session.Token) && session.Token != "OFFLINE-SESSION-TOKEN")
+        var authHeader = httpClient?.DefaultRequestHeaders.Authorization;
+        if (authHeader != null &&
+            (string.IsNullOrWhiteSpace(authHeader.Scheme) || string.Equals(authHeader.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase)) &&
+            TryGetValidToken(authHeader.Parameter, expectedUsername) != null)
         {
-            if (TryValidateTokenIdentity(session.Token, session.Username))
-            {
-                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.Token);
-                return true;
-            }
+            return true;
         }
+
+        return false;
+    }
+
+    private static string? TryGetValidToken(string? token, string? expectedUsername)
+    {
+        if (string.IsNullOrWhiteSpace(token) ||
+            string.Equals(token.Trim(), "OFFLINE-SESSION-TOKEN", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return TryValidateTokenIdentity(token, expectedUsername) ? token : null;
+    }
+
+    public static async Task<bool> EnsureOnlineBearerTokenAsync(HttpClient httpClient, PosSessionService? session = null, bool forceRefresh = false)
+    {
+        var result = await EnsureOnlineBearerTokenWithStatusAsync(httpClient, session, forceRefresh);
+        return result.Success;
+    }
+
+    public static async Task<BearerTokenResult> EnsureOnlineBearerTokenWithStatusAsync(
+        HttpClient httpClient,
+        PosSessionService? session = null,
+        bool forceRefresh = false)
+    {
+        if (httpClient == null)
+            return new BearerTokenResult(false, ErrorMessage: "HTTP client is unavailable.");
+
+        if (!forceRefresh && session != null && TryGetValidToken(session.Token, session.Username) is string validSessionToken)
+        {
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", validSessionToken);
+            return new BearerTokenResult(true);
+        }
+
+        string? previousHeaderToken = httpClient.DefaultRequestHeaders.Authorization?.Parameter;
+        HttpStatusCode? rejectionStatus = null;
+        string? rejectionMessage = null;
+        bool isTransientError = false;
 
         try
         {
@@ -252,7 +344,10 @@ public class DeviceActivationService : IDeviceActivationService
             using (var db = new LocalPosDbContext())
             {
                 db.InitializeDatabase();
-                localOutlet = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
+                int? scopedTerminalId = session?.Terminal?.TerminalId > 0 ? session.Terminal.TerminalId : null;
+                localOutlet = scopedTerminalId.HasValue
+                    ? await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == scopedTerminalId.Value)
+                    : await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
             }
 
             string? deviceUuid = !string.IsNullOrWhiteSpace(localOutlet?.DeviceUuid)
@@ -267,7 +362,7 @@ public class DeviceActivationService : IDeviceActivationService
                     DeviceUuid = deviceUuid,
                     CashierUsername = session?.Username
                 };
-                var resp = await System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync(httpClient, "api/terminals/session-token", req);
+                using var resp = await System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync(httpClient, "api/terminals/session-token", req);
                 if (resp.IsSuccessStatusCode)
                 {
                     var dto = await System.Net.Http.Json.HttpContentJsonExtensions.ReadFromJsonAsync<TerminalSessionTokenResponseDto>(resp.Content);
@@ -279,27 +374,75 @@ public class DeviceActivationService : IDeviceActivationService
                         {
                             session.SetSession(dto.Token, session.Username ?? string.Empty, session.Role ?? "Cashier", session.Terminal);
                         }
-                        return true;
+                        return new BearerTokenResult(true);
                     }
+
+                    isTransientError = true;
+                    rejectionStatus = resp.StatusCode;
+                    rejectionMessage = "Empty session token returned by server.";
+                }
+                else
+                {
+                    string rawError = string.Empty;
+                    try { rawError = await resp.Content.ReadAsStringAsync(); } catch { }
+                    rejectionStatus = resp.StatusCode;
+                    rejectionMessage = string.IsNullOrWhiteSpace(rawError)
+                        ? $"Session token request rejected with HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase})."
+                        : rawError.Trim();
+
+                    if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Locked or HttpStatusCode.Unauthorized or HttpStatusCode.BadRequest)
+                    {
+                        if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Locked)
+                        {
+                            ActiveTerminalToken = null;
+                            httpClient.DefaultRequestHeaders.Authorization = null;
+                        }
+                        return new BearerTokenResult(false, rejectionStatus, rejectionMessage, IsTransientError: false);
+                    }
+
+                    isTransientError = true;
                 }
             }
         }
-        catch
+        catch (HttpRequestException ex)
         {
-            // Ignore network/token exchange failure and fall back to cached token if available
+            isTransientError = true;
+            rejectionMessage = ex.Message;
+        }
+        catch (TaskCanceledException ex)
+        {
+            isTransientError = true;
+            rejectionMessage = ex.Message;
+        }
+        catch (TimeoutException ex)
+        {
+            isTransientError = true;
+            rejectionMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            isTransientError = true;
+            rejectionMessage = ex.Message;
         }
 
-        if (!string.IsNullOrWhiteSpace(ActiveTerminalToken))
+        if (TryGetValidToken(ActiveTerminalToken, session?.Username) is string cachedToken &&
+            (!forceRefresh || !string.Equals(cachedToken, previousHeaderToken, StringComparison.Ordinal)))
         {
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ActiveTerminalToken);
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", cachedToken);
             if (session != null && session.Terminal != null && (string.IsNullOrWhiteSpace(session.Token) || session.Token == "OFFLINE-SESSION-TOKEN"))
             {
-                session.SetSession(ActiveTerminalToken, session.Username ?? string.Empty, session.Role ?? "Cashier", session.Terminal);
+                session.SetSession(cachedToken, session.Username ?? string.Empty, session.Role ?? "Cashier", session.Terminal);
             }
-            return true;
+            return new BearerTokenResult(true);
         }
 
-        return httpClient.DefaultRequestHeaders.Authorization?.Parameter is { Length: > 0 } p && p != "OFFLINE-SESSION-TOKEN";
+        if (!forceRefresh &&
+            TryGetValidToken(httpClient.DefaultRequestHeaders.Authorization?.Parameter, session?.Username) is not null)
+        {
+            return new BearerTokenResult(true);
+        }
+
+        return new BearerTokenResult(false, rejectionStatus, rejectionMessage, isTransientError);
     }
 
     private static bool TryValidateTokenIdentity(string token, string? expectedUsername)

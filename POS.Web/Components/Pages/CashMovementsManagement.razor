@@ -306,8 +306,8 @@
                                     </td>
                                     <td>
                                         <div class="fw-semibold text-dark">@s.CashierId</div>
-                                        <div class="text-secondary">Open: @s.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</div>
-                                        <div class="text-secondary">Close: @(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt") : "Active")</div>
+                                        <div class="text-secondary">Open: @POS.Shared.Services.BusinessDayClock.FormatManila(s.OpenedAt, "yyyy-MM-dd hh:mm tt")</div>
+                                        <div class="text-secondary">Close: @POS.Shared.Services.BusinessDayClock.FormatManila(s.ClosedAt, "yyyy-MM-dd hh:mm tt", "Active")</div>
                                         @if (!string.IsNullOrWhiteSpace(s.Notes))
                                         {
                                             <div class="text-muted fst-italic text-truncate" style="max-width: 190px;" title="@s.Notes">Note: @s.Notes</div>
@@ -435,7 +435,7 @@
                             {
                                 <tr>
                                     <td class="px-4 fw-bold font-monospace small">@m.ReferenceNumber</td>
-                                    <td class="small">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</td>
+                                    <td class="small">@POS.Shared.Services.BusinessDayClock.FormatManila(m.CreatedAt, "yyyy-MM-dd hh:mm tt")</td>
                                     <td class="small">
                                         <div class="fw-semibold text-dark">@m.BranchName → @m.OutletName</div>
                                         <span class="badge bg-light text-dark border">@m.TerminalName (@m.TerminalCode)</span>
@@ -521,7 +521,7 @@
                             {
                                 <tr>
                                     <td class="px-4 fw-bold font-monospace small">@m.ReferenceNumber</td>
-                                    <td class="small">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</td>
+                                    <td class="small">@POS.Shared.Services.BusinessDayClock.FormatManila(m.CreatedAt, "yyyy-MM-dd hh:mm tt")</td>
                                     <td class="small">
                                         <div class="fw-semibold">@m.BranchName → @m.OutletName</div>
                                         <span class="badge bg-light text-dark border">@m.TerminalName (@m.TerminalCode)</span>
@@ -585,13 +585,13 @@
                                 <td><span class="badge @GetStatusBadgeClass(m.Status)">@m.Status</span></td>
                                 <td class="small">
                                     <div><strong>@m.CreatedBy</strong></div>
-                                    <div class="text-secondary">@m.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</div>
+                                    <div class="text-secondary">@POS.Shared.Services.BusinessDayClock.FormatManila(m.CreatedAt, "yyyy-MM-dd HH:mm:ss")</div>
                                 </td>
                                 <td class="small">
                                     @if (!string.IsNullOrWhiteSpace(m.ApprovedBy))
                                     {
                                         <div><strong class="text-success">@m.ApprovedBy</strong></div>
-                                        <div class="text-secondary">@m.ApprovedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</div>
+                                        <div class="text-secondary">@POS.Shared.Services.BusinessDayClock.FormatManila(m.ApprovedAt, "yyyy-MM-dd HH:mm:ss", "")</div>
                                     }
                                     else
                                     {
@@ -601,7 +601,7 @@
                                 <td class="small">
                                     @if (!string.IsNullOrWhiteSpace(m.ReversedBy))
                                     {
-                                        <div class="text-danger fw-semibold">Reversed by @m.ReversedBy (@m.ReversedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))</div>
+                                        <div class="text-danger fw-semibold">Reversed by @m.ReversedBy (@POS.Shared.Services.BusinessDayClock.FormatManila(m.ReversedAt, "yyyy-MM-dd HH:mm", ""))</div>
                                         <div>Reason: @m.ReversalReason</div>
                                     }
                                     else if (!string.IsNullOrWhiteSpace(m.RejectionReason))
@@ -834,8 +834,8 @@
                                     <div><strong>Cashier:</strong> @selectedShift.CashierId</div>
                                 </div>
                                 <div class="col-md-6">
-                                    <div><strong>Shift Opened:</strong> @selectedShift.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt")</div>
-                                    <div><strong>Shift Closed:</strong> @(selectedShift.ClosedAt.HasValue ? selectedShift.ClosedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt") : "Active")</div>
+                                    <div><strong>Shift Opened:</strong> @POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.OpenedAt, "yyyy-MM-dd hh:mm:ss tt")</div>
+                                    <div><strong>Shift Closed:</strong> @POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.ClosedAt, "yyyy-MM-dd hh:mm:ss tt", "Active")</div>
                                     <div><strong>Notes:</strong> @(string.IsNullOrWhiteSpace(selectedShift.Notes) ? "None" : selectedShift.Notes)</div>
                                 </div>
                             </div>
@@ -895,7 +895,7 @@
                     {
                         var xr = selectedShift.XReading;
                         <div class="alert alert-info py-2 px-3 small mb-3">
-                            <strong>X-Reading Report Scope:</strong> Non-resetting terminal reading covering Business Day window (<strong>@xr.ReportingPeriodStart.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</strong> to <strong>@xr.ReportingPeriodEnd.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</strong>) alongside Shift #@xr.ShiftId drawer ledger and per-method reconciliation.
+                            <strong>X-Reading Report Scope:</strong> Non-resetting terminal reading covering Business Day window (<strong>@POS.Shared.Services.BusinessDayClock.FormatManila(xr.ReportingPeriodStart, "yyyy-MM-dd hh:mm tt")</strong> to <strong>@POS.Shared.Services.BusinessDayClock.FormatManila(xr.ReportingPeriodEnd, "yyyy-MM-dd hh:mm tt")</strong>) alongside Shift #@xr.ShiftId drawer ledger and per-method reconciliation.
                         </div>
                         <div class="row g-3 mb-3 small">
                             <div class="col-md-4">
@@ -961,8 +961,8 @@
                             <div class="col-md-4">
                                 <div class="border rounded-3 p-3 bg-light h-100">
                                     <h6 class="fw-bold text-uppercase small text-secondary mb-2">Shift Metadata & Notes</h6>
-                                    <div class="small mb-1"><strong>Opened:</strong> @selectedShift.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt")</div>
-                                    <div class="small mb-1"><strong>Closed:</strong> @(selectedShift.ClosedAt.HasValue ? selectedShift.ClosedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt") : "Active")</div>
+                                    <div class="small mb-1"><strong>Opened:</strong> @POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.OpenedAt, "yyyy-MM-dd hh:mm:ss tt")</div>
+                                    <div class="small mb-1"><strong>Closed:</strong> @POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.ClosedAt, "yyyy-MM-dd hh:mm:ss tt", "Active")</div>
                                     <div class="small mb-1"><strong>Reconciliation:</strong> <span class="badge @(selectedShift.OverallReconciliationStatus == "BALANCED" ? "bg-success" : selectedShift.OverallReconciliationStatus == "NOT RECONCILED" ? "bg-secondary" : "bg-danger")">@selectedShift.OverallReconciliationStatus</span></div>
                                     <div class="small mt-2"><strong>Notes:</strong> @(string.IsNullOrWhiteSpace(selectedShift.Notes) ? "None" : selectedShift.Notes)</div>
                                 </div>
@@ -1052,7 +1052,7 @@
                             @if (selectedShift.OriginalDeclaration != null)
                             {
                                 <div class="border rounded-3 p-3 bg-light mb-3 small">
-                                    <strong>Original Cashier Blind Declaration (@selectedShift.OriginalDeclaration.SubmittedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt")):</strong>
+                                    <strong>Original Cashier Blind Declaration (@POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.OriginalDeclaration.SubmittedAt, "yyyy-MM-dd hh:mm:ss tt")):</strong>
                                     Counted Cash: <strong>₱@selectedShift.OriginalDeclaration.TotalCountedCash.ToString("N2")</strong> •
                                     Cashier-Declared Non-Cash Total: <strong>₱@selectedShift.OriginalDeclaration.TotalNonCashDeclared.ToString("N2")</strong> •
                                     Denominations: <strong>@(selectedShift.OriginalDeclaration.HasRecordedDenominations ? "Recorded" : "Not Recorded")</strong>
@@ -1080,7 +1080,7 @@
                                                 <tr>
                                                     <td>#@rc.RecountNumber</td>
                                                     <td class="fw-semibold">@rc.CorrectedBy</td>
-                                                    <td>@rc.CorrectedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</td>
+                                                    <td>@POS.Shared.Services.BusinessDayClock.FormatManila(rc.CorrectedAt, "yyyy-MM-dd hh:mm tt")</td>
                                                     <td>@rc.Reason</td>
                                                     <td class="text-end">₱@rc.OriginalCountedCash.ToString("N2")</td>
                                                     <td class="text-end fw-bold">₱@rc.RevisedCountedCash.ToString("N2")</td>
@@ -1309,14 +1309,14 @@
                         <div><strong>Amount:</strong> PHP @selectedMovement.Amount.ToString("N2")</div>
                         <div><strong>Reason:</strong> @selectedMovement.Reason</div>
                         <hr class="my-2" />
-                        <div><strong>Created By:</strong> @selectedMovement.CreatedBy (@selectedMovement.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))</div>
+                        <div><strong>Created By:</strong> @selectedMovement.CreatedBy (@POS.Shared.Services.BusinessDayClock.FormatManila(selectedMovement.CreatedAt, "yyyy-MM-dd HH:mm:ss"))</div>
                         @if (!string.IsNullOrWhiteSpace(selectedMovement.ApprovedBy))
                         {
-                            <div><strong>Approved By:</strong> @selectedMovement.ApprovedBy (@selectedMovement.ApprovedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))</div>
+                            <div><strong>Approved By:</strong> @selectedMovement.ApprovedBy (@POS.Shared.Services.BusinessDayClock.FormatManila(selectedMovement.ApprovedAt, "yyyy-MM-dd HH:mm:ss", ""))</div>
                         }
                         @if (!string.IsNullOrWhiteSpace(selectedMovement.ReversedBy))
                         {
-                            <div><strong>Reversed By:</strong> @selectedMovement.ReversedBy (@selectedMovement.ReversedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))</div>
+                            <div><strong>Reversed By:</strong> @selectedMovement.ReversedBy (@POS.Shared.Services.BusinessDayClock.FormatManila(selectedMovement.ReversedAt, "yyyy-MM-dd HH:mm:ss", ""))</div>
                             <div><strong>Reversal Reason:</strong> @selectedMovement.ReversalReason</div>
                         }
                     </div>

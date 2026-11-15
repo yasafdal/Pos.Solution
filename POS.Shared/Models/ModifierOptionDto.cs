@@ -6,6 +6,8 @@ public class ModifierOptionDto
 {
     public int ModifierOptionId { get; set; }
     public int ModifierGroupId { get; set; }
+    public int? ProductId { get; set; }
+    public string? ProductName { get; set; }
     [Required, StringLength(100)]
     public string Name { get; set; } = string.Empty;
     public decimal Price { get; set; }

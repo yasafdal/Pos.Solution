@@ -182,7 +182,7 @@
         {
             <div class="commercial-grid table-responsive w-100">
                 <QuickGrid Items="@transactions.AsQueryable()" Pagination="@pagination" Theme="commercial">
-                    <PropertyColumn Property="@(t => t.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))" Title="Date / Time" Sortable="true" Align="Align.Left" />
+                    <PropertyColumn Property="@(t => POS.Shared.Services.BusinessDayClock.FormatManila(t.CreatedAt, "yyyy-MM-dd HH:mm"))" Title="Date / Time" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(t => t.InvoiceNumber ?? "—")" Title="Invoice #" Sortable="true" Align="Align.Left" />
                     <PropertyColumn Property="@(t => t.OrderNumber)" Title="Order #" Sortable="true" Align="Align.Left" />
                     <TemplateColumn Context="t" Title="Branch → Outlet → Terminal" Align="Align.Left">
@@ -295,7 +295,7 @@
                             </div>
                             <small class="text-secondary">
                                 Invoice: <span class="fw-semibold text-dark">@(selectedOrder.InvoiceNumber ?? "N/A")</span> &bull;
-                                Date: <span class="fw-semibold text-dark">@selectedOrder.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                Date: <span class="fw-semibold text-dark">@POS.Shared.Services.BusinessDayClock.FormatManila(selectedOrder.CreatedAt, "yyyy-MM-dd HH:mm")</span>
                             </small>
                         </div>
                     </div>
@@ -644,7 +644,7 @@
         sb.AppendLine("\"Date/Time\",\"Invoice #\",\"Order #\",\"Branch\",\"Outlet\",\"Terminal Name\",\"Terminal Code\",\"Cashier\",\"Order Status\",\"Payment Status\",\"Subtotal\",\"Discount\",\"Output VAT\",\"Total Amount\"");
         foreach (var t in transactions)
         {
-            sb.AppendLine($"\"{t.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}\",\"{t.InvoiceNumber ?? ""}\",\"{t.OrderNumber}\",\"{t.BranchName.Replace("\"", "\"\"")}\",\"{t.OutletName.Replace("\"", "\"\"")}\",\"{t.TerminalName.Replace("\"", "\"\"")}\",\"{t.TerminalCode.Replace("\"", "\"\"")}\",\"{t.CashierId}\",\"{t.OrderStatus}\",\"{t.PaymentStatus}\",{t.Subtotal:0.00},{t.DiscountAmount:0.00},{t.VatAmount:0.00},{t.TotalAmount:0.00}");
+            sb.AppendLine($"\"{POS.Shared.Services.BusinessDayClock.FormatManila(t.CreatedAt, "yyyy-MM-dd HH:mm:ss")}\",\"{t.InvoiceNumber ?? ""}\",\"{t.OrderNumber}\",\"{t.BranchName.Replace("\"", "\"\"")}\",\"{t.OutletName.Replace("\"", "\"\"")}\",\"{t.TerminalName.Replace("\"", "\"\"")}\",\"{t.TerminalCode.Replace("\"", "\"\"")}\",\"{t.CashierId}\",\"{t.OrderStatus}\",\"{t.PaymentStatus}\",{t.Subtotal:0.00},{t.DiscountAmount:0.00},{t.VatAmount:0.00},{t.TotalAmount:0.00}");
         }
         var bytes = Encoding.UTF8.GetBytes(sb.ToString());
         var b64 = Convert.ToBase64String(bytes);

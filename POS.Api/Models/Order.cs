@@ -71,6 +71,15 @@ public partial class Order
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    public DateTime? ServerReceivedAtUtc { get; set; }
+
+    [MaxLength(100)]
+    public string? DeviceTimeZoneId { get; set; }
+
+    public int? DeviceUtcOffsetMinutes { get; set; }
+
+    public int? ClockSkewSeconds { get; set; }
+
     [MaxLength(200)]
     public string? CustomerName { get; set; }
 

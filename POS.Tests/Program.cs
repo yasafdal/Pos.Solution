@@ -129,6 +129,87 @@ public static partial class Program
         await RunTestAsync("PHASE1A-02. BIR InvoiceSequence block preservation (zero number burning on sync/re-login)", TestPhase1A_OfflineReferenceDataPreservesInvoiceSequenceBlock);
         await RunTestAsync("PAYMENT-01. Standardize payment status to PAID (offline/online/sync/void/receipt/migration)", TestPaymentStatusStandardization);
         await RunTestAsync("IMG-01. Product image URLs resolve against configured ApiBaseUrl (UAT), never localhost", TestProductImageUrlResolution);
+        await RunTestAsync("MOD-01. ModifierOption Product Linking: Non-inventory modifier without ProductId works as normal", TestModifierOption_NonInventoryModifier);
+        await RunTestAsync("MOD-02. ModifierOption Product Linking: Modifier with ProductId deducts linked product inventory and logs stock adjustment", TestModifierOption_LinkedProductInventoryDeduction);
+        await RunTestAsync("MOD-03. ModifierOption Product Linking: Invalid or inactive ProductId is rejected on creation/update", TestModifierOption_InvalidProductRejected);
+        await RunTestAsync("WB-01. Lechon Weight-Based Pricing: Amount Mode (₱300) and Weight Mode precision & complimentary sets", TestWeightBased_CalculationsAndComplimentarySets);
+        await RunTestAsync("WB-02. Lechon Weight-Based: Station routing splits Bar (Drink) and Kitchen (Lechon, Atchara, Sarsa)", TestWeightBased_StationRouting);
+        await RunTestAsync("WB-03. Lechon Weight-Based: Receipt thermal layout and complimentary labels", TestWeightBased_ReceiptFormatting);
+        await RunTestAsync("WB-04. Lechon Weight-Based: Offline sync, inventory deduction & double-deduction prevention", TestWeightBased_OfflineSyncAndInventory);
+        await RunTestAsync("WB-05. Lechon Weight-Based: Statutory SC/PWD discount and BIR tax calculation", TestWeightBased_DiscountCalculationService);
+        await RunTestAsync("WB-06. Lechon Weight-Based: Product PricingMethod persistence in EF Core and ProductsController", TestWeightBased_ProductPricingMethodPersistence);
+        await RunTestAsync("SORT-01. Custom Sorting: Categories and Products per-category reordering and offline sync", TestCustomSorting_CategoriesAndProducts);
+        await RunTestAsync("LOGO-01. Receipt Logo Management: Upload validation, branding CRUD, offline reference sync, and thermal HTML formatting", TestReceiptLogoManagementAndPrinting);
+        await RunTestAsync("VAT-01. Branch VAT Display configuration, LocalBranches SQLite sync, customer receipt VAT suppression, and tax calculation preservation", TestBranchVatDisplayAndLocalBranchSync);
+        await RunTestAsync("SYNC-01. Critical Transaction Sync: SQLite DateTimeKind.Unspecified UTC normalization, Terminal JWT shift/sale sync, split payments, NEEDS_ATTENTION retry recovery, idempotency, and LastSyncAt", TestCriticalTransactionSyncEndToEnd);
+        await RunTestAsync("TIME-01. Transaction Timestamps & Philippine Time (Asia/Manila): Windows/Android TimeZoneInfo, 3:59 AM / 4:00 AM cutoff, offline preservation, ServerReceivedAtUtc, clock skew detection, receipt reprints, and X/Z-Reading", TestTransactionTimestampsAndPhilippineTime);
+        await RunTestAsync("TAGLINE-01. Branch Tagline: Optional CRUD (with/without tagline, add/remove), LocalBranches SQLite sync, offline availability, and customer receipt formatting", TestBranchTaglineManagementSyncAndReceiptFormatting);
+        await RunTestAsync("RCPT-01. Receipt Footer & BranchCode Removal: AGRES Business Solution centered in footer, BranchCode omitted from customer receipt, DTO/80mm layout preserved", TestReceiptCompanyFooterAndBranchCodeRemoval);
+        await RunTestAsync("DRAWER-01. Cash Drawer ESC/POS Commands & Endpoint Validation: Xprinter XP-80T 1B 70 00 19 FA, Pin 2/5, Test Slip & IP/Port guards", TestCashDrawer01_EscPosCommandsAndValidation);
+        await RunTestAsync("DRAWER-02. Cash Drawer Automatic Sale Triggers: Offline cash sale opens once, Card & E-wallet stay closed, failed/incomplete sales stay closed", TestCashDrawer02_AutomaticCashVsNonCashAndFailed);
+        await RunTestAsync("DRAWER-03. Cash Drawer Split Payments: Cash+Card/GCash split opens once, multiple CASH splits open once, GCash+Card split stays closed", TestCashDrawer03_SplitPaymentRules);
+        await RunTestAsync("DRAWER-04. Cash Drawer Duplicate, Reprint & Restart Protection: Double callback, concurrent race, IsReprint, and fresh instance across restart open at most once", TestCashDrawer04_DuplicateReprintAndRestartProtection);
+        await RunTestAsync("DRAWER-05. Cash Drawer Manual Open Authorization & Audit: Supervisor direct, Cashier denied without PIN, Cashier+SupervisorPIN allowed offline with reason & audit trail", TestCashDrawer05_ManualOpenAuthorizationAndAudit);
+        await RunTestAsync("DRAWER-06. Cash Drawer Resilience & Config Auth: Printer timeout/offline never corrupts saved sale/shift, TestPrinter/TestDrawer work without sale", TestCashDrawer06_PrinterUnavailableResilienceAndHardwareTests);
+        await RunTestAsync("PRINTER-01. Unified ESC/POS Formatting & Raster Logo: 58mm/80mm layout, codepage, density, auto-cut, BranchCode omission & GS v 0 bitmap", TestUnifiedPrinter01_EscPosFormattingAndBitmap);
+        await RunTestAsync("PRINTER-02. Unified USB Printer Lifecycle: Discovery, runtime permission, print & cash drawer kick, unplug resilience & reconnect recovery", TestUnifiedPrinter02_UsbLifecycleDiscoveryPermissionReconnectAndDrawer);
+        await RunTestAsync("PRINTER-03. Unified Ethernet, USB/LAN Switching, Restart Persistence & Multi-Terminal Isolation", TestUnifiedPrinter03_EthernetSwitchingPersistenceAndMultiTerminalIsolation);
+        await RunTestAsync("PRINTER-04. Reliability & Safety: Pre-write connect retry on print, ZERO retry on cash drawer kick, & serialized concurrent jobs", TestUnifiedPrinter04_RetryBoundariesConcurrencyAndTimeoutSafety);
+        await RunTestAsync("PRINTER-05. Offline Unified Receipt & Reports: Prep ticket, X-Reading, Z-Reading & Cashier Declaration via ESC/POS without POS.API", TestUnifiedPrinter05_OfflineOperationWithoutApiAndAllReportTypes);
+        await RunTestAsync("AUTOPRINT-01. Automatic Receipt Printing on Finalized Cash, Card, E-Wallet & Split Sales with Saved Receipt Details", TestAutoPrint01_PaymentMethodsSplitAndSavedReceiptFormatting);
+        await RunTestAsync("AUTOPRINT-02. Auto-Print Guards: Failed, Pending, Cancelled, Non-Persisted & Reprint Never Auto-Print", TestAutoPrint02_FailedPendingCancelledIncompleteAndReprintSkipped);
+        await RunTestAsync("AUTOPRINT-03. Duplicate Auto-Print Prevention: Concurrent Callbacks, Restart Persistence & Sync Replay Isolation", TestAutoPrint03_DuplicateProtectionRestartAndSyncIsolation);
+        await RunTestAsync("AUTOPRINT-04. Unified USB Offline Auto-Printing & Direct ESC/POS Disabled Skip Safety", TestAutoPrint04_UsbAutoPrintOfflineAndDisabledFallbackBehavior);
+        await RunTestAsync("AUTOPRINT-05. Auto-Print Failure Handling: Sale Stays Paid, Logged Diagnostics & Controlled Retry Print", TestAutoPrint05_PrinterDisconnectedPreservesSaleAndControlledRetry);
+        await RunTestAsync("AUTOPRINT-06. Cash Drawer Coordination: Cash Opens+Prints, Card Prints-Only & Reprint Never Opens Drawer", TestAutoPrint06_CashDrawerCoordinationAndReprintIsolation);
+        await RunTestAsync("AUTOPRINT-07. Bounded Execution: Hung Transport & UI SyncContext Never Deadlock or Leave PRINTING Stuck", TestAutoPrint07_HungTransportAndSynchronizationContextNeverStall);
+        await RunTestAsync("LIC-01. Licensing: Terminal registration and license issuance (ECDSA P-256 signature)", TestLic01_TerminalRegistrationAndLicenseIssuance);
+        await RunTestAsync("LIC-02. Licensing: Terminal activation and hardware device binding", TestLic02_TerminalActivationAndDeviceBinding);
+        await RunTestAsync("LIC-03. Licensing: 5-year expiration date calculation from official activation date", TestLic03_FiveYearExpirationCalculation);
+        await RunTestAsync("LIC-04. Licensing: Valid active license allows POS sales and opening shifts", TestLic04_ValidActiveLicenseAllowsSales);
+        await RunTestAsync("LIC-05. Licensing: Expiring soon warnings (90, 60, 30, 7 days) allow sales with warning notice", TestLic05_ExpiringSoonWarnings);
+        await RunTestAsync("LIC-06. Licensing: Expired license blocks new POS sales and new shifts", TestLic06_ExpiredLicenseBlocksSales);
+        await RunTestAsync("LIC-07. Licensing: License renewal restores POS sales and logs renewal history", TestLic07_LicenseRenewalRestoresSales);
+        await RunTestAsync("LIC-08. Licensing: Revoked license blocks POS sales and shifts", TestLic08_RevokedLicenseBlocksSales);
+        await RunTestAsync("LIC-09. Licensing: Suspended license blocks POS sales and Reactivate restores access", TestLic09_SuspendedLicenseBlocksAndReactivates);
+        await RunTestAsync("LIC-10. Licensing: Device replacement workflow and device binding history", TestLic10_DeviceReplacementWorkflow);
+        await RunTestAsync("LIC-11. Licensing: Manual PostgreSQL license expiration modification rejected (signature mismatch)", TestLic11_ManualPostgreSqlExpirationModificationRejected);
+        await RunTestAsync("LIC-12. Licensing: Manual SQLite license expiration modification rejected (signature mismatch)", TestLic12_ManualSqliteExpirationModificationRejected);
+        await RunTestAsync("LIC-13. Licensing: Copying SQLite database to another physical device rejected", TestLic13_CopyingSqliteDatabaseToAnotherDeviceRejected);
+        await RunTestAsync("LIC-14. Licensing: Invalid / forged digital signature rejected", TestLic14_InvalidDigitalSignatureRejected);
+        await RunTestAsync("LIC-15. Licensing: Device clock rollback detected while preserving local transaction time", TestLic15_DeviceClockRollbackDetected);
+        await RunTestAsync("LIC-16. Licensing: Offline operation within 30-day grace period allowed", TestLic16_OfflineWithinGracePeriodAllowed);
+        await RunTestAsync("LIC-17. Licensing: Offline operation beyond 30-day grace period blocked", TestLic17_OfflineBeyondGracePeriodBlocked);
+        await RunTestAsync("LIC-18. Licensing: API unavailable during startup falls back to cached license with capped retries", TestLic18_ApiUnavailableDuringStartupFallbackAndCappedRetries);
+        await RunTestAsync("LIC-19. Licensing: Expiration during active session preserves already-committed sales", TestLic19_LicenseExpirationSafeBoundaryPreservesCommittedSales);
+        await RunTestAsync("LIC-20. Licensing: Unauthorized non-Admin API calls and brute-force rate limit rejected", TestLic20_UnauthorizedApiCallsAndRateLimitRejected);
+        await RunTestAsync("LIC-21. Licensing: Multi-terminal, multi-branch, and multi-outlet isolation", TestLic21_MultiTerminalBranchOutletIsolation);
+        await RunTestAsync("LIC-22. Licensing: Historical transaction/reprint access after expiration & UAT/Production key isolation", TestLic22_HistoricalAccessAfterExpirationAndEnvironmentKeyIsolation);
+        await RunTestAsync("LIC-23. Licensing: Configurable duration presets (1Y/2Y/3Y/5Y), custom durations (Y/M/D), leap-year & validation", TestLic23_ConfigurableDurationsPresetsCustomLeapAndValidation);
+        await RunTestAsync("LIC-24. Licensing: Active/expired/different-duration renewals, immutable history & auditable adjustment", TestLic24_RenewalsActiveExpiredDifferentDurationAndHistory);
+        await RunTestAsync("LIC-25. Licensing: Renewal authorization, idempotency replay/conflict, pre-renewal & post-renewal signatures", TestLic25_RenewalSecurityUnauthorizedIdempotencyAndSignatures);
+        await RunTestAsync("LIC-26. Licensing: Offline renewal behavior, clock tamper defense, reconnect sync & pending tx preservation", TestLic26_OfflineRenewalReconnectAndPendingTransactionPreservation);
+        await RunTestAsync("OFFLINE-01. Offline Checkout & Health: OFFLINE-SESSION-TOKEN, unreachable/timeout/503 DB-down/captive portal HTML -> local sale", TestOffline01_DisconnectedSaleAndHealthChecks);
+        await RunTestAsync("OFFLINE-02. Offline Resilience: Mid-session drop & proof 'Unable to verify current shift.' is never thrown on transient errors", TestOffline02_MidSessionDropAndNoVagueError);
+        await RunTestAsync("OFFLINE-03. Offline Continuity: App restart shift recovery, sequential BIR invoices & ShiftCacheRegressionTests suite", TestOffline03_RestartPersistenceAndSequentialInvoices);
+        await RunTestAsync("OFFLINE-04. Offline Shift & Movements: Negative shift open, CASH_IN/PETTY_CASH, reconnect migration, idempotency & closed-shift protection", TestOffline04_OfflineShiftOpenMovementsReconnectIdempotentSync);
+        await RunTestAsync("OFFLINE-05. Offline Security Fail-Closed: ShiftVerificationIssue matrix, 401/403/423 non-bypass, dup/conflict OPEN rows & expired license", TestOffline05_SecurityFailClosedAndErrorClassification);
+        await RunTestAsync("WM-01. Offline Weight-Based Modifier Loading, Reverse DisplayOrder, ProductId Scoping & Empty Fallback", TestWeightModifiers01_OfflineModifierLoadingAndOrdering);
+        await RunTestAsync("WM-02. Regular Multi-Select Modifiers, Weight Complimentary Thresholds, Preview Alignment & RemoveItem Isolation", TestWeightModifiers02_CartPricingComplimentaryAndRemoveIsolation);
+        await RunTestAsync("WM-03. Offline Weight & Modifier Sale Persistence, App Restart Recovery & Reconnect Sync", TestWeightModifiers03_OfflinePersistenceRestartRecoveryAndReconnectSync);
+        await RunTestAsync("WM-04. Online ProductModifiersController & Offline ReferenceDataSync Parity", TestWeightModifiers04_OnlineOfflineModifierParity);
+        await RunTestAsync("WM-05. CartItem Quantity & Product Card Badge Formatting with Precision Preservation", TestWeightModifiers05_QuantityAndBadgeFormatting);
+        await RunTestAsync("RCPT-QTY-01. Weight-Based Only Receipt Formatting & Legacy Null-Pricing Fallback", TestReceiptMixed01_WeightBasedOnlyAndLegacyFallback);
+        await RunTestAsync("RCPT-QTY-02. Regular Products Only: Configured UOM vs Null UOM (No Hardcoded 'pc')", TestReceiptMixed02_RegularConfiguredAndNullUom);
+        await RunTestAsync("RCPT-QTY-03. Mixed Weight-Based + Regular Items, Total Items & Total Weight", TestReceiptMixed03_MixedWeightBasedAndRegular);
+        await RunTestAsync("RCPT-QTY-04. Multiple Weight-Based Products: Same Unit Sum & Mixed Units Separate", TestReceiptMixed04_MultipleWeightSameAndIncompatibleUnits);
+        await RunTestAsync("RCPT-QTY-05. Weight Mode vs Amount Mode Exact LineTotal & Unrounded Summation", TestReceiptMixed05_WeightModeVsAmountModeAndUnroundedSummation);
+        await RunTestAsync("RCPT-QTY-06. Split Payment End-to-End Offline Checkout & Receipt Recovery Parity", TestReceiptMixed06_SplitPaymentEndToEndOfflineCheckoutAndRecovery);
+        await RunTestAsync("RCPT-QTY-07. Complimentary Items & Long Product Names Wrapping/Alignment on 58mm & 80mm", TestReceiptMixed07_ComplimentaryLongNamesWrappingAndAlignment58And80Mm);
+        await RunTestAsync("RCPT-QTY-08. Online Reprint (ReceiptService) & Offline DB-Mapped Reprint Parity", TestReceiptMixed08_OnlineReprintAndOfflineReprintParity);
+        await RunTestAsync("WM-COMP-01. ReceiptPresentationHelper.ShouldShowFreeModifierLabel Truth Table", TestWeightComplimentary01_ShouldShowFreeModifierLabelTruthTable);
+        await RunTestAsync("WM-COMP-02. CartService Weight-Based Unlinked & Linked Complimentary Modifiers + Note Isolation", TestWeightComplimentary02_CartWeightModifiersAndUpdateNotesNoCollapse);
+        await RunTestAsync("WM-COMP-03. Receipt, ESC/POS 58mm/80mm, Prep Tickets & Offline Checkout Pipeline for Unlinked/Linked Weight Complimentary Items", TestWeightComplimentary03_ReceiptPrepTicketsAndOfflineCheckoutPipeline);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
@@ -1326,5 +1407,2467 @@ public static partial class Program
         {
             POS.Shared.Services.BusinessDayClock.ResetProviders();
         }
+    }
+
+    private static async Task TestModifierOption_NonInventoryModifier()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            db.Categories.Add(new Category { CategoryId = 1, Name = "Food" });
+            db.InvoiceSequences.Add(new InvoiceSequence { TerminalId = 1, SeriesCode = "OFF", Prefix = "OFF-", StartingNumber = 1, EndingNumber = 1000, LastIssuedNumber = 0 });
+            var p1 = new Product { ProductId = 10, CategoryId = 1, Name = "Burger", Price = 100m, ProductType = "Standard", IsActive = true };
+            db.Products.Add(p1);
+            db.BranchInventories.Add(new BranchInventory { BranchId = 1, ProductId = 10, StockQuantity = 10, LastUpdated = DateTime.UtcNow });
+
+            var mg = new ModifierGroup { ModifierGroupId = 1, Name = "Spice Level", IsActive = true };
+            db.ModifierGroups.Add(mg);
+            var mo = new ModifierOption { ModifierOptionId = 1, ModifierGroupId = 1, ProductId = null, Name = "Extra Spicy", Price = 10m, IsActive = true };
+            db.ModifierOptions.Add(mo);
+            await db.SaveChangesAsync();
+
+            var controller = new OfflineSyncController(db);
+            Authenticate(controller);
+            var req = new OfflineTransactionSyncRequest
+            {
+                LocalTransactionId = "TX-MOD-NONINV",
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                DeviceIdentifier = "TEST",
+                OrderNumber = "POS01-000001",
+                InvoiceNumber = "OFF-0000001",
+                PayloadHash = "hash-noninv",
+                TransactionDate = DateTime.UtcNow,
+                Subtotal = 110m,
+                TotalAmount = 110m,
+                VatableSales = 110m,
+                Items = new List<OfflineTransactionItemDto>
+                {
+                    new()
+                    {
+                        ProductId = 10,
+                        ProductName = "Burger",
+                        Quantity = 1m,
+                        UnitPrice = 110m,
+                        LineTotal = 110m,
+                        Modifiers = new List<OfflineModifierDto>
+                        {
+                            new() { OptionId = 1, ProductId = null, Name = "Extra Spicy", AdditionalPrice = 10m }
+                        }
+                    }
+                },
+                Payments = new List<OfflinePaymentDto>
+                {
+                    new() { Amount = 110m, TenderedAmount = 110m, ChangeAmount = 0m, PaymentMethod = "CASH", PaidAt = DateTime.UtcNow }
+                }
+            };
+
+            var syncRes = await controller.SyncTransaction(req);
+            Assert(syncRes.Result is OkObjectResult, "Syncing non-inventory modifier transaction must succeed.");
+
+            var savedMod = await db.OrderItemModifiers.FirstOrDefaultAsync(m => m.ModifierOptionId == 1);
+            Assert(savedMod != null, "OrderItemModifier must be persisted.");
+            Assert(savedMod!.ProductId == null, "Non-inventory modifier OrderItemModifier.ProductId must be null.");
+
+            var burgerInv = await db.BranchInventories.FirstOrDefaultAsync(bi => bi.BranchId == 1 && bi.ProductId == 10);
+            Assert(burgerInv != null && burgerInv.StockQuantity == 9, "Burger inventory must decrease from 10 to 9.");
+
+            var adjustments = await db.StockAdjustments.ToListAsync();
+            Assert(adjustments.Count == 1, "Only 1 StockAdjustment must exist for the parent product.");
+            Assert(adjustments[0].ProductId == 10, "StockAdjustment must be for Product 10.");
+        }
+    }
+
+    private static async Task TestModifierOption_LinkedProductInventoryDeduction()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            db.Categories.Add(new Category { CategoryId = 1, Name = "Food" });
+            db.InvoiceSequences.Add(new InvoiceSequence { TerminalId = 1, SeriesCode = "OFF", Prefix = "OFF-", StartingNumber = 1, EndingNumber = 1000, LastIssuedNumber = 0 });
+            var p1 = new Product { ProductId = 20, CategoryId = 1, Name = "Lechon", Price = 950m, ProductType = "Standard", PricingMethod = "WeightBased", IsActive = true };
+            var p2 = new Product { ProductId = 21, CategoryId = 1, Name = "Coke 330ml", Price = 50m, ProductType = "Standard", PricingMethod = "Fixed", IsActive = true };
+            db.Products.AddRange(p1, p2);
+
+            db.BranchInventories.Add(new BranchInventory { BranchId = 1, ProductId = 20, StockQuantity = 5, LastUpdated = DateTime.UtcNow });
+            db.BranchInventories.Add(new BranchInventory { BranchId = 1, ProductId = 21, StockQuantity = 20, LastUpdated = DateTime.UtcNow });
+
+            var mg = new ModifierGroup { ModifierGroupId = 2, Name = "Beverage Inclusion", IsActive = true };
+            db.ModifierGroups.Add(mg);
+            var mo = new ModifierOption { ModifierOptionId = 2, ModifierGroupId = 2, ProductId = 21, Name = "Coke 330ml", Price = 0m, IsActive = true };
+            db.ModifierOptions.Add(mo);
+            await db.SaveChangesAsync();
+
+            var controller = new OfflineSyncController(db);
+            Authenticate(controller);
+            var req = new OfflineTransactionSyncRequest
+            {
+                LocalTransactionId = "TX-MOD-LINKED",
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                DeviceIdentifier = "TEST",
+                OrderNumber = "POS01-000002",
+                InvoiceNumber = "OFF-0000002",
+                PayloadHash = "hash-linked",
+                TransactionDate = DateTime.UtcNow,
+                Subtotal = 950m,
+                TotalAmount = 950m,
+                VatableSales = 950m,
+                Items = new List<OfflineTransactionItemDto>
+                {
+                    new()
+                    {
+                        ProductId = 20,
+                        ProductName = "Lechon",
+                        Quantity = 1m,
+                        UnitPrice = 950m,
+                        LineTotal = 950m,
+                        PricingMethod = "WeightBased",
+                        Modifiers = new List<OfflineModifierDto>
+                        {
+                            new() { OptionId = 2, ProductId = 21, Name = "Coke 330ml", AdditionalPrice = 0m }
+                        }
+                    }
+                },
+                Payments = new List<OfflinePaymentDto>
+                {
+                    new() { Amount = 950m, TenderedAmount = 950m, ChangeAmount = 0m, PaymentMethod = "CASH", PaidAt = DateTime.UtcNow }
+                }
+            };
+
+            var syncRes = await controller.SyncTransaction(req);
+            Assert(syncRes.Result is OkObjectResult, "Syncing linked modifier transaction must succeed.");
+
+            var savedMod = await db.OrderItemModifiers.FirstOrDefaultAsync(m => m.ModifierOptionId == 2);
+            Assert(savedMod != null, "OrderItemModifier must be persisted.");
+            Assert(savedMod!.ProductId == 21, "OrderItemModifier.ProductId must be 21.");
+
+            var lechonInv = await db.BranchInventories.FirstOrDefaultAsync(bi => bi.BranchId == 1 && bi.ProductId == 20);
+            Assert(lechonInv != null && lechonInv.StockQuantity == 4, "Lechon inventory must decrease from 5 to 4.");
+
+            var cokeInv = await db.BranchInventories.FirstOrDefaultAsync(bi => bi.BranchId == 1 && bi.ProductId == 21);
+            Assert(cokeInv != null && cokeInv.StockQuantity == 19, "Coke inventory must decrease from 20 to 19.");
+
+            var adjustments = await db.StockAdjustments.OrderBy(a => a.StockAdjustmentId).ToListAsync();
+            Assert(adjustments.Count == 2, "Exactly 2 StockAdjustment records must exist: 1 for Lechon and 1 for Coke.");
+            Assert(adjustments.Any(a => a.ProductId == 20 && a.Quantity == 1), "StockAdjustment must exist for Lechon.");
+            Assert(adjustments.Any(a => a.ProductId == 21 && a.Quantity == 1 && a.Reason.Contains("Modifier")), "StockAdjustment must exist for Coke with modifier reason.");
+        }
+    }
+
+    private static async Task TestModifierOption_InvalidProductRejected()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            db.Categories.Add(new Category { CategoryId = 1, Name = "Food" });
+            var mg = new ModifierGroup { ModifierGroupId = 3, Name = "Add-ons", IsActive = true };
+            db.ModifierGroups.Add(mg);
+
+            var inactiveProd = new Product { ProductId = 30, CategoryId = 1, Name = "Discontinued Drink", Price = 40m, ProductType = "Standard", IsActive = false };
+            var deletedProd = new Product { ProductId = 31, CategoryId = 1, Name = "Deleted Item", Price = 50m, ProductType = "Standard", IsActive = true, IsDeleted = true };
+            db.Products.AddRange(inactiveProd, deletedProd);
+            await db.SaveChangesAsync();
+
+            var controller = new ModifierOptionsController(db);
+            controller.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "admin"),
+                        new Claim(ClaimTypes.Role, "Admin")
+                    }, "TestAuth"))
+                }
+            };
+
+            // 1. Non-existent product ID
+            var resNonExistent = await controller.CreateOption(new ModifierOptionDto
+            {
+                ModifierGroupId = 3,
+                ProductId = 9999,
+                Name = "Invalid Option",
+                Price = 10m
+            });
+            Assert(resNonExistent.Result is BadRequestObjectResult, "Creating ModifierOption with non-existent ProductId must return BadRequest.");
+
+            // 2. Inactive product ID
+            var resInactive = await controller.CreateOption(new ModifierOptionDto
+            {
+                ModifierGroupId = 3,
+                ProductId = 30,
+                Name = "Inactive Product Option",
+                Price = 10m
+            });
+            Assert(resInactive.Result is BadRequestObjectResult, "Creating ModifierOption with inactive ProductId must return BadRequest.");
+
+            // 3. Deleted product ID
+            var resDeleted = await controller.CreateOption(new ModifierOptionDto
+            {
+                ModifierGroupId = 3,
+                ProductId = 31,
+                Name = "Deleted Product Option",
+                Price = 10m
+            });
+            Assert(resDeleted.Result is BadRequestObjectResult, "Creating ModifierOption with deleted ProductId must return BadRequest.");
+
+            // 4. Valid active product ID succeeds
+            var activeProd = new Product { ProductId = 32, CategoryId = 1, Name = "Available Drink", Price = 40m, ProductType = "Standard", IsActive = true };
+            db.Products.Add(activeProd);
+            await db.SaveChangesAsync();
+
+            var resSuccess = await controller.CreateOption(new ModifierOptionDto
+            {
+                ModifierGroupId = 3,
+                ProductId = 32,
+                Name = "Available Drink",
+                Price = 0m
+            });
+            Assert(resSuccess.Result is OkObjectResult, "Creating ModifierOption with active ProductId must return OkObjectResult.");
+            var createdDto = (ModifierOptionDto)((OkObjectResult)resSuccess.Result!).Value!;
+            Assert(createdDto.ProductId == 32, "Created DTO must retain ProductId = 32.");
+            Assert(createdDto.ProductName == "Available Drink", "Created DTO must retain ProductName.");
+        }
+    }
+
+    private static Task TestWeightBased_CalculationsAndComplimentarySets()
+    {
+        decimal pricePerKg = 950.00m;
+
+        // 1. Amount Mode: ₱300
+        decimal amt300 = 300.00m;
+        decimal wt300 = amt300 / pricePerKg; // 0.3157894736842105...
+        int sets300 = (int)Math.Floor(wt300);
+        Assert(sets300 == 0, "₱300 order must yield 0 complimentary sets.");
+        var item300 = new CartItem
+        {
+            ProductId = 20,
+            ProductName = "Lechon",
+            PricingMethod = "WeightBased",
+            BasePrice = pricePerKg,
+            Quantity = wt300,
+            TargetAmount = amt300
+        };
+        Assert(item300.LineTotal == 300.00m, "₱300 Amount Mode line total must be exact ₱300.00.");
+
+        // 2. Weight Mode: 0.99 kg
+        decimal wt099 = 0.99m;
+        int sets099 = (int)Math.Floor(wt099);
+        Assert(sets099 == 0, "0.99 kg must yield 0 complimentary sets.");
+        var item099 = new CartItem
+        {
+            ProductId = 20,
+            ProductName = "Lechon",
+            PricingMethod = "WeightBased",
+            BasePrice = pricePerKg,
+            Quantity = wt099
+        };
+        Assert(item099.LineTotal == 940.50m, "0.99 kg line total must be ₱940.50.");
+
+        // 3. Weight Mode: 1.00 kg
+        decimal wt100 = 1.00m;
+        int sets100 = (int)Math.Floor(wt100);
+        Assert(sets100 == 1, "1.00 kg must yield 1 complimentary set.");
+        var item100 = new CartItem
+        {
+            ProductId = 20,
+            ProductName = "Lechon",
+            PricingMethod = "WeightBased",
+            BasePrice = pricePerKg,
+            Quantity = wt100
+        };
+        Assert(item100.LineTotal == 950.00m, "1.00 kg line total must be ₱950.00.");
+
+        // 4. Weight Mode: 1.50 kg
+        decimal wt150 = 1.50m;
+        int sets150 = (int)Math.Floor(wt150);
+        Assert(sets150 == 1, "1.50 kg must yield 1 complimentary set.");
+        var item150 = new CartItem
+        {
+            ProductId = 20,
+            ProductName = "Lechon",
+            PricingMethod = "WeightBased",
+            BasePrice = pricePerKg,
+            Quantity = wt150
+        };
+        Assert(item150.LineTotal == 1425.00m, "1.50 kg line total must be ₱1,425.00.");
+
+        // 5. Weight Mode: 2.00 kg
+        decimal wt200 = 2.00m;
+        int sets200 = (int)Math.Floor(wt200);
+        Assert(sets200 == 2, "2.00 kg must yield 2 complimentary sets.");
+        var item200 = new CartItem
+        {
+            ProductId = 20,
+            ProductName = "Lechon",
+            PricingMethod = "WeightBased",
+            BasePrice = pricePerKg,
+            Quantity = wt200
+        };
+        Assert(item200.LineTotal == 1900.00m, "2.00 kg line total must be ₱1,900.00.");
+
+        // 6. Amount Mode: ₱1,500
+        decimal amt1500 = 1500.00m;
+        decimal wt1500 = amt1500 / pricePerKg; // 1.578947... kg
+        int sets1500 = (int)Math.Floor(wt1500);
+        Assert(sets1500 == 1, "₱1,500 order must yield 1 complimentary set.");
+        var item1500 = new CartItem
+        {
+            ProductId = 20,
+            ProductName = "Lechon",
+            PricingMethod = "WeightBased",
+            BasePrice = pricePerKg,
+            Quantity = wt1500,
+            TargetAmount = amt1500
+        };
+        Assert(item1500.LineTotal == 1500.00m, "₱1,500 Amount Mode line total must be exact ₱1,500.00.");
+
+        // 7. Amount Mode: ₱2,500
+        decimal amt2500 = 2500.00m;
+        decimal wt2500 = amt2500 / pricePerKg; // 2.631578... kg
+        int sets2500 = (int)Math.Floor(wt2500);
+        Assert(sets2500 == 2, "₱2,500 order must yield 2 complimentary sets.");
+        var item2500 = new CartItem
+        {
+            ProductId = 20,
+            ProductName = "Lechon",
+            PricingMethod = "WeightBased",
+            BasePrice = pricePerKg,
+            Quantity = wt2500,
+            TargetAmount = amt2500
+        };
+        Assert(item2500.LineTotal == 2500.00m, "₱2,500 Amount Mode line total must be exact ₱2,500.00.");
+
+        // 8. Complimentary items financial isolation
+        var compDrink = new CartItem { ProductId = 21, ProductName = "Coke 330ml", BasePrice = 50m, Quantity = 2m, IsComplimentary = true, ParentProductId = 20 };
+        var compAtchara = new CartItem { ProductId = 25, ProductName = "Atchara Cup", BasePrice = 30m, Quantity = 2m, IsComplimentary = true, ParentProductId = 20 };
+        var compSarsa = new CartItem { ProductId = 26, ProductName = "Sarsa Cup", BasePrice = 20m, Quantity = 2m, IsComplimentary = true, ParentProductId = 20 };
+
+        Assert(compDrink.UnitPrice == 0.00m, "Complimentary Drink UnitPrice must be 0.00.");
+        Assert(compDrink.LineTotal == 0.00m, "Complimentary Drink LineTotal must be 0.00.");
+        Assert(compAtchara.UnitPrice == 0.00m, "Complimentary Atchara UnitPrice must be 0.00.");
+        Assert(compAtchara.LineTotal == 0.00m, "Complimentary Atchara LineTotal must be 0.00.");
+        Assert(compSarsa.UnitPrice == 0.00m, "Complimentary Sarsa UnitPrice must be 0.00.");
+        Assert(compSarsa.LineTotal == 0.00m, "Complimentary Sarsa LineTotal must be 0.00.");
+
+        var allItems = new List<CartItem> { item200, compDrink, compAtchara, compSarsa };
+        decimal subtotal = allItems.Sum(i => i.LineTotal);
+        Assert(subtotal == 1900.00m, "Subtotal must remain strictly ₱1,900.00 with complimentary items included.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task TestWeightBased_StationRouting()
+    {
+        var receipt = new ReceiptDto
+        {
+            OrderId = 101,
+            OrderNumber = "POS01-000101",
+            InvoiceNumber = "INV01-000101",
+            OrderType = "DINING",
+            CashierId = "cashier1",
+            TerminalName = "POS-1",
+            CreatedAt = DateTime.UtcNow,
+            Subtotal = 1500.00m,
+            TotalAmount = 1500.00m,
+            Items = new List<OrderItemResponseDto>
+            {
+                new()
+                {
+                    OrderItemId = 1,
+                    ProductId = 20,
+                    ProductName = "Lechon",
+                    Quantity = 1.578947m,
+                    UnitPrice = 950.00m,
+                    LineTotal = 1500.00m,
+                    IsKitchenItem = true,
+                    IsBarItem = false
+                },
+                new()
+                {
+                    OrderItemId = 2,
+                    ProductId = 22,
+                    ProductName = "Sprite 330ml",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    LineTotal = 0.00m,
+                    IsComplimentary = true,
+                    ParentProductId = 20,
+                    IsKitchenItem = false,
+                    IsBarItem = true
+                },
+                new()
+                {
+                    OrderItemId = 3,
+                    ProductId = 25,
+                    ProductName = "Atchara Cup",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    LineTotal = 0.00m,
+                    IsComplimentary = true,
+                    ParentProductId = 20,
+                    IsKitchenItem = true,
+                    IsBarItem = false
+                },
+                new()
+                {
+                    OrderItemId = 4,
+                    ProductId = 26,
+                    ProductName = "Sarsa Cup",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    LineTotal = 0.00m,
+                    IsComplimentary = true,
+                    ParentProductId = 20,
+                    IsKitchenItem = true,
+                    IsBarItem = false
+                }
+            }
+        };
+
+        var tickets = POS.Client.Services.PreparationTicketRouter.GenerateTickets(receipt, "Kitchen-Thermal", "Bar-Thermal");
+        Assert(tickets.Count == 2, "Must generate exactly 2 tickets: 1 for KITCHEN and 1 for BAR.");
+
+        var barTicket = tickets.FirstOrDefault(t => t.Station == "BAR");
+        Assert(barTicket != null, "BAR ticket must exist.");
+        Assert(barTicket!.Items.Count == 1, "BAR ticket must have exactly 1 item (the complimentary Drink).");
+        Assert(barTicket.Items[0].ProductName == "Sprite 330ml", "BAR ticket must contain Sprite 330ml.");
+        Assert(barTicket.Items[0].Quantity == 1.00m, "BAR ticket Drink quantity must be 1.");
+
+        var kitchenTicket = tickets.FirstOrDefault(t => t.Station == "KITCHEN");
+        Assert(kitchenTicket != null, "KITCHEN ticket must exist.");
+        Assert(kitchenTicket!.Items.Count == 3, "KITCHEN ticket must have 3 items (Lechon, Atchara, Sarsa).");
+        Assert(kitchenTicket.Items.Any(i => i.ProductName == "Lechon" && i.Quantity == 1.578947m), "KITCHEN ticket must contain Lechon with exact computed weight.");
+        Assert(kitchenTicket.Items.Any(i => i.ProductName == "Atchara Cup" && i.Quantity == 1.00m), "KITCHEN ticket must contain Atchara with quantity 1.");
+        Assert(kitchenTicket.Items.Any(i => i.ProductName == "Sarsa Cup" && i.Quantity == 1.00m), "KITCHEN ticket must contain Sarsa with quantity 1.");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task TestWeightBased_ReceiptFormatting()
+    {
+        var receipt = new ReceiptDto
+        {
+            OrderId = 101,
+            OrderNumber = "POS01-000101",
+            InvoiceNumber = "INV01-000101",
+            OrderType = "DINING",
+            CashierId = "cashier1",
+            TerminalName = "POS-1",
+            CreatedAt = DateTime.UtcNow,
+            Subtotal = 1500.00m,
+            VatableSales = 1339.29m,
+            VatAmount = 160.71m,
+            TotalAmount = 1500.00m,
+            Items = new List<OrderItemResponseDto>
+            {
+                new()
+                {
+                    OrderItemId = 1,
+                    ProductId = 20,
+                    ProductName = "Lechon",
+                    Quantity = 1.578947m,
+                    UnitPrice = 950.00m,
+                    LineTotal = 1500.00m
+                },
+                new()
+                {
+                    OrderItemId = 2,
+                    ProductId = 22,
+                    ProductName = "Sprite 330ml",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    LineTotal = 0.00m,
+                    IsComplimentary = true,
+                    ParentProductId = 20
+                },
+                new()
+                {
+                    OrderItemId = 3,
+                    ProductId = 25,
+                    ProductName = "Atchara Cup",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    LineTotal = 0.00m,
+                    IsComplimentary = true,
+                    ParentProductId = 20
+                },
+                new()
+                {
+                    OrderItemId = 4,
+                    ProductId = 26,
+                    ProductName = "Sarsa Cup",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    LineTotal = 0.00m,
+                    IsComplimentary = true,
+                    ParentProductId = 20
+                }
+            },
+            Payments = new List<PaymentResponseDto>
+            {
+                new() { PaymentMethod = "CASH", Amount = 1500.00m, AmountTendered = 1500.00m, ChangeAmount = 0m }
+            }
+        };
+
+        var html = POS.Client.Services.ReceiptHtmlFormatter.Format(receipt);
+        Assert(html.Contains("LECHON", StringComparison.OrdinalIgnoreCase), "Receipt must list Lechon.");
+        Assert(html.Contains("Sprite 330ml [COMPLIMENTARY]", StringComparison.OrdinalIgnoreCase), "Receipt must label complimentary Sprite with [COMPLIMENTARY].");
+        Assert(html.Contains("Atchara Cup [COMPLIMENTARY]", StringComparison.OrdinalIgnoreCase), "Receipt must label complimentary Atchara with [COMPLIMENTARY].");
+        Assert(html.Contains("Sarsa Cup [COMPLIMENTARY]", StringComparison.OrdinalIgnoreCase), "Receipt must label complimentary Sarsa with [COMPLIMENTARY].");
+        Assert(html.Contains("1,500.00"), "Receipt must show Subtotal and Total as 1,500.00.");
+
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestWeightBased_OfflineSyncAndInventory()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            db.Categories.Add(new Category { CategoryId = 1, Name = "Food" });
+            db.InvoiceSequences.Add(new InvoiceSequence { TerminalId = 1, SeriesCode = "OFF", Prefix = "OFF-", StartingNumber = 1, EndingNumber = 1000, LastIssuedNumber = 0 });
+
+            var pLechon = new Product { ProductId = 20, CategoryId = 1, Name = "Lechon", Price = 950m, ProductType = "Standard", PricingMethod = "WeightBased", IsActive = true };
+            var pSprite = new Product { ProductId = 22, CategoryId = 1, Name = "Sprite 330ml", Price = 50m, ProductType = "Standard", PricingMethod = "Fixed", IsActive = true };
+            var pAtchara = new Product { ProductId = 25, CategoryId = 1, Name = "Atchara Cup", Price = 30m, ProductType = "Standard", PricingMethod = "Fixed", IsActive = true };
+            var pSarsa = new Product { ProductId = 26, CategoryId = 1, Name = "Sarsa Cup", Price = 20m, ProductType = "Standard", PricingMethod = "Fixed", IsActive = true };
+            db.Products.AddRange(pLechon, pSprite, pAtchara, pSarsa);
+
+            db.BranchInventories.Add(new BranchInventory { BranchId = 1, ProductId = 20, StockQuantity = 10, LastUpdated = DateTime.UtcNow });
+            db.BranchInventories.Add(new BranchInventory { BranchId = 1, ProductId = 22, StockQuantity = 20, LastUpdated = DateTime.UtcNow });
+            db.BranchInventories.Add(new BranchInventory { BranchId = 1, ProductId = 25, StockQuantity = 30, LastUpdated = DateTime.UtcNow });
+            db.BranchInventories.Add(new BranchInventory { BranchId = 1, ProductId = 26, StockQuantity = 40, LastUpdated = DateTime.UtcNow });
+
+            var mg = new ModifierGroup { ModifierGroupId = 5, Name = "Complimentary Drink", IsActive = true };
+            db.ModifierGroups.Add(mg);
+            var mo = new ModifierOption { ModifierOptionId = 50, ModifierGroupId = 5, ProductId = 22, Name = "Sprite 330ml", Price = 0m, IsActive = true };
+            db.ModifierOptions.Add(mo);
+            await db.SaveChangesAsync();
+
+            var controller = new OfflineSyncController(db);
+            Authenticate(controller);
+
+            // Sale: 2.0 kg Lechon (2 sets of freebies)
+            var req = new OfflineTransactionSyncRequest
+            {
+                LocalTransactionId = "TX-WB-SYNC-01",
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                DeviceIdentifier = "TEST",
+                OrderNumber = "POS01-000088",
+                InvoiceNumber = "OFF-0000088",
+                PayloadHash = "hash-wb-01",
+                TransactionDate = DateTime.UtcNow,
+                Subtotal = 1900m,
+                TotalAmount = 1900m,
+                VatableSales = 1696.43m,
+                VatAmount = 203.57m,
+                Items = new List<OfflineTransactionItemDto>
+                {
+                    new()
+                    {
+                        ProductId = 20,
+                        ProductName = "Lechon",
+                        Quantity = 2.00m,
+                        UnitPrice = 950m,
+                        LineTotal = 1900m,
+                        PricingMethod = "WeightBased",
+                        Modifiers = new List<OfflineModifierDto>
+                        {
+                            new() { OptionId = 50, ProductId = 22, Name = "Sprite 330ml", AdditionalPrice = 0m }
+                        }
+                    },
+                    new()
+                    {
+                        ProductId = 22,
+                        ProductName = "Sprite 330ml",
+                        Quantity = 2.00m,
+                        UnitPrice = 0m,
+                        LineTotal = 0m,
+                        IsComplimentary = true,
+                        ParentProductId = 20
+                    },
+                    new()
+                    {
+                        ProductId = 25,
+                        ProductName = "Atchara Cup",
+                        Quantity = 2.00m,
+                        UnitPrice = 0m,
+                        LineTotal = 0m,
+                        IsComplimentary = true,
+                        ParentProductId = 20
+                    },
+                    new()
+                    {
+                        ProductId = 26,
+                        ProductName = "Sarsa Cup",
+                        Quantity = 2.00m,
+                        UnitPrice = 0m,
+                        LineTotal = 0m,
+                        IsComplimentary = true,
+                        ParentProductId = 20
+                    }
+                },
+                Payments = new List<OfflinePaymentDto>
+                {
+                    new() { Amount = 1900m, TenderedAmount = 1900m, ChangeAmount = 0m, PaymentMethod = "CASH", PaidAt = DateTime.UtcNow }
+                }
+            };
+
+            var syncRes = await controller.SyncTransaction(req);
+            Assert(syncRes.Result is OkObjectResult, "Syncing weight-based transaction with complimentary items must succeed.");
+
+            // Verify inventory deductions
+            var lechonInv = await db.BranchInventories.FirstOrDefaultAsync(bi => bi.BranchId == 1 && bi.ProductId == 20);
+            Assert(lechonInv != null && lechonInv.StockQuantity == 8, "Lechon stock must decrease from 10 to 8.");
+
+            var spriteInv = await db.BranchInventories.FirstOrDefaultAsync(bi => bi.BranchId == 1 && bi.ProductId == 22);
+            Assert(spriteInv != null && spriteInv.StockQuantity == 18, "Sprite stock must decrease from 20 to 18 (deducted exactly once, no double-deduction).");
+
+            var atcharaInv = await db.BranchInventories.FirstOrDefaultAsync(bi => bi.BranchId == 1 && bi.ProductId == 25);
+            Assert(atcharaInv != null && atcharaInv.StockQuantity == 28, "Atchara stock must decrease from 30 to 28.");
+
+            var sarsaInv = await db.BranchInventories.FirstOrDefaultAsync(bi => bi.BranchId == 1 && bi.ProductId == 26);
+            Assert(sarsaInv != null && sarsaInv.StockQuantity == 38, "Sarsa stock must decrease from 40 to 38.");
+
+            // Verify persisted OrderItems
+            var items = await db.OrderItems.Where(i => i.Order.InvoiceNumber == "OFF-0000088").ToListAsync();
+            Assert(items.Count == 4, "Must persist 4 OrderItems.");
+            var lechonSaved = items.First(i => i.ProductId == 20);
+            Assert(lechonSaved.Quantity == 2.00m && lechonSaved.LineTotal == 1900m && lechonSaved.PricingMethod == "WeightBased", "Lechon saved properly.");
+
+            var spriteSaved = items.First(i => i.ProductId == 22);
+            Assert(spriteSaved.IsComplimentary && spriteSaved.ParentProductId == 20 && spriteSaved.LineTotal == 0m, "Complimentary Sprite saved properly.");
+        }
+    }
+
+    private static Task TestWeightBased_DiscountCalculationService()
+    {
+        var calculator = new POS.Shared.Services.LocalDiscountCalculationService();
+
+        // ₱1,500 Amount Mode order with complimentary Drink, Atchara, Sarsa
+        var req = new OrderCalculationRequestDto
+        {
+            BranchTaxType = "VAT-Registered",
+            DiscountCode = "NONE",
+            Items = new List<CartItemCalculationDto>
+            {
+                new()
+                {
+                    ProductId = 20,
+                    ProductName = "Lechon",
+                    Quantity = 1.578947m,
+                    UnitPrice = 950.00m,
+                    TargetAmount = 1500.00m,
+                    TaxName = "VATable"
+                },
+                new()
+                {
+                    ProductId = 22,
+                    ProductName = "Sprite 330ml",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    IsComplimentary = true,
+                    TaxName = "VATable"
+                },
+                new()
+                {
+                    ProductId = 25,
+                    ProductName = "Atchara Cup",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    IsComplimentary = true,
+                    TaxName = "VATable"
+                },
+                new()
+                {
+                    ProductId = 26,
+                    ProductName = "Sarsa Cup",
+                    Quantity = 1.00m,
+                    UnitPrice = 0.00m,
+                    IsComplimentary = true,
+                    TaxName = "VATable"
+                }
+            }
+        };
+
+        var res = calculator.CalculateOrder(req);
+        Assert(res.Subtotal == 1500.00m, "Subtotal must be ₱1,500.00.");
+        Assert(res.TotalAmount == 1500.00m, "TotalAmount must be ₱1,500.00.");
+        Assert(res.VatableSales == 1339.29m, "Vatable sales = 1500 / 1.12 = 1339.29.");
+        Assert(res.VatAmount == 160.71m, "VAT amount = 1500 - 1339.29 = 160.71.");
+
+        // Now apply Senior Citizen (SC) 20% discount
+        req.DiscountCode = "SC";
+        var scRes = calculator.CalculateOrder(req);
+        Assert(scRes.DiscountAmount == 267.86m, "SC Discount amount must be ₱267.86.");
+        Assert(scRes.TotalAmount == 1071.43m, "SC TotalAmount must be ₱1,071.43.");
+        Assert(scRes.VatExemptSales == 1339.29m, "SC VatExemptSales must be ₱1,339.29.");
+        Assert(scRes.VatAmount == 0.00m, "SC VatAmount must be ₱0.00.");
+
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestWeightBased_ProductPricingMethodPersistence()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            db.Categories.Add(new Category { CategoryId = 1, Name = "Meat" });
+            await db.SaveChangesAsync();
+
+            var env = new TestWebHostEnvironment();
+            var controller = new ProductsController(db, env);
+            controller.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "admin"),
+                        new Claim(ClaimTypes.Role, "Admin")
+                    }, "TestAuth"))
+                }
+            };
+
+            // 1. Create product with PricingMethod = "WeightBased"
+            var createDto = new ProductDto
+            {
+                CategoryId = 1,
+                Name = "Roasted Lechon",
+                Price = 950.00m,
+                CostPrice = 600.00m,
+                ProductType = "Standard",
+                PricingMethod = "WeightBased",
+                UnitOfMeasure = "kg",
+                UnitValue = 1.0m,
+                IsActive = true
+            };
+
+            var createRes = await controller.CreateProduct(createDto);
+            Assert(createRes.Result is CreatedAtActionResult, "CreateProduct must return CreatedAtActionResult.");
+            var createdDto = (createRes.Result as CreatedAtActionResult)!.Value as ProductDto;
+            Assert(createdDto != null && createdDto.PricingMethod == "WeightBased", "Created product must have PricingMethod = 'WeightBased'.");
+
+            // Verify database entity directly
+            var dbProduct = await db.Products.FindAsync(createdDto!.ProductId);
+            Assert(dbProduct != null, "Product must be persisted in database.");
+            Assert(dbProduct!.PricingMethod == "WeightBased", "Database entity PricingMethod must be 'WeightBased'.");
+
+            // 2. Update product back to "Fixed"
+            createdDto.PricingMethod = "Fixed";
+            var updateRes = await controller.UpdateProduct(createdDto.ProductId, createdDto);
+            Assert(updateRes is NoContentResult, "UpdateProduct must return NoContent.");
+
+            var reloaded = await db.Products.FindAsync(createdDto.ProductId);
+            Assert(reloaded!.PricingMethod == "Fixed", "Updated database entity PricingMethod must be 'Fixed'.");
+
+            // 3. Update product back to "WeightBased"
+            createdDto.PricingMethod = "WeightBased";
+            await controller.UpdateProduct(createdDto.ProductId, createdDto);
+            var reloaded2 = await db.Products.FindAsync(createdDto.ProductId);
+            Assert(reloaded2!.PricingMethod == "WeightBased", "Updated database entity PricingMethod must be 'WeightBased'.");
+
+            // 4. Test GetProducts returns correct PricingMethod
+            var getRes = await controller.GetProducts();
+            var okResult = getRes.Result as OkObjectResult;
+            Assert(okResult != null, "GetProducts must return OkObjectResult.");
+            var productsList = okResult!.Value as List<ProductDto>;
+            var lechon = productsList?.FirstOrDefault(p => p.ProductId == createdDto.ProductId);
+            Assert(lechon != null && lechon.PricingMethod == "WeightBased", "GetProducts DTO must return PricingMethod = 'WeightBased'.");
+        }
+    }
+
+    private static async Task TestCustomSorting_CategoriesAndProducts()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            var catController = new CategoriesController(db);
+            catController.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "admin"),
+                        new Claim(ClaimTypes.Role, "Admin"),
+                        new Claim("terminal_id", "1"),
+                        new Claim("branch_id", "1")
+                    }, "TestAuth"))
+                }
+            };
+
+            var env = new TestWebHostEnvironment();
+            var prodController = new ProductsController(db, env);
+            prodController.ControllerContext = catController.ControllerContext;
+
+            // 1. Create 3 categories with auto-increment DisplayOrder
+            var cat1Res = await catController.CreateCategory(new CategoryDto { Name = "Beverages", ColorHex = "#3B82F6", IsActive = true });
+            var cat1 = ((CreatedAtActionResult)cat1Res.Result!).Value as CategoryDto;
+            Assert(cat1!.DisplayOrder == 1, $"Cat1 DisplayOrder must be 1, got {cat1.DisplayOrder}");
+
+            var cat2Res = await catController.CreateCategory(new CategoryDto { Name = "Main Dishes", ColorHex = "#EF4444", IsActive = true });
+            var cat2 = ((CreatedAtActionResult)cat2Res.Result!).Value as CategoryDto;
+            Assert(cat2!.DisplayOrder == 2, $"Cat2 DisplayOrder must be 2, got {cat2.DisplayOrder}");
+
+            var cat3Res = await catController.CreateCategory(new CategoryDto { Name = "Desserts", ColorHex = "#10B981", IsActive = true });
+            var cat3 = ((CreatedAtActionResult)cat3Res.Result!).Value as CategoryDto;
+            Assert(cat3!.DisplayOrder == 3, $"Cat3 DisplayOrder must be 3, got {cat3.DisplayOrder}");
+
+            // 2. Reorder categories: Desserts (3), Beverages (1), Main Dishes (2)
+            var reorderCatRes = await catController.ReorderCategories(new List<int> { cat3.CategoryId, cat1.CategoryId, cat2.CategoryId });
+            Assert(reorderCatRes is OkResult, "ReorderCategories must return OkResult.");
+
+            var catListRes = await catController.GetCategories();
+            var catList = ((OkObjectResult)catListRes.Result!).Value as List<CategoryDto>;
+            Assert(catList != null && catList.Count >= 3, "GetCategories must return at least 3 categories.");
+            var myCats = catList!.Where(c => c.CategoryId == cat3.CategoryId || c.CategoryId == cat1.CategoryId || c.CategoryId == cat2.CategoryId).ToList();
+            Assert(myCats[0].CategoryId == cat3.CategoryId && myCats[0].DisplayOrder == 1, "First category must be Desserts with DisplayOrder 1.");
+            Assert(myCats[1].CategoryId == cat1.CategoryId && myCats[1].DisplayOrder == 2, "Second category must be Beverages with DisplayOrder 2.");
+            Assert(myCats[2].CategoryId == cat2.CategoryId && myCats[2].DisplayOrder == 3, "Third category must be Main Dishes with DisplayOrder 3.");
+
+            // 3. Create products in Beverages (cat1) and Desserts (cat3)
+            var p1Res = await prodController.CreateProduct(new ProductDto { CategoryId = cat1.CategoryId, Name = "Iced Tea", Price = 50, CostPrice = 20, ProductType = "Standard", IsActive = true });
+            var p1 = ((CreatedAtActionResult)p1Res.Result!).Value as ProductDto;
+            Assert(p1!.DisplayOrder == 1, $"Product 1 in Cat1 must have DisplayOrder 1, got {p1.DisplayOrder}");
+
+            var p2Res = await prodController.CreateProduct(new ProductDto { CategoryId = cat1.CategoryId, Name = "Lemonade", Price = 60, CostPrice = 25, ProductType = "Standard", IsActive = true });
+            var p2 = ((CreatedAtActionResult)p2Res.Result!).Value as ProductDto;
+            Assert(p2!.DisplayOrder == 2, $"Product 2 in Cat1 must have DisplayOrder 2, got {p2.DisplayOrder}");
+
+            var p3Res = await prodController.CreateProduct(new ProductDto { CategoryId = cat1.CategoryId, Name = "Mineral Water", Price = 30, CostPrice = 10, ProductType = "Standard", IsActive = true });
+            var p3 = ((CreatedAtActionResult)p3Res.Result!).Value as ProductDto;
+            Assert(p3!.DisplayOrder == 3, $"Product 3 in Cat1 must have DisplayOrder 3, got {p3.DisplayOrder}");
+
+            var p4Res = await prodController.CreateProduct(new ProductDto { CategoryId = cat3.CategoryId, Name = "Halo-Halo", Price = 120, CostPrice = 60, ProductType = "Standard", IsActive = true });
+            var p4 = ((CreatedAtActionResult)p4Res.Result!).Value as ProductDto;
+            Assert(p4!.DisplayOrder == 1, $"Product 4 in Cat3 must have DisplayOrder 1, got {p4.DisplayOrder}");
+
+            // 4. Reorder products in Beverages (cat1): Mineral Water (3), Iced Tea (1), Lemonade (2)
+            var reorderProdRes = await prodController.ReorderProducts(cat1.CategoryId, new List<int> { p3.ProductId, p1.ProductId, p2.ProductId });
+            Assert(reorderProdRes is OkResult, "ReorderProducts must return OkResult.");
+
+            var prodListRes = await prodController.GetProducts();
+            var prodList = ((OkObjectResult)prodListRes.Result!).Value as List<ProductDto>;
+            var cat1Prods = prodList!.Where(p => p.CategoryId == cat1.CategoryId).ToList();
+            Assert(cat1Prods.Count == 3, "Cat1 must have 3 products.");
+            Assert(cat1Prods[0].ProductId == p3.ProductId && cat1Prods[0].DisplayOrder == 1, "First Cat1 prod must be Mineral Water with DisplayOrder 1.");
+            Assert(cat1Prods[1].ProductId == p1.ProductId && cat1Prods[1].DisplayOrder == 2, "Second Cat1 prod must be Iced Tea with DisplayOrder 2.");
+            Assert(cat1Prods[2].ProductId == p2.ProductId && cat1Prods[2].DisplayOrder == 3, "Third Cat1 prod must be Lemonade with DisplayOrder 3.");
+
+            // Verify Cat3 product order untouched
+            var cat3Prods = prodList.Where(p => p.CategoryId == cat3.CategoryId).ToList();
+            Assert(cat3Prods.Count == 1 && cat3Prods[0].ProductId == p4.ProductId && cat3Prods[0].DisplayOrder == 1, "Cat3 products must remain unaffected.");
+
+            // 5. Verify Offline Reference Data Controller returns sorted data with DisplayOrder
+            var offlineController = new OfflineReferenceDataController(db);
+            offlineController.ControllerContext = catController.ControllerContext;
+
+            var refDataRes = await offlineController.GetReferenceData(1, null);
+            var okRef = refDataRes.Result as OkObjectResult;
+            Assert(okRef != null, "GetReferenceData must return OkObjectResult.");
+            var refData = okRef!.Value as OfflineReferenceDataResponseDto;
+            Assert(refData != null, "Reference data must not be null.");
+
+            // Check category sorting in offline reference data
+            var refCat3 = refData!.Categories.FirstOrDefault(c => c.CategoryId == cat3.CategoryId);
+            var refCat1 = refData.Categories.FirstOrDefault(c => c.CategoryId == cat1.CategoryId);
+            var refCat2 = refData.Categories.FirstOrDefault(c => c.CategoryId == cat2.CategoryId);
+            Assert(refCat3 != null && refCat3.DisplayOrder == 1, "Offline ref Cat3 DisplayOrder must be 1.");
+            Assert(refCat1 != null && refCat1.DisplayOrder == 2, "Offline ref Cat1 DisplayOrder must be 2.");
+            Assert(refCat2 != null && refCat2.DisplayOrder == 3, "Offline ref Cat2 DisplayOrder must be 3.");
+
+            // Check product sorting in offline reference data
+            var refP3 = refData.Products.FirstOrDefault(p => p.ProductId == p3.ProductId);
+            var refP1 = refData.Products.FirstOrDefault(p => p.ProductId == p1.ProductId);
+            var refP2 = refData.Products.FirstOrDefault(p => p.ProductId == p2.ProductId);
+            Assert(refP3 != null && refP3.DisplayOrder == 1, "Offline ref P3 DisplayOrder must be 1.");
+            Assert(refP1 != null && refP1.DisplayOrder == 2, "Offline ref P1 DisplayOrder must be 2.");
+            Assert(refP2 != null && refP2.DisplayOrder == 3, "Offline ref P2 DisplayOrder must be 3.");
+        }
+    }
+
+    private static async Task TestReceiptLogoManagementAndPrinting()
+    {
+        // 1. Validate ReceiptLogoValidator magic bytes, size limits, and extensions
+        var emptyCheck = POS.Shared.Helpers.ReceiptLogoValidator.Validate(Array.Empty<byte>(), "logo.png");
+        Assert(!emptyCheck.IsValid, "Empty file must be rejected.");
+
+        var spoofedCheck = POS.Shared.Helpers.ReceiptLogoValidator.Validate(Encoding.UTF8.GetBytes("<script>alert(1)</script>"), "logo.png");
+        Assert(!spoofedCheck.IsValid, "Spoofed non-image bytes with .png extension must be rejected.");
+
+        var svgCheck = POS.Shared.Helpers.ReceiptLogoValidator.Validate(Encoding.UTF8.GetBytes("<svg></svg>"), "logo.svg");
+        Assert(!svgCheck.IsValid, "Unsupported .svg extension must be rejected.");
+
+        // Valid 1x1 PNG (67 bytes)
+        byte[] validPng = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
+        var pngCheck = POS.Shared.Helpers.ReceiptLogoValidator.Validate(validPng, "brand-logo.png");
+        Assert(pngCheck.IsValid && pngCheck.MimeType == "image/png" && pngCheck.Width == 1 && pngCheck.Height == 1,
+            "Valid 1x1 PNG must pass validation and extract dimensions.");
+
+        // Valid minimal JPEG with SOF0 header (width=16, height=8)
+        byte[] validJpeg = new byte[]
+        {
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00,
+            0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x08, 0x00, 0x10, 0x01, 0x01, 0x11, 0x00,
+            0xFF, 0xD9
+        };
+        var jpgCheck = POS.Shared.Helpers.ReceiptLogoValidator.Validate(validJpeg, "brand-logo.jpg");
+        Assert(jpgCheck.IsValid && jpgCheck.MimeType == "image/jpeg" && jpgCheck.Width == 16 && jpgCheck.Height == 8,
+            $"Valid JPEG must pass validation and extract dimensions (got Valid={jpgCheck.IsValid}, W={jpgCheck.Width}, H={jpgCheck.Height}).");
+
+        Assert(!POS.Shared.Helpers.ReceiptLogoValidator.IsSafeDataUri("javascript:alert(1)"), "javascript URI must be rejected.");
+        Assert(!POS.Shared.Helpers.ReceiptLogoValidator.IsSafeDataUri("data:image/png;base64,abc\"onerror=\"alert(1)"), "Quotes/XSS in data URI must be rejected.");
+
+        // 2. Test ReceiptBrandingController CRUD, BOLA protection, and fallback preservation
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            db.Branches.Add(new Branch { BranchId = 2, Name = "Branch Two", Code = "BR-02", TaxType = "VAT-Registered", IsActive = true });
+            await db.SaveChangesAsync();
+
+            var env = new TestWebHostEnvironment();
+            var brandingController = new ReceiptBrandingController(db, env);
+
+            // Manager of Branch 1 attempting to modify Branch 2 -> Forbid
+            brandingController.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "manager1"),
+                        new Claim(ClaimTypes.Role, "Manager"),
+                        new Claim("branch_id", "1")
+                    }, "TestAuth"))
+                }
+            };
+            var forbidRes = await brandingController.GetReceiptBranding(2);
+            Assert(forbidRes.Result is ForbidResult, "Manager of Branch 1 must be forbidden from accessing Branch 2 receipt branding.");
+
+            // Admin context
+            var adminContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "admin"),
+                        new Claim(ClaimTypes.Role, "Admin"),
+                        new Claim("branch_id", "1"),
+                        new Claim("terminal_id", "1")
+                    }, "TestAuth"))
+                }
+            };
+            brandingController.ControllerContext = adminContext;
+
+            // Upload valid PNG to Branch 1
+            using var pngStream = new System.IO.MemoryStream(validPng);
+            IFormFile pngFormFile = new FormFile(pngStream, 0, validPng.Length, "file", "store-logo.png");
+            var uploadRes = await brandingController.UploadLogo(1, pngFormFile, applyToAllBranches: false);
+            var uploadOk = uploadRes.Result as OkObjectResult;
+            Assert(uploadOk != null, "Uploading valid PNG logo must return 200 OK.");
+            var uploadDto = uploadOk!.Value as ReceiptBrandingResultDto;
+            Assert(uploadDto != null && uploadDto.Success && uploadDto.Branding != null, "Upload response must include Branding DTO.");
+            Assert(uploadDto!.Branding!.HasLogo && uploadDto.Branding.ReceiptLogoUrl!.StartsWith("/uploads/logos/logo_", StringComparison.Ordinal),
+                "Uploaded logo URL must use safe generated server filename.");
+            Assert(POS.Shared.Helpers.ReceiptLogoValidator.IsSafeDataUri(uploadDto.Branding.ReceiptLogoDataUri),
+                "Upload response must include valid base64 data URI.");
+
+            string firstLogoUrl = uploadDto.Branding.ReceiptLogoUrl!;
+
+            // Attempt invalid upload -> must fail with BadRequest AND preserve firstLogoUrl
+            using var badStream = new System.IO.MemoryStream(Encoding.UTF8.GetBytes("not an image"));
+            IFormFile badFormFile = new FormFile(badStream, 0, badStream.Length, "file", "corrupt.png");
+            var badUploadRes = await brandingController.UploadLogo(1, badFormFile, applyToAllBranches: false);
+            Assert(badUploadRes.Result is BadRequestObjectResult, "Corrupted image upload must return 400 BadRequest.");
+
+            var branchAfterFailedUpload = await db.Branches.AsNoTracking().FirstAsync(b => b.BranchId == 1);
+            Assert(branchAfterFailedUpload.ReceiptLogoUrl == firstLogoUrl, "Existing logo must be preserved when a new upload fails validation.");
+
+            // Verify OfflineReferenceDataController includes ReceiptLogoUrl and ReceiptLogoDataUri
+            var offlineController = new OfflineReferenceDataController(db) { ControllerContext = adminContext };
+            var refDataRes = await offlineController.GetReferenceData(1, null);
+            var refData = ((OkObjectResult)refDataRes.Result!).Value as OfflineReferenceDataResponseDto;
+            Assert(refData != null && refData.Terminal.ReceiptLogoUrl == firstLogoUrl &&
+                   POS.Shared.Helpers.ReceiptLogoValidator.IsSafeDataUri(refData.Terminal.ReceiptLogoDataUri),
+                "OfflineReferenceDataController must return ReceiptLogoUrl and ReceiptLogoDataUri for offline caching.");
+
+            // Verify ReceiptHtmlFormatter renders <img class="receipt-logo"> when logo is configured
+            var sampleReceipt = new ReceiptDto
+            {
+                OrderId = 500,
+                OrderNumber = "ORD-500",
+                InvoiceNumber = "SI-0000500",
+                BranchId = 1,
+                BranchName = "Main Branch",
+                BranchCode = "BR-01",
+                TerminalId = 1,
+                TerminalName = "Counter 1",
+                CashierId = "cashier1",
+                CreatedAt = DateTime.UtcNow,
+                PaidAt = DateTime.UtcNow,
+                Subtotal = 100m,
+                TotalAmount = 100m,
+                ReceiptLogoUrl = refData!.Terminal.ReceiptLogoUrl,
+                ReceiptLogoDataUri = refData.Terminal.ReceiptLogoDataUri,
+                Items = new List<OrderItemResponseDto>
+                {
+                    new() { ProductName = "Coffee", Quantity = 1, UnitPrice = 100m, LineTotal = 100m }
+                },
+                Payments = new List<PaymentResponseDto>
+                {
+                    new() { PaymentMethod = "CASH", Amount = 100m, AmountTendered = 100m, ChangeAmount = 0m }
+                }
+            };
+
+            string htmlWithLogo = POS.Client.Services.ReceiptHtmlFormatter.Format(sampleReceipt);
+            Assert(htmlWithLogo.Contains("img-src data:;", StringComparison.Ordinal), "Receipt HTML CSP must allow data: images.");
+            Assert(htmlWithLogo.Contains("<div class=\"receipt-logo-wrap\"><img class=\"receipt-logo\" src=\"data:image/png;base64,", StringComparison.Ordinal),
+                "Receipt HTML must render centered receipt-logo img at the top of the header.");
+
+            // Remove logo -> verify DB cleared and ReceiptHtmlFormatter omits <img>
+            var removeRes = await brandingController.RemoveLogo(1, applyToAllBranches: true);
+            Assert(removeRes.Result is OkObjectResult, "RemoveLogo must return 200 OK.");
+            var branchAfterRemove = await db.Branches.AsNoTracking().FirstAsync(b => b.BranchId == 1);
+            Assert(string.IsNullOrEmpty(branchAfterRemove.ReceiptLogoUrl), "Branch ReceiptLogoUrl must be null after removal.");
+
+            sampleReceipt.ReceiptLogoUrl = null;
+            sampleReceipt.ReceiptLogoDataUri = null;
+            string htmlWithoutLogo = POS.Client.Services.ReceiptHtmlFormatter.Format(sampleReceipt);
+            Assert(!htmlWithoutLogo.Contains("<img class=\"receipt-logo\"", StringComparison.Ordinal),
+                "Receipt HTML without a configured logo must not render an <img> tag or broken image placeholder.");
+        }
+    }
+
+    private static async Task TestBranchVatDisplayAndLocalBranchSync()
+    {
+        var (conn, db, _) = await CreateTestEnvAsync();
+        using (conn)
+        using (db)
+        {
+            var adminContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "admin"),
+                        new Claim(ClaimTypes.Role, "Admin"),
+                        new Claim("branch_id", "1"),
+                        new Claim("terminal_id", "1")
+                    }, "TestAuth"))
+                }
+            };
+
+            var branchesController = new BranchesController(db) { ControllerContext = adminContext };
+
+            // 1. Default VatDisplay = true on existing Branch 1 and new Branch creation
+            var createRes = await branchesController.CreateBranch(new BranchDto
+            {
+                Name = "Branch No-VAT-Display",
+                Code = "BR-NOVATDISP",
+                TaxType = "VAT-Registered",
+                VatDisplay = false,
+                IsActive = true
+            });
+            var createdBranch = ((OkObjectResult)createRes.Result!).Value as BranchDto;
+            Assert(createdBranch != null && createdBranch.BranchId > 0 && !createdBranch.VatDisplay,
+                "CreateBranch must persist VatDisplay = false when configured.");
+
+            // 2. Update Branch 1 VatDisplay -> false
+            var branch1 = await db.Branches.AsNoTracking().FirstAsync(b => b.BranchId == 1);
+            Assert(branch1.VatDisplay, "Branch 1 must default to VatDisplay = true.");
+
+            var updateRes = await branchesController.UpdateBranch(1, new BranchDto
+            {
+                BranchId = 1,
+                BusinessTypeId = branch1.BusinessTypeId,
+                ServiceModeId = branch1.ServiceModeId,
+                Name = branch1.Name,
+                Code = branch1.Code,
+                Address = branch1.Address,
+                Phone = branch1.Phone,
+                TaxType = branch1.TaxType,
+                VatDisplay = false,
+                IsActive = branch1.IsActive,
+                TrackInventory = branch1.TrackInventory
+            });
+            Assert(updateRes is NoContentResult, "UpdateBranch must return 204 NoContent.");
+
+            var clientCfgRes = await branchesController.GetBranchClientConfig(1);
+            var clientCfg = ((OkObjectResult)clientCfgRes.Result!).Value as OfflineBranchConfigDto;
+            Assert(clientCfg != null && clientCfg.BranchId == 1 && !clientCfg.VatDisplay && clientCfg.TaxType == "VAT-Registered",
+                "GetBranchClientConfig must return updated VatDisplay = false while keeping TaxType = VAT-Registered.");
+
+            // 3. OfflineReferenceDataController returns Branch DTO and Terminal.VatDisplay = false
+            var offlineRefController = new OfflineReferenceDataController(db) { ControllerContext = adminContext };
+            var refRes = await offlineRefController.GetReferenceData(1, null);
+            var refDto = ((OkObjectResult)refRes.Result!).Value as OfflineReferenceDataResponseDto;
+            Assert(refDto != null && refDto.Branch != null && !refDto.Branch.VatDisplay && !refDto.Terminal.VatDisplay,
+                "OfflineReferenceDataController must include Branch config and Terminal.VatDisplay = false.");
+
+            // 4. Online Order creation & ReceiptService: VAT calculation MUST remain intact even when VatDisplay = false!
+            var discountCalc = new POS.Api.Services.DiscountCalculationService();
+            var calcResult = discountCalc.CalculateOrder(new OrderCalculationRequestDto
+            {
+                BranchTaxType = "VAT-Registered",
+                DiscountCode = "NONE",
+                Items = new List<CartItemCalculationDto>
+                {
+                    new() { ProductId = 1, ProductName = "Burger", Quantity = 1, UnitPrice = 112m, TaxName = "VATable" }
+                }
+            });
+            Assert(calcResult.VatableSales == 100.00m && calcResult.VatAmount == 12.00m && calcResult.TotalAmount == 112.00m,
+                "VAT calculation must remain 100.00 Vatable + 12.00 VAT = 112.00 Total regardless of VatDisplay.");
+
+            var order = new Order
+            {
+                OrderNumber = "POS01-000777",
+                InvoiceNumber = "SI-0000777",
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                OrderType = "DINING",
+                Subtotal = 112m,
+                VatableSales = calcResult.VatableSales,
+                VatExemptSales = calcResult.VatExemptSales,
+                ZeroRatedSales = calcResult.ZeroRatedSales,
+                VatAmount = calcResult.VatAmount,
+                DiscountAmount = 0m,
+                TotalAmount = 112m,
+                PaymentStatus = "PAID",
+                OrderStatus = "COMPLETED",
+                CreatedAt = DateTime.UtcNow,
+                InvoiceIssuedAt = DateTime.UtcNow
+            };
+            order.OrderItems.Add(new OrderItem
+            {
+                ProductId = 1,
+                ProductName = "Burger",
+                Quantity = 1,
+                BasePrice = 112m,
+                UnitPrice = 112m,
+                LineTotal = 112m,
+                VatType = "VATABLE",
+                VatAmount = 12m
+            });
+            order.Payments.Add(new Payment
+            {
+                PaymentMethod = "CASH",
+                Amount = 112m,
+                AmountTendered = 112m,
+                ChangeAmount = 0m,
+                PaymentStatus = "PAID",
+                ProcessedBy = "cashier1",
+                PaidAt = DateTime.UtcNow
+            });
+            db.Orders.Add(order);
+            await db.SaveChangesAsync();
+
+            var receiptService = new POS.Api.Services.ReceiptService(db);
+            var receiptFalse = await receiptService.GetReceiptAsync(order.OrderId);
+            Assert(receiptFalse != null && !receiptFalse.VatDisplay && receiptFalse.VatableSales == 100m && receiptFalse.VatAmount == 12m,
+                "ReceiptService must preserve VatableSales (100) and VatAmount (12) on ReceiptDto while setting VatDisplay = false.");
+
+            // 5. Customer-facing ReceiptHtmlFormatter suppresses VAT breakdown when VatDisplay = false, and shows it when true
+            string htmlSuppressed = POS.Client.Services.ReceiptHtmlFormatter.Format(receiptFalse!);
+            Assert(!htmlSuppressed.Contains("Vatable Sales", StringComparison.Ordinal) &&
+                   !htmlSuppressed.Contains("VAT-Exempt Sales", StringComparison.Ordinal) &&
+                   !htmlSuppressed.Contains("Zero-Rated Sales", StringComparison.Ordinal) &&
+                   !htmlSuppressed.Contains("VAT (12%):", StringComparison.Ordinal),
+                "ReceiptHtmlFormatter must hide all VAT breakdown rows when VatDisplay = false.");
+            Assert(htmlSuppressed.Contains("Subtotal", StringComparison.Ordinal) &&
+                   htmlSuppressed.Contains("TOTAL", StringComparison.Ordinal) &&
+                   htmlSuppressed.Contains("112.00", StringComparison.Ordinal),
+                "ReceiptHtmlFormatter must still display Subtotal and TOTAL when VatDisplay = false.");
+
+            receiptFalse!.VatDisplay = true;
+            string htmlDisplayed = POS.Client.Services.ReceiptHtmlFormatter.Format(receiptFalse);
+            Assert(htmlDisplayed.Contains("Vatable Sales", StringComparison.Ordinal) &&
+                   htmlDisplayed.Contains("100.00", StringComparison.Ordinal) &&
+                   htmlDisplayed.Contains("VAT (12%):", StringComparison.Ordinal) &&
+                   htmlDisplayed.Contains("12.00", StringComparison.Ordinal),
+                "ReceiptHtmlFormatter must display Vatable Sales and VAT (12%) when VatDisplay = true.");
+
+            // 6. Local SQLite LocalBranches table creation, backfill, and offline checkout preservation
+            string tempSqlitePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pos_vat_branch_test_{Guid.NewGuid():N}.db");
+            var prevLocalPath = AppContext.GetData("POS.LocalDatabasePath");
+            try
+            {
+                AppContext.SetData("POS.LocalDatabasePath", tempSqlitePath);
+                using (var localDb = new POS.Client.Data.LocalPosDbContext())
+                {
+                    localDb.InitializeDatabase();
+                    localDb.Branches.Add(new POS.Client.Data.LocalBranch
+                    {
+                        BranchId = 1,
+                        Name = "Main Branch",
+                        Code = "BR-01",
+                        TaxType = "VAT-Registered",
+                        VatDisplay = false,
+                        IsActive = true,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                    localDb.TerminalConfigs.Add(new POS.Client.Data.LocalTerminalConfig
+                    {
+                        TerminalId = 1,
+                        OutletId = 1,
+                        OutletName = "Main Counter",
+                        TerminalCode = "T-01",
+                        TerminalName = "POS1",
+                        TerminalIdentifier = "DEV-01",
+                        BranchId = 1,
+                        BranchName = "Main Branch",
+                        BranchCode = "BR-01",
+                        BranchTaxType = "VAT-Registered",
+                        VatDisplay = false,
+                        IsActivated = true,
+                        IsInitialized = true
+                    });
+                    localDb.Products.Add(new POS.Client.Data.LocalProduct
+                    {
+                        ProductId = 1,
+                        CategoryId = 1,
+                        CategoryName = "Meals",
+                        Name = "Burger",
+                        Price = 112m,
+                        TaxName = "VATable",
+                        IsActive = true
+                    });
+                    localDb.InvoiceSequences.Add(new POS.Client.Data.LocalInvoiceSequence
+                    {
+                        SequenceId = 1,
+                        TerminalId = 1,
+                        SeriesCode = "SI",
+                        Prefix = "SI-",
+                        StartingNumber = 1,
+                        EndingNumber = 100,
+                        LastIssuedNumber = 0,
+                        PaddingLength = 7,
+                        IsActive = true
+                    });
+                    localDb.CashDrawerShifts.Add(new POS.Client.Data.LocalCashDrawerShift
+                    {
+                        ShiftId = 1,
+                        BranchId = 1,
+                        TerminalId = 1,
+                        CashierId = "cashier1",
+                        OpeningFloat = 1000m,
+                        ExpectedBalance = 1000m,
+                        OpeningConfirmed = true,
+                        Status = "OPEN",
+                        OpenedAt = DateTime.UtcNow
+                    });
+                    await localDb.SaveChangesAsync();
+
+                    var session = new POS.Client.Services.PosSessionService();
+                    session.SetSession("TEST-TOKEN", "cashier1", "Cashier", new TerminalConfigDto
+                    {
+                        TerminalId = 1,
+                        OutletId = 1,
+                        BranchId = 1,
+                        BranchName = "Main Branch",
+                        BranchCode = "BR-01",
+                        TerminalName = "POS1"
+                    });
+                    await session.RefreshCachedMenuDisplayModeAsync();
+                    Assert(session.Terminal != null && !session.Terminal.VatDisplay && session.Terminal.BranchTaxType == "VAT-Registered",
+                        "PosSessionService.RefreshCachedMenuDisplayModeAsync must load VatDisplay = false and TaxType from LocalBranches.");
+
+                    var offlineCheckout = new POS.Client.Services.OfflineCheckoutService(localDb, session);
+                    var checkoutRes = await offlineCheckout.ProcessOfflineCashSaleAsync(new OrderCreateDto
+                    {
+                        BranchId = 1,
+                        OutletId = 1,
+                        TerminalId = 1,
+                        CashierId = "cashier1",
+                        OrderType = "DINING",
+                        Items = new List<OrderItemCreateDto>
+                        {
+                            new() { ProductId = 1, ProductName = "Burger", Quantity = 1, BasePrice = 112m, TaxName = "VATable" }
+                        }
+                    }, 112m, "cashier1");
+
+                    Assert(checkoutRes.Success && checkoutRes.Receipt != null, $"Offline checkout must succeed: {checkoutRes.ErrorMessage}");
+                    Assert(!checkoutRes.Receipt!.VatDisplay, "Offline receipt must inherit VatDisplay = false from LocalBranches.");
+                    Assert(checkoutRes.Receipt.VatableSales == 100.00m && checkoutRes.Receipt.VatAmount == 12.00m && checkoutRes.Receipt.TotalAmount == 112.00m,
+                        "Offline checkout must still compute and store VatableSales = 100.00 and VatAmount = 12.00 when VatDisplay = false.");
+
+                    var savedLocalOrder = await localDb.Orders.AsNoTracking().FirstAsync();
+                    Assert(savedLocalOrder.VatableSales == 100.00m && savedLocalOrder.VatAmount == 12.00m && savedLocalOrder.TotalAmount == 112.00m,
+                        "LocalOrders table must store full VatableSales and VatAmount even when VatDisplay = false.");
+                }
+            }
+            finally
+            {
+                AppContext.SetData("POS.LocalDatabasePath", prevLocalPath);
+                try { if (System.IO.File.Exists(tempSqlitePath)) System.IO.File.Delete(tempSqlitePath); } catch { }
+            }
+        }
+    }
+
+    private static async Task TestCriticalTransactionSyncEndToEnd()
+    {
+        var (conn, serverDb, serverShift) = await CreateTestEnvAsync();
+        await using var cleanup = conn;
+
+        // Configure server invoice sequence matching POS.Client local sequence
+        serverDb.InvoiceSequences.Add(new InvoiceSequence
+        {
+            TerminalId = 1,
+            SeriesCode = "TXN1",
+            Prefix = "TXN1-",
+            StartingNumber = 1,
+            EndingNumber = 1000,
+            LastIssuedNumber = 0,
+            PaddingLength = 7,
+            IsActive = true
+        });
+        serverShift.ClientShiftId = "shift-online-1";
+        serverShift.CashierId = "YAFDAL";
+        serverShift.OpeningConfirmed = true;
+        serverShift.OpenedAt = DateTime.SpecifyKind(DateTime.UtcNow.AddSeconds(-5), DateTimeKind.Utc);
+        await serverDb.SaveChangesAsync();
+
+        string tempSqlitePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pos_sync_fix_test_{Guid.NewGuid():N}.db");
+        var prevLocalPath = AppContext.GetData("POS.LocalDatabasePath");
+        try
+        {
+            AppContext.SetData("POS.LocalDatabasePath", tempSqlitePath);
+            using var localDb = new POS.Client.Data.LocalPosDbContext();
+            localDb.InitializeDatabase();
+
+            localDb.TerminalConfigs.Add(new POS.Client.Data.LocalTerminalConfig
+            {
+                TerminalId = 1,
+                OutletId = 1,
+                OutletName = "Counter 1",
+                TerminalCode = "POS-1",
+                TerminalName = "POS1",
+                TerminalIdentifier = "DEV-UUID-1",
+                DeviceUuid = "DEV-UUID-1",
+                BranchId = 1,
+                BranchName = "Main Branch",
+                BranchCode = "BR-01",
+                BranchTaxType = "VAT-Registered",
+                VatDisplay = true,
+                IsActivated = true,
+                IsInitialized = true,
+                AllowSync = true
+            });
+            localDb.Products.Add(new POS.Client.Data.LocalProduct
+            {
+                ProductId = 1,
+                CategoryId = 1,
+                CategoryName = "Meals",
+                Name = "Lechon Meal",
+                Price = 224m,
+                TaxName = "VATable",
+                IsActive = true
+            });
+            localDb.InvoiceSequences.Add(new POS.Client.Data.LocalInvoiceSequence
+            {
+                SequenceId = 1,
+                TerminalId = 1,
+                SeriesCode = "TXN1",
+                Prefix = "TXN1-",
+                StartingNumber = 1,
+                EndingNumber = 1000,
+                LastIssuedNumber = 0,
+                PaddingLength = 7,
+                IsActive = true
+            });
+            localDb.CashDrawerShifts.Add(new POS.Client.Data.LocalCashDrawerShift
+            {
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = serverShift.ClientShiftId,
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "YAFDAL",
+                OpeningFloat = 1000m,
+                ExpectedBalance = 1000m,
+                OpeningConfirmed = true,
+                Status = "OPEN",
+                OpenedAt = serverShift.OpenedAt
+            });
+            await localDb.SaveChangesAsync();
+
+            var session = new POS.Client.Services.PosSessionService();
+            session.SetSession("TERMINAL-JWT", "YAFDAL", "Cashier", new TerminalConfigDto
+            {
+                TerminalId = 1,
+                OutletId = 1,
+                BranchId = 1,
+                BranchName = "Main Branch",
+                BranchCode = "BR-01",
+                TerminalName = "POS1"
+            });
+
+            // 1. Checkout sale with Split Payments + Customer Details + Modifiers
+            var checkoutSvc = new POS.Client.Services.OfflineCheckoutService(localDb, session);
+            var sale1Result = await checkoutSvc.ProcessSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = serverShift.ClientShiftId,
+                CashierId = "YAFDAL",
+                OrderType = "DINING",
+                TableNumber = "T-05",
+                HeadCount = 2,
+                DiscountCode = "SC",
+                CustomerCardNumber = "SC-998877",
+                CustomerName = "Juan Dela Cruz",
+                CustomerAddress = "Cebu City",
+                CustomerTin = "123-456-789-000",
+                CustomerBusinessStyle = "Walk-in",
+                Splits = new List<PaymentSplitDto>
+                {
+                    new() { PaymentMethod = "CASH", Amount = 100m, AmountTendered = 100m },
+                    new() { PaymentMethod = "GCASH", Amount = 60m, AmountTendered = 60m, ReferenceNumber = "GC-REF-001" }
+                },
+                Items = new List<OrderItemCreateDto>
+                {
+                    new()
+                    {
+                        ProductId = 1,
+                        ProductName = "Lechon Meal",
+                        Quantity = 1,
+                        BasePrice = 200m,
+                        TaxName = "VATable",
+                        Modifiers = new List<OrderItemModifierCreateDto>
+                        {
+                            new() { ModifierOptionId = 10, ModifierName = "Extra Spicy Sauce", AdditionalPrice = 24m }
+                        }
+                    }
+                }
+            }, 160m, "CASH", null, "YAFDAL");
+
+            Assert(sale1Result.Success, $"Split sale checkout must succeed: {sale1Result.ErrorMessage}");
+
+            // Simulate exact SQLite DateTimeKind.Unspecified deserialization + Terminal-role JWT upload to OfflineSyncController
+            var syncController = new OfflineSyncController(serverDb);
+            syncController.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "POS-1"),
+                        new Claim(ClaimTypes.Role, "Terminal"),
+                        new Claim("terminal_id", "1"),
+                        new Claim("branch_id", "1")
+                    }, "TestTerminalAuth"))
+                }
+            };
+            var cashDrawerController = CreateController(serverDb, "POS-1", "Terminal");
+
+            bool simulateTransientFailure = false;
+            using var inProcHttp = new System.Net.Http.HttpClient(new InProcSyncHandler(async req =>
+            {
+                if (simulateTransientFailure)
+                {
+                    return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new System.Net.Http.StringContent("Temporary server maintenance")
+                    };
+                }
+
+                if (req.RequestUri!.AbsolutePath.EndsWith("api/offline-sync/transactions", StringComparison.OrdinalIgnoreCase))
+                {
+                    var bodyJson = await req.Content!.ReadAsStringAsync();
+                    // System.Text.Json deserializes SQLite Unspecified timestamps as DateTimeKind.Unspecified if not normalized
+                    var dto = System.Text.Json.JsonSerializer.Deserialize<OfflineTransactionSyncRequest>(bodyJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+                    // Also test forcing Unspecified on PaidAt & TransactionDate to prove server NormalizeUtc prevents the 8-hour UTC+8 bug
+                    dto.TransactionDate = DateTime.SpecifyKind(dto.TransactionDate, DateTimeKind.Unspecified);
+                    foreach (var p in dto.Payments) p.PaidAt = DateTime.SpecifyKind(p.PaidAt, DateTimeKind.Unspecified);
+
+                    var actionRes = await syncController.SyncTransaction(dto);
+                    if (actionRes.Result is OkObjectResult ok)
+                    {
+                        return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                        {
+                            Content = System.Net.Http.Json.JsonContent.Create(ok.Value)
+                        };
+                    }
+                    if (actionRes.Result is ObjectResult obj)
+                    {
+                        return new System.Net.Http.HttpResponseMessage((System.Net.HttpStatusCode)(obj.StatusCode ?? 400))
+                        {
+                            Content = new System.Net.Http.StringContent(obj.Value?.ToString() ?? "Error")
+                        };
+                    }
+                    return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+                }
+
+                if (req.RequestUri.AbsolutePath.EndsWith("api/cash-drawer/open-shift", StringComparison.OrdinalIgnoreCase))
+                {
+                    var openJson = await req.Content!.ReadAsStringAsync();
+                    var dto = System.Text.Json.JsonSerializer.Deserialize<OpenShiftDto>(openJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    var res = await cashDrawerController.OpenShift(dto!);
+                    if (res is OkObjectResult ok)
+                    {
+                        return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                        {
+                            Content = System.Net.Http.Json.JsonContent.Create(ok.Value)
+                        };
+                    }
+                    var statusObj = res as ObjectResult;
+                    return new System.Net.Http.HttpResponseMessage((System.Net.HttpStatusCode)(statusObj?.StatusCode ?? 403))
+                    {
+                        Content = new System.Net.Http.StringContent(statusObj?.Value?.ToString() ?? "Forbidden")
+                    };
+                }
+
+                return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+            }))
+            {
+                BaseAddress = new Uri("http://localhost/")
+            };
+
+            var syncSvc = new POS.Client.Services.OfflineTransactionSyncService(localDb);
+
+            // 2. Simulate a transient failure first -> verify RETRY_PENDING and structured diagnostic audit log
+            simulateTransientFailure = true;
+            var pendingBefore = await syncSvc.GetPendingOutboxItemsAsync();
+            Assert(pendingBefore.Count == 1, "One pending outbox item expected.");
+            bool failedAttempt = await syncSvc.UploadTransactionAsync(pendingBefore[0], inProcHttp);
+            Assert(!failedAttempt, "Transient 503 failure must return false.");
+
+            using (var checkDb = new POS.Client.Data.LocalPosDbContext())
+            {
+                var itemAfter503 = await checkDb.SyncOutboxes.AsNoTracking().SingleAsync();
+                Assert(itemAfter503.Status == "RETRY_PENDING" && itemAfter503.RetryCount == 1,
+                    $"Transient failure must set Status=RETRY_PENDING and RetryCount=1 (actual: {itemAfter503.Status}, retry={itemAfter503.RetryCount}).");
+                var diagLog = await checkDb.SyncAuditLogs.AsNoTracking().OrderByDescending(l => l.LogId).FirstOrDefaultAsync();
+                Assert(diagLog != null && diagLog.Message.Contains("[SYNC_DIAG]", StringComparison.Ordinal) && diagLog.Message.Contains("Retryable=True", StringComparison.Ordinal),
+                    "Failed sync attempt must write structured [SYNC_DIAG] audit log.");
+
+                // 3. Simulate the exact stuck NEEDS_ATTENTION state from user's screenshot ("Payment is outside the shift lifecycle.")
+                var tracked = await checkDb.SyncOutboxes.SingleAsync();
+                tracked.Status = "NEEDS_ATTENTION";
+                tracked.LastError = "Payment is outside the shift lifecycle.";
+                tracked.NextRetryAt = null;
+                await checkDb.SaveChangesAsync();
+            }
+
+            // 4. Controlled retry recovery (ResetFailedOutboxItemsForRetryAsync) + successful upload
+            simulateTransientFailure = false;
+            int resetCount = await syncSvc.ResetFailedOutboxItemsForRetryAsync();
+            Assert(resetCount == 1, "ResetFailedOutboxItemsForRetryAsync must reset NEEDS_ATTENTION item to RETRY_PENDING.");
+
+            var retryItems = await syncSvc.GetPendingOutboxItemsAsync();
+            Assert(retryItems.Count == 1, "Reset item must now be returned by GetPendingOutboxItemsAsync.");
+            bool uploadOk = await syncSvc.UploadTransactionAsync(retryItems[0], inProcHttp);
+            Assert(uploadOk, "Retry upload after fixing DateTimeKind.Unspecified must succeed.");
+
+            // 5. Verify PostgreSQL/Server persistence of Order, Customer Details, Modifiers, and Split Payments
+            var syncedServerOrder = await serverDb.Orders
+                .Include(o => o.OrderItems)
+                    .ThenInclude(oi => oi.OrderItemModifiers)
+                .Include(o => o.Payments)
+                .AsNoTracking()
+                .SingleOrDefaultAsync(o => o.InvoiceNumber == sale1Result.InvoiceNumber);
+
+            Assert(syncedServerOrder != null, "Synced order must exist in central server Orders table.");
+            Assert(syncedServerOrder!.CustomerName == "Juan Dela Cruz" &&
+                   syncedServerOrder.CustomerTin == "123-456-789-000" &&
+                   syncedServerOrder.CustomerCardNumber == "SC-998877" &&
+                   syncedServerOrder.DiscountCode == "SC",
+                "Server order must preserve CustomerName, CustomerTin, CustomerCardNumber, and DiscountCode.");
+            Assert(syncedServerOrder.Payments.Count == 2 &&
+                   syncedServerOrder.Payments.Any(p => p.PaymentMethod == "CASH" && p.Amount == 100m) &&
+                   syncedServerOrder.Payments.Any(p => p.PaymentMethod == "GCASH" && p.Amount == 60m && p.ReferenceNumber == "GC-REF-001"),
+                "Server order must preserve all split payments and ReferenceNumber.");
+            Assert(syncedServerOrder.OrderItems.Count == 1 &&
+                   syncedServerOrder.OrderItems.First().OrderItemModifiers.Count == 1,
+                "Server order must preserve item modifiers.");
+
+            // 6. Verify idempotent replay does not duplicate order
+            bool replayOk = await syncSvc.UploadTransactionAsync(retryItems[0], inProcHttp);
+            Assert(replayOk && await serverDb.Orders.CountAsync() == 1, "Replaying the same outbox transaction must be idempotent and never create duplicates.");
+
+            // 7. Verify SyncedAt and LastSyncAt and dashboard counts
+            using (var verifyLocalDb = new POS.Client.Data.LocalPosDbContext())
+            {
+                var syncedOutbox = await verifyLocalDb.SyncOutboxes.AsNoTracking().SingleAsync();
+                var termCfg = await verifyLocalDb.TerminalConfigs.AsNoTracking().SingleAsync();
+                Assert(syncedOutbox.Status == "SYNCED" && syncedOutbox.SyncedAt.HasValue, "Synced outbox record must have Status=SYNCED and non-null SyncedAt.");
+                Assert(termCfg.LastSyncAt.HasValue, "LocalTerminalConfig.LastSyncAt must be updated upon transaction sync.");
+                int pendingCount = await verifyLocalDb.SyncOutboxes.CountAsync(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING");
+                int failedCount = await verifyLocalDb.SyncOutboxes.CountAsync(o => o.Status == "NEEDS_ATTENTION" || o.Status == "FAILED");
+                Assert(pendingCount == 0 && failedCount == 0, "Pending and Failed counts must both be 0 after successful sync.");
+            }
+
+            // 8. Verify offline SHIFT_OPEN + offline Order syncs with Terminal-role JWT token
+            serverShift.Status = "CLOSED";
+            serverShift.ClosedAt = DateTime.UtcNow.AddSeconds(-1);
+            await serverDb.SaveChangesAsync();
+            using (var closeLocal = new POS.Client.Data.LocalPosDbContext())
+            {
+                var ls = await closeLocal.CashDrawerShifts.SingleAsync();
+                ls.Status = "CLOSED";
+                ls.ClosedAt = serverShift.ClosedAt;
+                await closeLocal.SaveChangesAsync();
+            }
+
+            using var noNetHttp = new System.Net.Http.HttpClient(new InProcSyncHandler(_ => throw new InvalidOperationException("Offline")));
+            var offlineShift = await POS.Client.Services.ShiftSession.OpenAsync(noNetHttp, new OpenShiftDto
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                OpeningFloat = 1500m,
+                ClientShiftId = "shift-offline-2"
+            }, "YAFDAL", offline: true);
+
+            var sale2Result = await checkoutSvc.ProcessOfflineCashSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                ShiftId = offlineShift.ShiftId,
+                ClientShiftId = offlineShift.ClientShiftId,
+                CashierId = "YAFDAL",
+                OrderType = "TAKEOUT",
+                Items = new List<OrderItemCreateDto>
+                {
+                    new() { ProductId = 1, ProductName = "Lechon Meal", Quantity = 1, BasePrice = 224m, TaxName = "VATable" }
+                }
+            }, 224m, "YAFDAL");
+            Assert(sale2Result.Success, $"Offline shift sale must succeed: {sale2Result.ErrorMessage}");
+
+            var queue = await syncSvc.GetPendingOutboxItemsAsync();
+            Assert(queue.Count == 2 && queue[0].EntityType == "SHIFT_OPEN" && queue[1].EntityType == "Order",
+                "GetPendingOutboxItemsAsync must prioritize SHIFT_OPEN before dependent Order.");
+            foreach (var q in queue)
+            {
+                Assert(await syncSvc.UploadTransactionAsync(q, inProcHttp), $"Queued {q.EntityType} must sync with Terminal JWT.");
+            }
+            Assert(await serverDb.Orders.CountAsync() == 2, "Second sale under offline-opened shift must persist in server Orders.");
+        }
+        finally
+        {
+            AppContext.SetData("POS.LocalDatabasePath", prevLocalPath);
+            try { if (System.IO.File.Exists(tempSqlitePath)) System.IO.File.Delete(tempSqlitePath); } catch { }
+        }
+    }
+
+    private static async Task TestTransactionTimestampsAndPhilippineTime()
+    {
+        var prevUtcNow = POS.Shared.Services.BusinessDayClock.UtcNowProvider;
+        var prevDeviceNow = POS.Shared.Services.BusinessDayClock.DeviceNowOffsetProvider;
+        var prevDeviceTz = POS.Shared.Services.BusinessDayClock.DeviceTimeZoneProvider;
+        string tempSqlitePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pos_time01_{Guid.NewGuid():N}.db3");
+        object? prevLocalPath = AppContext.GetData("POS.LocalDatabasePath");
+
+        var (conn, serverDb, serverShift) = await CreateTestEnvAsync();
+        await using var cleanup = conn;
+
+        try
+        {
+            // Scenario 1 & 2: Windows ("Singapore Standard Time") and Android ("Asia/Manila") TimeZoneInfo resolution
+            var winTz = POS.Shared.Services.BusinessDayClock.ResolveTimeZone("Singapore Standard Time");
+            var androidTz = POS.Shared.Services.BusinessDayClock.ResolveTimeZone("Asia/Manila");
+            Assert(winTz.BaseUtcOffset == TimeSpan.FromHours(8), "Windows Singapore Standard Time must resolve to UTC+08:00.");
+            Assert(androidTz.BaseUtcOffset == TimeSpan.FromHours(8), "Android Asia/Manila must resolve to UTC+08:00.");
+
+            // Device shows November 14, 2026 – 4:10 PM (16:10:00 local, 08:10:00 UTC)
+            var deviceLocalWallClock = new DateTime(2026, 11, 14, 16, 10, 0, DateTimeKind.Unspecified);
+            var correspondingUtc = new DateTime(2026, 11, 14, 8, 10, 0, DateTimeKind.Utc);
+            Assert(POS.Shared.Services.BusinessDayClock.FormatManila(deviceLocalWallClock, "yyyy-MM-dd HH:mm:ss") == "2026-11-14 16:10:00",
+                "Saved device-local Unspecified timestamp (2026-11-14 16:10:00) must display directly as 2026-11-14 16:10:00 without adding +8 hours.");
+            Assert(POS.Shared.Services.BusinessDayClock.FormatManila(correspondingUtc, "yyyy-MM-dd HH:mm:ss") == "2026-11-14 16:10:00",
+                "Explicit UTC timestamp (08:10:00 UTC) must convert to 2026-11-14 16:10:00 local time.");
+
+            // Scenario 10: 3:59 AM, 4:00 AM, and 4:01 AM local BusinessDate cutoff
+            var local359 = new DateTime(2026, 11, 14, 3, 59, 0, DateTimeKind.Unspecified);
+            var local400 = new DateTime(2026, 11, 14, 4, 0, 0, DateTimeKind.Unspecified);
+            var local401 = new DateTime(2026, 11, 14, 4, 1, 0, DateTimeKind.Unspecified);
+            Assert(POS.Shared.Services.BusinessDayClock.GetBusinessDate(local359) == new DateOnly(2026, 11, 13),
+                "Transaction at 3:59 AM local time must belong to previous business date (2026-11-13).");
+            Assert(POS.Shared.Services.BusinessDayClock.GetBusinessDate(local400) == new DateOnly(2026, 11, 14),
+                "Transaction at 4:00 AM local time must belong to current business date (2026-11-14).");
+            Assert(POS.Shared.Services.BusinessDayClock.GetBusinessDate(local401) == new DateOnly(2026, 11, 14),
+                "Transaction at 4:01 AM local time must belong to current business date (2026-11-14).");
+
+            var (periodStartLocal, periodEndLocal) = POS.Shared.Services.BusinessDayClock.GetPeriodLocal(new DateOnly(2026, 11, 14));
+            Assert(periodStartLocal == new DateTime(2026, 11, 14, 4, 0, 0, DateTimeKind.Unspecified) &&
+                   periodEndLocal == new DateTime(2026, 11, 15, 4, 0, 0, DateTimeKind.Unspecified),
+                "Local business date 2026-11-14 must span 2026-11-14 04:00 to 2026-11-15 04:00.");
+
+            // Set up server shift + invoice sequence + local SQLite DB
+            var openShiftLocal = new DateTime(2026, 11, 14, 9, 0, 0, DateTimeKind.Unspecified); // 09:00 AM local
+            serverDb.Categories.Add(new Category { CategoryId = 1, Name = "Meals", IsActive = true });
+            serverDb.Products.Add(new Product { ProductId = 1, CategoryId = 1, Name = "Lechon Meal", ProductType = "SIMPLE", Price = 224m, IsActive = true });
+            serverDb.InvoiceSequences.Add(new InvoiceSequence
+            {
+                TerminalId = 1,
+                SeriesCode = "TXN1",
+                Prefix = "TXN1-",
+                StartingNumber = 1,
+                EndingNumber = 1000,
+                LastIssuedNumber = 0,
+                PaddingLength = 7,
+                IsActive = true
+            });
+            serverShift.ClientShiftId = "shift-time01-1";
+            serverShift.CashierId = "YAFDAL";
+            serverShift.OpeningConfirmed = true;
+            serverShift.OpenedAt = openShiftLocal;
+            await serverDb.SaveChangesAsync();
+
+            AppContext.SetData("POS.LocalDatabasePath", tempSqlitePath);
+            using var localDb = new POS.Client.Data.LocalPosDbContext();
+            localDb.InitializeDatabase();
+
+            localDb.TerminalConfigs.Add(new POS.Client.Data.LocalTerminalConfig
+            {
+                TerminalId = 1,
+                OutletId = 1,
+                OutletName = "Counter 1",
+                TerminalCode = "POS-1",
+                TerminalName = "POS1",
+                TerminalIdentifier = "DEV-UUID-1",
+                DeviceUuid = "DEV-UUID-1",
+                BranchId = 1,
+                BranchName = "Main Branch",
+                BranchCode = "BR-01",
+                BranchTaxType = "VAT-Registered",
+                VatDisplay = true,
+                IsActivated = true,
+                IsInitialized = true,
+                AllowSync = true
+            });
+            localDb.Products.Add(new POS.Client.Data.LocalProduct
+            {
+                ProductId = 1,
+                CategoryId = 1,
+                CategoryName = "Meals",
+                Name = "Lechon Meal",
+                Price = 224m,
+                TaxName = "VATable",
+                IsActive = true
+            });
+            localDb.InvoiceSequences.Add(new POS.Client.Data.LocalInvoiceSequence
+            {
+                SequenceId = 1,
+                TerminalId = 1,
+                SeriesCode = "TXN1",
+                Prefix = "TXN1-",
+                StartingNumber = 1,
+                EndingNumber = 1000,
+                LastIssuedNumber = 0,
+                PaddingLength = 7,
+                IsActive = true
+            });
+            localDb.CashDrawerShifts.Add(new POS.Client.Data.LocalCashDrawerShift
+            {
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = serverShift.ClientShiftId,
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "YAFDAL",
+                OpeningFloat = 1000m,
+                ExpectedBalance = 1000m,
+                OpeningConfirmed = true,
+                Status = "OPEN",
+                OpenedAt = openShiftLocal
+            });
+            await localDb.SaveChangesAsync();
+
+            var session = new POS.Client.Services.PosSessionService();
+            session.SetSession("TERMINAL-JWT", "YAFDAL", "Cashier", new TerminalConfigDto
+            {
+                TerminalId = 1,
+                OutletId = 1,
+                BranchId = 1,
+                BranchName = "Main Branch",
+                BranchCode = "BR-01",
+                TerminalName = "POS1"
+            });
+
+            var syncController = new OfflineSyncController(serverDb);
+            syncController.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "POS-1"),
+                        new Claim(ClaimTypes.Role, "Terminal"),
+                        new Claim("terminal_id", "1"),
+                        new Claim("branch_id", "1")
+                    }, "TestTerminalAuth"))
+                }
+            };
+
+            using var inProcHttp = new System.Net.Http.HttpClient(new InProcSyncHandler(async req =>
+            {
+                if (req.RequestUri!.AbsolutePath.EndsWith("api/offline-sync/transactions", StringComparison.OrdinalIgnoreCase))
+                {
+                    var bodyJson = await req.Content!.ReadAsStringAsync();
+                    var dto = System.Text.Json.JsonSerializer.Deserialize<OfflineTransactionSyncRequest>(bodyJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+                    var actionRes = await syncController.SyncTransaction(dto);
+                    if (actionRes.Result is OkObjectResult ok)
+                    {
+                        return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                        {
+                            Content = System.Net.Http.Json.JsonContent.Create(ok.Value)
+                        };
+                    }
+                    if (actionRes.Result is ObjectResult obj)
+                    {
+                        return new System.Net.Http.HttpResponseMessage((System.Net.HttpStatusCode)(obj.StatusCode ?? 400))
+                        {
+                            Content = new System.Net.Http.StringContent(obj.Value?.ToString() ?? "Error")
+                        };
+                    }
+                    return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+                }
+                return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+            }))
+            {
+                BaseAddress = new Uri("http://localhost/")
+            };
+
+            var checkoutSvc = new POS.Client.Services.OfflineCheckoutService(localDb, session);
+            var syncSvc = new POS.Client.Services.OfflineTransactionSyncService(localDb);
+
+            // Scenario 1, 2, 3 & 4: Philippine-time device (November 14, 2026 – 4:10 PM) creates offline transaction, syncs 3 hours later
+            POS.Shared.Services.BusinessDayClock.DeviceTimeZoneProvider = () => androidTz;
+            POS.Shared.Services.BusinessDayClock.DeviceNowOffsetProvider = () => new DateTimeOffset(2026, 11, 14, 16, 10, 0, TimeSpan.FromHours(8));
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => correspondingUtc;
+
+            var phtOfflineSale = await checkoutSvc.ProcessOfflineCashSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = serverShift.ClientShiftId,
+                CashierId = "YAFDAL",
+                OrderType = "TAKEOUT",
+                Items = new List<OrderItemCreateDto>
+                {
+                    new() { ProductId = 1, ProductName = "Lechon Meal", Quantity = 1, BasePrice = 224m, TaxName = "VATable" }
+                }
+            }, 224m, "YAFDAL");
+            Assert(phtOfflineSale.Success, $"Offline sale on Philippine-time device must succeed: {phtOfflineSale.ErrorMessage}");
+
+            using (var verifySqlite = new POS.Client.Data.LocalPosDbContext())
+            {
+                var sqliteOrder = await verifySqlite.Orders.AsNoTracking().SingleAsync(o => o.InvoiceNumber == phtOfflineSale.InvoiceNumber);
+                var sqlitePayment = await verifySqlite.Payments.AsNoTracking().SingleAsync(p => p.OrderId == sqliteOrder.OrderId);
+                Assert(sqliteOrder.CreatedAt == deviceLocalWallClock,
+                    $"SQLite LocalOrder.CreatedAt must be saved as 2026-11-14 16:10:00 local time, not {sqliteOrder.CreatedAt:yyyy-MM-dd HH:mm:ss}.");
+                Assert(sqlitePayment.PaidAt == deviceLocalWallClock,
+                    $"SQLite LocalPayment.PaidAt must be saved as 2026-11-14 16:10:00 local time, not {sqlitePayment.PaidAt:yyyy-MM-dd HH:mm:ss}.");
+                Assert(sqliteOrder.DeviceUtcOffsetMinutes == 480, "Philippine device offset (+480 mins) must be recorded.");
+            }
+
+            // Synchronize 3 hours later (19:10:00 local / 11:10:00 UTC)
+            var phtSyncServerUtc = correspondingUtc.AddHours(3); // 2026-11-14 11:10:00 UTC
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => phtSyncServerUtc;
+            POS.Shared.Services.BusinessDayClock.DeviceNowOffsetProvider = () => new DateTimeOffset(2026, 11, 14, 19, 10, 0, TimeSpan.FromHours(8));
+
+            var phtPending = await syncSvc.GetPendingOutboxItemsAsync();
+            Assert(phtPending.Count == 1, "One PHT offline transaction must be queued.");
+            Assert(await syncSvc.UploadTransactionAsync(phtPending[0], inProcHttp), "Delayed PHT offline transaction sync must succeed.");
+
+            var syncedPhtOrder = await serverDb.Orders.Include(o => o.Payments).AsNoTracking().SingleAsync(o => o.InvoiceNumber == phtOfflineSale.InvoiceNumber);
+            Assert(syncedPhtOrder.CreatedAt == deviceLocalWallClock,
+                $"PostgreSQL/API Order.CreatedAt must be saved as 2026-11-14 16:10:00 (never 08:10:00 UTC or sync time), got {syncedPhtOrder.CreatedAt:yyyy-MM-dd HH:mm:ss}.");
+            Assert(syncedPhtOrder.InvoiceIssuedAt == deviceLocalWallClock,
+                "Order.InvoiceIssuedAt must preserve device-local 2026-11-14 16:10:00.");
+            Assert(syncedPhtOrder.Payments.Single().PaidAt == deviceLocalWallClock,
+                "Payment.PaidAt must preserve device-local 2026-11-14 16:10:00.");
+            Assert(syncedPhtOrder.ServerReceivedAtUtc.HasValue && POS.Shared.Services.BusinessDayClock.NormalizeUtc(syncedPhtOrder.ServerReceivedAtUtc.Value) == phtSyncServerUtc,
+                "Order.ServerReceivedAtUtc must record the separate UTC server receipt timestamp.");
+
+            // Scenario 5, 6 & 7: Online transaction created at 4:10 PM local, retrieved via TransactionsController & displayed in POS.Web
+            POS.Shared.Services.BusinessDayClock.DeviceTimeZoneProvider = () => winTz;
+            POS.Shared.Services.BusinessDayClock.DeviceNowOffsetProvider = () => new DateTimeOffset(2026, 11, 14, 16, 10, 0, TimeSpan.FromHours(8));
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => correspondingUtc;
+
+            var seqSvc = new POS.Api.Services.SequenceService(serverDb);
+            var ordersController = new OrdersController(serverDb, seqSvc, new POS.Api.Services.DiscountCalculationService());
+            ordersController.ControllerContext = syncController.ControllerContext;
+            var onlineOrderAction = await ordersController.CreateOrder(new OrderCreateDto
+            {
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = serverShift.ClientShiftId,
+                CashierId = "YAFDAL",
+                OrderType = "DINE_IN",
+                TransactionTimestamp = new DateTimeOffset(2026, 11, 14, 16, 10, 0, TimeSpan.FromHours(8)),
+                DeviceTimeZoneId = winTz.Id,
+                DeviceUtcOffsetMinutes = 480,
+                Items = new List<OrderItemCreateDto>
+                {
+                    new() { ProductId = 1, ProductName = "Lechon Meal", Quantity = 1, BasePrice = 224m, TaxName = "VATable" }
+                }
+            });
+            var onlineCreated = (onlineOrderAction.Result as OkObjectResult)?.Value as OrderResponseDto;
+            Assert(onlineCreated != null, "Online order creation must succeed.");
+            Assert(onlineCreated!.CreatedAt == deviceLocalWallClock,
+                $"Online OrderResponseDto.CreatedAt must be 2026-11-14 16:10:00, got {onlineCreated.CreatedAt:yyyy-MM-dd HH:mm:ss}.");
+
+            var txController = new TransactionsController(serverDb, new POS.Api.Services.ReceiptService(serverDb))
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext
+                    {
+                        User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                        {
+                            new Claim(ClaimTypes.Name, "admin"),
+                            new Claim(ClaimTypes.Role, "Admin")
+                        }, "TestAdminAuth"))
+                    }
+                }
+            };
+            var txListAction = await txController.GetTransactions(
+                dateFrom: new DateTime(2026, 11, 14, 0, 0, 0),
+                dateTo: new DateTime(2026, 11, 14, 23, 59, 59),
+                branchId: 1,
+                terminalId: null,
+                cashierId: null,
+                orderNumber: null,
+                invoiceNumber: null,
+                paymentMethod: null,
+                orderStatus: null,
+                paymentStatus: null,
+                discountCode: null);
+            var txRows = (txListAction.Result as OkObjectResult)?.Value as IEnumerable<OrderResponseDto>;
+            Assert(txRows != null && txRows.Any(r => r.InvoiceNumber == phtOfflineSale.InvoiceNumber),
+                "TransactionsController must return the 2026-11-14 16:10:00 transaction when queried for 2026-11-14.");
+            var phtRow = txRows!.Single(r => r.InvoiceNumber == phtOfflineSale.InvoiceNumber);
+            Assert(phtRow.CreatedAt == deviceLocalWallClock,
+                "OrderResponseDto.CreatedAt from TransactionsController must return 2026-11-14 16:10:00 without conversion.");
+            Assert(POS.Shared.Services.BusinessDayClock.FormatManila(phtRow.CreatedAt, "yyyy-MM-dd HH:mm:ss") == "2026-11-14 16:10:00",
+                "POS.Web FormatManila on OrderResponseDto.CreatedAt must display 2026-11-14 16:10:00 without double conversion.");
+
+            // Scenario 8 & 9: Receipt print, reprint, prep ticket, X-Reading, and Z-Reading display 2026-11-14 16:10:00
+            var receiptService = new POS.Api.Services.ReceiptService(serverDb);
+            var serverReceiptDto = await receiptService.GetReceiptAsync(syncedPhtOrder.OrderId, isReprint: true);
+            Assert(serverReceiptDto != null, "Server receipt DTO must be generated.");
+            string serverReceiptHtml = POS.Client.Services.ReceiptHtmlFormatter.Format(serverReceiptDto!);
+            string offlineReceiptHtml = POS.Client.Services.ReceiptHtmlFormatter.Format(phtOfflineSale.Receipt!);
+
+            Assert(offlineReceiptHtml.Contains("2026-11-14 16:10:00", StringComparison.Ordinal) && !offlineReceiptHtml.Contains("08:10:00", StringComparison.Ordinal),
+                "Offline customer receipt must display 2026-11-14 16:10:00 (not 08:10:00 UTC).");
+            Assert(serverReceiptHtml.Contains("2026-11-14 16:10:00", StringComparison.Ordinal) && !serverReceiptHtml.Contains("08:10:00", StringComparison.Ordinal),
+                "Reprint after synchronization must display the exact same 2026-11-14 16:10:00 without double conversion.");
+
+            var prepTicketHtml = POS.Client.Services.PreparationTicketHtmlFormatter.Format(new PreparationTicketDto
+            {
+                Station = "KITCHEN",
+                OrderNumber = syncedPhtOrder.OrderNumber,
+                InvoiceNumber = syncedPhtOrder.InvoiceNumber,
+                CreatedAt = syncedPhtOrder.CreatedAt,
+                TerminalName = "POS 1",
+                CashierId = "YAFDAL",
+                Items = new List<PreparationTicketItemDto> { new() { ProductName = "Lechon Meal", Quantity = 1 } }
+            });
+            Assert(prepTicketHtml.Contains("2026-11-14 16:10:00", StringComparison.Ordinal),
+                "Preparation ticket must format CreatedAt as 2026-11-14 16:10:00.");
+
+            var xReadingHtml = POS.Client.Services.XReadingHtmlFormatter.Format(new XReadingReportDto
+            {
+                ShiftId = serverShift.ShiftId,
+                BranchName = "Main Branch",
+                TerminalName = "POS 1",
+                CashierId = "YAFDAL",
+                GeneratedAt = deviceLocalWallClock,
+                OpenedAt = openShiftLocal,
+                ReportingPeriodStart = periodStartLocal,
+                ReportingPeriodEnd = deviceLocalWallClock,
+                ReportingPeriodMatchesShift = false
+            });
+            Assert(xReadingHtml.Contains("2026-11-14 16:10:00", StringComparison.Ordinal) &&
+                   xReadingHtml.Contains("2026-11-14 09:00", StringComparison.Ordinal),
+                "X-Reading thermal formatter must display local GeneratedAt (16:10:00) and OpenedAt (09:00) without double conversion.");
+
+            var zReadingHtml = POS.Shared.Services.ZReadingHtmlFormatter.Format(new ZReadingReportDto
+            {
+                Id = Guid.NewGuid(),
+                ZNumber = 1,
+                BranchId = 1,
+                BranchName = "Main Branch",
+                TerminalId = 1,
+                TerminalCode = "POS-1",
+                TerminalName = "POS 1",
+                BusinessDate = new DateOnly(2026, 11, 14),
+                PeriodStartUtc = periodStartLocal,
+                PeriodEndUtc = periodEndLocal,
+                GeneratedAt = deviceLocalWallClock,
+                GeneratedBy = "admin"
+            });
+            Assert(zReadingHtml.Contains("2026-11-14 04:00 Asia/Manila", StringComparison.Ordinal) &&
+                   zReadingHtml.Contains("2026-11-14 16:10 Asia/Manila", StringComparison.Ordinal),
+                "Z-Reading thermal formatter must display PeriodStart and GeneratedAt (16:10) without double conversion.");
+
+            // Scenario 11: Device configured with a different timezone (UTC-05:00) preserves its own local wall-clock time
+            var estTz = TimeZoneInfo.CreateCustomTimeZone("America/New_York_Test", TimeSpan.FromHours(-5), "EST", "EST");
+            var estWallClock = new DateTime(2026, 11, 14, 10, 15, 0, DateTimeKind.Unspecified); // 10:15 AM on EST device
+            var estOccurrenceUtc = new DateTime(2026, 11, 14, 15, 15, 0, DateTimeKind.Utc);
+            POS.Shared.Services.BusinessDayClock.DeviceTimeZoneProvider = () => estTz;
+            POS.Shared.Services.BusinessDayClock.DeviceNowOffsetProvider = () => new DateTimeOffset(estWallClock, TimeSpan.FromHours(-5));
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => estOccurrenceUtc;
+
+            var estSale = await checkoutSvc.ProcessOfflineCashSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = serverShift.ClientShiftId,
+                CashierId = "YAFDAL",
+                OrderType = "TAKEOUT",
+                Items = new List<OrderItemCreateDto>
+                {
+                    new() { ProductId = 1, ProductName = "Lechon Meal", Quantity = 1, BasePrice = 224m, TaxName = "VATable" }
+                }
+            }, 224m, "YAFDAL");
+            Assert(estSale.Success, $"Offline sale in UTC-05:00 timezone must succeed: {estSale.ErrorMessage}");
+
+            var estPending = await syncSvc.GetPendingOutboxItemsAsync();
+            Assert(estPending.Count == 1, "EST offline transaction must be queued.");
+            Assert(await syncSvc.UploadTransactionAsync(estPending[0], inProcHttp), "EST offline transaction sync must succeed.");
+
+            var syncedEstOrder = await serverDb.Orders.AsNoTracking().SingleAsync(o => o.InvoiceNumber == estSale.InvoiceNumber);
+            Assert(syncedEstOrder.CreatedAt == estWallClock,
+                $"Device in UTC-05:00 must preserve its exact local wall-clock time ({estWallClock:yyyy-MM-dd HH:mm:ss}), got {syncedEstOrder.CreatedAt:yyyy-MM-dd HH:mm:ss}.");
+            Assert(syncedEstOrder.DeviceUtcOffsetMinutes == -300, "Device UTC offset (-300 mins for UTC-05:00) must be recorded.");
+
+            // Scenario 12: Device clock intentionally skewed behind while shift is OPEN
+            var realServerUtc = new DateTime(2026, 11, 14, 4, 0, 0, DateTimeKind.Utc); // 12:00 PM PHT
+            var skewedLocalWallClock = new DateTime(2026, 11, 14, 8, 15, 0, DateTimeKind.Unspecified); // 08:15 AM local (before shift OpenedAt 09:00 AM!)
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => realServerUtc;
+            POS.Shared.Services.BusinessDayClock.DeviceTimeZoneProvider = () => winTz;
+            POS.Shared.Services.BusinessDayClock.DeviceNowOffsetProvider = () => new DateTimeOffset(skewedLocalWallClock, TimeSpan.FromHours(8));
+
+            var skewedSale = await checkoutSvc.ProcessOfflineCashSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = serverShift.ClientShiftId,
+                CashierId = "YAFDAL",
+                OrderType = "TAKEOUT",
+                Items = new List<OrderItemCreateDto>
+                {
+                    new() { ProductId = 1, ProductName = "Lechon Meal", Quantity = 1, BasePrice = 224m, TaxName = "VATable" }
+                }
+            }, 224m, "YAFDAL");
+            Assert(skewedSale.Success, "Checkout with skewed device clock must succeed locally.");
+
+            var skewedQueue = await syncSvc.GetPendingOutboxItemsAsync();
+            Assert(skewedQueue.Count == 1, "Skewed transaction must be in outbox.");
+            Assert(await syncSvc.UploadTransactionAsync(skewedQueue[0], inProcHttp),
+                "Skewed device clock transaction on an explicitly bound OPEN shift must sync and not be permanently rejected.");
+
+            var skewedServerOrder = await serverDb.Orders.AsNoTracking().SingleAsync(o => o.InvoiceNumber == skewedSale.InvoiceNumber);
+            Assert(skewedServerOrder.CreatedAt == skewedLocalWallClock,
+                "Skewed offline transaction must preserve its original device-local timestamp (2026-11-14 08:15:00) without silent replacement.");
+            Assert(skewedServerOrder.ServerReceivedAtUtc.HasValue && POS.Shared.Services.BusinessDayClock.NormalizeUtc(skewedServerOrder.ServerReceivedAtUtc.Value) == realServerUtc,
+                "Skewed transaction must record ServerReceivedAtUtc.");
+            Assert(skewedServerOrder.ClockSkewSeconds.HasValue && Math.Abs(skewedServerOrder.ClockSkewSeconds.Value) >= 300,
+                "Skewed transaction must record ClockSkewSeconds audit metadata.");
+        }
+        finally
+        {
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = prevUtcNow;
+            POS.Shared.Services.BusinessDayClock.DeviceNowOffsetProvider = prevDeviceNow;
+            POS.Shared.Services.BusinessDayClock.DeviceTimeZoneProvider = prevDeviceTz;
+            AppContext.SetData("POS.LocalDatabasePath", prevLocalPath);
+            try { if (System.IO.File.Exists(tempSqlitePath)) System.IO.File.Delete(tempSqlitePath); } catch { }
+        }
+    }
+
+    private static async Task TestBranchTaglineManagementSyncAndReceiptFormatting()
+    {
+        var (conn, serverDb, serverShift) = await CreateTestEnvAsync();
+        await using var cleanup = conn;
+
+        var tempSqlitePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pos_tagline_test_{Guid.NewGuid():N}.db3");
+        var prevLocalPath = AppContext.GetData("POS.LocalDatabasePath");
+        AppContext.SetData("POS.LocalDatabasePath", tempSqlitePath);
+
+        try
+        {
+            var adminContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                    {
+                        new Claim(ClaimTypes.Name, "admin"),
+                        new Claim(ClaimTypes.Role, "Admin"),
+                        new Claim("branch_id", "1"),
+                        new Claim("terminal_id", "1")
+                    }, "TestAuth"))
+                }
+            };
+
+            var branchesController = new POS.Api.Controllers.BranchesController(serverDb)
+            {
+                ControllerContext = adminContext
+            };
+
+            // 1. Create a new branch WITH a tagline
+            var createWithTaglineRes = await branchesController.CreateBranch(new BranchDto
+            {
+                Name = "Sulitchon",
+                BranchTagline = "  Ang Sulit na lechon sa habang panahon  ",
+                Code = "SUL-01",
+                Address = "Quezon City",
+                Phone = "09171234567",
+                TaxType = "VAT-Registered",
+                VatDisplay = true,
+                IsActive = true,
+                TrackInventory = true
+            });
+            var branchWithTagline = (createWithTaglineRes.Result as OkObjectResult)?.Value as BranchDto;
+            Assert(branchWithTagline != null && branchWithTagline.BranchId > 0, "Branch with tagline must be created.");
+            Assert(branchWithTagline!.BranchTagline == "Ang Sulit na lechon sa habang panahon", "Saved tagline must be trimmed and returned.");
+
+            // 2. Create a new branch WITHOUT a tagline (whitespace/empty -> NULL)
+            var createWithoutTaglineRes = await branchesController.CreateBranch(new BranchDto
+            {
+                Name = "Sulitchon Express",
+                BranchTagline = "   ",
+                Code = "SUL-02",
+                Address = "Makati City",
+                Phone = "09179876543",
+                TaxType = "VAT-Registered",
+                VatDisplay = true,
+                IsActive = true
+            });
+            var branchWithoutTagline = (createWithoutTaglineRes.Result as OkObjectResult)?.Value as BranchDto;
+            Assert(branchWithoutTagline != null && branchWithoutTagline.BranchId > 0, "Branch without tagline must be created.");
+            Assert(branchWithoutTagline!.BranchTagline == null, "Empty or whitespace tagline must be normalized to null.");
+
+            // 3. Edit an existing branch and add a tagline
+            branchWithoutTagline.BranchTagline = "Fresh Lechon Daily";
+            var addTaglineUpdateRes = await branchesController.UpdateBranch(branchWithoutTagline.BranchId, branchWithoutTagline);
+            Assert(addTaglineUpdateRes is NoContentResult, "Adding tagline to existing branch must succeed.");
+
+            // 5. Confirm tagline is saved and retrieved
+            var getBranchesRes = await branchesController.GetBranches();
+            var allBranches = (getBranchesRes.Result as OkObjectResult)?.Value as List<BranchDto>;
+            Assert(allBranches != null, "GetBranches must return branch list.");
+            var fetchedWith = allBranches!.Single(b => b.BranchId == branchWithTagline.BranchId);
+            var fetchedAdded = allBranches!.Single(b => b.BranchId == branchWithoutTagline.BranchId);
+            Assert(fetchedWith.BranchTagline == "Ang Sulit na lechon sa habang panahon", "Retrieved branch must retain its tagline.");
+            Assert(fetchedAdded.BranchTagline == "Fresh Lechon Daily", "Edited branch must return newly added tagline.");
+
+            // 4. Edit an existing branch and remove the tagline
+            fetchedAdded.BranchTagline = "";
+            var removeTaglineRes = await branchesController.UpdateBranch(fetchedAdded.BranchId, fetchedAdded);
+            Assert(removeTaglineRes is NoContentResult, "Removing tagline from existing branch must succeed.");
+            var afterRemoveEntity = await serverDb.Branches.AsNoTracking().SingleAsync(b => b.BranchId == fetchedAdded.BranchId);
+            Assert(afterRemoveEntity.BranchTagline == null, "Removed tagline must be stored as NULL in database.");
+
+            // Update Branch 1 to Sulitchon with tagline so Terminal 1 (from CreateTestEnvAsync) inherits it
+            var branch1 = await serverDb.Branches.AsNoTracking().SingleAsync(b => b.BranchId == 1);
+            await branchesController.UpdateBranch(1, new BranchDto
+            {
+                BranchId = 1,
+                BusinessTypeId = branch1.BusinessTypeId,
+                ServiceModeId = branch1.ServiceModeId,
+                Name = "Sulitchon",
+                BranchTagline = "Ang Sulit na lechon sa habang panahon",
+                Code = "SUL-01",
+                Address = "Quezon City",
+                Phone = "09171234567",
+                TaxType = "VAT-Registered",
+                VatDisplay = true,
+                IsActive = true,
+                TrackInventory = branch1.TrackInventory
+            });
+
+            // 6. Confirm tagline synchronizes to POS.Client via OfflineReferenceDataController & client-config endpoint
+            var clientCfgRes = await branchesController.GetBranchClientConfig(1);
+            var clientCfg = (clientCfgRes.Result as OkObjectResult)?.Value as OfflineBranchConfigDto;
+            Assert(clientCfg != null && clientCfg.BranchTagline == "Ang Sulit na lechon sa habang panahon",
+                "GetBranchClientConfig must return BranchTagline.");
+
+            var refController = new POS.Api.Controllers.OfflineReferenceDataController(serverDb)
+            {
+                ControllerContext = adminContext
+            };
+            var refRes = await refController.GetReferenceData(1, null);
+            var refDto = (refRes.Result as OkObjectResult)?.Value as OfflineReferenceDataResponseDto;
+            Assert(refDto != null && refDto.Branch != null &&
+                   refDto.Branch.BranchTagline == "Ang Sulit na lechon sa habang panahon" &&
+                   refDto.Terminal.BranchTagline == "Ang Sulit na lechon sa habang panahon",
+                "OfflineReferenceDataController must return BranchTagline on both Branch and Terminal config DTOs.");
+
+            // 7. Confirm tagline is persisted in LocalBranches and LocalTerminalConfigs and remains available offline
+            using var localDb = new POS.Client.Data.LocalPosDbContext();
+            localDb.InitializeDatabase();
+            localDb.Branches.Add(new POS.Client.Data.LocalBranch
+            {
+                BranchId = 1,
+                Name = refDto!.Branch!.Name,
+                BranchTagline = refDto.Branch.BranchTagline,
+                Code = refDto.Branch.Code,
+                Address = refDto.Branch.Address,
+                Phone = refDto.Branch.Phone,
+                TaxType = refDto.Branch.TaxType,
+                VatDisplay = refDto.Branch.VatDisplay,
+                IsActive = true,
+                UpdatedAt = DateTime.UtcNow
+            });
+            localDb.TerminalConfigs.Add(new POS.Client.Data.LocalTerminalConfig
+            {
+                TerminalId = 1,
+                OutletId = 1,
+                OutletName = refDto.Terminal.OutletName,
+                TerminalCode = refDto.Terminal.TerminalCode,
+                TerminalName = refDto.Terminal.TerminalName,
+                TerminalIdentifier = "DEV-SUL-1",
+                BranchId = 1,
+                BranchName = refDto.Terminal.BranchName,
+                BranchTagline = refDto.Terminal.BranchTagline,
+                BranchCode = refDto.Terminal.BranchCode,
+                BranchTaxType = refDto.Terminal.BranchTaxType,
+                VatDisplay = refDto.Terminal.VatDisplay,
+                IsActivated = true,
+                IsInitialized = true
+            });
+            localDb.Products.Add(new POS.Client.Data.LocalProduct
+            {
+                ProductId = 1,
+                CategoryId = 1,
+                CategoryName = "Lechon",
+                Name = "1kg Lechon",
+                Price = 800m,
+                TaxName = "VATable",
+                IsActive = true
+            });
+            localDb.InvoiceSequences.Add(new POS.Client.Data.LocalInvoiceSequence
+            {
+                SequenceId = 1,
+                TerminalId = 1,
+                SeriesCode = "SUL",
+                Prefix = "INV-SUL-",
+                StartingNumber = 1,
+                EndingNumber = 1000,
+                LastIssuedNumber = 0,
+                PaddingLength = 7,
+                IsActive = true
+            });
+            localDb.CashDrawerShifts.Add(new POS.Client.Data.LocalCashDrawerShift
+            {
+                ShiftId = serverShift.ShiftId,
+                ClientShiftId = "shift-sul-1",
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                OpeningFloat = 1000m,
+                ExpectedBalance = 1000m,
+                OpeningConfirmed = true,
+                Status = "OPEN",
+                OpenedAt = DateTime.UtcNow
+            });
+            await localDb.SaveChangesAsync();
+
+            var session = new POS.Client.Services.PosSessionService();
+            session.SetSession("OFFLINE-SESSION-TOKEN", "cashier1", "Cashier", new TerminalConfigDto
+            {
+                TerminalId = 1,
+                OutletId = 1,
+                BranchId = 1,
+                BranchName = "Sulitchon",
+                BranchCode = "SUL-01",
+                TerminalName = "POS 1"
+            });
+            await session.RefreshCachedMenuDisplayModeAsync();
+            Assert(session.Terminal!.BranchTagline == "Ang Sulit na lechon sa habang panahon",
+                "PosSessionService.RefreshCachedMenuDisplayModeAsync must hydrate BranchTagline from local SQLite.");
+
+            var offlineCheckout = new POS.Client.Services.OfflineCheckoutService(localDb, session);
+            var offlineSale = await offlineCheckout.ProcessOfflineCashSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                ShiftId = serverShift.ShiftId,
+                CashierId = "cashier1",
+                OrderType = "TAKEOUT",
+                Items = new List<OrderItemCreateDto>
+                {
+                    new() { ProductId = 1, ProductName = "1kg Lechon", Quantity = 1m, BasePrice = 800m, TaxName = "VATable" }
+                }
+            }, 800m, "cashier1");
+            Assert(offlineSale.Success && offlineSale.Receipt != null, $"Offline checkout must succeed: {offlineSale.ErrorMessage}");
+            Assert(offlineSale.Receipt!.BranchTagline == "Ang Sulit na lechon sa habang panahon",
+                "Offline receipt must include BranchTagline from local SQLite.");
+
+            // Seed paid server order for reprint testing
+            var order = new Order
+            {
+                OrderNumber = "POS1-000001",
+                InvoiceNumber = "INV-SUL-0000001",
+                InvoiceIssuedAt = DateTime.UtcNow,
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                OrderType = "TAKEOUT",
+                Subtotal = 800m,
+                VatableSales = 714.29m,
+                VatAmount = 85.71m,
+                TotalAmount = 800m,
+                PaymentStatus = "PAID",
+                OrderStatus = "COMPLETED",
+                CreatedAt = DateTime.UtcNow
+            };
+            order.OrderItems.Add(new OrderItem
+            {
+                ProductId = 1,
+                ProductName = "1kg Lechon",
+                Quantity = 1m,
+                BasePrice = 800m,
+                UnitPrice = 800m,
+                LineTotal = 800m
+            });
+            order.Payments.Add(new Payment
+            {
+                PaymentMethod = "CASH",
+                Amount = 800m,
+                AmountTendered = 1000m,
+                ChangeAmount = 200m,
+                PaymentStatus = "PAID",
+                ProcessedBy = "cashier1",
+                PaidAt = DateTime.UtcNow
+            });
+            serverDb.Orders.Add(order);
+            await serverDb.SaveChangesAsync();
+
+            // 8, 10, 11 & 12. Print/format receipt WITH tagline + Reprint existing transaction + 80mm layout + existing settings unaffected
+            var receiptSvc = new POS.Api.Services.ReceiptService(serverDb);
+            var reprintedReceipt = await receiptSvc.GetReceiptAsync(order.OrderId, isReprint: true);
+            Assert(reprintedReceipt != null && reprintedReceipt.IsReprint, "Reprint receipt must be retrieved.");
+            Assert(reprintedReceipt!.BranchTagline == "Ang Sulit na lechon sa habang panahon",
+                "Reprinted receipt must include BranchTagline.");
+            Assert(reprintedReceipt.VatDisplay && reprintedReceipt.TotalAmount == 800m && reprintedReceipt.VatAmount == 85.71m,
+                "Existing branch settings (VatDisplay) and receipt totals must remain unaffected.");
+
+            string htmlWithTagline = POS.Client.Services.ReceiptHtmlFormatter.Format(reprintedReceipt);
+            Assert(htmlWithTagline.Contains("<h1>Sulitchon</h1><p class=\"branch-tagline\">Ang Sulit na lechon sa habang panahon</p>", StringComparison.Ordinal),
+                "Receipt HTML with tagline must render <p class=\"branch-tagline\"> directly underneath <h1>BranchName</h1>.");
+            Assert(htmlWithTagline.Contains("size: 80mm auto;", StringComparison.Ordinal) && htmlWithTagline.Contains("width: 64mm;", StringComparison.Ordinal),
+                "80mm thermal printer layout dimensions must remain intact.");
+
+            // 9. Print/format a receipt for a branch WITHOUT a tagline (no empty line or placeholder)
+            reprintedReceipt.BranchTagline = null;
+            string htmlWithoutTagline = POS.Client.Services.ReceiptHtmlFormatter.Format(reprintedReceipt);
+            Assert(!htmlWithoutTagline.Contains("<p class=\"branch-tagline\">", StringComparison.Ordinal),
+                "Receipt HTML without tagline must not render an empty .branch-tagline element or blank line.");
+            Assert(!htmlWithoutTagline.Contains("Branch Code:", StringComparison.Ordinal) &&
+                   htmlWithoutTagline.Contains("<h1>Sulitchon</h1><p>", StringComparison.Ordinal),
+                "Receipt HTML without tagline must transition directly from <h1>BranchName</h1> to the next header line without Branch Code.");
+        }
+        finally
+        {
+            AppContext.SetData("POS.LocalDatabasePath", prevLocalPath);
+            try { if (System.IO.File.Exists(tempSqlitePath)) System.IO.File.Delete(tempSqlitePath); } catch { }
+        }
+    }
+
+    private static Task TestReceiptCompanyFooterAndBranchCodeRemoval()
+    {
+        Assert(POS.Shared.Constants.ReceiptCompanyInfo.CompanyName == "AGRES Business Solution", "CompanyName constant mismatch.");
+        Assert(POS.Shared.Constants.ReceiptCompanyInfo.Email == "agressolutionsph@gmail.com", "Email constant mismatch.");
+        Assert(POS.Shared.Constants.ReceiptCompanyInfo.Address == "Sta. Rosa, Laguna, Philippines, 4026", "Address constant mismatch.");
+
+        var receipt = new ReceiptDto
+        {
+            OrderId = 501,
+            OrderNumber = "POS01-000501",
+            InvoiceNumber = "INV-000501",
+            BranchId = 1,
+            BranchName = "Test Store",
+            BranchTagline = "Best in Town",
+            BranchCode = "BR-99",
+            BranchAddress = "123 Store St.",
+            BranchPhone = "0917-000-0000",
+            TerminalName = "POS-01",
+            CashierId = "cashier1",
+            OrderType = "DINING",
+            CreatedAt = DateTime.UtcNow,
+            VatDisplay = true,
+            Subtotal = 100m,
+            VatableSales = 89.29m,
+            VatAmount = 10.71m,
+            TotalAmount = 100m,
+            IsReprint = true,
+            Items = new()
+            {
+                new OrderItemResponseDto { ProductName = "Classic Burger", Quantity = 1, UnitPrice = 100m, LineTotal = 100m }
+            },
+            Payments = new()
+            {
+                new PaymentResponseDto { PaymentMethod = "CASH", Amount = 100m, AmountTendered = 100m, ChangeAmount = 0m }
+            }
+        };
+
+        var html = POS.Client.Services.ReceiptHtmlFormatter.Format(receipt);
+
+        // BranchCode preserved on DTO, omitted from customer receipt HTML
+        Assert(receipt.BranchCode == "BR-99", "ReceiptDto.BranchCode must remain intact.");
+        Assert(!html.Contains("Branch Code", StringComparison.OrdinalIgnoreCase), "Receipt HTML must not contain Branch Code label.");
+        Assert(!html.Contains("BR-99", StringComparison.Ordinal), "Receipt HTML must not contain BranchCode value.");
+
+        // Company info centered in footer in exact order
+        Assert(html.Contains("text-align: center;", StringComparison.Ordinal) && html.Contains(".company-info", StringComparison.Ordinal),
+            "Receipt HTML must include centered company-info styling.");
+        string expectedFooterCompany =
+            "<div class=\"company-info\">" +
+            "<p class=\"company-name\">AGRES Business Solution</p>" +
+            "<p class=\"company-detail\">agressolutionsph@gmail.com</p>" +
+            "<p class=\"company-detail\">Sta. Rosa, Laguna, Philippines, 4026</p>" +
+            "</div>";
+        int footerIdx = html.IndexOf("<div class=\"footer\">", StringComparison.Ordinal);
+        int companyIdx = html.IndexOf(expectedFooterCompany, StringComparison.Ordinal);
+        Assert(footerIdx >= 0 && companyIdx > footerIdx, "Company info must appear inside .footer at the bottom of the receipt.");
+
+        // Preserved elements & 80mm paper dimensions
+        Assert(html.Contains("size: 80mm auto;", StringComparison.Ordinal) && html.Contains("width: 64mm;", StringComparison.Ordinal),
+            "80mm receipt width must remain intact.");
+        Assert(html.Contains("Test Store", StringComparison.Ordinal) && html.Contains("Best in Town", StringComparison.Ordinal),
+            "BranchName and BranchTagline must remain intact.");
+        Assert(html.Contains("** REPRINT **", StringComparison.Ordinal) && html.Contains("PHP 100.00", StringComparison.Ordinal),
+            "Reprint notice and totals must remain intact.");
+
+        return Task.CompletedTask;
+    }
+
+    private sealed class InProcSyncHandler(Func<System.Net.Http.HttpRequestMessage, Task<System.Net.Http.HttpResponseMessage>> handler) : System.Net.Http.HttpMessageHandler
+    {
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+            => handler(request);
     }
 }

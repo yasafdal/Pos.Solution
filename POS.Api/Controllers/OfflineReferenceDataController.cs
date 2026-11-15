@@ -17,6 +17,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         [FromBody] OfflineReferenceDataRequestDto? request = null)
     {
         if (terminalId <= 0 && request?.TerminalId > 0) terminalId = request.TerminalId;
+        await POS.Api.Services.ReceiptLogoStorage.EnsureBranchColumnsAsync(context);
         var outlet = await context.Terminals
             .Include(o => o.Branch)
                 .ThenInclude(b => b.BusinessType)
@@ -32,17 +33,23 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         var categories = await context.Categories
         .AsNoTracking()
         .Where(c => !c.IsDeleted && c.IsActive)
+        .OrderBy(c => c.DisplayOrder)
+        .ThenBy(c => c.CategoryId)
         .Select(c => new OfflineCategoryDto
         {
             CategoryId = c.CategoryId,
             Name = c.Name,
-            ColorCode = c.ColorHex
+            ColorCode = c.ColorHex,
+            DisplayOrder = c.DisplayOrder
         })
         .ToListAsync();
 
         var products = await context.Products
             .AsNoTracking()
             .Where(p => p.IsActive && !p.IsDeleted && p.ProductType != "RawMaterial")
+            .OrderBy(p => p.CategoryId)
+            .ThenBy(p => p.DisplayOrder)
+            .ThenBy(p => p.ProductId)
             .Select(p => new OfflineProductDto
             {
                 ProductId = p.ProductId,
@@ -60,15 +67,18 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                 TaxId = p.TaxId,
                 TaxName = p.Tax != null ? p.Tax.Name : "No Tax",
                 ProductType = p.ProductType,
+                PricingMethod = p.PricingMethod ?? POS.Shared.Constants.PricingMethods.Fixed,
                 IsActive = p.IsActive,
                 IsKitchenItem = p.IsKitchenItem,
-                IsBarItem = p.IsBarItem
+                IsBarItem = p.IsBarItem,
+                DisplayOrder = p.DisplayOrder
             })
             .ToListAsync();
 
         var modifierGroups = await context.ModifierGroups
             .AsNoTracking()
             .Include(mg => mg.ModifierOptions)
+                .ThenInclude(mo => mo.Product)
             .Select(mg => new OfflineModifierGroupDto
             {
                 ModifierGroupId = mg.ModifierGroupId,
@@ -83,6 +93,8 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                 {
                     ModifierOptionId = mo.ModifierOptionId,
                     ModifierGroupId = mo.ModifierGroupId,
+                    ProductId = mo.ProductId,
+                    ProductName = mo.Product != null ? mo.Product.Name : null,
                     Name = mo.Name,
                     Price = mo.Price,
                     DisplayOrder = mo.DisplayOrder,
@@ -185,7 +197,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                         IsActive = true
                     };
                     activeSeq.LastIssuedNumber = end;
-                    activeSeq.UpdatedAt = DateTime.UtcNow;
+                    activeSeq.UpdatedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
                     await context.SaveChangesAsync();
                 }
             }
@@ -258,10 +270,31 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             .AsNoTracking()
             .SingleOrDefaultAsync(s => s.TerminalId == terminalId);
 
+        var logoDataUri = POS.Api.Services.ReceiptLogoStorage.GetDataUri(outlet.Branch?.ReceiptLogoUrl);
         var response = new OfflineReferenceDataResponseDto
         {
             Version = DateTime.UtcNow.Ticks.ToString(),
             ServerTimestamp = DateTime.UtcNow,
+            Branch = outlet.Branch == null ? null : new OfflineBranchConfigDto
+            {
+                BranchId = outlet.Branch.BranchId,
+                Name = outlet.Branch.Name,
+                BranchTagline = outlet.Branch.BranchTagline,
+                Code = outlet.Branch.Code ?? $"BR-{outlet.Branch.BranchId:D2}",
+                Address = outlet.Branch.Address,
+                Phone = outlet.Branch.Phone,
+                TaxType = outlet.Branch.TaxType ?? "VAT-Registered",
+                VatDisplay = outlet.Branch.VatDisplay,
+                TrackInventory = outlet.Branch.TrackInventory,
+                BusinessTypeId = outlet.Branch.BusinessTypeId ?? 1,
+                BusinessType = outlet.Branch.BusinessType?.Type ?? "FNB",
+                ServiceModeId = outlet.Branch.ServiceModeId,
+                ReceiptLogoUrl = outlet.Branch.ReceiptLogoUrl,
+                ReceiptLogoDataUri = logoDataUri,
+                ReceiptLogoUpdatedAt = outlet.Branch.ReceiptLogoUpdatedAt,
+                IsActive = outlet.Branch.IsActive,
+                UpdatedAt = DateTime.UtcNow
+            },
             Terminal = new OfflineTerminalConfigDto
             {
                 TerminalId = outlet.TerminalId, MenuDisplayMode = outlet.MenuDisplayMode,
@@ -271,9 +304,14 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
                 BusinessTypeId = outlet.Branch?.BusinessTypeId ?? 1,
                 BusinessType = outlet.Branch?.BusinessType?.Type ?? "FNB",
                 BranchName = outlet.Branch?.Name ?? string.Empty,
+                BranchTagline = outlet.Branch?.BranchTagline,
                 BranchCode = outlet.Branch?.Code,
                 BranchAddress = outlet.Branch?.Address,
                 BranchPhone = outlet.Branch?.Phone,
+                ReceiptLogoUrl = outlet.Branch?.ReceiptLogoUrl,
+                ReceiptLogoDataUri = logoDataUri,
+                ReceiptLogoUpdatedAt = outlet.Branch?.ReceiptLogoUpdatedAt,
+                VatDisplay = outlet.Branch?.VatDisplay ?? true,
                 TerminalName = outlet.Name,
                 BranchTaxType = outlet.Branch?.TaxType ?? "VAT-Registered",
                 DeviceIdentifier = outlet.DeviceIdentifier ?? string.Empty,

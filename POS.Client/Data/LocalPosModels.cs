@@ -32,10 +32,12 @@ public class LocalProduct
     public virtual LocalTax? Tax { get; set; }
     public string? TaxName { get; set; } = "VATable";
     public string ProductType { get; set; } = string.Empty;
+    public string PricingMethod { get; set; } = "Fixed";
 
     public bool IsActive { get; set; }
     public bool IsKitchenItem { get; set; }
     public bool IsBarItem { get; set; }
+    public int DisplayOrder { get; set; }
 }
 
 public class LocalCategory
@@ -44,6 +46,7 @@ public class LocalCategory
     public int CategoryId { get; set; }
     public string Name { get; set; } = null!;
     public string? ColorCode { get; set; }
+    public int DisplayOrder { get; set; }
 }
 
 public class LocalProductModifierGroup
@@ -78,6 +81,8 @@ public class LocalModifierOption
     [Key]
     public int ModifierOptionId { get; set; }
     public int ModifierGroupId { get; set; }
+    public int? ProductId { get; set; }
+    public string? ProductName { get; set; }
     public string Name { get; set; } = null!;
     public decimal Price { get; set; }
     public int DisplayOrder { get; set; }
@@ -120,6 +125,29 @@ public class LocalPaymentMethod
     public int DisplayOrder { get; set; }
 }
 
+public class LocalBranch
+{
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.None)]
+    public int BranchId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? BranchTagline { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string? Address { get; set; }
+    public string? Phone { get; set; }
+    public string TaxType { get; set; } = "VAT-Registered";
+    public bool VatDisplay { get; set; } = true;
+    public bool TrackInventory { get; set; }
+    public int? BusinessTypeId { get; set; } = 1;
+    public string? BusinessType { get; set; } = "FNB";
+    public int? ServiceModeId { get; set; }
+    public string? ReceiptLogoUrl { get; set; }
+    public string? ReceiptLogoDataUri { get; set; }
+    public DateTime? ReceiptLogoUpdatedAt { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class LocalTerminalConfig
 {
     [Key]
@@ -135,9 +163,14 @@ public class LocalTerminalConfig
     public int? BusinessTypeId { get; set; }
     public string? BusinessType { get; set; }
     public string? BranchName { get; set; }
+    public string? BranchTagline { get; set; }
     public string? BranchCode { get; set; }
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
+    public string? ReceiptLogoUrl { get; set; }
+    public string? ReceiptLogoDataUri { get; set; }
+    public DateTime? ReceiptLogoUpdatedAt { get; set; }
+    public bool VatDisplay { get; set; } = true;
     public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = "VAT-Registered";
     public string TerminalIdentifier { get; set; } = null!;
@@ -210,6 +243,11 @@ public class LocalOrder
     [Column(TypeName = "decimal(18,2)")]
     public decimal DiscountAmount { get; set; }
     public string? DiscountCode { get; set; }
+    public string? CustomerCardNumber { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerAddress { get; set; }
+    public string? CustomerTin { get; set; }
+    public string? CustomerBusinessStyle { get; set; }
     [Column(TypeName = "decimal(18,2)")]
     public decimal VatableSales { get; set; }
     [Column(TypeName = "decimal(18,2)")]
@@ -223,6 +261,9 @@ public class LocalOrder
     public string PaymentStatus { get; set; } = "PENDING";
     public string OrderStatus { get; set; } = "COMPLETED";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string? DeviceTimeZoneId { get; set; }
+    public int? DeviceUtcOffsetMinutes { get; set; }
+    public DateTime? ServerReceivedAtUtc { get; set; }
 }
 
 public class LocalOrderItem
@@ -232,11 +273,17 @@ public class LocalOrderItem
     public string OrderId { get; set; } = null!;
     public int ProductId { get; set; }
     public string ProductName { get; set; } = null!;
-    public int Quantity { get; set; }
+    [Column(TypeName = "decimal(18,6)")]
+    public decimal Quantity { get; set; }
     [Column(TypeName = "decimal(18,2)")]
     public decimal UnitPrice { get; set; }
     [Column(TypeName = "decimal(18,2)")]
     public decimal LineTotal { get; set; }
+    public string? PricingMethod { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? TargetAmount { get; set; }
+    public bool IsComplimentary { get; set; } = false;
+    public int? ParentProductId { get; set; }
     public string TaxName { get; set; } = "VATable";
     public string? ProductShortCode { get; set; }
     public bool IsKitchenItem { get; set; }
@@ -259,6 +306,7 @@ public class LocalPayment
     public decimal ChangeAmount { get; set; }
     public string PaymentMethod { get; set; } = "CASH";
     public string PaymentStatus { get; set; } = POS.Shared.Constants.PaymentStatuses.Paid;
+    public string? ReferenceNumber { get; set; }
     public DateTime PaidAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -273,6 +321,7 @@ public class LocalSyncOutbox
     public int RetryCount { get; set; } = 0;
     public string? LastError { get; set; }
     public DateTime? NextRetryAt { get; set; }
+    public DateTime? SyncedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -388,4 +437,147 @@ public class LocalCashDrawerMovement
     public DateTime? PostedAt { get; set; }
     public string SyncStatus { get; set; } = "PENDING"; // PENDING, SYNCED, NEEDS_ATTENTION, CONFLICT
     public string? SyncError { get; set; }
+}
+
+public class LocalTerminalLicense
+{
+    [Key]
+    public int TerminalId { get; set; }
+    public string LicenseId { get; set; } = string.Empty;
+    public string LicenseKey { get; set; } = string.Empty;
+    public string DeviceId { get; set; } = string.Empty;
+    public int BranchId { get; set; }
+    public int OutletId { get; set; }
+    public string LicenseStatus { get; set; } = "PENDING_ACTIVATION";
+    public DateTime IssuedAtUtc { get; set; }
+    public DateTime? ActivatedAtUtc { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+    public int LicenseVersion { get; set; } = 1;
+    public int DurationValue { get; set; } = 5;
+    public string DurationUnit { get; set; } = "YEARS";
+    public int OriginalDurationValue { get; set; } = 5;
+    public string OriginalDurationUnit { get; set; } = "YEARS";
+    public int RenewalCount { get; set; }
+    public DateTime? LastRenewedAtUtc { get; set; }
+    public int OfflineGracePeriodDays { get; set; } = 30;
+    public string EnvironmentType { get; set; } = "Production";
+    public string Signature { get; set; } = string.Empty;
+    public DateTime? LastValidatedServerUtc { get; set; }
+    public long? LastValidatedTickCount64 { get; set; }
+    public DateTime? HighWaterMarkUtc { get; set; }
+    public long? HighWaterMarkTickCount64 { get; set; }
+    public string? RevocationReason { get; set; }
+    public DateTime? RevokedAtUtc { get; set; }
+    public string? SuspensionReason { get; set; }
+    public DateTime? SuspendedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Local unified ESC/POS thermal printer (USB & Ethernet) and RJ11/RJ12 cash drawer settings per terminal.</summary>
+public class LocalPrinterHardwareConfig
+{
+    [Key]
+    public int TerminalId { get; set; }
+    public bool PrinterEnabled { get; set; }
+    [MaxLength(24)]
+    public string ConnectionType { get; set; } = "Ethernet"; // "Ethernet" or "USB"
+    public bool CashDrawerEnabled { get; set; }
+    [MaxLength(64)]
+    public string? PrinterIpAddress { get; set; }
+    public int PrinterPort { get; set; } = 9100;
+    [MaxLength(320)]
+    public string? UsbDeviceId { get; set; }
+    [MaxLength(200)]
+    public string? UsbDeviceName { get; set; }
+    public int PaperWidthMm { get; set; } = 80; // 58 or 80
+    [MaxLength(16)]
+    public string PrintDensity { get; set; } = "Normal"; // Light, Normal, Dark
+    [MaxLength(24)]
+    public string CharacterEncoding { get; set; } = "PC437"; // PC437, PC850, WPC1252, UTF-8
+    public bool AutoCutEnabled { get; set; } = true;
+    public int ConnectTimeoutMs { get; set; } = 2000;
+    public int KickPin { get; set; } // 0 = Pin 2 (0x00, Xprinter default), 1 = Pin 5 (0x01)
+    public int PulseOnUnits { get; set; } = 25; // t1 * 2ms -> 0x19 = 50ms
+    public int PulseOffUnits { get; set; } = 250; // t2 * 2ms -> 0xFA = 500ms
+    [MaxLength(100)]
+    public string? UpdatedBy { get; set; }
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Durable cash drawer and printer hardware audit log with per-transaction idempotency claim.</summary>
+public class LocalCashDrawerHardwareEvent
+{
+    [Key]
+    public long EventId { get; set; }
+    public int TerminalId { get; set; }
+    public int BranchId { get; set; }
+    [MaxLength(64)]
+    public string? TransactionId { get; set; }
+    [MaxLength(64)]
+    public string? InvoiceNumber { get; set; }
+    [MaxLength(32)]
+    public string ActionType { get; set; } = string.Empty;
+    [MaxLength(100)]
+    public string RequestedBy { get; set; } = string.Empty;
+    [MaxLength(100)]
+    public string? AuthorizedBy { get; set; }
+    [MaxLength(50)]
+    public string? AuthorizedRole { get; set; }
+    [MaxLength(250)]
+    public string? Reason { get; set; }
+    [MaxLength(80)]
+    public string? TargetEndpoint { get; set; }
+    [MaxLength(40)]
+    public string? CommandHex { get; set; }
+    [MaxLength(24)]
+    public string Status { get; set; } = "CLAIMED";
+    [MaxLength(400)]
+    public string? ErrorMessage { get; set; }
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+
+public static class ReceiptPrintJobStatuses
+{
+    public const string Pending = "PENDING";
+    public const string Printing = "PRINTING";
+    public const string Printed = "PRINTED";
+    public const string Failed = "FAILED";
+}
+
+public class LocalReceiptPrintJob
+{
+    [Key]
+    public long PrintJobId { get; set; }
+
+    [MaxLength(64)]
+    public string TransactionId { get; set; } = string.Empty;
+
+    [MaxLength(64)]
+    public string? OrderNumber { get; set; }
+
+    [MaxLength(64)]
+    public string? InvoiceNumber { get; set; }
+
+    public int TerminalId { get; set; }
+    public int BranchId { get; set; }
+
+    [MaxLength(20)]
+    public string ConnectionType { get; set; } = "Ethernet";
+
+    [MaxLength(80)]
+    public string? TargetEndpoint { get; set; }
+
+    [MaxLength(20)]
+    public string Status { get; set; } = ReceiptPrintJobStatuses.Pending;
+
+    public int AttemptCount { get; set; }
+
+    [MaxLength(400)]
+    public string? ErrorMessage { get; set; }
+
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? LastAttemptAtUtc { get; set; }
+    public DateTime? PrintedAtUtc { get; set; }
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }

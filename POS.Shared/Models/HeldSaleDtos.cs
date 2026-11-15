@@ -52,6 +52,10 @@ public class HeldSaleItemDto
     public decimal Quantity { get; set; }
     public decimal BasePrice { get; set; }
     public decimal LineTotal { get; set; }
+    public string? PricingMethod { get; set; }
+    public decimal? TargetAmount { get; set; }
+    public bool IsComplimentary { get; set; } = false;
+    public int? ParentProductId { get; set; }
     public string TaxName { get; set; } = "VATable";
     public string? SpecialInstructions { get; set; }
     public List<HeldSaleModifierDto> Modifiers { get; set; } = new();
@@ -61,6 +65,8 @@ public class HeldSaleModifierDto
 {
     public long HeldSaleItemModifierId { get; set; }
     public int ModifierOptionId { get; set; }
+    public int? ProductId { get; set; }
+    public string? ProductName { get; set; }
     public string ModifierName { get; set; } = null!;
     public decimal AdditionalPrice { get; set; }
 }

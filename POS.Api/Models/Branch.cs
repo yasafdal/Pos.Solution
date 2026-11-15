@@ -15,6 +15,8 @@ public partial class Branch
 
     public string Name { get; set; } = null!;
 
+    public string? BranchTagline { get; set; }
+
     public string? Code { get; set; }
 
     public string? Address { get; set; }
@@ -25,7 +27,13 @@ public partial class Branch
 
     public string TaxType { get; set; } = null!;
 
+    public bool VatDisplay { get; set; } = true;
+
     public bool TrackInventory { get; set; }
+
+    public string? ReceiptLogoUrl { get; set; }
+
+    public DateTime? ReceiptLogoUpdatedAt { get; set; }
 
     public virtual ICollection<BranchInventory> BranchInventories { get; set; } = new List<BranchInventory>();
 

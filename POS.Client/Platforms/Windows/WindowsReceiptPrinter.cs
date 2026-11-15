@@ -1,3 +1,4 @@
+#if WINDOWS
 using Microsoft.Maui.ApplicationModel;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
@@ -22,6 +23,7 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
 
         try
         {
+            PosSessionService.EnsureReceiptLogoPopulated(receipt);
             var html = ReceiptHtmlFormatter.Format(receipt);
             await MainThread.InvokeOnMainThreadAsync(() => PrintDirectAsync(html, null, "Print Receipt"));
         }
@@ -211,6 +213,10 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
     private static double EstimateReceiptHeightMm(string html)
     {
         double height = 150d;
+        if (html.Contains("class=\"receipt-logo\"", StringComparison.Ordinal))
+        {
+            height += 24d;
+        }
         int itemCount = CountOccurrences(html, "class=\"item-block\"");
         height += itemCount * 12d;
         int modCount = CountOccurrences(html, "class=\"modifier-line\"");
@@ -232,3 +238,4 @@ public sealed class WindowsReceiptPrinter : IReceiptPrinter
         return count;
     }
 }
+#endif

@@ -1,0 +1,604 @@
+@page "/receipt-branding"
+@page "/receipt-settings"
+@attribute [Authorize(Roles = "Admin, Manager")]
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using POS.Shared.Helpers
+@using POS.Shared.Interfaces
+@using POS.Shared.Models
+@using CurrieTechnologies.Razor.SweetAlert2
+@inject IBranchService BranchService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject SweetAlertService Swal
+
+<PageTitle>Receipt Branding - POS Admin</PageTitle>
+
+<div class="w-100 py-2">
+    <!-- Page Header -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-4">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Receipt Branding &amp; Logo Settings</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Configure the business logo printed at the top of 80mm POS thermal receipts</span>
+        </div>
+        @if (currentBranding != null)
+        {
+            <div>
+                @if (currentBranding.HasLogo)
+                {
+                    <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 rounded-pill fw-bold">
+                        <i class="bi bi-check-circle-fill me-1"></i> Logo Configured
+                    </span>
+                }
+                else
+                {
+                    <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle px-3 py-2 rounded-pill fw-bold">
+                        <i class="bi bi-dash-circle me-1"></i> No Logo Configured (Text Header Only)
+                    </span>
+                }
+            </div>
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="text-center py-5 text-muted">
+            <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+            Loading receipt branding configuration...
+        </div>
+    }
+    else if (branches == null || branches.Count == 0)
+    {
+        <div class="alert alert-warning rounded-3">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>No branches found. Please create a branch first before configuring receipt branding.
+        </div>
+    }
+    else
+    {
+        <div class="row g-4 align-items-start">
+            <!-- Left Column: Configuration & Upload Controls -->
+            <div class="col-12 col-lg-7">
+                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white mb-4">
+                    <h5 class="fw-bold text-dark mb-3">
+                        <i class="bi bi-Sliders me-2 text-primary"></i>1. Target Branch / Business Scope
+                    </h5>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark small">Select Branch</label>
+                        <select class="form-select rounded-3" value="@selectedBranchId" @onchange="OnBranchChanged" disabled="@isSaving">
+                            @foreach (var b in branches)
+                            {
+                                <option value="@b.BranchId">
+                                    @b.Name @(!string.IsNullOrWhiteSpace(b.Code) ? $"({b.Code})" : "") — @(string.IsNullOrWhiteSpace(b.ReceiptLogoUrl) ? "No Logo" : "Logo Active")
+                                </option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (isAdmin && branches.Count > 1)
+                    {
+                        <div class="form-check form-switch bg-light rounded-3 p-3 ps-5 border">
+                            <input class="form-check-input" type="checkbox" role="switch" id="applyAllBranchesSwitch" @bind="applyToAllBranches" disabled="@isSaving" />
+                            <label class="form-check-label fw-semibold text-dark small" for="applyAllBranchesSwitch">
+                                Apply logo changes to all @branches.Count branches (Global Business Logo)
+                            </label>
+                            <div class="text-secondary" style="font-size: 0.78rem;">
+                                When enabled, uploading or removing the logo updates every branch across the business in one action.
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white">
+                    <h5 class="fw-bold text-dark mb-3">
+                        <i class="bi bi-image me-2 text-primary"></i>2. Receipt Logo Upload &amp; Management
+                    </h5>
+
+                    @if (!string.IsNullOrWhiteSpace(validationError))
+                    {
+                        <div class="alert alert-danger d-flex align-items-center gap-2 rounded-3 py-2 px-3 small mb-3">
+                            <i class="bi bi-exclamation-octagon-fill fs-6"></i>
+                            <span>@validationError</span>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(statusMessage))
+                    {
+                        <div class="alert alert-success d-flex align-items-center gap-2 rounded-3 py-2 px-3 small mb-3">
+                            <i class="bi bi-check-circle-fill fs-6"></i>
+                            <span>@statusMessage</span>
+                        </div>
+                    }
+
+                    <!-- Current Saved Logo Status -->
+                    <div class="p-3 rounded-3 border bg-light mb-3">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div>
+                                <div class="text-uppercase text-secondary fw-bold" style="font-size: 0.72rem; letter-spacing: 0.04em;">Current Saved Configuration</div>
+                                @if (currentBranding?.HasLogo == true)
+                                {
+                                    <div class="fw-bold text-success mt-1">
+                                        <i class="bi bi-check-circle-fill me-1"></i>Active Receipt Logo Configured
+                                    </div>
+                                    @if (currentBranding.ReceiptLogoUpdatedAt.HasValue)
+                                    {
+                                        <div class="text-secondary small">
+                                            Last updated: @currentBranding.ReceiptLogoUpdatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")
+                                        </div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="fw-semibold text-secondary mt-1">
+                                        No logo configured for @(currentBranding?.BranchName ?? "this branch"). Receipts print text header only.
+                                    </div>
+                                }
+                            </div>
+
+                            @if (currentBranding?.HasLogo == true)
+                            {
+                                <button type="button" class="btn btn-outline-danger btn-sm rounded-3 px-3 fw-bold" @onclick="ConfirmRemoveLogoAsync" disabled="@isSaving">
+                                    <i class="bi bi-trash me-1"></i> Remove Logo
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- File Picker -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-dark small">
+                            @(currentBranding?.HasLogo == true ? "Replace / Update Receipt Logo" : "Upload Receipt Logo")
+                        </label>
+                        <InputFile OnChange="OnFileSelectedAsync" accept=".png,.jpg,.jpeg,image/png,image/jpeg" class="form-control rounded-3" disabled="@isSaving" />
+                        <div class="form-text text-secondary small mt-1">
+                            Accepted formats: <strong>PNG, JPEG (.png, .jpg, .jpeg)</strong> &bull; Maximum file size: <strong>2 MB</strong> &bull; Max dimensions: <strong>2048 &times; 2048 px</strong>.<br />
+                            Tip: High-contrast dark logos on a white or transparent background print sharpest on 80mm monochrome thermal paper.
+                        </div>
+                    </div>
+
+                    @if (stagedBytes != null && !string.IsNullOrWhiteSpace(stagedDataUri))
+                    {
+                        <div class="p-3 rounded-3 border border-primary bg-primary-subtle bg-opacity-10 mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="badge bg-primary text-white">Staged for Upload (Unsaved)</span>
+                                <span class="text-secondary small fw-semibold">@stagedFileName (@stagedDimensionsText, @FormatFileSize(stagedBytes.Length))</span>
+                            </div>
+                            <div class="text-center p-3 bg-white rounded-3 border mb-2">
+                                <img src="@stagedDataUri" alt="Staged Logo Preview" style="max-width: 180px; max-height: 84px; width: auto; height: auto; object-fit: contain;" />
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Action Buttons -->
+                    <div class="d-flex flex-wrap justify-content-end gap-2 pt-2 border-top">
+                        @if (stagedBytes != null)
+                        {
+                            <button type="button" class="btn btn-outline-secondary rounded-3 px-3 fw-semibold" @onclick="ClearStagedFile" disabled="@isSaving">
+                                Discard Selection
+                            </button>
+                        }
+                        <button type="button" class="btn btn-primary rounded-3 px-4 fw-bold shadow-sm" @onclick="SaveLogoAsync" disabled="@(stagedBytes == null || isSaving)">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                <span>Saving Logo...</span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-cloud-arrow-up-fill me-1"></i>
+                                <span>Save Receipt Logo</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Live 80mm Thermal Receipt Preview -->
+            <div class="col-12 col-lg-5">
+                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-dark mb-0">
+                            <i class="bi bi-printer me-2 text-primary"></i>Live 80mm Receipt Preview
+                        </h5>
+                        @if (!string.IsNullOrWhiteSpace( stagedDataUri ))
+                        {
+                            <span class="badge bg-warning text-dark">Previewing New Upload</span>
+                        }
+                        else if (currentBranding?.HasLogo == true)
+                        {
+                            <span class="badge bg-success-subtle text-success">Saved Logo</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary-subtle text-secondary">Text-Only Header</span>
+                        }
+                    </div>
+
+                    <p class="text-secondary small mb-3">
+                        Simulates how POS.Client formats and prints the receipt header on an 80mm thermal printer.
+                    </p>
+
+                    <div class="d-flex justify-content-center bg-light p-3 rounded-4 border">
+                        <div class="thermal-receipt-preview-paper shadow-sm">
+                            <div class="thermal-header">
+                                @if (!string.IsNullOrWhiteSpace(PreviewLogoDataUri))
+                                {
+                                    <div class="thermal-logo-wrap">
+                                        <img class="thermal-logo-img" src="@PreviewLogoDataUri" alt="Receipt Logo" />
+                                    </div>
+                                }
+                                <div class="thermal-branch-name">@(string.IsNullOrWhiteSpace(currentBranding?.BranchName) ? "STORE NAME" : currentBranding!.BranchName)</div>
+                                @if (!string.IsNullOrWhiteSpace(currentBranding?.BranchCode))
+                                {
+                                    <div class="thermal-sub">Branch Code: @currentBranding!.BranchCode</div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(currentBranding?.BranchAddress))
+                                {
+                                    <div class="thermal-sub">@currentBranding!.BranchAddress</div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(currentBranding?.BranchPhone))
+                                {
+                                    <div class="thermal-sub">Tel: @currentBranding!.BranchPhone</div>
+                                }
+                                <div class="thermal-sub">Outlet: Main Counter</div>
+                                <div class="thermal-badge">SALES RECEIPT</div>
+                            </div>
+
+                            <div class="thermal-section">
+                                <div class="thermal-row"><span>SI #:</span><span class="fw-bold">SI-0000101</span></div>
+                                <div class="thermal-row"><span>Order #:</span><span>ORD-0000101</span></div>
+                                <div class="thermal-row"><span>Date:</span><span>@DateTime.Now.ToString("yyyy-MM-dd HH:mm")</span></div>
+                                <div class="thermal-row"><span>Cashier:</span><span>CASHIER01</span></div>
+                            </div>
+
+                            <div class="thermal-section">
+                                <div class="thermal-item-title">1. Chicken Inasal Meal</div>
+                                <div class="thermal-row"><span>1 x 145.00</span><span>145.00</span></div>
+                                <div class="thermal-item-title mt-1">2. Iced Tea Regular</div>
+                                <div class="thermal-row"><span>1 x 45.00</span><span>45.00</span></div>
+                            </div>
+
+                            <div class="thermal-section">
+                                <div class="thermal-row"><span>Subtotal:</span><span>190.00</span></div>
+                                <div class="thermal-row thermal-total"><span>TOTAL:</span><span>190.00</span></div>
+                            </div>
+
+                            <div class="thermal-footer">
+                                Thank you for your purchase!<br />
+                                Please come again.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .thermal-receipt-preview-paper {
+        width: 72mm;
+        max-width: 100%;
+        background: #ffffff;
+        color: #000000;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 9pt;
+        line-height: 1.25;
+        padding: 4mm 3mm;
+        border-top: 4px dashed #cbd5e1;
+        border-bottom: 4px dashed #cbd5e1;
+    }
+
+    .thermal-header {
+        text-align: center;
+        border-bottom: 1px dashed #000;
+        padding-bottom: 2mm;
+        margin-bottom: 2mm;
+    }
+
+    .thermal-logo-wrap {
+        text-align: center;
+        margin-bottom: 1.5mm;
+    }
+
+    .thermal-logo-img {
+        max-width: 48mm;
+        max-height: 22mm;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+        display: block;
+        margin: 0 auto;
+        filter: grayscale(100%) contrast(135%);
+    }
+
+    .thermal-branch-name {
+        font-size: 11pt;
+        font-weight: bold;
+        text-transform: uppercase;
+        margin-bottom: 0.5mm;
+    }
+
+    .thermal-sub {
+        font-size: 8pt;
+    }
+
+    .thermal-badge {
+        display: inline-block;
+        font-weight: bold;
+        font-size: 9.5pt;
+        border: 1px solid #000;
+        padding: 0.5mm 2mm;
+        margin-top: 1.2mm;
+    }
+
+    .thermal-section {
+        border-bottom: 1px dashed #000;
+        padding-bottom: 1.8mm;
+        margin-bottom: 1.8mm;
+    }
+
+    .thermal-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 8.5pt;
+    }
+
+    .thermal-item-title {
+        font-weight: bold;
+        font-size: 8.5pt;
+    }
+
+    .thermal-total {
+        font-size: 10.5pt;
+        font-weight: bold;
+        border-top: 1px solid #000;
+        padding-top: 1mm;
+        margin-top: 1mm;
+    }
+
+    .thermal-footer {
+        text-align: center;
+        font-size: 8pt;
+        margin-top: 2mm;
+    }
+</style>
+
+@code {
+    private List<BranchDto>? branches;
+    private int selectedBranchId;
+    private ReceiptBrandingDto? currentBranding;
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool isAdmin = false;
+    private bool applyToAllBranches = true;
+
+    private byte[]? stagedBytes;
+    private string? stagedFileName;
+    private string? stagedContentType;
+    private string? stagedDataUri;
+    private string? stagedDimensionsText;
+
+    private string? validationError;
+    private string? statusMessage;
+
+    private string? PreviewLogoDataUri =>
+        !string.IsNullOrWhiteSpace(stagedDataUri)
+            ? stagedDataUri
+            : currentBranding?.ReceiptLogoDataUri;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        isAdmin = authState.User.IsInRole("Admin");
+        applyToAllBranches = isAdmin;
+
+        await LoadBranchesAndBrandingAsync();
+    }
+
+    private async Task LoadBranchesAndBrandingAsync(int? targetBranchId = null)
+    {
+        isLoading = true;
+        try
+        {
+            branches = await BranchService.GetBranchesAsync();
+            if (branches.Count > 0)
+            {
+                selectedBranchId = targetBranchId.HasValue && branches.Any(b => b.BranchId == targetBranchId.Value)
+                    ? targetBranchId.Value
+                    : branches[0].BranchId;
+                await LoadSelectedBranchBrandingAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            validationError = $"Failed to load receipt branding settings: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadSelectedBranchBrandingAsync()
+    {
+        if (selectedBranchId <= 0) return;
+        currentBranding = await BranchService.GetReceiptBrandingAsync(selectedBranchId);
+        if (currentBranding == null && branches != null)
+        {
+            var fallback = branches.FirstOrDefault(b => b.BranchId == selectedBranchId);
+            if (fallback != null)
+            {
+                currentBranding = new ReceiptBrandingDto
+                {
+                    BranchId = fallback.BranchId,
+                    BranchName = fallback.Name,
+                    BranchCode = fallback.Code,
+                    BranchAddress = fallback.Address,
+                    BranchPhone = fallback.Phone,
+                    ReceiptLogoUrl = fallback.ReceiptLogoUrl,
+                    ReceiptLogoDataUri = fallback.ReceiptLogoDataUri,
+                    ReceiptLogoUpdatedAt = fallback.ReceiptLogoUpdatedAt
+                };
+            }
+        }
+    }
+
+    private async Task OnBranchChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newBranchId) && newBranchId != selectedBranchId)
+        {
+            selectedBranchId = newBranchId;
+            validationError = null;
+            statusMessage = null;
+            ClearStagedFile();
+            await LoadSelectedBranchBrandingAsync();
+        }
+    }
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        validationError = null;
+        statusMessage = null;
+
+        var file = e.File;
+        if (file == null)
+            return;
+
+        if (file.Size > ReceiptLogoValidator.MaxFileSizeBytes)
+        {
+            validationError = "Logo file size exceeds the 2 MB maximum limit. Existing logo was preserved.";
+            return;
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: ReceiptLogoValidator.MaxFileSizeBytes);
+            using var ms = new System.IO.MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+
+            var check = ReceiptLogoValidator.Validate(bytes, file.Name);
+            if (!check.IsValid)
+            {
+                validationError = check.ErrorMessage ?? "Invalid image file.";
+                return;
+            }
+
+            stagedBytes = bytes;
+            stagedFileName = file.Name;
+            stagedContentType = check.MimeType;
+            stagedDataUri = ReceiptLogoValidator.ToDataUri(bytes, check.MimeType);
+            stagedDimensionsText = $"{check.Width}×{check.Height}px";
+        }
+        catch (Exception ex)
+        {
+            validationError = $"Could not read selected image file: {ex.Message}";
+        }
+    }
+
+    private void ClearStagedFile()
+    {
+        stagedBytes = null;
+        stagedFileName = null;
+        stagedContentType = null;
+        stagedDataUri = null;
+        stagedDimensionsText = null;
+    }
+
+    private async Task SaveLogoAsync()
+    {
+        if (stagedBytes == null || selectedBranchId <= 0)
+            return;
+
+        isSaving = true;
+        validationError = null;
+        statusMessage = null;
+
+        try
+        {
+            var result = await BranchService.UploadReceiptLogoAsync(
+                selectedBranchId,
+                stagedBytes,
+                stagedFileName ?? "logo.png",
+                stagedContentType ?? "image/png",
+                isAdmin && applyToAllBranches);
+
+            if (result.Success)
+            {
+                statusMessage = result.Message;
+                ClearStagedFile();
+                await LoadBranchesAndBrandingAsync(selectedBranchId);
+            }
+            else
+            {
+                validationError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            validationError = $"Upload error: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ConfirmRemoveLogoAsync()
+    {
+        if (currentBranding == null || !currentBranding.HasLogo)
+            return;
+
+        var scopeText = (isAdmin && applyToAllBranches && (branches?.Count ?? 0) > 1)
+            ? "all branches"
+            : currentBranding.BranchName;
+
+        var confirm = await Swal.FireAsync(new SweetAlertOptions
+        {
+            Title = "Remove Receipt Logo?",
+            Text = $"Receipts for {scopeText} will return to printing the standard text header without a logo.",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonText = "Yes, Remove Logo",
+            CancelButtonText = "Cancel"
+        });
+
+        if (!confirm.IsConfirmed)
+            return;
+
+        isSaving = true;
+        validationError = null;
+        statusMessage = null;
+
+        try
+        {
+            var result = await BranchService.RemoveReceiptLogoAsync(selectedBranchId, isAdmin && applyToAllBranches);
+            if (result.Success)
+            {
+                statusMessage = result.Message;
+                ClearStagedFile();
+                await LoadBranchesAndBrandingAsync(selectedBranchId);
+            }
+            else
+            {
+                validationError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            validationError = $"Failed to remove logo: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private static string FormatFileSize(int byteCount)
+    {
+        if (byteCount < 1024) return $"{byteCount} B";
+        if (byteCount < 1024 * 1024) return $"{byteCount / 1024.0:F1} KB";
+        return $"{byteCount / (1024.0 * 1024.0):F2} MB";
+    }
+}

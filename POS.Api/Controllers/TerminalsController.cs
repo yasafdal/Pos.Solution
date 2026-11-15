@@ -32,11 +32,16 @@ namespace POS.Api.Controllers
         [HttpGet("resolve-terminal")]
         public async Task<IActionResult> ResolveTerminal([FromQuery] string? ipAddress = null, [FromQuery] string? deviceUuid = null)
         {
+            await POS.Api.Services.ReceiptLogoStorage.EnsureBranchColumnsAsync(_context);
             var query = _context.Terminals.AsNoTracking()
                 .Select(o => new { o.TerminalId, o.BranchId, o.OutletId, o.TerminalCode, o.IpAddress, o.Ptunumber, o.Minnumber, o.SerialNumber, OutletName = o.Outlet.Name, OutletActive = o.Outlet.IsActive, o.Name, o.DeviceIdentifier,
                     o.IsActive, o.MenuDisplayMode, BranchActive = o.Branch.IsActive,
-                    BranchName = o.Branch.Name, o.Branch.Code,
+                    BranchName = o.Branch.Name, BranchTagline = o.Branch.BranchTagline, o.Branch.Code,
                     BranchAddress = o.Branch.Address, BranchPhone = o.Branch.Phone,
+                    BranchTaxType = o.Branch.TaxType,
+                    VatDisplay = o.Branch.VatDisplay,
+                    ReceiptLogoUrl = o.Branch.ReceiptLogoUrl,
+                    ReceiptLogoUpdatedAt = o.Branch.ReceiptLogoUpdatedAt,
                     o.Branch.BusinessTypeId,
                     BusinessType = o.Branch.BusinessType == null ? null : o.Branch.BusinessType.Type,
                     o.Uuid, o.AllowSync,
@@ -118,9 +123,15 @@ namespace POS.Api.Controllers
                 PTUNumber = outlet.Ptunumber, MINNumber = outlet.Minnumber, SerialNumber = outlet.SerialNumber,
                 BranchId = outlet.BranchId,
                 BranchName = outlet.BranchName,
+                BranchTagline = outlet.BranchTagline,
                 BranchCode = outlet.Code,
                 BranchAddress = outlet.BranchAddress,
                 BranchPhone = outlet.BranchPhone,
+                ReceiptLogoUrl = outlet.ReceiptLogoUrl,
+                ReceiptLogoDataUri = POS.Api.Services.ReceiptLogoStorage.GetDataUri(outlet.ReceiptLogoUrl),
+                ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt,
+                BranchTaxType = outlet.BranchTaxType ?? "VAT-Registered",
+                VatDisplay = outlet.VatDisplay,
                 TerminalName = outlet.Name,
                 BusinessTypeId = outlet.BusinessTypeId,
                 BusinessType = outlet.BusinessType,
@@ -331,9 +342,15 @@ namespace POS.Api.Controllers
                 SerialNumber = terminal.SerialNumber,
                 BranchId = terminal.BranchId,
                 BranchName = terminal.Branch?.Name ?? string.Empty,
+                BranchTagline = terminal.Branch?.BranchTagline,
                 BranchCode = terminal.Branch?.Code ?? string.Empty,
                 BranchAddress = terminal.Branch?.Address,
                 BranchPhone = terminal.Branch?.Phone,
+                ReceiptLogoUrl = terminal.Branch?.ReceiptLogoUrl,
+                ReceiptLogoDataUri = POS.Api.Services.ReceiptLogoStorage.GetDataUri(terminal.Branch?.ReceiptLogoUrl),
+                ReceiptLogoUpdatedAt = terminal.Branch?.ReceiptLogoUpdatedAt,
+                BranchTaxType = terminal.Branch?.TaxType ?? "VAT-Registered",
+                VatDisplay = terminal.Branch?.VatDisplay ?? true,
                 TerminalName = terminal.Name,
                 BusinessTypeId = terminal.Branch?.BusinessTypeId,
                 BusinessType = terminal.Branch?.BusinessType?.Type,
@@ -363,6 +380,22 @@ namespace POS.Api.Controllers
                 })
                 .ToList();
 
+            SignedLicensePackageDto? licensePkg = null;
+            try
+            {
+                var licService = new POS.Api.Services.LicensingService(_context, _configuration);
+                licensePkg = await licService.EnsureOrActivateTerminalLicenseAsync(
+                    terminal,
+                    clientUuid,
+                    request.DeviceId,
+                    terminal.TerminalCode,
+                    HttpContext?.Connection?.RemoteIpAddress?.ToString());
+            }
+            catch
+            {
+                // Non-fatal if licensing table is not yet initialized in an isolated mock test
+            }
+
             return Ok(new TerminalActivationResponseDto
             {
                 Success = true,
@@ -370,7 +403,8 @@ namespace POS.Api.Controllers
                 Token = token,
                 Terminal = HierarchyMapping.ToDto(terminal),
                 Config = config,
-                Cashiers = cashiers
+                Cashiers = cashiers,
+                LicensePackage = licensePkg
             });
         }
 

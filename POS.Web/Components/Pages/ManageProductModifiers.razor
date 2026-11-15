@@ -5,6 +5,7 @@
 @using CurrieTechnologies.Razor.SweetAlert2
 @using System.Linq
 @inject IModifierService ModifierService
+@inject IProductService ProductService
 @inject SweetAlertService Swal
 
 <PageTitle>Product Modifiers - POS</PageTitle>
@@ -294,16 +295,31 @@
                                 <div class="row g-2 align-items-end">
                                     <div class="col-12 col-md-4">
                                         <label class="form-label small fw-semibold text-dark mb-1 text-nowrap">Option Name <span class="text-danger">*</span></label>
-                                        <InputText @bind-Value="currentOption.Name" class="form-control form-control-sm rounded" placeholder="e.g. Regular, Large, 50% Sugar" />
+                                        <InputText @bind-Value="currentOption.Name" class="form-control form-control-sm rounded" placeholder="e.g. Regular, Coke, Extra Spicy" />
                                     </div>
-                                    <div class="col-6 col-sm-3 col-md-2">
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label small fw-semibold text-dark mb-1 text-nowrap">
+                                            Linked Product <span class="text-muted fw-normal">(Optional for Inventory)</span>
+                                        </label>
+                                        <select class="form-select form-select-sm rounded" value="@currentOption.ProductId" @onchange="OnLinkedProductChanged">
+                                            <option value="">-- None (Non-Inventory Option) --</option>
+                                            @if (allProducts != null)
+                                            {
+                                                @foreach (var prod in allProducts.Where(p => p.IsActive))
+                                                {
+                                                    <option value="@prod.ProductId">@prod.Name (@prod.Price.ToString("C"))</option>
+                                                }
+                                            }
+                                        </select>
+                                    </div>
+                                    <div class="col-6 col-sm-4 col-md-2">
                                         <label class="form-label small fw-semibold text-dark mb-1 text-nowrap">Additional Price</label>
                                         <div class="input-group input-group-sm">
                                             <span class="input-group-text bg-light text-secondary border">₱</span>
                                             <InputNumber @bind-Value="currentOption.Price" class="form-control rounded-end" min="0" step="0.25" placeholder="0.00" />
                                         </div>
                                     </div>
-                                    <div class="col-6 col-sm-3 col-md-2">
+                                    <div class="col-6 col-sm-2 col-md-2">
                                         <label class="form-label small fw-semibold text-dark mb-1 text-nowrap">Display Order</label>
                                         <InputNumber @bind-Value="currentOption.DisplayOrder" class="form-control form-control-sm rounded" min="0" />
                                     </div>
@@ -368,6 +384,12 @@
                                             <tr>
                                                 <td style="padding-left: 1rem;">
                                                     <span class="fw-semibold text-dark">@opt.Name</span>
+                                                    @if (opt.ProductId.HasValue)
+                                                    {
+                                                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-1" title="Deducts product inventory on sale">
+                                                            <i class="bi bi-box-seam me-1"></i>@(string.IsNullOrWhiteSpace(opt.ProductName) ? $"Product #{opt.ProductId}" : opt.ProductName)
+                                                        </span>
+                                                    }
                                                 </td>
                                                 <td class="text-center">
                                                     @if (opt.Price > 0)
@@ -434,6 +456,7 @@
     private bool isOptionsModalOpen = false;
     private ModifierGroupDto? selectedGroup;
     private List<ModifierOptionDto>? groupOptions;
+    private List<ProductDto>? allProducts;
     private ModifierOptionDto currentOption = new();
     private bool isEditingOption = false;
     private bool isSavingOption = false;
@@ -472,6 +495,14 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadGroups();
+        try
+        {
+            allProducts = await ProductService.GetProductsAsync();
+        }
+        catch
+        {
+            // Non-fatal if product service is temporarily unavailable
+        }
     }
 
     private async Task LoadGroups()
@@ -613,12 +644,33 @@
         groupOptions = null;
     }
 
+    private void OnLinkedProductChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int pId) && pId > 0)
+        {
+            currentOption.ProductId = pId;
+            var prod = allProducts?.FirstOrDefault(p => p.ProductId == pId);
+            currentOption.ProductName = prod?.Name;
+            if (string.IsNullOrWhiteSpace(currentOption.Name) && prod != null)
+            {
+                currentOption.Name = prod.Name;
+            }
+        }
+        else
+        {
+            currentOption.ProductId = null;
+            currentOption.ProductName = null;
+        }
+    }
+
     private void EditOption(ModifierOptionDto opt)
     {
         currentOption = new ModifierOptionDto
         {
             ModifierOptionId = opt.ModifierOptionId,
             ModifierGroupId = opt.ModifierGroupId,
+            ProductId = opt.ProductId,
+            ProductName = opt.ProductName,
             Name = opt.Name,
             Price = opt.Price,
             DisplayOrder = opt.DisplayOrder,

@@ -15,7 +15,11 @@
             <span class="text-secondary" style="font-size: 0.95rem;">Manage your product classifications</span>
         </div>
         
-        <div>
+        <div class="d-flex gap-2">
+            <!-- Manage Display Order Button -->
+            <button type="button" class="btn btn-outline-secondary rounded px-3 py-2 fw-semibold shadow-sm text-nowrap" @onclick="OpenReorderModal">
+                <i class="bi bi-arrow-down-up me-1"></i> Manage Display Order
+            </button>
             <!-- Add Category Button -->
             <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" @onclick="OpenAddModal">
                 Add New Category
@@ -52,6 +56,9 @@
                         <span class="category-color-swatch" style="--category-color: @CategoryColor.Normalize(category.ColorHex)" aria-hidden="true"></span>
                         <span>@CategoryColor.Normalize(category.ColorHex)</span>
                     </TemplateColumn>
+
+                    <!-- Display Order Column -->
+                    <PropertyColumn Property="@(c => c.DisplayOrder)" Title="Order" Sortable="true" Align="Align.Center" />
 
                     <!-- Name Column -->
                     <PropertyColumn Property="@(c => c.Name)" Title="Category Name" Sortable="true" />
@@ -222,6 +229,96 @@
     </div>
 }
 
+<!-- Reorder Categories Modal Dialog -->
+@if (isReorderModalOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Manage Category Display Order</h5>
+                        <small class="text-secondary" style="font-size: 0.85rem;">
+                            Drag items or use the up/down arrows to change the display sequence in the POS.
+                        </small>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseReorderModal" aria-label="Close"></button>
+                </div>
+
+                <div class="modal-body px-4 py-3">
+                    @if (reorderList == null || !reorderList.Any())
+                    {
+                        <div class="text-center py-4 text-muted">No categories available to reorder.</div>
+                    }
+                    else
+                    {
+                        <div class="list-group list-group-flush gap-2">
+                            @for (int i = 0; i < reorderList.Count; i++)
+                            {
+                                var index = i;
+                                var cat = reorderList[index];
+                                <div class="list-group-item d-flex align-items-center justify-content-between p-2 rounded-3 border bg-white @(draggedCategoryIndex == index ? "border-primary opacity-50" : "")"
+                                     draggable="true"
+                                     @ondragstart="() => OnCategoryDragStart(index)"
+                                     @ondragover:preventDefault
+                                     @ondrop="() => OnCategoryDrop(index)"
+                                     style="cursor: grab;">
+                                    <div class="d-flex align-items-center gap-3">
+                                        <i class="bi bi-grip-vertical text-secondary fs-5" title="Drag to reorder"></i>
+                                        <span class="badge bg-secondary text-white rounded-pill px-2 py-1" style="min-width: 28px;">
+                                            @(index + 1)
+                                        </span>
+                                        <span class="category-color-swatch" style="--category-color: @CategoryColor.Normalize(cat.ColorHex); width: 18px; height: 18px; border-radius: 4px; display: inline-block;" aria-hidden="true"></span>
+                                        <div>
+                                            <span class="fw-semibold text-dark">@cat.Name</span>
+                                            @if (!cat.IsActive)
+                                            {
+                                                <span class="badge bg-secondary-subtle text-secondary border ms-2" style="font-size: 0.72rem;">Inactive</span>
+                                            }
+                                        </div>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-1">
+                                        <button type="button" class="btn btn-sm btn-light border px-2 py-1"
+                                                disabled="@(index == 0)"
+                                                @onclick="() => MoveCategoryUp(index)"
+                                                title="Move Up">
+                                            <i class="bi bi-chevron-up"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-light border px-2 py-1"
+                                                disabled="@(index == reorderList.Count - 1)"
+                                                @onclick="() => MoveCategoryDown(index)"
+                                                title="Move Down">
+                                            <i class="bi bi-chevron-down"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">
+                        <i class="bi bi-info-circle me-1"></i> Order updates will synchronize to the POS New Sales category bar.
+                    </span>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" @onclick="CloseReorderModal">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-primary rounded px-4 fw-bold shadow-sm" @onclick="SaveReorderedCategories" disabled="@isSavingReorder">
+                            @if (isSavingReorder)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            }
+                            Save Display Order
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<CategoryDto>? categories;
     private PaginationState pagination = new PaginationState { ItemsPerPage = 10 };
@@ -232,6 +329,12 @@
     private bool isEditing = false;
     private bool isSaving = false;
     private CategoryDto currentCategory = new();
+
+    // Reorder State
+    private bool isReorderModalOpen = false;
+    private bool isSavingReorder = false;
+    private List<CategoryDto> reorderList = new();
+    private int? draggedCategoryIndex = null;
 
     private IQueryable<CategoryDto>? FilteredCategories =>
         categories?
@@ -276,8 +379,8 @@
         try
         {
             var rawCategories = await CategoryService.GetCategoriesAsync();
-            // Client-side sort by ID descending so newest categories appear at the top
-            categories = rawCategories.OrderByDescending(c => c.CategoryId).ToList();
+            // Sort by DisplayOrder ascending then CategoryId ascending
+            categories = rawCategories.OrderBy(c => c.DisplayOrder).ThenBy(c => c.CategoryId).ToList();
         }
         catch (Exception ex)
         {
@@ -289,6 +392,109 @@
                 ConfirmButtonText = "OK",
                 ConfirmButtonColor = "#2563eb"
             });
+        }
+    }
+
+    private void OpenReorderModal()
+    {
+        if (categories != null)
+        {
+            reorderList = categories
+                .Where(c => !c.IsDeleted)
+                .OrderBy(c => c.DisplayOrder)
+                .ThenBy(c => c.CategoryId)
+                .Select(c => new CategoryDto
+                {
+                    CategoryId = c.CategoryId,
+                    Name = c.Name,
+                    ColorHex = c.ColorHex,
+                    IsActive = c.IsActive,
+                    DisplayOrder = c.DisplayOrder
+                })
+                .ToList();
+        }
+        else
+        {
+            reorderList = new();
+        }
+        draggedCategoryIndex = null;
+        isReorderModalOpen = true;
+    }
+
+    private void CloseReorderModal()
+    {
+        isReorderModalOpen = false;
+        draggedCategoryIndex = null;
+    }
+
+    private void OnCategoryDragStart(int index)
+    {
+        draggedCategoryIndex = index;
+    }
+
+    private void OnCategoryDrop(int targetIndex)
+    {
+        if (!draggedCategoryIndex.HasValue || draggedCategoryIndex.Value == targetIndex)
+            return;
+
+        int sourceIndex = draggedCategoryIndex.Value;
+        if (sourceIndex < 0 || sourceIndex >= reorderList.Count || targetIndex < 0 || targetIndex >= reorderList.Count)
+            return;
+
+        var item = reorderList[sourceIndex];
+        reorderList.RemoveAt(sourceIndex);
+        reorderList.Insert(targetIndex, item);
+        draggedCategoryIndex = null;
+    }
+
+    private void MoveCategoryUp(int index)
+    {
+        if (index <= 0 || index >= reorderList.Count) return;
+        var item = reorderList[index];
+        reorderList.RemoveAt(index);
+        reorderList.Insert(index - 1, item);
+    }
+
+    private void MoveCategoryDown(int index)
+    {
+        if (index < 0 || index >= reorderList.Count - 1) return;
+        var item = reorderList[index];
+        reorderList.RemoveAt(index);
+        reorderList.Insert(index + 1, item);
+    }
+
+    private async Task SaveReorderedCategories()
+    {
+        try
+        {
+            isSavingReorder = true;
+            var orderedIds = reorderList.Select(c => c.CategoryId).ToList();
+            await CategoryService.ReorderCategoriesAsync(orderedIds);
+            await LoadCategories();
+            CloseReorderModal();
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Order Saved!",
+                Text = "Category display order updated successfully.",
+                Icon = SweetAlertIcon.Success,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        catch (Exception ex)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Error",
+                Text = "Failed to save category order: " + ex.Message,
+                Icon = SweetAlertIcon.Error,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+        }
+        finally
+        {
+            isSavingReorder = false;
         }
     }
 

@@ -126,7 +126,7 @@
                                         }
                                     </td>
                                     <td>@h.CashierId</td>
-                                    <td class="text-secondary small">@h.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="text-secondary small">@POS.Shared.Services.BusinessDayClock.FormatManila(h.CreatedAt, "yyyy-MM-dd HH:mm")</td>
                                     <td class="text-center"><span class="badge bg-secondary-subtle text-dark">@h.Items.Sum(i => i.Quantity)</span></td>
                                     <td class="text-end px-4 fw-bold text-dark">₱@h.TotalAmount.ToString("N2")</td>
                                 </tr>

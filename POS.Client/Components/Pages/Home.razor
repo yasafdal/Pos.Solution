@@ -5,6 +5,8 @@
 @inject NavigationManager Navigation
 @inject POS.Client.Services.IPosConnectivityService ConnectivityService
 @inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
+@inject POS.Client.Services.IOfflineTransactionSyncService TransactionSyncService
+@inject POS.Client.Services.IReferenceDataSyncService ReferenceDataSync
 @inject POS.Client.Data.LocalPosDbContext LocalDb
 @inject POS.Shared.Interfaces.IHeldSaleService HeldSaleService
 @implements IDisposable
@@ -12,8 +14,11 @@
 @code {
     private TerminalConnectivityState _connectivityState = TerminalConnectivityState.Unknown;
     private int _pendingCount = 0;
+    private int _processingCount = 0;
     private int _conflictedCount = 0;
+    private int _syncedCount = 0;
     private int _heldCount = 0;
+    private string? _lastErrorMessage = null;
     private DateTime? _lastSuccessfulSync = null;
     private DateTime _lastCheckTime = DateTime.UtcNow;
     private bool _isSyncing = false;
@@ -27,9 +32,13 @@
             return;
         }
 
+        TransactionSyncService.OnSyncStateChanged += OnExternalSyncStateChanged;
+        ReferenceDataSync.OnSyncCompleted += OnExternalSyncStateChanged;
         await RefreshStatusAsync();
-        _statusTimer = new System.Threading.Timer(async _ => await InvokeAsync(RefreshStatusAsync), null, TimeSpan.Zero, TimeSpan.FromSeconds(15));
+        _statusTimer = new System.Threading.Timer(async _ => await InvokeAsync(RefreshStatusAsync), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(15));
     }
+
+    private void OnExternalSyncStateChanged() => _ = InvokeAsync(RefreshStatusAsync);
 
     private async Task RefreshStatusAsync()
     {
@@ -41,17 +50,42 @@
             using var db = new LocalPosDbContext();
             db.InitializeDatabase();
             _pendingCount = db.SyncOutboxes.Count(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING");
-            _conflictedCount = db.SyncOutboxes.Count(o => o.Status == "NEEDS_ATTENTION");
+            _processingCount = db.SyncOutboxes.Count(o => o.Status == "UPLOADING");
+            _conflictedCount = db.SyncOutboxes.Count(o => o.Status == "NEEDS_ATTENTION" || o.Status == "FAILED");
+            _syncedCount = db.SyncOutboxes.Count(o => o.Status == "SYNCED");
 
-            var lastSynced = db.SyncOutboxes
-                .Where(o => o.Status == "SYNCED")
+            var latestFailed = db.SyncOutboxes
+                .Where(o => o.Status == "NEEDS_ATTENTION" || o.Status == "FAILED")
                 .OrderByDescending(o => o.OutboxId)
                 .FirstOrDefault();
+            _lastErrorMessage = latestFailed?.LastError;
 
-            if (lastSynced != null)
+            var lastSyncedOutbox = db.SyncOutboxes
+                .Where(o => o.Status == "SYNCED")
+                .OrderByDescending(o => o.SyncedAt ?? o.CreatedAt)
+                .ThenByDescending(o => o.OutboxId)
+                .FirstOrDefault();
+
+            var termLastSync = db.TerminalConfigs
+                .Select(t => t.LastSyncAt)
+                .FirstOrDefault();
+
+            var refLastSync = await ReferenceDataSync.GetLastSuccessfulSyncAsync();
+
+            DateTime? bestSync = null;
+            if (lastSyncedOutbox != null)
             {
-                _lastSuccessfulSync = lastSynced.CreatedAt;
+                bestSync = lastSyncedOutbox.SyncedAt ?? lastSyncedOutbox.CreatedAt;
             }
+            if (termLastSync.HasValue && (!bestSync.HasValue || termLastSync.Value > bestSync.Value))
+            {
+                bestSync = termLastSync.Value;
+            }
+            if (refLastSync.HasValue && (!bestSync.HasValue || refLastSync.Value > bestSync.Value))
+            {
+                bestSync = refLastSync.Value;
+            }
+            _lastSuccessfulSync = bestSync;
         }
         catch
         {
@@ -92,6 +126,8 @@
 
     public void Dispose()
     {
+        TransactionSyncService.OnSyncStateChanged -= OnExternalSyncStateChanged;
+        ReferenceDataSync.OnSyncCompleted -= OnExternalSyncStateChanged;
         _statusTimer?.Dispose();
     }
 }
@@ -183,13 +219,13 @@ else
                         </button>
                     </div>
                     <h4 class="fw-bolder mb-1">
-                        @if (_isSyncing)
+                        @if (_isSyncing || _processingCount > 0)
                         {
                             <span class="text-primary">SYNCING</span>
                         }
                         else if (_conflictedCount > 0)
                         {
-                            <span class="text-danger">NEEDS ATTENTION</span>
+                            <span class="text-danger" title="@(_lastErrorMessage ?? "Sync attention required")">NEEDS ATTENTION</span>
                         }
                         else if (_connectivityState == TerminalConnectivityState.OnlineAndHealthy)
                         {
@@ -201,8 +237,14 @@ else
                         }
                     </h4>
                     <div class="small text-muted d-flex justify-content-between align-items-center mt-auto pt-2">
-                        <span>Pending: <strong>@_pendingCount</strong></span>
-                        <span class="text-muted" style="font-size: 0.72rem;">Last: @(_lastSuccessfulSync?.ToString("hh:mm tt") ?? "None")</span>
+                        <span>
+                            Pending: <strong>@_pendingCount</strong>
+                            @if (_conflictedCount > 0)
+                            {
+                                <span class="text-danger ms-1" title="@_lastErrorMessage">(@_conflictedCount failed)</span>
+                            }
+                        </span>
+                        <span class="text-muted" style="font-size: 0.72rem;">Last: @POS.Shared.Services.BusinessDayClock.FormatManila(_lastSuccessfulSync, "hh:mm tt", "None")</span>
                     </div>
                 </div>
             </div>

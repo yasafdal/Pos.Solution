@@ -167,7 +167,7 @@
                                 </td>
                                 <td>
                                     <div>@item.GeneratedBy</div>
-                                    <span class="text-muted small">@item.GeneratedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                    <span class="text-muted small">@POS.Shared.Services.BusinessDayClock.FormatManila(item.GeneratedAt, "MMM dd, yyyy HH:mm")</span>
                                 </td>
                                 <td class="text-end pe-4">
                                     <button class="btn btn-sm btn-outline-primary rounded-pill px-3 shadow-sm" @onclick="() => ViewSnapshotAsync(item.Id)">
@@ -471,7 +471,7 @@
                                         <tr>
                                             <td class="fw-bold">#@s.ShiftId</td>
                                             <td>@s.CashierId</td>
-                                            <td class="small">@s.OpenedAt.ToLocalTime().ToString("HH:mm") to @(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToLocalTime().ToString("HH:mm") : "OPEN")</td>
+                                            <td class="small">@POS.Shared.Services.BusinessDayClock.FormatManila(s.OpenedAt, "HH:mm") to @POS.Shared.Services.BusinessDayClock.FormatManila(s.ClosedAt, "HH:mm", "OPEN")</td>
                                             <td class="text-end font-monospace">@s.OpeningFloat.ToString("C2")</td>
                                             <td class="text-end font-monospace">@s.CashSales.ToString("C2")</td>
                                             <td class="text-end font-monospace">@s.ExpectedBalance.ToString("C2")</td>
@@ -559,7 +559,7 @@
                                     @foreach (var att in printAttempts)
                                     {
                                         <tr>
-                                            <td class="small">@att.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                            <td class="small">@POS.Shared.Services.BusinessDayClock.FormatManila(att.StartedAt, "yyyy-MM-dd HH:mm:ss")</td>
                                             <td class="fw-semibold">@att.RequestedBy</td>
                                             <td>@att.Reason</td>
                                             <td>

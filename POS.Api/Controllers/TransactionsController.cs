@@ -20,18 +20,13 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
     private bool IsSupervisor() =>
         User.IsInRole("Admin") || User.IsInRole("Manager") || User.IsInRole("SeniorCashier");
 
-    // Orders.CreatedAt is stored as UTC in a 'timestamp without time zone' column.
+    // Orders.CreatedAt is stored as device-local wall-clock time in a 'timestamp without time zone' column.
     private static DateTime ToUtcUnspecified(DateTime value) =>
-        DateTime.SpecifyKind(value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value, DateTimeKind.Unspecified);
+        DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
 
-    // Business day starts at 04:00 AM Philippine Time (UTC+8).
-    private static DateTime GetBusinessDayCutoffUtc()
-    {
-        var nowPht = DateTime.UtcNow.AddHours(8);
-        var businessDate = nowPht.TimeOfDay < TimeSpan.FromHours(4) ? nowPht.Date.AddDays(-1) : nowPht.Date;
-        var businessDayStartPht = businessDate.AddHours(4);
-        return businessDayStartPht.AddHours(-8);
-    }
+    // Business day starts at 04:00 AM local time.
+    private static DateTime GetBusinessDayCutoffUtc() =>
+        POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDayStartLocal();
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<OrderResponseDto>>> GetTransactions(
@@ -55,7 +50,9 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         pageSize = Math.Clamp(pageSize, 1, 100);
 
         var query = context.Orders.AsNoTracking()
-            .Include(o => o.OrderItems).ThenInclude(i => i.OrderItemModifiers)
+            .Include(o => o.OrderItems)
+                .ThenInclude(i => i.OrderItemModifiers)
+                    .ThenInclude(m => m.Product)
             .Include(o => o.Payments)
             .AsQueryable();
 
@@ -176,7 +173,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         var productRouting = allProductIds.Count > 0
             ? await context.Products.AsNoTracking()
                 .Where(p => allProductIds.Contains(p.ProductId))
-                .Select(p => new { p.ProductId, p.IsKitchenItem, p.IsBarItem })
+                .Select(p => new { p.ProductId, p.IsKitchenItem, p.IsBarItem, p.UnitOfMeasure, p.PricingMethod })
                 .ToDictionaryAsync(p => p.ProductId, cancellationToken)
             : new();
 
@@ -220,32 +217,49 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             DiscountCode = o.DiscountCode,
             CustomerCardNumber = o.CustomerCardNumber,
             InvoiceNumber = o.InvoiceNumber,
-            InvoiceIssuedAt = o.InvoiceIssuedAt,
-            CreatedAt = o.CreatedAt,
+            InvoiceIssuedAt = o.InvoiceIssuedAt.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeLocal(o.InvoiceIssuedAt.Value) : null,
+            CreatedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(o.CreatedAt),
+            ServerReceivedAtUtc = o.ServerReceivedAtUtc.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(o.ServerReceivedAtUtc.Value) : null,
+            DeviceTimeZoneId = o.DeviceTimeZoneId,
+            DeviceUtcOffsetMinutes = o.DeviceUtcOffsetMinutes,
+            ClockSkewSeconds = o.ClockSkewSeconds,
             CustomerName = o.CustomerName,
             CustomerAddress = o.CustomerAddress,
             CustomerTin = o.CustomerTin,
             CustomerBusinessStyle = o.CustomerBusinessStyle,
-            Items = o.OrderItems.Select(i => new OrderItemResponseDto
+            Items = o.OrderItems.Select(i =>
             {
-                OrderItemId = i.OrderItemId,
-                ProductId = i.ProductId,
-                ProductName = i.ProductName,
-                ProductShortCode = i.ProductShortCode,
-                Quantity = i.Quantity,
-                UnitPrice = i.UnitPrice,
-                LineTotal = i.LineTotal,
-                VatType = i.VatType,
-                VatAmount = i.VatAmount,
-                IsKitchenItem = productRouting.TryGetValue(i.ProductId, out var pr) && pr.IsKitchenItem,
-                IsBarItem = productRouting.TryGetValue(i.ProductId, out var pr2) && pr2.IsBarItem,
-                SpecialInstructions = i.SpecialInstructions,
-                Modifiers = i.OrderItemModifiers.Select(m => new OrderItemModifierResponseDto
+                productRouting.TryGetValue(i.ProductId, out var prod);
+                return new OrderItemResponseDto
                 {
-                    ModifierOptionId = m.ModifierOptionId,
-                    ModifierName = m.ModifierName,
-                    AdditionalPrice = m.AdditionalPrice
-                }).ToList()
+                    OrderItemId = i.OrderItemId,
+                    ProductId = i.ProductId,
+                    ProductName = i.ProductName,
+                    ProductShortCode = i.ProductShortCode,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    LineTotal = i.LineTotal,
+                    PricingMethod = !string.IsNullOrWhiteSpace(i.PricingMethod)
+                        ? i.PricingMethod
+                        : (!i.IsComplimentary ? prod?.PricingMethod : null),
+                    UnitOfMeasure = prod?.UnitOfMeasure,
+                    IsComplimentary = i.IsComplimentary,
+                    ParentProductId = i.ParentProductId,
+                    VatType = i.VatType,
+                    VatAmount = i.VatAmount,
+                    IsKitchenItem = prod != null && prod.IsKitchenItem,
+                    IsBarItem = prod != null && prod.IsBarItem,
+                    SpecialInstructions = i.SpecialInstructions,
+                    Modifiers = i.OrderItemModifiers.Select(m => new OrderItemModifierResponseDto
+                    {
+                        OrderItemModifierId = m.OrderItemModifierId,
+                        ModifierOptionId = m.ModifierOptionId,
+                        ProductId = m.ProductId,
+                        ProductName = m.Product != null ? m.Product.Name : null,
+                        ModifierName = m.ModifierName,
+                        AdditionalPrice = m.AdditionalPrice
+                    }).ToList()
+                };
             }).ToList(),
             Payments = o.Payments.Select(p => new PaymentResponseDto
             {
@@ -331,8 +345,12 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             DiscountCode = order.DiscountCode,
             CustomerCardNumber = order.CustomerCardNumber,
             InvoiceNumber = order.InvoiceNumber,
-            InvoiceIssuedAt = order.InvoiceIssuedAt,
-            CreatedAt = order.CreatedAt,
+            InvoiceIssuedAt = order.InvoiceIssuedAt.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.InvoiceIssuedAt.Value) : null,
+            CreatedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.CreatedAt),
+            ServerReceivedAtUtc = order.ServerReceivedAtUtc.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(order.ServerReceivedAtUtc.Value) : null,
+            DeviceTimeZoneId = order.DeviceTimeZoneId,
+            DeviceUtcOffsetMinutes = order.DeviceUtcOffsetMinutes,
+            ClockSkewSeconds = order.ClockSkewSeconds,
             CustomerName = order.CustomerName,
             CustomerAddress = order.CustomerAddress,
             CustomerTin = order.CustomerTin,

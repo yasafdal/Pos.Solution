@@ -96,6 +96,64 @@ public static class LocalHierarchyUpgrade
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastKnownServerUtc TEXT NULL");
                 if (!Columns("LocalTerminalConfigs").Contains("LastKnownServerTickCount64"))
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastKnownServerTickCount64 INTEGER NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("VatDisplay"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN VatDisplay INTEGER NOT NULL DEFAULT 1");
+                if (!Columns("LocalTerminalConfigs").Contains("ReceiptLogoUrl"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ReceiptLogoUrl TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("ReceiptLogoDataUri"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ReceiptLogoDataUri TEXT NULL");
+                if (!Columns("LocalTerminalConfigs").Contains("ReceiptLogoUpdatedAt"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ReceiptLogoUpdatedAt TEXT NULL");
+
+                Execute(@"
+                    CREATE TABLE IF NOT EXISTS LocalBranches (
+                        BranchId INTEGER PRIMARY KEY,
+                        Name TEXT NOT NULL DEFAULT '',
+                        Code TEXT NOT NULL DEFAULT '',
+                        Address TEXT NULL,
+                        Phone TEXT NULL,
+                        TaxType TEXT NOT NULL DEFAULT 'VAT-Registered',
+                        VatDisplay INTEGER NOT NULL DEFAULT 1,
+                        TrackInventory INTEGER NOT NULL DEFAULT 0,
+                        BusinessTypeId INTEGER NULL DEFAULT 1,
+                        BusinessType TEXT NULL DEFAULT 'FNB',
+                        ServiceModeId INTEGER NULL,
+                        ReceiptLogoUrl TEXT NULL,
+                        ReceiptLogoDataUri TEXT NULL,
+                        ReceiptLogoUpdatedAt TEXT NULL,
+                        IsActive INTEGER NOT NULL DEFAULT 1,
+                        UpdatedAt TEXT NOT NULL
+                    )");
+
+                var tcCols = Columns("LocalTerminalConfigs");
+                if (tcCols.Contains("BranchId") && tcCols.Contains("BranchName") && tcCols.Contains("BranchTaxType"))
+                {
+                    Execute(@"
+                        INSERT OR IGNORE INTO LocalBranches (
+                            BranchId, Name, Code, Address, Phone, TaxType, VatDisplay, TrackInventory,
+                            BusinessTypeId, BusinessType, ServiceModeId, ReceiptLogoUrl, ReceiptLogoDataUri,
+                            ReceiptLogoUpdatedAt, IsActive, UpdatedAt
+                        )
+                        SELECT
+                            BranchId,
+                            COALESCE(BranchName, TerminalName, ''),
+                            COALESCE(BranchCode, 'BR-' || printf('%02d', BranchId)),
+                            BranchAddress,
+                            BranchPhone,
+                            COALESCE(BranchTaxType, 'VAT-Registered'),
+                            COALESCE(VatDisplay, 1),
+                            0,
+                            COALESCE(BusinessTypeId, 1),
+                            COALESCE(BusinessType, 'FNB'),
+                            NULL,
+                            ReceiptLogoUrl,
+                            ReceiptLogoDataUri,
+                            ReceiptLogoUpdatedAt,
+                            1,
+                            COALESCE(LastSyncAt, CURRENT_TIMESTAMP)
+                        FROM LocalTerminalConfigs
+                        WHERE BranchId > 0");
+                }
             }
             if (TableExists("LocalCashDrawerShifts"))
             {
@@ -106,6 +164,12 @@ public static class LocalHierarchyUpgrade
                     Execute("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDiscrepancy TEXT NULL");
                 if (!shiftCols.Contains("OpeningDenominationsJson"))
                     Execute("ALTER TABLE LocalCashDrawerShifts ADD COLUMN OpeningDenominationsJson TEXT NULL");
+            }
+            if (TableExists("LocalProducts"))
+            {
+                var prodCols = Columns("LocalProducts");
+                if (!prodCols.Contains("PricingMethod"))
+                    Execute("ALTER TABLE LocalProducts ADD COLUMN PricingMethod TEXT DEFAULT 'Fixed'");
             }
             if (TableExists("LocalOrderItems"))
             {
@@ -120,12 +184,28 @@ public static class LocalHierarchyUpgrade
                     Execute("ALTER TABLE LocalOrderItems ADD COLUMN ModifiersJson TEXT NULL");
                 if (!itemCols.Contains("SpecialInstructions"))
                     Execute("ALTER TABLE LocalOrderItems ADD COLUMN SpecialInstructions TEXT NULL");
+                if (!itemCols.Contains("PricingMethod"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN PricingMethod TEXT NULL");
+                if (!itemCols.Contains("TargetAmount"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN TargetAmount REAL NULL");
+                if (!itemCols.Contains("IsComplimentary"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN IsComplimentary INTEGER NOT NULL DEFAULT 0");
+                if (!itemCols.Contains("ParentProductId"))
+                    Execute("ALTER TABLE LocalOrderItems ADD COLUMN ParentProductId INTEGER NULL");
             }
             if (TableExists("LocalOrders"))
             {
                 var orderCols = Columns("LocalOrders");
                 if (!orderCols.Contains("OrderNumber"))
                     Execute("ALTER TABLE LocalOrders ADD COLUMN OrderNumber TEXT NULL");
+            }
+            if (TableExists("LocalModifierOptions"))
+            {
+                var modCols = Columns("LocalModifierOptions");
+                if (!modCols.Contains("ProductId"))
+                    Execute("ALTER TABLE LocalModifierOptions ADD COLUMN ProductId INTEGER NULL");
+                if (!modCols.Contains("ProductName"))
+                    Execute("ALTER TABLE LocalModifierOptions ADD COLUMN ProductName TEXT NULL");
             }
             transaction.Commit();
         }

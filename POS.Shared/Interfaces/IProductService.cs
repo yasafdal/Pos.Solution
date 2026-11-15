@@ -11,4 +11,5 @@ public interface IProductService
     Task<ProductDto> CreateProductAsync(ProductDto product);
     Task UpdateProductAsync(int id, ProductDto product);
     Task DeleteProductAsync(int id);
+    Task ReorderProductsAsync(int categoryId, List<int> orderedProductIds);
 }

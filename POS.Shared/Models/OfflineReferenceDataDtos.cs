@@ -18,6 +18,7 @@ public class OfflineReferenceDataResponseDto
 {
     public string Version { get; set; } = null!;
     public DateTime ServerTimestamp { get; set; }
+    public OfflineBranchConfigDto? Branch { get; set; }
     public OfflineTerminalConfigDto Terminal { get; set; } = null!;
     public List<OfflineProductDto> Products { get; set; } = new();
     public List<OfflineCategoryDto> Categories { get; set; } = new();
@@ -76,9 +77,14 @@ public class OfflineTerminalConfigDto
     public int? BusinessTypeId { get; set; }
     public string? BusinessType { get; set; }
     public string BranchName { get; set; } = string.Empty;
+    public string? BranchTagline { get; set; }
     public string? BranchCode { get; set; }
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
+    public string? ReceiptLogoUrl { get; set; }
+    public string? ReceiptLogoDataUri { get; set; }
+    public DateTime? ReceiptLogoUpdatedAt { get; set; }
+    public bool VatDisplay { get; set; } = true;
     public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = null!;
     public string DeviceIdentifier { get; set; } = null!;
@@ -94,6 +100,27 @@ public class OfflineTerminalConfigDto
     public string? ClosingLockedByCashier { get; set; }
     public DateTime? ClosingLockedAtUtc { get; set; }
     public DateTime? ClosingUnlockAtUtc { get; set; }
+}
+
+public class OfflineBranchConfigDto
+{
+    public int BranchId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? BranchTagline { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string? Address { get; set; }
+    public string? Phone { get; set; }
+    public string TaxType { get; set; } = "VAT-Registered";
+    public bool VatDisplay { get; set; } = true;
+    public bool TrackInventory { get; set; }
+    public int? BusinessTypeId { get; set; }
+    public string? BusinessType { get; set; }
+    public int? ServiceModeId { get; set; }
+    public string? ReceiptLogoUrl { get; set; }
+    public string? ReceiptLogoDataUri { get; set; }
+    public DateTime? ReceiptLogoUpdatedAt { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class OfflineProductDto
@@ -119,10 +146,12 @@ public class OfflineProductDto
     public int? TaxId { get; set; }
     public string? TaxName { get; set; } = "VATable";
     public string ProductType { get; set; } = string.Empty;
+    public string PricingMethod { get; set; } = POS.Shared.Constants.PricingMethods.Fixed;
 
     public bool IsActive { get; set; }
     public bool IsKitchenItem { get; set; }
     public bool IsBarItem { get; set; }
+    public int DisplayOrder { get; set; }
 }
 
 public class OfflineCategoryDto
@@ -130,6 +159,7 @@ public class OfflineCategoryDto
     public int CategoryId { get; set; }
     public string Name { get; set; } = null!;
     public string? ColorCode { get; set; }
+    public int DisplayOrder { get; set; }
 }
 
 public class OfflineModifierGroupDto
@@ -149,6 +179,8 @@ public class OfflineModifierOptionDto
 {
     public int ModifierOptionId { get; set; }
     public int ModifierGroupId { get; set; }
+    public int? ProductId { get; set; }
+    public string? ProductName { get; set; }
     [Required, StringLength(100)]
     public string Name { get; set; } = string.Empty;
     public decimal Price { get; set; }

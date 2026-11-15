@@ -24,6 +24,7 @@ public sealed class AndroidReceiptPrinter : IReceiptPrinter
 
         try
         {
+            PosSessionService.EnsureReceiptLogoPopulated(receipt);
             var html = ReceiptHtmlFormatter.Format(receipt);
             await PrintHtmlOnAndroidAsync(html, $"Receipt-{receipt.InvoiceNumber}");
         }

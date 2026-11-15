@@ -10,7 +10,9 @@ public class MigrationRunner
     {
         string connString = !string.IsNullOrWhiteSpace(configuredConnectionString)
             ? configuredConnectionString
-            : "Host=localhost;Port=5432;Database=pos_db;Username=postgres;Password=p@$$w0rd";
+            : Environment.GetEnvironmentVariable("POS_DB_CONNECTION")
+              ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
+              ?? throw new InvalidOperationException("PostgreSQL connection string is required for MigrationRunner.");
 
         string[] scripts = {
             Path.Combine("Database", "ReceiptReprintLogs.sql"),
@@ -189,6 +191,219 @@ public class MigrationRunner
             payCmd.ExecuteNonQuery();
         }
 
+        // Non-destructive schema evolution: Weight-Based Pricing with Amount-Based Ordering
+        string weightPricingMigrationSql = @"
+            ALTER TABLE ""Products"" ADD COLUMN IF NOT EXISTS ""PricingMethod"" VARCHAR(20) DEFAULT 'Fixed';
+            ALTER TABLE ""OrderItems"" ADD COLUMN IF NOT EXISTS ""PricingMethod"" VARCHAR(20) NULL;
+            ALTER TABLE ""OrderItems"" ALTER COLUMN ""Quantity"" TYPE NUMERIC(18, 6);
+        ";
+        using (var weightCmd = new NpgsqlCommand(weightPricingMigrationSql, conn))
+        {
+            weightCmd.ExecuteNonQuery();
+        }
+
+        // Non-destructive schema evolution: ModifierOption and OrderItemModifier Product Linking
+        string modifierProductMigrationSql = @"
+            ALTER TABLE ""ModifierOption"" ADD COLUMN IF NOT EXISTS ""product_id"" INT NULL;
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'FK_ModifierOption_Product'
+                ) THEN
+                    ALTER TABLE ""ModifierOption"" 
+                    ADD CONSTRAINT ""FK_ModifierOption_Product"" 
+                    FOREIGN KEY (""product_id"") REFERENCES ""Products""(""ProductId"") 
+                    ON DELETE SET NULL;
+                END IF;
+            END $$;
+
+            ALTER TABLE ""OrderItemModifiers"" ADD COLUMN IF NOT EXISTS ""ProductId"" INT NULL;
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'FK_OrderItemModifiers_Products'
+                ) THEN
+                    ALTER TABLE ""OrderItemModifiers"" 
+                    ADD CONSTRAINT ""FK_OrderItemModifiers_Products"" 
+                    FOREIGN KEY (""ProductId"") REFERENCES ""Products""(""ProductId"") 
+                    ON DELETE SET NULL;
+                END IF;
+            END $$;
+
+            ALTER TABLE ""HeldSaleItemModifiers"" ADD COLUMN IF NOT EXISTS ""ProductId"" INT NULL;
+
+            ALTER TABLE ""OrderItems"" ADD COLUMN IF NOT EXISTS ""IsComplimentary"" BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE ""OrderItems"" ADD COLUMN IF NOT EXISTS ""ParentProductId"" INT NULL;
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'FK_OrderItems_ParentProduct'
+                ) THEN
+                    ALTER TABLE ""OrderItems"" 
+                    ADD CONSTRAINT ""FK_OrderItems_ParentProduct"" 
+                    FOREIGN KEY (""ParentProductId"") REFERENCES ""Products""(""ProductId"") 
+                    ON DELETE SET NULL;
+                END IF;
+            END $$;
+
+            ALTER TABLE ""HeldSaleItems"" ADD COLUMN IF NOT EXISTS ""PricingMethod"" VARCHAR(20) NULL;
+            ALTER TABLE ""HeldSaleItems"" ADD COLUMN IF NOT EXISTS ""TargetAmount"" NUMERIC(18, 2) NULL;
+            ALTER TABLE ""HeldSaleItems"" ADD COLUMN IF NOT EXISTS ""IsComplimentary"" BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE ""HeldSaleItems"" ADD COLUMN IF NOT EXISTS ""ParentProductId"" INT NULL;
+            ALTER TABLE ""HeldSaleItems"" ALTER COLUMN ""Quantity"" TYPE NUMERIC(18, 6);
+
+            -- Custom Display Order for Categories and Products
+            DO $$ 
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Categories') THEN
+                    ALTER TABLE ""Categories"" ADD COLUMN IF NOT EXISTS ""display_order"" INT NOT NULL DEFAULT 0;
+                ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'categories') THEN
+                    ALTER TABLE ""categories"" ADD COLUMN IF NOT EXISTS ""display_order"" INT NOT NULL DEFAULT 0;
+                END IF;
+
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Products') THEN
+                    ALTER TABLE ""Products"" ADD COLUMN IF NOT EXISTS ""display_order"" INT NOT NULL DEFAULT 0;
+                ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'products') THEN
+                    ALTER TABLE ""products"" ADD COLUMN IF NOT EXISTS ""display_order"" INT NOT NULL DEFAULT 0;
+                END IF;
+            END $$;
+
+            ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUrl"" VARCHAR(255) NULL;
+            ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+            ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""VatDisplay"" BOOLEAN NOT NULL DEFAULT TRUE;
+            ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""BranchTagline"" VARCHAR(200) NULL;
+
+            ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ServerReceivedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
+            ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceTimeZoneId"" VARCHAR(100) NULL;
+            ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceUtcOffsetMinutes"" INT NULL;
+            ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ClockSkewSeconds"" INT NULL;
+            UPDATE ""Payments"" p
+            SET ""paid_at"" = p.""paid_at"" + (o.""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute')
+            FROM ""Orders"" o
+            WHERE p.""order_id"" = o.""order_id""
+              AND o.""DeviceUtcOffsetMinutes"" IS NOT NULL
+              AND ABS(o.""DeviceUtcOffsetMinutes"") >= 180
+              AND o.""ServerReceivedAtUtc"" IS NOT NULL
+              AND ABS(EXTRACT(EPOCH FROM (o.""created_at"" - o.""ServerReceivedAtUtc""))) < 7200;
+            UPDATE ""Orders""
+            SET ""created_at"" = ""created_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute'),
+                ""invoice_issued_at"" = CASE WHEN ""invoice_issued_at"" IS NOT NULL THEN ""invoice_issued_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute') ELSE NULL END
+            WHERE ""DeviceUtcOffsetMinutes"" IS NOT NULL
+              AND ABS(""DeviceUtcOffsetMinutes"") >= 180
+              AND ""ServerReceivedAtUtc"" IS NOT NULL
+              AND ABS(EXTRACT(EPOCH FROM (""created_at"" - ""ServerReceivedAtUtc""))) < 7200;
+        ";
+        using (var modCmd = new NpgsqlCommand(modifierProductMigrationSql, conn))
+        {
+            modCmd.ExecuteNonQuery();
+        }
+
+        ApplyLicensingSchema(conn);
+
         Console.WriteLine("All migration scripts applied successfully to pos_db!");
+    }
+
+    public static void ApplyLicensingSchema(NpgsqlConnection conn)
+    {
+        string licensingSchemaSql = @"
+            CREATE TABLE IF NOT EXISTS ""TerminalLicenses"" (
+                ""LicenseId"" VARCHAR(64) PRIMARY KEY,
+                ""LicenseKey"" VARCHAR(80) NOT NULL,
+                ""TerminalId"" INTEGER NOT NULL REFERENCES ""Terminals""(""TerminalId"") ON DELETE CASCADE,
+                ""DeviceId"" VARCHAR(120) NOT NULL DEFAULT '',
+                ""BranchId"" INTEGER NOT NULL REFERENCES ""Branches""(""BranchId"") ON DELETE RESTRICT,
+                ""OutletId"" INTEGER NOT NULL REFERENCES ""Outlets""(""OutletId"") ON DELETE RESTRICT,
+                ""LicenseStatus"" VARCHAR(40) NOT NULL DEFAULT 'PENDING_ACTIVATION',
+                ""DurationYears"" INTEGER NOT NULL DEFAULT 5,
+                ""DurationValue"" INTEGER NOT NULL DEFAULT 5,
+                ""DurationUnit"" VARCHAR(20) NOT NULL DEFAULT 'YEARS',
+                ""OriginalDurationValue"" INTEGER NOT NULL DEFAULT 5,
+                ""OriginalDurationUnit"" VARCHAR(20) NOT NULL DEFAULT 'YEARS',
+                ""RenewalCount"" INTEGER NOT NULL DEFAULT 0,
+                ""LastRenewedAt"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""IssuedAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ""ActivatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""ExpiresAt"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""LastValidatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""LicenseVersion"" INTEGER NOT NULL DEFAULT 1,
+                ""RevokedAt"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""RevocationReason"" VARCHAR(255) NULL,
+                ""SuspendedAt"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""SuspensionReason"" VARCHAR(255) NULL,
+                ""OfflineGracePeriodDays"" INTEGER NOT NULL DEFAULT 30,
+                ""EnvironmentType"" VARCHAR(30) NOT NULL DEFAULT 'Production',
+                ""Signature"" VARCHAR(512) NOT NULL DEFAULT '',
+                ""IssuedBy"" VARCHAR(150) NULL,
+                ""CreatedAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ""UpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""UX_TerminalLicenses_LicenseKey"" ON ""TerminalLicenses"" (""LicenseKey"");
+            CREATE UNIQUE INDEX IF NOT EXISTS ""UX_TerminalLicenses_TerminalId"" ON ""TerminalLicenses"" (""TerminalId"");
+
+            CREATE TABLE IF NOT EXISTS ""LicenseRenewalHistories"" (
+                ""RenewalId"" BIGSERIAL PRIMARY KEY,
+                ""LicenseId"" VARCHAR(64) NOT NULL,
+                ""TerminalId"" INTEGER NOT NULL,
+                ""PreviousExpiresAt"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""RenewalDuration"" INTEGER NOT NULL DEFAULT 5,
+                ""RenewalUnit"" VARCHAR(20) NOT NULL DEFAULT 'YEARS',
+                ""NewExpiresAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                ""PreviousLicenseVersion"" INTEGER NOT NULL DEFAULT 1,
+                ""NewLicenseVersion"" INTEGER NOT NULL DEFAULT 2,
+                ""RenewedBy"" VARCHAR(150) NOT NULL,
+                ""RenewalReason"" VARCHAR(255) NULL,
+                ""RenewalNotes"" VARCHAR(255) NULL,
+                ""RenewalStatus"" VARCHAR(30) NOT NULL DEFAULT 'COMPLETED',
+                ""IdempotencyKey"" VARCHAR(100) NULL,
+                ""RenewedAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            ALTER TABLE ""TerminalLicenses"" ADD COLUMN IF NOT EXISTS ""DurationValue"" INTEGER NOT NULL DEFAULT 5;
+            ALTER TABLE ""TerminalLicenses"" ADD COLUMN IF NOT EXISTS ""DurationUnit"" VARCHAR(20) NOT NULL DEFAULT 'YEARS';
+            ALTER TABLE ""TerminalLicenses"" ADD COLUMN IF NOT EXISTS ""OriginalDurationValue"" INTEGER NOT NULL DEFAULT 5;
+            ALTER TABLE ""TerminalLicenses"" ADD COLUMN IF NOT EXISTS ""OriginalDurationUnit"" VARCHAR(20) NOT NULL DEFAULT 'YEARS';
+            ALTER TABLE ""TerminalLicenses"" ADD COLUMN IF NOT EXISTS ""RenewalCount"" INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE ""TerminalLicenses"" ADD COLUMN IF NOT EXISTS ""LastRenewedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+            ALTER TABLE ""LicenseRenewalHistories"" ADD COLUMN IF NOT EXISTS ""RenewalDuration"" INTEGER NOT NULL DEFAULT 5;
+            ALTER TABLE ""LicenseRenewalHistories"" ADD COLUMN IF NOT EXISTS ""RenewalUnit"" VARCHAR(20) NOT NULL DEFAULT 'YEARS';
+            ALTER TABLE ""LicenseRenewalHistories"" ADD COLUMN IF NOT EXISTS ""RenewalReason"" VARCHAR(255) NULL;
+            ALTER TABLE ""LicenseRenewalHistories"" ADD COLUMN IF NOT EXISTS ""RenewalStatus"" VARCHAR(30) NOT NULL DEFAULT 'COMPLETED';
+            ALTER TABLE ""LicenseRenewalHistories"" ADD COLUMN IF NOT EXISTS ""IdempotencyKey"" VARCHAR(100) NULL;
+            CREATE INDEX IF NOT EXISTS ""IX_LicenseRenewalHistories_Terminal_RenewedAt"" ON ""LicenseRenewalHistories"" (""TerminalId"", ""RenewedAt"");
+            CREATE UNIQUE INDEX IF NOT EXISTS ""UX_LicenseRenewalHistories_Terminal_IdempotencyKey"" ON ""LicenseRenewalHistories"" (""TerminalId"", ""IdempotencyKey"") WHERE ""IdempotencyKey"" IS NOT NULL;
+
+            CREATE TABLE IF NOT EXISTS ""LicenseDeviceHistories"" (
+                ""DeviceHistoryId"" BIGSERIAL PRIMARY KEY,
+                ""LicenseId"" VARCHAR(64) NOT NULL,
+                ""TerminalId"" INTEGER NOT NULL,
+                ""OldDeviceId"" VARCHAR(120) NULL,
+                ""NewDeviceId"" VARCHAR(120) NULL,
+                ""ActionType"" VARCHAR(50) NOT NULL,
+                ""AuthorizedBy"" VARCHAR(150) NOT NULL,
+                ""Reason"" VARCHAR(255) NULL,
+                ""OccurredAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ""IX_LicenseDeviceHistories_Terminal_OccurredAt"" ON ""LicenseDeviceHistories"" (""TerminalId"", ""OccurredAt"");
+
+            CREATE TABLE IF NOT EXISTS ""LicenseAuditLogs"" (
+                ""AuditLogId"" BIGSERIAL PRIMARY KEY,
+                ""LicenseId"" VARCHAR(64) NULL,
+                ""TerminalId"" INTEGER NULL,
+                ""BranchId"" INTEGER NULL,
+                ""OutletId"" INTEGER NULL,
+                ""DeviceId"" VARCHAR(120) NULL,
+                ""EventType"" VARCHAR(50) NOT NULL,
+                ""EventStatus"" VARCHAR(30) NOT NULL,
+                ""Message"" VARCHAR(500) NOT NULL,
+                ""Actor"" VARCHAR(150) NULL,
+                ""IpAddress"" VARCHAR(64) NULL,
+                ""DeviceClockUtc"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""ServerClockUtc"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ""ClockSkewSeconds"" INTEGER NULL,
+                ""OccurredAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ""IX_LicenseAuditLogs_Terminal_OccurredAt"" ON ""LicenseAuditLogs"" (""TerminalId"", ""OccurredAt"");
+        ";
+        using var licCmd = new NpgsqlCommand(licensingSchemaSql, conn);
+        licCmd.ExecuteNonQuery();
     }
 }

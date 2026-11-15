@@ -17,6 +17,9 @@
 @inject IPosConnectivityService ConnectivityService
 @inject POS.Client.Services.IOfflineCheckoutService OfflineCheckoutService
 @inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
+@inject POS.Client.Services.IReferenceDataSyncService ReferenceDataSync
+@inject POS.Client.Services.ICashDrawerHardwareService CashDrawerHardware
+@inject POS.Client.Services.IPrinterService PrinterService
 @inject IJSRuntime Js
 @implements IDisposable
 
@@ -68,6 +71,53 @@ else
                         <span>Offline Mode (@Layout.PendingCount pending sync)</span>
                     </div>
                     <span class="badge bg-secondary">Offline</span>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(cashDrawerWarning))
+            {
+                <div class="alert alert-warning alert-dismissible fade show py-2 px-3 mb-2 small d-flex justify-content-between align-items-center rounded-3 shadow-sm" role="alert">
+                    <div>
+                        <i class="bi bi-safe2 me-2"></i>
+                        <strong>Cash Drawer Notice:</strong> @cashDrawerWarning
+                    </div>
+                    <button type="button" class="btn-close btn-sm" @onclick="() => cashDrawerWarning = null" aria-label="Close"></button>
+                </div>
+            }
+
+            @if (isAutoPrintingReceipt && string.IsNullOrWhiteSpace(autoPrintFailureMessage))
+            {
+                <div class="alert alert-info py-1 px-3 mb-2 small d-flex align-items-center gap-2 rounded-3 shadow-sm" role="status">
+                    <span class="spinner-border spinner-border-sm"></span>
+                    <span>Printing receipt automatically…</span>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(autoPrintFailureMessage))
+            {
+                <div class="alert alert-warning py-2 px-3 mb-2 small d-flex flex-wrap justify-content-between align-items-center gap-2 rounded-3 shadow-sm" role="alert">
+                    <div>
+                        <i class="bi bi-printer me-2"></i>
+                        <strong>Receipt Print Notice:</strong> @autoPrintFailureMessage
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        @if (autoPrintCanRetry && !string.IsNullOrWhiteSpace(autoPrintTransactionId))
+                        {
+                            <button type="button" class="btn btn-sm btn-warning text-dark fw-semibold" disabled="@isRetryingAutoPrint" @onclick="RetryAutoPrintAsync">
+                                @(isRetryingAutoPrint ? "Retrying…" : "Retry Print")
+                            </button>
+                        }
+                        <button type="button" class="btn-close btn-sm" @onclick="ClearAutoPrintStatus" aria-label="Close"></button>
+                    </div>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(autoPrintSuccessMessage))
+            {
+                <div class="alert alert-success alert-dismissible fade show py-1 px-3 mb-2 small d-flex justify-content-between align-items-center rounded-3 shadow-sm" role="status">
+                    <div>
+                        <i class="bi bi-check-circle-fill me-2"></i>
+                        <span>@autoPrintSuccessMessage</span>
+                    </div>
+                    <button type="button" class="btn-close btn-sm" @onclick="ClearAutoPrintStatus" aria-label="Close"></button>
                 </div>
             }
 
@@ -137,7 +187,8 @@ else
                 {
                     var isSelected = selectedCategoryId == cat.CategoryId;
                     var catColor = GetCategoryColor(cat.CategoryId);
-                    <button type="button"
+                    <button @key="cat.CategoryId"
+                            type="button"
                             class="category-pill category-item @(isSelected ? "active" : "")"
                             style="--category-color: @catColor;"
                             aria-pressed="@(isSelected ? "true" : "false")"
@@ -256,7 +307,7 @@ else
                 <div class="order-header d-flex justify-content-between align-items-center">
                     <div class="d-flex align-items-center gap-2">
                         <h6 class="fw-bold mb-0 text-dark">Current Order</h6>
-                        <span class="order-badge">@Cart.TotalItems @(Cart.TotalItems == 1 ? "item" : "items")</span>
+                        <span class="order-badge">@CartItem.FormatQuantity(Cart.TotalItems) @(Cart.TotalItems == 1 ? "item" : "items")</span>
                     </div>
                     @if (Cart.Items.Any())
                     {
@@ -301,8 +352,31 @@ else
                                         </label>
                                     </div>
                                     <div class="cart-item-info">
-                                        <div class="cart-item-name" title="@item.ProductName">@item.ProductName</div>
-                                        <div class="cart-item-unit-price text-muted">₱@item.UnitPrice.ToString("N2") each</div>
+                                        <div class="cart-item-name" title="@item.ProductName">
+                                            @item.ProductName
+                                            @if (item.IsComplimentary)
+                                            {
+                                                <span class="badge bg-success ms-1">FREE</span>
+                                            }
+                                            else if (item.IsWeightBased)
+                                            {
+                                                <span class="badge bg-info text-dark ms-1">@CartItem.FormatQuantity(item.Quantity) kg</span>
+                                            }
+                                        </div>
+                                        <div class="cart-item-unit-price text-muted">
+                                            @if (item.IsComplimentary)
+                                            {
+                                                <span>Complimentary</span>
+                                            }
+                                            else if (item.IsWeightBased)
+                                            {
+                                                <span>₱@item.UnitPrice.ToString("N2")/kg</span>
+                                            }
+                                            else
+                                            {
+                                                <span>₱@item.UnitPrice.ToString("N2") each</span>
+                                            }
+                                        </div>
                                         @if (item.SelectedModifiers != null && item.SelectedModifiers.Any())
                                         {
                                             <div class="cart-item-modifiers">
@@ -313,6 +387,10 @@ else
                                                         @if (mod.Price > 0)
                                                         {
                                                             <span class="mod-price">₱@mod.Price.ToString("N2")</span>
+                                                        }
+                                                        else if (item.IsWeightBased && mod.Price == 0m)
+                                                        {
+                                                            <span class="mod-price text-success">(Free)</span>
                                                         }
                                                     </div>
                                                 }
@@ -335,13 +413,35 @@ else
                                                 <i class="bi @(!string.IsNullOrWhiteSpace(item.SpecialInstructions) ? "bi-chat-left-text-fill" : "bi-chat-left-text")"></i>
                                             </button>
                                             <div class="qty-control">
-                                                <button type="button" class="qty-btn" @onclick="() => Cart.DecreaseQuantity(item)" title="Decrease">
-                                                    −
-                                                </button>
-                                                <span class="qty-display">@item.Quantity</span>
-                                                <button type="button" class="qty-btn" @onclick="() => Cart.IncreaseQuantity(item)" title="Increase">
-                                                    +
-                                                </button>
+                                                @if (item.IsComplimentary)
+                                                {
+                                                    <span class="badge bg-light text-muted">Qty: @CartItem.FormatQuantity(item.Quantity)</span>
+                                                    <button type="button" class="qty-btn text-danger ms-1" @onclick="() => Cart.RemoveItem(item)" title="Remove Complimentary Item">
+                                                        <i class="bi bi-x"></i>
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    @if (!item.IsWeightBased)
+                                                    {
+                                                        <button type="button" class="qty-btn" @onclick="() => Cart.DecreaseQuantity(item)" title="Decrease">
+                                                            −
+                                                        </button>
+                                                    }
+                                                    <span class="qty-display">@CartItem.FormatQuantity(item.Quantity)</span>
+                                                    @if (!item.IsWeightBased)
+                                                    {
+                                                        <button type="button" class="qty-btn" @onclick="() => Cart.IncreaseQuantity(item)" title="Increase">
+                                                            +
+                                                        </button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button type="button" class="qty-btn text-danger" @onclick="() => Cart.RemoveItem(item)" title="Remove Item">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    }
+                                                }
                                             </div>
                                         </div>
                                         <div class="cart-item-total">
@@ -500,7 +600,7 @@ else
 
                                 <!-- Modifier Options Grid -->
                                 <div class="modifier-grid" role="group" aria-label="@group.ModifierGroupName">
-                                    @foreach (var option in group.Options.Where(o => o.IsActive).OrderBy(o => o.DisplayOrder))
+                                    @foreach (var option in GetOrderedActiveOptions(group))
                                     {
                                         var isSelected = set.Contains(option.ModifierOptionId);
                                         <button type="button"
@@ -557,21 +657,10 @@ else
                                     Optional • @(customizationSpecialInstructions?.Length ?? 0)/@CartItem.MaxSpecialInstructionsLength
                                 </span>
                             </div>
-                            <div class="d-flex flex-wrap gap-1.5 mb-2">
-                                @foreach (var chip in GetProductNoteSuggestions(customizingProduct.IsKitchenItem, customizingProduct.IsBarItem))
-                                {
-                                    var isChipActive = HasInstructionChip(customizationSpecialInstructions, chip);
-                                    <button type="button"
-                                            class="note-suggestion-chip @(isChipActive ? "active" : "")"
-                                            @onclick="() => customizationSpecialInstructions = ToggleInstructionChip(customizationSpecialInstructions, chip)">
-                                        <i class="bi @(isChipActive ? "bi-check-lg" : "bi-plus") me-1"></i>@chip
-                                    </button>
-                                }
-                            </div>
                             <textarea class="form-control note-modal-textarea"
                                       rows="2"
                                       maxlength="@CartItem.MaxSpecialInstructionsLength"
-                                      placeholder="E.g. No Ice, Less Sugar, No Onion, Separate Sauce..."
+                                      placeholder="Enter any special instructions or notes for this item..."
                                       @bind="customizationSpecialInstructions"
                                       @bind:event="oninput"></textarea>
                         </section>
@@ -622,6 +711,221 @@ else
         </div>
     }
 
+    <!-- Weight-Based Pricing & Complimentary Items Modal -->
+    @if (isWeightModalOpen && weightModalProduct != null)
+    {
+        <div class="modal fade show d-block pos-sale-modal weight-modal-overlay" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.72); backdrop-filter: blur(5px); z-index: 1060;" role="dialog" aria-modal="true" aria-labelledby="weight-modal-title">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden" style="background-color: #1e293b; color: #f8fafc;">
+                    <!-- Header -->
+                    <div class="modal-header border-bottom px-4 py-3 border-secondary d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="d-flex align-items-center gap-2">
+                                <h4 id="weight-modal-title" class="modal-title fw-bold text-white mb-0">@weightModalProduct.Name</h4>
+                                <span class="badge bg-primary px-2.5 py-1">Weight-Based</span>
+                            </div>
+                            <div class="text-secondary small mt-1">
+                                Price: <strong class="text-warning fs-6">₱@weightModalProduct.Price.ToString("N2")</strong> per kilogram
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-link text-secondary p-1 modal-close-btn" @onclick="CloseWeightModal" aria-label="Close" title="Cancel">
+                            <i class="bi bi-x-lg fs-5"></i>
+                        </button>
+                    </div>
+
+                    <!-- Body -->
+                    <div class="modal-body px-4 py-3">
+                        @if (!string.IsNullOrEmpty(weightModalError))
+                        {
+                            <div class="alert alert-danger d-flex align-items-center gap-2 py-2 mb-3 rounded-3" role="alert">
+                                <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+                                <div>@weightModalError</div>
+                            </div>
+                        }
+
+                        <!-- Mode Switcher Tabs -->
+                        <div class="d-flex p-1 bg-dark rounded-3 mb-3 border border-secondary">
+                            <button type="button" 
+                                    class="btn flex-fill py-2 fw-semibold @(weightOrderMode == "AMOUNT" ? "btn-primary text-white shadow-sm" : "btn-link text-secondary text-decoration-none")"
+                                    @onclick='() => SetWeightOrderMode("AMOUNT")'>
+                                <i class="bi bi-currency-dollar me-1"></i> By Amount (₱)
+                            </button>
+                            <button type="button" 
+                                    class="btn flex-fill py-2 fw-semibold @(weightOrderMode == "WEIGHT" ? "btn-primary text-white shadow-sm" : "btn-link text-secondary text-decoration-none")"
+                                    @onclick='() => SetWeightOrderMode("WEIGHT")'>
+                                <i class="bi bi-speedometer2 me-1"></i> By Weight (kg)
+                            </button>
+                        </div>
+
+                        <!-- Amount Mode Controls -->
+                        @if (weightOrderMode == "AMOUNT")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label text-secondary small fw-bold mb-1">CUSTOMER REQUESTED AMOUNT (PESOS)</label>
+                                <div class="input-group input-group-lg mb-2">
+                                    <span class="input-group-text bg-dark border-secondary text-warning fw-bold">₱</span>
+                                    <input type="number" 
+                                           class="form-control bg-dark text-white border-secondary fw-bold fs-4" 
+                                           placeholder="Enter peso amount (e.g. 300)"
+                                           step="any"
+                                           value="@weightModalInputText" 
+                                           @oninput="OnWeightInputChanged" />
+                                </div>
+                                <div class="d-flex flex-wrap gap-1">
+                                    @foreach (var preset in new decimal[] { 100, 200, 300, 500, 1000, 1500, 2000 })
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary text-white" @onclick="() => SetPresetAmount(preset)">
+                                            ₱@preset.ToString("N0")
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mb-3">
+                                <label class="form-label text-secondary small fw-bold mb-1">CUSTOMER REQUESTED WEIGHT (KILOGRAMS)</label>
+                                <div class="input-group input-group-lg mb-2">
+                                    <input type="number" 
+                                           class="form-control bg-dark text-white border-secondary fw-bold fs-4" 
+                                           placeholder="Enter weight in kg (e.g. 1.5)"
+                                           step="0.001"
+                                           value="@weightModalInputText" 
+                                           @oninput="OnWeightInputChanged" />
+                                    <span class="input-group-text bg-dark border-secondary text-info fw-bold">kg</span>
+                                </div>
+                                <div class="d-flex flex-wrap gap-1">
+                                    @foreach (var preset in new decimal[] { 0.25m, 0.5m, 1.0m, 1.5m, 2.0m, 3.0m })
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary text-white" @onclick="() => SetPresetWeight(preset)">
+                                            @preset.ToString("0.##") kg
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        <!-- Live Calculation Readout Card -->
+                        <div class="card bg-dark border border-secondary rounded-3 p-3 mb-3">
+                            <div class="row g-2 text-center">
+                                <div class="col-4 border-end border-secondary">
+                                    <div class="text-secondary small">Selling Price</div>
+                                    <div class="fw-bold text-white">₱@weightModalProduct.Price.ToString("N2")/kg</div>
+                                </div>
+                                <div class="col-4 border-end border-secondary">
+                                    <div class="text-secondary small">Computed Weight</div>
+                                    <div class="fw-bold text-info fs-5">@WeightModalComputedWeight.ToString("0.######") kg</div>
+                                    <div class="text-muted" style="font-size: 0.75rem;">~@((WeightModalComputedWeight * 1000m).ToString("0.##")) grams</div>
+                                </div>
+                                <div class="col-4">
+                                    <div class="text-secondary small">Total Payable</div>
+                                    <div class="fw-bolder text-warning fs-4">₱@WeightModalComputedTotal.ToString("N2")</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Complimentary Items / Freebies Section -->
+                        <div class="card bg-dark border border-secondary rounded-3 p-3 mb-2">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <span class="fw-bold text-white"><i class="bi bi-gift-fill text-danger me-1"></i> Complimentary Inclusions</span>
+                                    <span class="badge bg-success ms-2">@WeightModalComplimentarySets Set(s)</span>
+                                </div>
+                                <span class="text-secondary small">(1 set per completed 1.0 kg)</span>
+                            </div>
+
+                            @if (WeightModalComplimentarySets > 0)
+                            {
+                                @if (weightModalModifierGroups != null && weightModalModifierGroups.Any())
+                                {
+                                    @foreach (var grp in weightModalModifierGroups)
+                                    {
+                                        <div class="mb-2 p-2 rounded bg-opacity-25 bg-secondary">
+                                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                                <span class="fw-semibold text-white small">@grp.ModifierGroupName</span>
+                                                @if (grp.MaxSelections == 1)
+                                                {
+                                                    <span class="text-info" style="font-size: 0.75rem;">(Choose 1 for all @WeightModalComplimentarySets set(s))</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-success" style="font-size: 0.75rem;">(@WeightModalComplimentarySets portion(s) each)</span>
+                                                }
+                                            </div>
+                                            <div class="d-flex flex-wrap gap-2">
+                                                @foreach (var opt in GetOrderedActiveOptions(grp))
+                                                {
+                                                    var isSel = weightSelectedOptionIds.TryGetValue(grp.ModifierGroupId, out var s) && s.Contains(opt.ModifierOptionId);
+                                                    if (grp.MaxSelections == 1)
+                                                    {
+                                                        <button type="button" 
+                                                                class="btn btn-sm @(isSel ? "btn-success text-white" : "btn-outline-secondary text-light")"
+                                                                @onclick="() => SelectWeightRadioOption(grp, opt)">
+                                                            @opt.Name
+                                                        </button>
+                                                    }
+                                                    else if (isSel)
+                                                    {
+                                                        <span class="badge bg-secondary text-light p-2 d-flex align-items-center gap-1">
+                                                            <i class="bi bi-check-circle-fill text-success"></i>
+                                                            @WeightModalComplimentarySets x @opt.Name
+                                                        </span>
+                                                    }
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="text-muted small">No complimentary options configured in catalog for this item.</div>
+                                }
+                            }
+                            else
+                            {
+                                var currentWt = WeightModalComputedWeight;
+                                var nextKg = Math.Ceiling(currentWt <= 0 ? 1m : (currentWt == Math.Floor(currentWt) ? currentWt + 1m : currentWt));
+                                if (nextKg <= currentWt) nextKg = currentWt + 1m;
+                                var neededKg = nextKg - currentWt;
+                                var neededAmount = neededKg * weightModalProduct.Price;
+                                <div class="text-secondary small d-flex align-items-center gap-2">
+                                    <i class="bi bi-info-circle text-info"></i>
+                                    <span>
+                                        Complimentary threshold not reached. Add <strong>@neededKg.ToString("0.###") kg</strong> (₱@neededAmount.ToString("N2")) more to get <strong>1 FREE set</strong> (Drink, Atchara, Sarsa)!
+                                    </span>
+                                </div>
+                            }
+                        </div>
+
+                        <!-- Special Instructions -->
+                        <div class="mt-2">
+                            <label class="form-label text-secondary small mb-1">Special Instructions (Optional)</label>
+                            <input type="text" 
+                                   class="form-control bg-dark text-white border-secondary form-control-sm"
+                                   placeholder="e.g. Separate sauce, crispy skin, etc."
+                                   maxlength="250"
+                                   @bind="weightModalSpecialInstructions" />
+                        </div>
+                    </div>
+
+                    <!-- Footer -->
+                    <div class="modal-footer border-top px-4 py-3 border-secondary d-flex justify-content-between align-items-center">
+                        <button type="button" class="btn btn-outline-secondary" @onclick="CloseWeightModal">
+                            Cancel
+                        </button>
+                        <button type="button" 
+                                class="btn btn-primary px-4 py-2 fw-bold d-flex align-items-center gap-2"
+                                disabled="@(WeightModalComputedWeight <= 0m || WeightModalComputedTotal <= 0m)"
+                                @onclick="ConfirmWeightModal">
+                            <i class="bi bi-cart-plus-fill fs-5"></i>
+                            <span>Add to Cart — ₱@WeightModalComputedTotal.ToString("N2")</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
     <!-- Cart Item Special Instructions Modal -->
     @if (isNoteModalOpen && editingNoteCartItem != null)
     {
@@ -633,7 +937,7 @@ else
                             <div class="d-flex align-items-center gap-2 flex-wrap">
                                 <h5 id="note-modal-title" class="modal-title fw-bold text-white mb-0">Special Instructions</h5>
                                 <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-2.5 py-1">
-                                    @(editingNoteCartItem.Quantity)x @editingNoteCartItem.ProductName
+                                    @(CartItem.FormatQuantity(editingNoteCartItem.Quantity))@(editingNoteCartItem.IsWeightBased ? " kg" : "x") @editingNoteCartItem.ProductName
                                 </span>
                                 @if (editingNoteCartItem.IsKitchenItem)
                                 {
@@ -654,7 +958,7 @@ else
                     </div>
 
                     <div class="modal-body px-4 py-3">
-                        @if (editingNoteCartItem.Quantity > 1)
+                        @if (!editingNoteCartItem.IsWeightBased && editingNoteCartItem.Quantity > 1)
                         {
                             <div class="note-scope-bar mb-3">
                                 <span class="text-secondary small fw-semibold">Apply instructions to:</span>
@@ -662,7 +966,7 @@ else
                                     <button type="button"
                                             class="note-scope-btn flex-fill @(!splitSingleItemForNote ? "active" : "")"
                                             @onclick="() => splitSingleItemForNote = false">
-                                        <i class="bi bi-collection me-1"></i>All @editingNoteCartItem.Quantity items
+                                        <i class="bi bi-collection me-1"></i>All @CartItem.FormatQuantity(editingNoteCartItem.Quantity) items
                                     </button>
                                     <button type="button"
                                             class="note-scope-btn flex-fill @(splitSingleItemForNote ? "active" : "")"
@@ -672,25 +976,6 @@ else
                                 </div>
                             </div>
                         }
-
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <label class="text-secondary small fw-bold text-uppercase" style="letter-spacing: 0.4px; font-size: 0.73rem;">
-                                    Quick-Select Suggestions
-                                </label>
-                            </div>
-                            <div class="d-flex flex-wrap gap-1.5">
-                                @foreach (var chip in GetProductNoteSuggestions(editingNoteCartItem.IsKitchenItem, editingNoteCartItem.IsBarItem))
-                                {
-                                    var isChipActive = HasInstructionChip(noteDraftText, chip);
-                                    <button type="button"
-                                            class="note-suggestion-chip @(isChipActive ? "active" : "")"
-                                            @onclick="() => noteDraftText = ToggleInstructionChip(noteDraftText, chip)">
-                                        <i class="bi @(isChipActive ? "bi-check-lg" : "bi-plus") me-1"></i>@chip
-                                    </button>
-                                }
-                            </div>
-                        </div>
 
                         <div>
                             <div class="d-flex justify-content-between align-items-center mb-1.5">
@@ -705,7 +990,7 @@ else
                                       class="form-control note-modal-textarea"
                                       rows="3"
                                       maxlength="@CartItem.MaxSpecialInstructionsLength"
-                                      placeholder="Enter preparation note (e.g. No Ice, Less Sugar, No Onion, Extra Sauce)..."
+                                      placeholder="Enter any special instructions or notes for this item..."
                                       @bind="noteDraftText"
                                       @bind:event="oninput"></textarea>
                         </div>
@@ -738,7 +1023,19 @@ else
 
 @if (paidReceiptOrderId.HasValue || paidOfflineReceipt != null)
 {
-    <ReceiptPreview OrderId="@(paidReceiptOrderId ?? 0)" OfflineReceipt="@paidOfflineReceipt" OnClose="CloseReceiptPreview" />
+    <ReceiptPreview OrderId="@(paidReceiptOrderId ?? 0)"
+                    OfflineReceipt="@paidOfflineReceipt"
+                    HardwareWarning="@cashDrawerWarning"
+                    OnDismissHardwareWarning="() => cashDrawerWarning = null"
+                    AutoPrinting="@isAutoPrintingReceipt"
+                    AutoPrinted="@receiptAutoPrinted"
+                    AutoPrintSuccessMessage="@autoPrintSuccessMessage"
+                    AutoPrintError="@autoPrintFailureMessage"
+                    RetryingAutoPrint="@isRetryingAutoPrint"
+                    CanRetryAutoPrint="@autoPrintCanRetry"
+                    OnRetryAutoPrint="RetryAutoPrintAsync"
+                    OnDismissAutoPrint="ClearAutoPrintStatus"
+                    OnClose="CloseReceiptPreview" />
 }
 
 
@@ -1342,6 +1639,21 @@ else
 
     private long? paidReceiptOrderId;
     private ReceiptDto? paidOfflineReceipt;
+    private string? cashDrawerWarning;
+    private bool isAutoPrintingReceipt;
+    private bool receiptAutoPrinted;
+    private bool isRetryingAutoPrint;
+    private bool autoPrintCanRetry;
+    private string? autoPrintTransactionId;
+    private string? autoPrintSuccessMessage;
+    private string? autoPrintFailureMessage;
+
+    private void ClearAutoPrintStatus()
+    {
+        autoPrintSuccessMessage = null;
+        autoPrintFailureMessage = null;
+    }
+
     private void CloseReceiptPreview()
     {
         paidReceiptOrderId = null;
@@ -1366,10 +1678,11 @@ else
     private bool? bodyScrollLockState;
     private bool paymentModalWasOpen;
     private bool customizationModalWasOpen;
+    private bool weightModalWasOpen;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        var modalOpen = isPaymentModalOpen || isCustomizationOpen;
+        var modalOpen = isPaymentModalOpen || isCustomizationOpen || isWeightModalOpen;
         if (bodyScrollLockState != modalOpen)
         {
             bodyScrollLockState = modalOpen;
@@ -1380,7 +1693,7 @@ else
             catch { }
         }
 
-        if (modalOpen && !paymentModalWasOpen && !customizationModalWasOpen)
+        if (modalOpen && !paymentModalWasOpen && !customizationModalWasOpen && !weightModalWasOpen)
         {
             try
             {
@@ -1391,6 +1704,7 @@ else
 
         paymentModalWasOpen = isPaymentModalOpen;
         customizationModalWasOpen = isCustomizationOpen;
+        weightModalWasOpen = isWeightModalOpen;
 
         if (restoreSearchFocus && !disposed && Session.IsAuthenticated && IsRetail && !isLoading && !quantityDialogOpen)
         {
@@ -1420,8 +1734,26 @@ else
         }
 
         Cart.OnChange += OnCartChanged;
+        ReferenceDataSync.OnSyncCompleted += OnReferenceDataSyncCompleted;
         if (IsSupported) await LoadCatalogAsync();
         restoreSearchFocus = IsRetail;
+    }
+
+    private async void OnReferenceDataSyncCompleted()
+    {
+        if (disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (!disposed)
+                {
+                    await LoadCatalogAsync();
+                    StateHasChanged();
+                }
+            });
+        }
+        catch { }
     }
 
     private int previousCartItemCount = 0;
@@ -1447,6 +1779,7 @@ else
     {
         disposed = true;
         Cart.OnChange -= OnCartChanged;
+        ReferenceDataSync.OnSyncCompleted -= OnReferenceDataSyncCompleted;
         try
         {
             _ = Js.InvokeVoidAsync("posModal.setBodyScrollLock", false);
@@ -1471,8 +1804,17 @@ else
                     var pmTask = PaymentService.GetPaymentMethodsAsync();
                     await Task.WhenAll(catTask, prodTask, pmTask);
 
-                    categories = (await catTask).Where(c => !c.IsDeleted && c.IsActive).ToList();
-                    products = (await prodTask).Where(p => p.IsActive && p.ProductType != "RawMaterial").ToList();
+                    categories = (await catTask)
+                        .Where(c => !c.IsDeleted && c.IsActive)
+                        .OrderBy(c => c.DisplayOrder)
+                        .ThenBy(c => c.CategoryId)
+                        .ToList();
+                    products = (await prodTask)
+                        .Where(p => p.IsActive && p.ProductType != "RawMaterial")
+                        .OrderBy(p => p.CategoryId)
+                        .ThenBy(p => p.DisplayOrder)
+                        .ThenBy(p => p.ProductId)
+                        .ToList();
                     paymentMethods = await pmTask;
                     loadedOnline = true;
                 }
@@ -1489,11 +1831,16 @@ else
                 db.InitializeDatabase();
                 categories = db.Categories
                     .AsNoTracking()
-                    .Select(c => new CategoryDto { CategoryId = c.CategoryId, Name = c.Name ?? string.Empty, ColorHex = c.ColorCode ?? POS.Shared.Helpers.CategoryColor.Default, IsActive = true })
+                    .OrderBy(c => c.DisplayOrder)
+                    .ThenBy(c => c.CategoryId)
+                    .Select(c => new CategoryDto { CategoryId = c.CategoryId, Name = c.Name ?? string.Empty, ColorHex = c.ColorCode ?? POS.Shared.Helpers.CategoryColor.Default, IsActive = true, DisplayOrder = c.DisplayOrder })
                     .ToList();
 
                 products = db.Products
                     .AsNoTracking()
+                    .OrderBy(p => p.CategoryId)
+                    .ThenBy(p => p.DisplayOrder)
+                    .ThenBy(p => p.ProductId)
                     .Select(p => new ProductDto
                     {
                         ProductId = p.ProductId,
@@ -1511,9 +1858,11 @@ else
                         TaxId = p.TaxId,
                         TaxName = p.TaxName ?? "VATable",
                         ProductType = p.ProductType,
+                        PricingMethod = p.PricingMethod,
                         IsActive = p.IsActive,
                         IsKitchenItem = p.IsKitchenItem,
-                        IsBarItem = p.IsBarItem
+                        IsBarItem = p.IsBarItem,
+                        DisplayOrder = p.DisplayOrder
                     })
                     .ToList();
 
@@ -1642,7 +1991,10 @@ else
                     (p.Barcode != null && p.Barcode.Contains(q, StringComparison.OrdinalIgnoreCase)));
             }
 
-            filteredCache = query.OrderBy(p => p.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase).ToList();
+            filteredCache = query
+                .OrderBy(p => p.DisplayOrder)
+                .ThenBy(p => p.ProductId)
+                .ToList();
             return filteredCache;
         }
     }
@@ -1657,16 +2009,18 @@ else
 
     private List<CategoryProductGroup> groupedCache = new();
     private List<ProductDto>? groupedCacheFilteredSource;
+    private List<CategoryDto>? groupedCacheCategoriesSource;
 
     private List<CategoryProductGroup> GroupedCategoryProducts
     {
         get
         {
             var filtered = FilteredProducts;
-            if (ReferenceEquals(groupedCacheFilteredSource, filtered))
+            if (ReferenceEquals(groupedCacheFilteredSource, filtered) && ReferenceEquals(groupedCacheCategoriesSource, categories))
                 return groupedCache;
 
             groupedCacheFilteredSource = filtered;
+            groupedCacheCategoriesSource = categories;
 
             if (!filtered.Any())
             {
@@ -1678,7 +2032,7 @@ else
                 .GroupBy(p => p.CategoryId)
                 .ToDictionary(
                     g => g.Key,
-                    g => g.OrderBy(p => p.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase).ToList()
+                    g => g.OrderBy(p => p.DisplayOrder).ThenBy(p => p.ProductId).ToList()
                 );
 
             var groups = new List<CategoryProductGroup>();
@@ -1725,7 +2079,7 @@ else
         }
     }
 
-    private Dictionary<int, int> CartQuantityByProduct() =>
+    private Dictionary<int, decimal> CartQuantityByProduct() =>
         Cart.Items.GroupBy(i => i.ProductId).ToDictionary(g => g.Key, g => g.Sum(i => i.Quantity));
 
     private void SelectCategory(int? categoryId)
@@ -1758,6 +2112,11 @@ else
 
     private async Task ChooseQuantity(ProductDto product)
     {
+        if (POS.Shared.Constants.PricingMethods.IsWeightBased(product.PricingMethod))
+        {
+            await OpenWeightBasedModal(product);
+            return;
+        }
         if (quantityDialogOpen || disposed || !Session.IsAuthenticated) return;
         quantityDialogOpen = true;
         try
@@ -1811,56 +2170,6 @@ else
     private string? noteDraftText = null;
     private bool splitSingleItemForNote = false;
 
-    private static readonly string[] KitchenNoteSuggestions =
-    {
-        "No Onion", "Less Spicy", "Extra Sauce", "Separate Sauce", "No Pickles", "Well Done", "Less Salt"
-    };
-
-    private static readonly string[] BarNoteSuggestions =
-    {
-        "No Ice", "Less Ice", "Less Sugar", "No Sugar", "Extra Hot", "Warm", "Separate Cup"
-    };
-
-    private static readonly string[] GeneralNoteSuggestions =
-    {
-        "No Ice", "Less Sugar", "Extra Hot", "No Onion", "Less Spicy", "Extra Sauce", "Separate Sauce"
-    };
-
-    private static IReadOnlyList<string> GetProductNoteSuggestions(bool isKitchen, bool isBar)
-    {
-        if (isBar && !isKitchen) return BarNoteSuggestions;
-        if (isKitchen && !isBar) return KitchenNoteSuggestions;
-        return GeneralNoteSuggestions;
-    }
-
-    private static bool HasInstructionChip(string? currentText, string chip)
-    {
-        if (string.IsNullOrWhiteSpace(currentText) || string.IsNullOrWhiteSpace(chip))
-            return false;
-
-        var parts = currentText.Split(new[] { ',', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return parts.Any(p => string.Equals(p, chip, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static string? ToggleInstructionChip(string? currentText, string chip)
-    {
-        var parts = (currentText ?? string.Empty)
-            .Split(new[] { ',', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-
-        var existingIdx = parts.FindIndex(p => string.Equals(p, chip, StringComparison.OrdinalIgnoreCase));
-        if (existingIdx >= 0)
-        {
-            parts.RemoveAt(existingIdx);
-        }
-        else
-        {
-            parts.Add(chip);
-        }
-
-        return CartItem.NormalizeSpecialInstructions(string.Join(", ", parts));
-    }
-
     private void OpenNoteModal(CartItem item)
     {
         editingNoteCartItem = item;
@@ -1895,7 +2204,7 @@ else
         }
 
         var normalized = CartItem.NormalizeSpecialInstructions(noteDraftText);
-        if (splitSingleItemForNote && editingNoteCartItem.Quantity > 1)
+        if (splitSingleItemForNote && !editingNoteCartItem.IsWeightBased && editingNoteCartItem.Quantity > 1)
         {
             var itemRef = editingNoteCartItem;
             Cart.DecreaseQuantity(itemRef);
@@ -1915,6 +2224,8 @@ else
             {
                 ModifierOptionId = m.ModifierOptionId,
                 ModifierGroupId = m.ModifierGroupId,
+                ProductId = m.ProductId,
+                ProductName = m.ProductName,
                 Name = m.Name,
                 Price = m.Price,
                 DisplayOrder = m.DisplayOrder,
@@ -1930,8 +2241,49 @@ else
         CloseNoteModal();
     }
 
+    /// <summary>
+    /// Returns active modifier options ordered by display order and option ID.
+    /// </summary>
+    private static IEnumerable<ModifierOptionDto> GetOrderedActiveOptions(ProductModifierGroupDto? group)
+        => (group?.Options ?? Enumerable.Empty<ModifierOptionDto>())
+            .Where(o => o.IsActive)
+            .OrderBy(o => o.DisplayOrder)
+            .ThenBy(o => o.ModifierOptionId);
+
+    /// <summary>
+    /// Loads product modifier groups online when reachable, falling back to local SQLite reference cache.
+    /// </summary>
+    private async Task<List<ProductModifierGroupDto>> LoadProductModifierGroupsAsync(int productId)
+    {
+        var connectivityState = await ConnectivityService.CheckConnectivityAsync();
+        isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
+
+        if (!isOffline && await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session))
+        {
+            try
+            {
+                return await ModifierService.GetProductModifierGroupsAsync(productId) ?? new();
+            }
+            catch
+            {
+                // Fall back to local SQLite reference data when online modifier retrieval fails.
+            }
+        }
+
+        // OFFLINE FALLBACK: Read exact product-modifier mapping from isolated local SQLite database
+        using var db = new POS.Client.Data.LocalPosDbContext();
+        db.InitializeDatabase();
+        return await POS.Client.Services.ReferenceDataSyncService.GetLocalProductModifierGroupsAsync(db, productId);
+    }
+
     private async Task AddToCart(ProductDto product)
     {
+        if (POS.Shared.Constants.PricingMethods.IsWeightBased(product.PricingMethod))
+        {
+            await OpenWeightBasedModal(product);
+            return;
+        }
+
         if (IsRetail)
         {
             Cart.AddItem(product);
@@ -1940,76 +2292,7 @@ else
 
         try
         {
-            var connectivityState = await ConnectivityService.CheckConnectivityAsync();
-            isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
-            List<ProductModifierGroupDto> groups = new();
-
-            bool loadedModifiersOnline = false;
-            if (!isOffline && await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session))
-            {
-                try
-                {
-                    var groupsTask = ModifierService.GetProductModifierGroupsAsync(product.ProductId);
-                    groups = await groupsTask;
-                    loadedModifiersOnline = true;
-                }
-                catch
-                {
-                    loadedModifiersOnline = false;
-                }
-            }
-
-            if (!loadedModifiersOnline)
-            {
-                // OFFLINE FALLBACK: Read exact product-modifier mapping from isolated local SQLite database
-                using var db = new POS.Client.Data.LocalPosDbContext();
-                db.InitializeDatabase();
-
-                var mappedGroupIds = db.ProductModifierGroups
-                    .AsNoTracking()
-                    .Where(pmg => pmg.ProductId == product.ProductId)
-                    .OrderBy(pmg => pmg.DisplayOrder)
-                    .Select(pmg => pmg.ModifierGroupId)
-                    .ToList();
-
-                var localGroups = db.ModifierGroups
-                    .AsNoTracking()
-                    .Where(g => mappedGroupIds.Contains(g.ModifierGroupId))
-                    .ToList();
-
-                // Preserve display order from mapping
-                localGroups = localGroups
-                    .OrderBy(g => mappedGroupIds.IndexOf(g.ModifierGroupId))
-                    .ToList();
-
-                foreach (var g in localGroups)
-                {
-                    var options = db.ModifierOptions
-                        .AsNoTracking()
-                        .Where(o => o.ModifierGroupId == g.ModifierGroupId)
-                        .OrderBy(o => o.ModifierOptionId)
-                        .Select(o => new ModifierOptionDto
-                        {
-                            ModifierOptionId = o.ModifierOptionId,
-                            ModifierGroupId = g.ModifierGroupId,
-                            Name = o.Name,
-                            Price = o.Price,
-                            DisplayOrder = o.DisplayOrder,
-                            IsActive = o.IsActive
-                        })
-                        .ToList();
-
-                    groups.Add(new ProductModifierGroupDto
-                    {
-                        ModifierGroupId = g.ModifierGroupId,
-                        ModifierGroupName = g.Name,
-                        IsRequired = g.IsRequired,
-                        MinSelections = g.MinSelections,
-                        MaxSelections = g.MaxSelections,
-                        Options = options
-                    });
-                }
-            }
+            var groups = await LoadProductModifierGroupsAsync(product.ProductId);
 
             if (groups != null && groups.Any())
             {
@@ -2022,10 +2305,13 @@ else
                 foreach (var g in groups)
                 {
                     selectedOptionIdsByGroup[g.ModifierGroupId] = new HashSet<int>();
-                    if (g.IsRequired && g.MinSelections > 0 && g.Options.Any())
+                    if (g.IsRequired && g.MinSelections > 0)
                     {
-                        var firstOpt = g.Options.OrderBy(o => o.DisplayOrder).First();
-                        selectedOptionIdsByGroup[g.ModifierGroupId].Add(firstOpt.ModifierOptionId);
+                        var firstOpt = GetOrderedActiveOptions(g).FirstOrDefault();
+                        if (firstOpt != null)
+                        {
+                            selectedOptionIdsByGroup[g.ModifierGroupId].Add(firstOpt.ModifierOptionId);
+                        }
                     }
                 }
 
@@ -2274,6 +2560,241 @@ else
         StateHasChanged();
     }
 
+    private bool isWeightModalOpen = false;
+    private ProductDto? weightModalProduct = null;
+    private string weightOrderMode = "AMOUNT";
+    private string weightModalInputText = "300";
+    private List<ProductModifierGroupDto> weightModalModifierGroups = new();
+    private Dictionary<int, HashSet<int>> weightSelectedOptionIds = new();
+    private string? weightModalSpecialInstructions = null;
+    private string? weightModalError = null;
+
+    private decimal WeightModalComputedWeight
+    {
+        get
+        {
+            if (weightModalProduct == null || weightModalProduct.Price <= 0m) return 0m;
+            if (weightOrderMode == "AMOUNT")
+            {
+                if (decimal.TryParse(weightModalInputText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var amt) && amt > 0m)
+                {
+                    return amt / weightModalProduct.Price;
+                }
+                return 0m;
+            }
+            else
+            {
+                if (decimal.TryParse(weightModalInputText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var wt) && wt > 0m)
+                {
+                    return wt;
+                }
+                return 0m;
+            }
+        }
+    }
+
+    private decimal WeightModalComputedTotal
+    {
+        get
+        {
+            if (weightModalProduct == null) return 0m;
+            if (weightOrderMode == "AMOUNT")
+            {
+                if (decimal.TryParse(weightModalInputText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var amt) && amt > 0m)
+                {
+                    return amt;
+                }
+                return 0m;
+            }
+            else
+            {
+                if (decimal.TryParse(weightModalInputText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var wt) && wt > 0m)
+                {
+                    return Math.Round(wt * weightModalProduct.Price, 2, MidpointRounding.AwayFromZero);
+                }
+                return 0m;
+            }
+        }
+    }
+
+    private int WeightModalComplimentarySets => (int)Math.Floor(WeightModalComputedWeight);
+
+    private void SetWeightOrderMode(string mode)
+    {
+        weightOrderMode = mode;
+        if (mode == "AMOUNT")
+        {
+            weightModalInputText = "300";
+        }
+        else
+        {
+            weightModalInputText = "1.0";
+        }
+        StateHasChanged();
+    }
+
+    private void SetPresetAmount(decimal amount)
+    {
+        weightModalInputText = amount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        StateHasChanged();
+    }
+
+    private void SetPresetWeight(decimal weight)
+    {
+        weightModalInputText = weight.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        StateHasChanged();
+    }
+
+    private void OnWeightInputChanged(ChangeEventArgs e)
+    {
+        weightModalInputText = e.Value?.ToString() ?? string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task OpenWeightBasedModal(ProductDto product)
+    {
+        weightModalProduct = product;
+        weightOrderMode = "AMOUNT";
+        weightModalInputText = "300";
+        weightModalSpecialInstructions = null;
+        weightModalError = null;
+        weightSelectedOptionIds.Clear();
+        weightModalModifierGroups.Clear();
+
+        try
+        {
+            var groups = await LoadProductModifierGroupsAsync(product.ProductId);
+
+            weightModalModifierGroups = groups;
+
+            foreach (var g in groups)
+            {
+                weightSelectedOptionIds[g.ModifierGroupId] = new HashSet<int>();
+                var activeOptions = GetOrderedActiveOptions(g).ToList();
+                if (g.MaxSelections == 1)
+                {
+                    var firstOpt = activeOptions.FirstOrDefault();
+                    if (firstOpt != null)
+                    {
+                        weightSelectedOptionIds[g.ModifierGroupId].Add(firstOpt.ModifierOptionId);
+                    }
+                }
+                else
+                {
+                    foreach (var opt in activeOptions.Where(o => o.Price == 0m || o.ProductId.HasValue))
+                    {
+                        weightSelectedOptionIds[g.ModifierGroupId].Add(opt.ModifierOptionId);
+                    }
+                }
+            }
+
+            isWeightModalOpen = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            weightModalError = $"Error loading modifiers: {ex.Message}";
+            isWeightModalOpen = true;
+            StateHasChanged();
+        }
+    }
+
+    private void SelectWeightRadioOption(ProductModifierGroupDto group, ModifierOptionDto option)
+    {
+        if (!weightSelectedOptionIds.ContainsKey(group.ModifierGroupId))
+        {
+            weightSelectedOptionIds[group.ModifierGroupId] = new HashSet<int>();
+        }
+        var set = weightSelectedOptionIds[group.ModifierGroupId];
+        set.Clear();
+        set.Add(option.ModifierOptionId);
+        StateHasChanged();
+    }
+
+    private void CloseWeightModal()
+    {
+        isWeightModalOpen = false;
+        weightModalProduct = null;
+        StateHasChanged();
+    }
+
+    private void ConfirmWeightModal()
+    {
+        if (weightModalProduct == null) return;
+        decimal weight = WeightModalComputedWeight;
+        decimal total = WeightModalComputedTotal;
+        if (weight <= 0m || total <= 0m)
+        {
+            weightModalError = "Please enter a valid amount or weight greater than zero.";
+            return;
+        }
+
+        int sets = WeightModalComplimentarySets;
+        List<CartItem> compItems = new();
+        List<ModifierOptionDto> unlinkedComplimentaryModifiers = new();
+
+        if (sets > 0)
+        {
+            foreach (var grp in weightModalModifierGroups)
+            {
+                if (weightSelectedOptionIds.TryGetValue(grp.ModifierGroupId, out var selectedSet))
+                {
+                    foreach (var opt in GetOrderedActiveOptions(grp).Where(o => selectedSet.Contains(o.ModifierOptionId)))
+                    {
+                        if (opt.ProductId.HasValue && opt.ProductId.Value > 0)
+                        {
+                            var linkedProd = products.FirstOrDefault(p => p.ProductId == opt.ProductId.Value);
+                            compItems.Add(new CartItem
+                            {
+                                ProductId = opt.ProductId.Value,
+                                ProductName = linkedProd?.Name ?? opt.ProductName ?? opt.Name,
+                                ProductShortCode = linkedProd?.ShortCode,
+                                BasePrice = 0.00m,
+                                Quantity = sets,
+                                IsComplimentary = true,
+                                ParentProductId = weightModalProduct.ProductId,
+                                UnitOfMeasure = linkedProd?.UnitOfMeasure,
+                                IsKitchenItem = linkedProd?.IsKitchenItem ?? true,
+                                IsBarItem = linkedProd?.IsBarItem ?? false,
+                                TaxName = linkedProd?.TaxName ?? "VATable"
+                            });
+                        }
+                        else
+                        {
+                            var optionName = opt.Name ?? string.Empty;
+                            var formattedName = sets > 1 ? $"{sets}x {optionName}" : optionName;
+                            if (formattedName.Length > 100)
+                            {
+                                formattedName = formattedName[..100];
+                            }
+
+                            unlinkedComplimentaryModifiers.Add(new ModifierOptionDto
+                            {
+                                ModifierOptionId = opt.ModifierOptionId,
+                                ModifierGroupId = opt.ModifierGroupId,
+                                ProductId = null,
+                                Name = formattedName,
+                                Price = 0m,
+                                DisplayOrder = opt.DisplayOrder,
+                                IsActive = true
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Cart.AddWeightBasedItem(
+            weightModalProduct,
+            weight: weight,
+            targetAmount: weightOrderMode == "AMOUNT" ? total : null,
+            selectedModifiers: unlinkedComplimentaryModifiers.Count > 0 ? unlinkedComplimentaryModifiers : null,
+            specialInstructions: weightModalSpecialInstructions,
+            complimentaryItems: compItems);
+
+        CloseWeightModal();
+    }
+
     private async Task ClearCart()
     {
         var result = await Swal.FireAsync(new SweetAlertOptions
@@ -2504,68 +3025,81 @@ else
 
     private async Task<bool> VerifyPaymentShift()
     {
-        var state = await ConnectivityService.CheckConnectivityAsync();
-        var offline = state != TerminalConnectivityState.OnlineAndHealthy;
-        if (!offline)
+        var result = await POS.Client.Services.ShiftSession.VerifyPaymentShiftLocalFirstAsync(Http, Session, ConnectivityService);
+        isOffline = result.Offline;
+        if (result.IsReady)
         {
-            await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+            paymentShift = result.Shift;
+            return true;
         }
-        var lockState = await POS.Client.Services.ShiftSession.GetTerminalLockStatusAsync(
-            Http, Session.Terminal!.TerminalId, Session.Username, offline);
-        if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+
+        switch (result.Issue)
         {
-            Session.ClearSession();
-            Http.DefaultRequestHeaders.Authorization = null;
-            Navigation.NavigateTo("/terminal-locked", replace: true);
-            return false;
+            case POS.Client.Services.ShiftVerificationIssue.Locked:
+                Session.ClearSession();
+                Http.DefaultRequestHeaders.Authorization = null;
+                Navigation.NavigateTo("/terminal-locked", replace: true);
+                return false;
+
+            case POS.Client.Services.ShiftVerificationIssue.AuthorizationRejected:
+                paymentError = result.ErrorMessage ?? "Re-authenticate online.";
+                await Swal.FireAsync("Session authorization required", paymentError, SweetAlertIcon.Warning);
+                return false;
+
+            case POS.Client.Services.ShiftVerificationIssue.DifferentCashierOpen:
+            case POS.Client.Services.ShiftVerificationIssue.BranchMismatch:
+                paymentError = result.ErrorMessage ?? "Drawer ownership mismatch.";
+                await Swal.FireAsync("Drawer unavailable", paymentError, SweetAlertIcon.Warning);
+                return false;
+
+            case POS.Client.Services.ShiftVerificationIssue.ClosedShift:
+                paymentError = result.ErrorMessage ?? "This shift is already closed.";
+                await Swal.FireAsync("Shift closed", paymentError, SweetAlertIcon.Warning);
+                return false;
+
+            case POS.Client.Services.ShiftVerificationIssue.InvalidSession:
+                paymentError = result.ErrorMessage ?? "Please sign in again.";
+                await Swal.FireAsync("Invalid cashier session", paymentError, SweetAlertIcon.Error);
+                return false;
+
+            case POS.Client.Services.ShiftVerificationIssue.LocalDatabaseError:
+                paymentError = result.ErrorMessage ?? "Unable to read local shift database.";
+                await Swal.FireAsync("Local database error", paymentError, SweetAlertIcon.Error);
+                return false;
+
+            case POS.Client.Services.ShiftVerificationIssue.MissingOpeningConfig:
+                paymentError = result.ErrorMessage ?? "Configure Initial Cash Fund before opening a shift.";
+                await Swal.FireAsync("Opening float not configured", paymentError, SweetAlertIcon.Warning);
+                return false;
+
+            case POS.Client.Services.ShiftVerificationIssue.NoActiveShift:
+            case POS.Client.Services.ShiftVerificationIssue.OpeningNotConfirmed:
+                paymentShift = result.Shift;
+                openingFundConfig = result.OpeningFundConfig;
+                InitializeOpeningDenominations();
+                isOpeningFundConfirmedByCashier = false;
+                openingNotes = string.Empty;
+                openingError = null;
+                openingShiftModal = true;
+                return false;
+
+            default:
+                paymentError = result.ErrorMessage ?? "Shift verification did not complete.";
+                await Swal.FireAsync("Shift verification required", paymentError, SweetAlertIcon.Warning);
+                return false;
         }
-        paymentShift = await POS.Client.Services.ShiftSession.CurrentAsync(Http, Session.Terminal!.TerminalId, offline);
-        if (paymentShift != null && paymentShift.CashierId != Session.Username)
-        {
-            await Swal.FireAsync("Drawer unavailable", "This drawer belongs to another cashier.", SweetAlertIcon.Warning); return false;
-        }
-        if (!offline && paymentShift?.ShiftId < 0)
-        {
-            List<CashDenominationLineDto>? openDenoms = null;
-            if (!string.IsNullOrWhiteSpace(paymentShift.OpeningDenominationsJson))
-            {
-                try { openDenoms = System.Text.Json.JsonSerializer.Deserialize<List<CashDenominationLineDto>>(paymentShift.OpeningDenominationsJson); } catch { }
-            }
-            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, new OpenShiftDto
-            {
-                TerminalId = paymentShift.TerminalId,
-                BranchId = paymentShift.BranchId,
-                OpeningFloat = paymentShift.OpeningFloat,
-                ExpectedOpeningFund = paymentShift.ExpectedOpeningFund,
-                OpeningDiscrepancy = paymentShift.OpeningDiscrepancy,
-                OpeningDenominations = openDenoms,
-                ClientShiftId = paymentShift.ClientShiftId,
-                OpenedAt = paymentShift.OpenedAt,
-                Notes = paymentShift.Notes
-            }, Session.Username!, false);
-        }
-        if (paymentShift != null && paymentShift.Status != "OPEN")
-            throw new InvalidOperationException("The acknowledged shift is closed. Reconcile the drawer in My Shift before opening a new shift.");
-        if (paymentShift == null || !paymentShift.OpeningConfirmed)
-        {
-            openingFundConfig = await POS.Client.Services.ShiftSession.GetOpeningFundConfigAsync(Http, Session.Terminal!.TerminalId, offline);
-            InitializeOpeningDenominations();
-            isOpeningFundConfirmedByCashier = false;
-            openingNotes = string.Empty;
-            openingError = null;
-            openingShiftModal = true;
-            return false;
-        }
-        if (paymentShift.CashierId != Session.Username)
-        {
-            await Swal.FireAsync("Drawer unavailable", "This drawer belongs to another cashier. Close that shift before opening your own.", SweetAlertIcon.Warning); return false;
-        }
-        return true;
     }
 
     private async Task ConfirmOpeningFloat()
     {
         if (openingBusy || isProcessingPayment || !openingShiftModal) return;
+        if (!Session.IsAuthenticated || string.IsNullOrWhiteSpace(Session.Username) ||
+            Session.Terminal == null || Session.Terminal.TerminalId <= 0 ||
+            Session.Terminal.BranchId <= 0 || Session.Terminal.OutletId <= 0)
+        {
+            openingError = "Cashier session or assigned terminal, branch, and outlet are invalid. Please sign in again.";
+            return;
+        }
         if (openingFundConfig == null || !openingFundConfig.IsConfigured || !openingFundConfig.EffectiveOpeningFund.HasValue)
         {
             openingError = "Initial Cash Fund is not configured for this Terminal or Outlet. Please contact an Administrator.";
@@ -2581,6 +3115,8 @@ else
             openingError = "Please explicitly confirm your opening cash count before opening the shift.";
             return;
         }
+        var terminal = Session.Terminal;
+        var cashierUsername = Session.Username.Trim();
         openingBusy = true;
         openingOpenedAt ??= DateTime.UtcNow;
         openingError = null;
@@ -2590,12 +3126,28 @@ else
             var offline = state != TerminalConnectivityState.OnlineAndHealthy;
             if (!offline)
             {
-                await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+                var tokenResult = await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(Http, Session);
+                if (!tokenResult.Success)
+                {
+                    if (tokenResult.RejectionStatus is System.Net.HttpStatusCode.Unauthorized
+                        or System.Net.HttpStatusCode.Forbidden
+                        or System.Net.HttpStatusCode.Locked
+                        or System.Net.HttpStatusCode.BadRequest)
+                    {
+                        openingError = tokenResult.ErrorMessage ?? $"Online session authorization was rejected by the server (HTTP {(int)tokenResult.RejectionStatus.Value}).";
+                        return;
+                    }
+                    if (tokenResult.IsTransientError || !POS.Client.Services.DeviceActivationService.HasValidOnlineBearerToken(Http, Session))
+                    {
+                        offline = true;
+                    }
+                }
             }
+            isOffline = offline;
             var openDto = new OpenShiftDto
             {
-                TerminalId = Session.Terminal!.TerminalId,
-                BranchId = Session.Terminal.BranchId,
+                TerminalId = terminal.TerminalId,
+                BranchId = terminal.BranchId,
                 OpeningFloat = OpeningCountedCash,
                 ExpectedOpeningFund = ExpectedOpeningFundAmount,
                 OpeningDiscrepancy = OpeningDiscrepancyAmount,
@@ -2611,7 +3163,7 @@ else
                 OpenedAt = openingOpenedAt,
                 Notes = string.IsNullOrWhiteSpace(openingNotes) ? null : openingNotes.Trim()
             };
-            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, openDto, Session.Username!, offline);
+            paymentShift = await POS.Client.Services.ShiftSession.OpenAsync(Http, openDto, cashierUsername, offline);
             if (paymentShift.Status != "OPEN")
                 throw new InvalidOperationException("This opening acknowledgement is for a closed shift. Reconcile the drawer in My Shift before starting another sale.");
             openingShiftModal = false;
@@ -2630,13 +3182,31 @@ else
         paymentError = null;
         try
         {
+            if (!Session.IsAuthenticated || string.IsNullOrWhiteSpace(Session.Username) ||
+                Session.Terminal == null || Session.Terminal.TerminalId <= 0 ||
+                Session.Terminal.BranchId <= 0 || Session.Terminal.OutletId <= 0)
+            {
+                paymentError = "Cashier session or assigned terminal, branch, and outlet are invalid. Please sign in again.";
+                await Swal.FireAsync("Invalid cashier session", paymentError, SweetAlertIcon.Error);
+                return;
+            }
+            var terminal = Session.Terminal;
+            var cashierUsername = Session.Username.Trim();
+
+            var licenseGate = await POS.Client.Services.ClientLicenseService.CheckOperationalGateAsync(terminal.TerminalId);
+            if (!licenseGate.Allowed)
+            {
+                paymentError = licenseGate.ErrorMessage ?? "Terminal license is not valid for processing new sales.";
+                await Swal.FireAsync("License Restricted", paymentError, SweetAlertIcon.Error);
+                return;
+            }
             if (!await VerifyPaymentShift()) return;
             var createDto = new OrderCreateDto
             {
-                BranchId = Session.Terminal?.BranchId ?? 1,
-                OutletId = Session.Terminal?.OutletId ?? 1,
-                TerminalId = Session.Terminal?.TerminalId ?? 1,
-                CashierId = Session.Username ?? "cashier",
+                BranchId = terminal.BranchId,
+                OutletId = terminal.OutletId,
+                TerminalId = terminal.TerminalId,
+                CashierId = cashierUsername,
                 OrderType = IsRetail ? "RETAIL" : selectedServiceMode,
                 TableNumber = string.IsNullOrWhiteSpace(tableNumber) ? null : tableNumber.Trim(),
                 HeadCount = headCount > 0 ? headCount : (int?)null,
@@ -2647,6 +3217,7 @@ else
                 CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
                 CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
                 CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim(),
+                Splits = isSplitPaymentMode && paymentSplits.Count > 0 ? paymentSplits.ToList() : null,
                 Items = Cart.Items.Select(ci => new OrderItemCreateDto
                 {
                     ProductId = ci.ProductId,
@@ -2654,6 +3225,11 @@ else
                     ProductShortCode = ci.ProductShortCode,
                     Quantity = ci.Quantity,
                     BasePrice = ci.BasePrice,
+                    PricingMethod = ci.PricingMethod,
+                    UnitOfMeasure = ci.UnitOfMeasure,
+                    TargetAmount = ci.TargetAmount,
+                    IsComplimentary = ci.IsComplimentary,
+                    ParentProductId = ci.ParentProductId,
                     TaxName = ci.TaxName ?? "VATable",
                     IsKitchenItem = ci.IsKitchenItem,
                     IsBarItem = ci.IsBarItem,
@@ -2661,27 +3237,27 @@ else
                     Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                     {
                         ModifierOptionId = m.ModifierOptionId,
+                        ProductId = m.ProductId,
                         ModifierName = m.Name,
                         AdditionalPrice = m.Price
                     }).ToList() ?? new()
                 }).ToList()
             };
 
-            var connectivityState = await ConnectivityService.CheckConnectivityAsync();
-            isOffline = connectivityState != TerminalConnectivityState.OnlineAndHealthy;
-
             // Local-First: Always prepare payment preview locally without creating an unpaid server order first.
             var calcReq = new OrderCalculationRequestDto
             {
-                BranchTaxType = "VAT-Registered",
+                BranchTaxType = !string.IsNullOrWhiteSpace(terminal.BranchTaxType) ? terminal.BranchTaxType : "VAT-Registered",
                 DiscountCode = createDto.DiscountCode ?? "NONE",
                 Items = createDto.Items.Select(i => new CartItemCalculationDto
                 {
                     ProductId = i.ProductId,
                     ProductName = i.ProductName ?? "Product",
                     Quantity = i.Quantity,
-                    UnitPrice = i.BasePrice,
-                    ModifierTotal = i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m,
+                    UnitPrice = i.IsComplimentary ? 0m : i.BasePrice,
+                    TargetAmount = i.IsComplimentary ? 0m : i.TargetAmount,
+                    ModifierTotal = i.IsComplimentary ? 0m : (i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m),
+                    IsComplimentary = i.IsComplimentary,
                     TaxName = i.TaxName ?? "VATable",
                     IsEligibleForStatutoryDiscount = true
                 }).ToList()
@@ -2775,6 +3351,17 @@ else
         try
         {
             if (!await VerifyPaymentShift()) { isPaymentModalOpen = false; return; }
+            if (!Session.IsAuthenticated || string.IsNullOrWhiteSpace(Session.Username) ||
+                Session.Terminal == null || Session.Terminal.TerminalId <= 0 ||
+                Session.Terminal.BranchId <= 0 || Session.Terminal.OutletId <= 0)
+            {
+                paymentError = "Cashier session or assigned terminal, branch, and outlet are invalid. Please sign in again.";
+                isPaymentModalOpen = false;
+                await Swal.FireAsync("Invalid cashier session", paymentError, SweetAlertIcon.Error);
+                return;
+            }
+            var terminal = Session.Terminal;
+            var cashierUsername = Session.Username.Trim();
 
             PaymentProcessDto processDto;
 
@@ -2795,7 +3382,7 @@ else
                 processDto = new PaymentProcessDto
                 {
                     OrderId = currentOrderResponse.OrderId,
-                    ProcessedBy = Session.Username ?? "cashier",
+                    ProcessedBy = cashierUsername,
                     Splits = paymentSplits,
                     CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
                     CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
@@ -2826,7 +3413,7 @@ else
                     Amount = currentOrderResponse.TotalAmount,
                     AmountTendered = methodCode == "CASH" ? cashTendered : currentOrderResponse.TotalAmount,
                     ReferenceNumber = string.IsNullOrWhiteSpace(referenceNumber) ? null : referenceNumber.Trim(),
-                    ProcessedBy = Session.Username ?? "cashier",
+                    ProcessedBy = cashierUsername,
                     CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
                     CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
                     CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
@@ -2840,10 +3427,10 @@ else
             {
                 ShiftId = paymentShift?.ShiftId,
                 ClientShiftId = paymentShift?.ClientShiftId,
-                BranchId = Session.Terminal?.BranchId ?? 1,
-                OutletId = Session.Terminal?.OutletId ?? 1,
-                TerminalId = Session.Terminal?.TerminalId ?? 1,
-                CashierId = Session.Username ?? "cashier",
+                BranchId = terminal.BranchId,
+                OutletId = terminal.OutletId,
+                TerminalId = terminal.TerminalId,
+                CashierId = cashierUsername,
                 OrderType = IsRetail ? "RETAIL" : selectedServiceMode,
                 TableNumber = string.IsNullOrWhiteSpace(tableNumber) ? null : tableNumber.Trim(),
                 HeadCount = headCount > 0 ? headCount : (int?)null,
@@ -2854,6 +3441,7 @@ else
                 CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
                 CustomerTin = string.IsNullOrWhiteSpace(customerTin) ? null : customerTin.Trim(),
                 CustomerBusinessStyle = string.IsNullOrWhiteSpace(customerBusinessStyle) ? null : customerBusinessStyle.Trim(),
+                Splits = isSplitPaymentMode && paymentSplits.Count > 0 ? paymentSplits.ToList() : null,
                 Items = Cart.Items.Select(ci => new OrderItemCreateDto
                 {
                     ProductId = ci.ProductId,
@@ -2861,6 +3449,11 @@ else
                     ProductShortCode = ci.ProductShortCode,
                     Quantity = ci.Quantity,
                     BasePrice = ci.BasePrice,
+                    PricingMethod = ci.PricingMethod,
+                    UnitOfMeasure = ci.UnitOfMeasure,
+                    TargetAmount = ci.TargetAmount,
+                    IsComplimentary = ci.IsComplimentary,
+                    ParentProductId = ci.ParentProductId,
                     TaxName = ci.TaxName ?? "VATable",
                     IsKitchenItem = ci.IsKitchenItem,
                     IsBarItem = ci.IsBarItem,
@@ -2868,6 +3461,7 @@ else
                     Modifiers = ci.SelectedModifiers?.Select(m => new OrderItemModifierCreateDto
                     {
                         ModifierOptionId = m.ModifierOptionId,
+                        ProductId = m.ProductId,
                         ModifierName = m.Name,
                         AdditionalPrice = m.Price
                     }).ToList() ?? new()
@@ -2880,7 +3474,7 @@ else
                 tenderAmount,
                 saleMethod,
                 referenceNumber,
-                Session.Username ?? "cashier");
+                cashierUsername);
 
             if (!checkoutResult.Success)
             {
@@ -2899,6 +3493,17 @@ else
             selectedServiceMode = "DINING";
             customerName = customerAddress = customerTin = customerBusinessStyle = string.Empty;
             paidOfflineReceipt = checkoutResult.Receipt;
+            cashDrawerWarning = null;
+            autoPrintTransactionId = checkoutResult.LocalTransactionId;
+            isAutoPrintingReceipt = !string.IsNullOrWhiteSpace(checkoutResult.LocalTransactionId);
+            receiptAutoPrinted = false;
+            autoPrintSuccessMessage = null;
+            autoPrintFailureMessage = null;
+            autoPrintCanRetry = false;
+            isRetryingAutoPrint = false;
+
+            // Execute drawer kick and auto receipt print completely off UI SynchronizationContext strictly AFTER SQLite commit
+            _ = Task.Run(() => TriggerPostSaleHardwareAsync(checkoutResult));
 
             // Trigger background upload immediately if online
             if (!isOffline)
@@ -2921,6 +3526,167 @@ else
         {
             isProcessingPayment = false;
             StateHasChanged();
+        }
+    }
+
+    private async Task TriggerPostSaleHardwareAsync(POS.Client.Services.OfflineCheckoutResultDto checkoutResult)
+    {
+        await TriggerCashDrawerAfterSaleAsync(checkoutResult);
+        await TriggerAutoPrintReceiptAfterSaleAsync(checkoutResult);
+    }
+
+    private async Task TriggerCashDrawerAfterSaleAsync(POS.Client.Services.OfflineCheckoutResultDto checkoutResult)
+    {
+        try
+        {
+            using var drawerCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var drawerResult = await CashDrawerHardware.OpenForCompletedSaleAsync(checkoutResult, drawerCts.Token)
+                .WaitAsync(TimeSpan.FromSeconds(10));
+            if (!drawerResult.Skipped && !drawerResult.Success && !string.IsNullOrWhiteSpace(drawerResult.Message) && !disposed)
+            {
+                await InvokeAsync(() =>
+                {
+                    cashDrawerWarning = drawerResult.Message;
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!disposed)
+            {
+                await InvokeAsync(() =>
+                {
+                    cashDrawerWarning = $"Sale completed, but cash drawer failed: {ex.Message}";
+                    StateHasChanged();
+                });
+            }
+        }
+    }
+
+    private async Task TriggerAutoPrintReceiptAfterSaleAsync(POS.Client.Services.OfflineCheckoutResultDto checkoutResult)
+    {
+        string? txId = checkoutResult.LocalTransactionId;
+        try
+        {
+            using var printCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var printResult = await PrinterService.AutoPrintReceiptForCompletedSaleAsync(checkoutResult, printCts.Token)
+                .WaitAsync(TimeSpan.FromSeconds(15));
+            if (disposed || !string.Equals(autoPrintTransactionId, txId, StringComparison.Ordinal))
+                return;
+
+            await InvokeAsync(() =>
+            {
+                isAutoPrintingReceipt = false;
+                if (printResult.Skipped)
+                {
+                    if (printResult.AlreadyPrinted)
+                    {
+                        receiptAutoPrinted = true;
+                        autoPrintSuccessMessage = printResult.Message;
+                    }
+                    autoPrintFailureMessage = null;
+                    autoPrintCanRetry = false;
+                }
+                else if (printResult.Success)
+                {
+                    receiptAutoPrinted = true;
+                    autoPrintSuccessMessage = printResult.Message;
+                    autoPrintFailureMessage = null;
+                    autoPrintCanRetry = false;
+                }
+                else
+                {
+                    receiptAutoPrinted = false;
+                    autoPrintSuccessMessage = null;
+                    autoPrintFailureMessage = string.IsNullOrWhiteSpace(printResult.Message)
+                        ? "Payment successful, but receipt printing failed. Please check the printer."
+                        : printResult.Message;
+                    autoPrintCanRetry = !string.IsNullOrWhiteSpace(txId);
+                }
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            if (disposed || !string.Equals(autoPrintTransactionId, txId, StringComparison.Ordinal))
+                return;
+
+            await InvokeAsync(() =>
+            {
+                isAutoPrintingReceipt = false;
+                receiptAutoPrinted = false;
+                autoPrintSuccessMessage = null;
+                autoPrintFailureMessage = $"Payment successful, but receipt printing failed. Please check the printer. ({ex.Message})";
+                autoPrintCanRetry = !string.IsNullOrWhiteSpace(txId);
+                StateHasChanged();
+            });
+        }
+        finally
+        {
+            if (!disposed && string.Equals(autoPrintTransactionId, txId, StringComparison.Ordinal) && isAutoPrintingReceipt)
+            {
+                try
+                {
+                    await InvokeAsync(() =>
+                    {
+                        isAutoPrintingReceipt = false;
+                        StateHasChanged();
+                    });
+                }
+                catch { }
+            }
+        }
+    }
+
+    private async Task RetryAutoPrintAsync()
+    {
+        if (isRetryingAutoPrint || string.IsNullOrWhiteSpace(autoPrintTransactionId)) return;
+        string txId = autoPrintTransactionId;
+        isRetryingAutoPrint = true;
+        autoPrintFailureMessage = null;
+        autoPrintSuccessMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            using var retryCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var retryResult = await Task.Run(() => PrinterService.RetryAutoPrintReceiptAsync(txId, retryCts.Token))
+                .WaitAsync(TimeSpan.FromSeconds(15));
+            if (disposed) return;
+
+            if (retryResult.Success)
+            {
+                receiptAutoPrinted = true;
+                autoPrintSuccessMessage = retryResult.Message;
+                autoPrintFailureMessage = null;
+                autoPrintCanRetry = false;
+            }
+            else
+            {
+                receiptAutoPrinted = false;
+                autoPrintFailureMessage = string.IsNullOrWhiteSpace(retryResult.Message)
+                    ? "Payment successful, but receipt printing failed. Please check the printer."
+                    : retryResult.Message;
+                autoPrintCanRetry = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!disposed)
+            {
+                receiptAutoPrinted = false;
+                autoPrintFailureMessage = $"Payment successful, but receipt printing failed. Please check the printer. ({ex.Message})";
+                autoPrintCanRetry = true;
+            }
+        }
+        finally
+        {
+            if (!disposed)
+            {
+                isRetryingAutoPrint = false;
+                StateHasChanged();
+            }
         }
     }
 
@@ -3048,6 +3814,10 @@ else
                     Quantity = ci.Quantity,
                     BasePrice = ci.BasePrice,
                     LineTotal = ci.LineTotal,
+                    PricingMethod = ci.PricingMethod,
+                    TargetAmount = ci.TargetAmount,
+                    IsComplimentary = ci.IsComplimentary,
+                    ParentProductId = ci.ParentProductId,
                     TaxName = ci.TaxName ?? "VATable",
                     SpecialInstructions = ci.SpecialInstructions,
                     Modifiers = ci.SelectedModifiers?.Select(m => new HeldSaleModifierDto

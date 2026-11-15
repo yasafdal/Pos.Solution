@@ -76,6 +76,7 @@ builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IOutletService, OutletService>();
 builder.Services.AddScoped<ITerminalService, TerminalService>();
+builder.Services.AddScoped<ILicensingApiService, LicensingApiService>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<IUomService, UomService>();
 builder.Services.AddScoped<IServiceModeService, ServiceModeService>();

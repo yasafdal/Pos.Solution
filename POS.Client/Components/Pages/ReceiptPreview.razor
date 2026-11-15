@@ -1,5 +1,7 @@
 @inject IReceiptService ReceiptService
 @inject IReceiptPrinter ReceiptPrinter
+@inject PosSessionService Session
+@inject NavigationManager Navigation
 @using POS.Client.Services
 @using POS.Client.Data
 @using Microsoft.EntityFrameworkCore
@@ -13,7 +15,7 @@
                     <li class="nav-item">
                         <button type="button" class="nav-link btn-sm py-1 px-3 @(activeTab == "receipt" ? "active" : "")" @onclick='() => activeTab = "receipt"'>
                             <i class="bi bi-receipt me-1"></i> Receipt
-                            @if (receiptSentToPrinter) { <span class="badge bg-success ms-1"><i class="bi bi-check"></i></span> }
+                            @if (IsReceiptMarkedSent) { <span class="badge bg-success ms-1"><i class="bi bi-check"></i></span> }
                         </button>
                     </li>
                     @if (kitchenTicket != null)
@@ -45,6 +47,69 @@
                 @if (loading)
                 {
                     <p role="status">Loading saved receipt…</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(HardwareWarning))
+                {
+                    <div class="alert alert-warning d-flex justify-content-between align-items-center py-2 mb-3" role="alert">
+                        <div>
+                            <i class="bi bi-safe2 me-2"></i>
+                            <strong>Cash Drawer Notice:</strong> @HardwareWarning
+                        </div>
+                        @if (OnDismissHardwareWarning.HasDelegate)
+                        {
+                            <button type="button" class="btn-close btn-sm" @onclick="OnDismissHardwareWarning" aria-label="Dismiss"></button>
+                        }
+                    </div>
+                }
+                @if (AutoPrinting && !IsReceiptMarkedSent)
+                {
+                    <div class="alert alert-info py-2 mb-3 d-flex align-items-center gap-2" role="status">
+                        <span class="spinner-border spinner-border-sm"></span>
+                        <span>Sending receipt automatically to printer…</span>
+                    </div>
+                }
+                @if (!string.IsNullOrWhiteSpace(AutoPrintSuccessMessage) && IsReceiptMarkedSent && string.IsNullOrWhiteSpace(AutoPrintError))
+                {
+                    <div class="alert alert-success d-flex justify-content-between align-items-center py-2 mb-3" role="status">
+                        <div>
+                            <i class="bi bi-printer-fill me-2"></i>
+                            <span>@AutoPrintSuccessMessage</span>
+                        </div>
+                        @if (OnDismissAutoPrint.HasDelegate)
+                        {
+                            <button type="button" class="btn-close btn-sm" @onclick="OnDismissAutoPrint" aria-label="Dismiss"></button>
+                        }
+                    </div>
+                }
+                @if (!string.IsNullOrWhiteSpace(AutoPrintError))
+                {
+                    <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 mb-3" role="alert">
+                        <div>
+                            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                            <strong>Receipt Print Notice:</strong> @AutoPrintError
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            @if (CanRetryAutoPrint && OnRetryAutoPrint.HasDelegate)
+                            {
+                                <button type="button" class="btn btn-sm btn-warning text-dark fw-semibold" disabled="@RetryingAutoPrint" @onclick="OnRetryAutoPrint">
+                                    @if (RetryingAutoPrint)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1"></span>
+                                        <span>Retrying…</span>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-arrow-clockwise me-1"></i>
+                                        <span>Retry Print</span>
+                                    }
+                                </button>
+                            }
+                            @if (OnDismissAutoPrint.HasDelegate)
+                            {
+                                <button type="button" class="btn-close btn-sm" @onclick="OnDismissAutoPrint" aria-label="Dismiss"></button>
+                            }
+                        </div>
+                    </div>
                 }
                 @if (error != null)
                 {
@@ -111,9 +176,14 @@
                             <input id="barPrinterInput" class="form-control" placeholder="e.g. POS-Bar-Thermal or network printer name" @bind="barPrinterInput" />
                             <small class="text-muted">Orders with Bar/beverage items route here.</small>
                         </div>
-                        <button type="button" class="btn btn-primary btn-sm px-3" @onclick="SavePrinterSettings">
-                            <i class="bi bi-save me-1"></i> Save Printer Settings
-                        </button>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-primary btn-sm px-3" @onclick="SavePrinterSettings">
+                                <i class="bi bi-save me-1"></i> Save Printer Settings
+                            </button>
+                            <button type="button" class="btn btn-outline-dark btn-sm px-3" @onclick='() => Navigation.NavigateTo("/printer-settings")'>
+                                <i class="bi bi-hdd-network me-1"></i> Receipt Printer IP &amp; Cash Drawer Setup
+                            </button>
+                        </div>
                     </div>
                 }
             </div>
@@ -122,7 +192,7 @@
                 <div class="d-flex gap-2 flex-wrap justify-content-end">
                     <button type="button" class="btn btn-outline-primary px-3 py-2" disabled="@(loading || printing)" @onclick="PrintReceipt">
                         <i class="bi bi-receipt me-1"></i>
-                        @(receiptSentToPrinter ? "Receipt (Re-print)" : "Print Receipt")
+                        @(IsReceiptMarkedSent ? "Receipt (Re-print)" : "Print Receipt")
                     </button>
                     @if (kitchenTicket != null)
                     {
@@ -165,7 +235,18 @@
 @code {
     [Parameter] public long OrderId { get; set; }
     [Parameter] public ReceiptDto? OfflineReceipt { get; set; }
+    [Parameter] public string? HardwareWarning { get; set; }
+    [Parameter] public EventCallback OnDismissHardwareWarning { get; set; }
+    [Parameter] public bool AutoPrinting { get; set; }
+    [Parameter] public bool AutoPrinted { get; set; }
+    [Parameter] public string? AutoPrintSuccessMessage { get; set; }
+    [Parameter] public string? AutoPrintError { get; set; }
+    [Parameter] public bool RetryingAutoPrint { get; set; }
+    [Parameter] public bool CanRetryAutoPrint { get; set; }
+    [Parameter] public EventCallback OnRetryAutoPrint { get; set; }
+    [Parameter] public EventCallback OnDismissAutoPrint { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
+    private bool IsReceiptMarkedSent => receiptSentToPrinter || AutoPrinted;
     private ReceiptDto? receipt;
     private PreparationTicketDto? kitchenTicket;
     private PreparationTicketDto? barTicket;
@@ -194,6 +275,7 @@
         {
             if (loadedInvoiceNumber == OfflineReceipt.InvoiceNumber && receipt != null) return;
             loadedInvoiceNumber = OfflineReceipt.InvoiceNumber;
+            PosSessionService.EnsureReceiptLogoPopulated(OfflineReceipt, Session);
             receipt = OfflineReceipt;
             GeneratePreparationTickets();
             error = null;
@@ -268,6 +350,7 @@
     {
         if (OfflineReceipt != null)
         {
+            PosSessionService.EnsureReceiptLogoPopulated(OfflineReceipt, Session);
             receipt = OfflineReceipt;
             GeneratePreparationTickets();
             error = null;
@@ -285,6 +368,7 @@
             }
             else
             {
+                PosSessionService.EnsureReceiptLogoPopulated(receipt, Session);
                 GeneratePreparationTickets();
             }
         }

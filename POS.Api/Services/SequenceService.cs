@@ -110,7 +110,9 @@ public class SequenceService(PosDbContext context) : ISequenceService
 
         order.InvoiceSequenceId = seq.InvoiceSequenceId;
         order.InvoiceNumber = invoiceNumber;
-        order.InvoiceIssuedAt = DateTime.UtcNow;
+        order.InvoiceIssuedAt = order.CreatedAt != default
+            ? POS.Shared.Services.BusinessDayClock.NormalizeLocal(order.CreatedAt)
+            : POS.Shared.Services.BusinessDayClock.DeviceNow();
 
         await context.SaveChangesAsync();
         return invoiceNumber;

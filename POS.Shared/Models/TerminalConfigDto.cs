@@ -16,9 +16,15 @@ public class TerminalConfigDto
     public int? BusinessTypeId { get; set; }
     public string? BusinessType { get; set; }
     public string BranchName { get; set; } = string.Empty;
+    public string? BranchTagline { get; set; }
     public string BranchCode { get; set; } = string.Empty;
     public string? BranchAddress { get; set; }
     public string? BranchPhone { get; set; }
+    public string? ReceiptLogoUrl { get; set; }
+    public string? ReceiptLogoDataUri { get; set; }
+    public DateTime? ReceiptLogoUpdatedAt { get; set; }
+    public string BranchTaxType { get; set; } = "VAT-Registered";
+    public bool VatDisplay { get; set; } = true;
     public string TerminalName { get; set; } = string.Empty;
     public string? ReceiptPrinterName { get; set; }
     public string? KitchenPrinterName { get; set; }

@@ -31,6 +31,8 @@ public partial class Product
 
     public string ProductType { get; set; } = null!;
 
+    public string PricingMethod { get; set; } = "Fixed";
+
     public string? ShortCode { get; set; }
 
     public bool IsKitchenItem { get; set; }
@@ -38,6 +40,8 @@ public partial class Product
     public bool IsBarItem { get; set; }
 
     public bool IsDeleted { get; set; }
+
+    public int DisplayOrder { get; set; }
 
     public virtual ICollection<BranchInventory> BranchInventories { get; set; } = new List<BranchInventory>();
 

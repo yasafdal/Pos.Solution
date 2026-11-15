@@ -488,8 +488,8 @@
                                         </td>
                                         <td>
                                             <div class="fw-semibold text-dark">@s.CashierId</div>
-                                            <div class="text-muted">Open: @s.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</div>
-                                            <div class="text-muted">Close: @(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt") : "Active")</div>
+                                            <div class="text-muted">Open: @POS.Shared.Services.BusinessDayClock.FormatManila(s.OpenedAt, "yyyy-MM-dd hh:mm tt")</div>
+                                            <div class="text-muted">Close: @POS.Shared.Services.BusinessDayClock.FormatManila(s.ClosedAt, "yyyy-MM-dd hh:mm tt", "Active")</div>
                                         </td>
                                         <td class="text-end">
                                             <div>Float: ₱@s.OpeningFloat.ToString("N2")</div>
@@ -672,8 +672,8 @@
                         <div class="col-md-4">
                             <div class="border rounded-3 p-3 bg-light h-100">
                                 <h6 class="fw-bold text-uppercase small text-secondary mb-2">3. Timestamps & Closing Notes</h6>
-                                <div class="small mb-1"><strong>Opened:</strong> @selectedShift.OpenedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt")</div>
-                                <div class="small mb-1"><strong>Closed:</strong> @(selectedShift.ClosedAt.HasValue ? selectedShift.ClosedAt.Value.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt") : "Open")</div>
+                                <div class="small mb-1"><strong>Opened:</strong> @POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.OpenedAt, "yyyy-MM-dd hh:mm:ss tt")</div>
+                                <div class="small mb-1"><strong>Closed:</strong> @POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.ClosedAt, "yyyy-MM-dd hh:mm:ss tt", "Open")</div>
                                 <div class="small mb-1"><strong>Overall Status:</strong> <span class="badge @(selectedShift.OverallReconciliationStatus == "BALANCED" ? "bg-success" : selectedShift.OverallReconciliationStatus == "NOT RECONCILED" ? "bg-secondary" : "bg-danger")">@selectedShift.OverallReconciliationStatus</span></div>
                                 <div class="small mt-2"><strong>Notes:</strong> @(string.IsNullOrWhiteSpace(selectedShift.Notes) ? "None" : selectedShift.Notes)</div>
                             </div>
@@ -766,7 +766,7 @@
                         @if (selectedShift.OriginalDeclaration != null)
                         {
                             <div class="border rounded-3 p-3 bg-light mb-3 small">
-                                <strong>Original Cashier Blind Declaration (@selectedShift.OriginalDeclaration.SubmittedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm:ss tt")):</strong>
+                                <strong>Original Cashier Blind Declaration (@POS.Shared.Services.BusinessDayClock.FormatManila(selectedShift.OriginalDeclaration.SubmittedAt, "yyyy-MM-dd hh:mm:ss tt")):</strong>
                                 Counted Cash: <strong>₱@selectedShift.OriginalDeclaration.TotalCountedCash.ToString("N2")</strong> •
                                 Cashier-Declared Non-Cash Total: <strong>₱@selectedShift.OriginalDeclaration.TotalNonCashDeclared.ToString("N2")</strong> •
                                 Denominations: <strong>@(selectedShift.OriginalDeclaration.HasRecordedDenominations ? "Recorded" : "Not Recorded")</strong>
@@ -793,7 +793,7 @@
                                             <tr>
                                                 <td>#@rc.RecountNumber</td>
                                                 <td class="fw-semibold">@rc.CorrectedBy</td>
-                                                <td>@rc.CorrectedAt.ToLocalTime().ToString("yyyy-MM-dd hh:mm tt")</td>
+                                                <td>@POS.Shared.Services.BusinessDayClock.FormatManila(rc.CorrectedAt, "yyyy-MM-dd hh:mm tt")</td>
                                                 <td>@rc.Reason</td>
                                                 <td class="text-end">₱@rc.OriginalCountedCash.ToString("N2")</td>
                                                 <td class="text-end fw-bold">₱@rc.RevisedCountedCash.ToString("N2")</td>

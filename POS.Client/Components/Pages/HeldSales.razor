@@ -71,8 +71,8 @@ else
                                         }
                                     </td>
                                     <td>@h.CashierId</td>
-                                    <td class="held-date small">@h.CreatedAt.ToLocalTime().ToString("MMM dd, yyyy")<span>@h.CreatedAt.ToLocalTime().ToString("HH:mm")</span></td>
-                                    <td class="text-center"><span class="held-items-badge">@h.Items.Sum(i => i.Quantity)</span></td>
+                                    <td class="held-date small">@POS.Shared.Services.BusinessDayClock.FormatManila(h.CreatedAt, "MMM dd, yyyy")<span>@POS.Shared.Services.BusinessDayClock.FormatManila(h.CreatedAt, "HH:mm")</span></td>
+                                    <td class="text-center"><span class="held-items-badge">@CartItem.FormatQuantity(h.Items.Sum(i => i.Quantity))</span></td>
                                     <td class="held-total text-end fw-bold">₱@h.TotalAmount.ToString("N2")</td>
                                     <td class="held-actions text-end px-4">
                                         <div class="d-flex justify-content-end gap-2">

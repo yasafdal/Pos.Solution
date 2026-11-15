@@ -10,7 +10,10 @@ public class CartItemCalculationDto
     public string ProductName { get; set; } = null!;
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; } // Inclusive of VAT for VAT-registered, or regular price for Non-VAT
+    public decimal? TargetAmount { get; set; }
     public decimal ModifierTotal { get; set; }
+    public bool IsComplimentary { get; set; } = false;
+    public int? ParentProductId { get; set; }
     public int? TaxId { get; set; }
     public string TaxName { get; set; } = "VATable"; // VATable, VAT-Exempt, Zero-Rated
     public decimal TaxRate { get; set; } = 12.00m;

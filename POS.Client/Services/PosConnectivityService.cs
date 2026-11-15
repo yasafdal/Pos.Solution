@@ -1,6 +1,6 @@
 using System;
 using System.Net.Http;
-using System.Net.Http.Json;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -26,6 +26,7 @@ namespace POS.Client.Services
 
     public class PosConnectivityService : IPosConnectivityService
     {
+        private static readonly TimeSpan HealthProbeTimeout = TimeSpan.FromSeconds(4);
         private readonly HttpClient _httpClient;
         private TerminalConnectivityState _currentState = TerminalConnectivityState.Unknown;
 
@@ -51,12 +52,18 @@ namespace POS.Client.Services
 
         public async Task<TerminalConnectivityState> CheckConnectivityAsync(CancellationToken cancellationToken = default)
         {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(HealthProbeTimeout);
+
             try
             {
-                var response = await _httpClient.GetAsync("api/offline-sync/health", cancellationToken);
+                using var response = await _httpClient.GetAsync("api/offline-sync/health", timeoutCts.Token);
                 if (response.IsSuccessStatusCode)
                 {
-                    CurrentState = TerminalConnectivityState.OnlineAndHealthy;
+                    string body = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+                    CurrentState = IsHealthyJsonResponse(body)
+                        ? TerminalConnectivityState.OnlineAndHealthy
+                        : TerminalConnectivityState.InternetConnectedApiUnavailable;
                     return CurrentState;
                 }
 
@@ -86,7 +93,7 @@ namespace POS.Client.Services
                 CurrentState = TerminalConnectivityState.InternetConnectedApiUnavailable;
                 return CurrentState;
             }
-            catch (TaskCanceledException)
+            catch (OperationCanceledException)
             {
                 CurrentState = TerminalConnectivityState.InternetConnectedApiUnavailable;
                 return CurrentState;
@@ -95,6 +102,34 @@ namespace POS.Client.Services
             {
                 CurrentState = TerminalConnectivityState.InternetConnectedApiUnavailable;
                 return CurrentState;
+            }
+        }
+
+        private static bool IsHealthyJsonResponse(string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+                return false;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                    return false;
+
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (string.Equals(prop.Name, "Status", StringComparison.OrdinalIgnoreCase) &&
+                        prop.Value.ValueKind == JsonValueKind.String)
+                    {
+                        return string.Equals(prop.Value.GetString(), "ONLINE", StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+
+                return false;
+            }
+            catch (JsonException)
+            {
+                return false;
             }
         }
     }

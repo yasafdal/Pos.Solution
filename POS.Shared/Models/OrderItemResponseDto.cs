@@ -13,6 +13,11 @@ public class OrderItemResponseDto
     public decimal ModifierTotal { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal LineTotal { get; set; }
+    public string? PricingMethod { get; set; }
+    public string? UnitOfMeasure { get; set; }
+    public decimal? TargetAmount { get; set; }
+    public bool IsComplimentary { get; set; } = false;
+    public int? ParentProductId { get; set; }
     public string? VatType { get; set; }
     public decimal VatAmount { get; set; }
     public bool IsKitchenItem { get; set; }

@@ -32,6 +32,10 @@ public partial class PosDbContext
     public virtual DbSet<CashDrawerMovement> CashDrawerMovements { get; set; }
     public virtual DbSet<CashMovementCategory> CashMovementCategories { get; set; }
     public virtual DbSet<OfflineSyncIdempotencyRecord> OfflineSyncIdempotencyRecords { get; set; }
+    public virtual DbSet<TerminalLicense> TerminalLicenses { get; set; }
+    public virtual DbSet<LicenseRenewalHistory> LicenseRenewalHistories { get; set; }
+    public virtual DbSet<LicenseDeviceHistory> LicenseDeviceHistories { get; set; }
+    public virtual DbSet<LicenseAuditLog> LicenseAuditLogs { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
@@ -108,6 +112,7 @@ public partial class PosDbContext
             entity.HasKey(e => e.ModifierOptionId).HasName("ModifierOption_pkey");
             entity.Property(e => e.ModifierOptionId).HasColumnName("modifier_option_id");
             entity.Property(e => e.ModifierGroupId).HasColumnName("modifier_group_id");
+            entity.Property(e => e.ProductId).HasColumnName("product_id").IsRequired(false);
             entity.Property(e => e.Name).HasColumnName("name").HasMaxLength(100).IsRequired();
             entity.Property(e => e.Price).HasColumnName("price").HasPrecision(18, 2).HasDefaultValue(0.00m);
             entity.Property(e => e.DisplayOrder).HasColumnName("display_order").HasDefaultValue(0);
@@ -118,6 +123,12 @@ public partial class PosDbContext
                 .HasForeignKey(d => d.ModifierGroupId)
                 .HasConstraintName("FK_ModifierOption_ModifierGroup")
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(d => d.Product)
+                .WithMany()
+                .HasForeignKey(d => d.ProductId)
+                .HasConstraintName("FK_ModifierOption_Product")
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<ProductModifierGroup>(entity =>
@@ -169,6 +180,10 @@ public partial class PosDbContext
             entity.Property(e => e.CustomerTin).HasColumnName("CustomerTin").HasMaxLength(50);
             entity.Property(e => e.CustomerBusinessStyle).HasColumnName("CustomerBusinessStyle").HasMaxLength(100);
             entity.Property(e => e.CreatedAt).HasColumnName("CreatedAt").HasColumnType("timestamp without time zone").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.ServerReceivedAtUtc).HasColumnName("ServerReceivedAtUtc").HasColumnType("timestamp without time zone");
+            entity.Property(e => e.DeviceTimeZoneId).HasColumnName("DeviceTimeZoneId").HasMaxLength(100);
+            entity.Property(e => e.DeviceUtcOffsetMinutes).HasColumnName("DeviceUtcOffsetMinutes");
+            entity.Property(e => e.ClockSkewSeconds).HasColumnName("ClockSkewSeconds");
 
             entity.HasIndex(e => e.OrderNumber).IsUnique().HasDatabaseName("Orders_OrderNumber_key");
             entity.HasIndex(e => e.InvoiceNumber).IsUnique().HasDatabaseName("IX_Orders_InvoiceNumber");
@@ -178,6 +193,14 @@ public partial class PosDbContext
                 .HasForeignKey(d => d.InvoiceSequenceId)
                 .HasConstraintName("FK_Orders_InvoiceSequence")
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<Product>(entity =>
+        {
+            entity.Property(e => e.PricingMethod)
+                .HasColumnName("PricingMethod")
+                .HasMaxLength(20)
+                .HasDefaultValueSql("'Fixed'::character varying");
         });
 
         modelBuilder.Entity<OrderItem>(entity =>
@@ -190,17 +213,26 @@ public partial class PosDbContext
             entity.Property(e => e.ProductName).HasColumnName("ProductName").HasMaxLength(200).IsRequired();
             entity.Property(e => e.ProductShortCode).HasColumnName("ProductShortCode").HasMaxLength(30);
             entity.Property(e => e.SpecialInstructions).HasColumnName("SpecialInstructions").HasMaxLength(250);
-            entity.Property(e => e.Quantity).HasColumnName("Quantity").HasPrecision(18, 3);
+            entity.Property(e => e.PricingMethod).HasColumnName("PricingMethod").HasMaxLength(20);
+            entity.Property(e => e.Quantity).HasColumnName("Quantity").HasPrecision(18, 6);
             entity.Property(e => e.BasePrice).HasColumnName("BasePrice").HasPrecision(18, 2);
             entity.Property(e => e.ModifierTotal).HasColumnName("ModifierTotal").HasPrecision(18, 2).HasDefaultValue(0.00m);
             entity.Property(e => e.UnitPrice).HasColumnName("UnitPrice").HasPrecision(18, 2);
             entity.Property(e => e.LineTotal).HasColumnName("LineTotal").HasPrecision(18, 2);
+            entity.Property(e => e.IsComplimentary).HasColumnName("IsComplimentary").HasDefaultValue(false);
+            entity.Property(e => e.ParentProductId).HasColumnName("ParentProductId").IsRequired(false);
 
             entity.HasOne(d => d.Order)
                 .WithMany(p => p.OrderItems)
                 .HasForeignKey(d => d.OrderId)
                 .HasConstraintName("FK_OrderItems_Orders")
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(d => d.ParentProduct)
+                .WithMany()
+                .HasForeignKey(d => d.ParentProductId)
+                .HasConstraintName("FK_OrderItems_ParentProduct")
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<OrderItemModifier>(entity =>
@@ -210,6 +242,7 @@ public partial class PosDbContext
             entity.Property(e => e.OrderItemModifierId).HasColumnName("OrderItemModifierId");
             entity.Property(e => e.OrderItemId).HasColumnName("OrderItemId");
             entity.Property(e => e.ModifierOptionId).HasColumnName("ModifierOptionId");
+            entity.Property(e => e.ProductId).HasColumnName("ProductId").IsRequired(false);
             entity.Property(e => e.ModifierName).HasColumnName("ModifierName").HasMaxLength(100).IsRequired();
             entity.Property(e => e.AdditionalPrice).HasColumnName("AdditionalPrice").HasPrecision(18, 2);
 
@@ -218,6 +251,12 @@ public partial class PosDbContext
                 .HasForeignKey(d => d.OrderItemId)
                 .HasConstraintName("FK_OrderItemModifiers_OrderItems")
                 .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(d => d.Product)
+                .WithMany()
+                .HasForeignKey(d => d.ProductId)
+                .HasConstraintName("FK_OrderItemModifiers_Products")
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<Payment>(entity =>
@@ -338,9 +377,13 @@ public partial class PosDbContext
             entity.Property(e => e.ProductName).HasColumnName("ProductName").HasMaxLength(200).IsRequired();
             entity.Property(e => e.ProductShortCode).HasColumnName("ProductShortCode").HasMaxLength(50);
             entity.Property(e => e.SpecialInstructions).HasColumnName("SpecialInstructions").HasMaxLength(250);
-            entity.Property(e => e.Quantity).HasColumnName("Quantity").HasColumnType("numeric(18,3)");
+            entity.Property(e => e.Quantity).HasColumnName("Quantity").HasColumnType("numeric(18,6)");
             entity.Property(e => e.BasePrice).HasColumnName("BasePrice").HasColumnType("numeric(18,2)");
             entity.Property(e => e.LineTotal).HasColumnName("LineTotal").HasColumnType("numeric(18,2)");
+            entity.Property(e => e.PricingMethod).HasColumnName("PricingMethod").HasMaxLength(20);
+            entity.Property(e => e.TargetAmount).HasColumnName("TargetAmount").HasColumnType("numeric(18,2)");
+            entity.Property(e => e.IsComplimentary).HasColumnName("IsComplimentary").HasDefaultValue(false);
+            entity.Property(e => e.ParentProductId).HasColumnName("ParentProductId").IsRequired(false);
             entity.Property(e => e.TaxName).HasColumnName("TaxName").HasMaxLength(50).IsRequired();
 
             entity.HasOne(d => d.HeldSale)
@@ -616,5 +659,139 @@ public partial class PosDbContext
             entity.HasIndex(e => e.LocalTransactionId).IsUnique().HasDatabaseName("UX_OfflineSync_LocalTx");
             entity.HasIndex(e => e.InvoiceNumber).IsUnique().HasDatabaseName("UX_OfflineSync_Invoice");
         });
+
+        modelBuilder.Entity<TerminalLicense>(entity =>
+        {
+            entity.ToTable("TerminalLicenses");
+            entity.HasKey(e => e.LicenseId);
+            entity.Property(e => e.LicenseId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.LicenseKey).HasMaxLength(80).IsRequired();
+            entity.Property(e => e.TerminalId).IsRequired();
+            entity.Property(e => e.DeviceId).HasMaxLength(120).IsRequired();
+            entity.Property(e => e.BranchId).IsRequired();
+            entity.Property(e => e.OutletId).IsRequired();
+            entity.Property(e => e.LicenseStatus).HasMaxLength(40).IsRequired();
+            entity.Property(e => e.DurationYears).HasDefaultValue(5);
+            entity.Property(e => e.DurationValue).HasDefaultValue(5);
+            entity.Property(e => e.DurationUnit).HasMaxLength(20).HasDefaultValue("YEARS");
+            entity.Property(e => e.OriginalDurationValue).HasDefaultValue(5);
+            entity.Property(e => e.OriginalDurationUnit).HasMaxLength(20).HasDefaultValue("YEARS");
+            entity.Property(e => e.RenewalCount).HasDefaultValue(0);
+            entity.Property(e => e.LastRenewedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.IssuedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.ActivatedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.ExpiresAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.LastValidatedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.LicenseVersion).HasDefaultValue(1);
+            entity.Property(e => e.RevokedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.RevocationReason).HasMaxLength(255);
+            entity.Property(e => e.SuspendedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.SuspensionReason).HasMaxLength(255);
+            entity.Property(e => e.OfflineGracePeriodDays).HasDefaultValue(30);
+            entity.Property(e => e.EnvironmentType).HasMaxLength(30).HasDefaultValue("Production");
+            entity.Property(e => e.Signature).HasMaxLength(512).IsRequired();
+            entity.Property(e => e.IssuedBy).HasMaxLength(150);
+            entity.Property(e => e.CreatedAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.UpdatedAt).HasColumnType("timestamp without time zone");
+
+            entity.HasIndex(e => e.LicenseKey).IsUnique().HasDatabaseName("UX_TerminalLicenses_LicenseKey");
+            entity.HasIndex(e => e.TerminalId).IsUnique().HasDatabaseName("UX_TerminalLicenses_TerminalId");
+
+            entity.HasOne(e => e.Terminal)
+                .WithMany()
+                .HasForeignKey(e => e.TerminalId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Branch)
+                .WithMany()
+                .HasForeignKey(e => e.BranchId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Outlet)
+                .WithMany()
+                .HasForeignKey(e => e.OutletId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<LicenseRenewalHistory>(entity =>
+        {
+            entity.ToTable("LicenseRenewalHistories");
+            entity.HasKey(e => e.RenewalId);
+            entity.Property(e => e.LicenseId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.TerminalId).IsRequired();
+            entity.Property(e => e.PreviousExpiresAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.RenewalDuration).HasDefaultValue(5);
+            entity.Property(e => e.RenewalUnit).HasMaxLength(20).HasDefaultValue("YEARS");
+            entity.Property(e => e.NewExpiresAt).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.RenewedBy).HasMaxLength(150).IsRequired();
+            entity.Property(e => e.RenewalReason).HasMaxLength(255);
+            entity.Property(e => e.RenewalNotes).HasMaxLength(255);
+            entity.Property(e => e.RenewalStatus).HasMaxLength(30).HasDefaultValue("COMPLETED");
+            entity.Property(e => e.IdempotencyKey).HasMaxLength(100);
+            entity.Property(e => e.RenewedAt).HasColumnType("timestamp without time zone");
+
+            entity.HasIndex(e => new { e.TerminalId, e.RenewedAt }).HasDatabaseName("IX_LicenseRenewalHistories_Terminal_RenewedAt");
+            entity.HasIndex(e => new { e.TerminalId, e.IdempotencyKey })
+                .IsUnique()
+                .HasDatabaseName("UX_LicenseRenewalHistories_Terminal_IdempotencyKey")
+                .HasFilter("\"IdempotencyKey\" IS NOT NULL");
+        });
+
+        modelBuilder.Entity<LicenseDeviceHistory>(entity =>
+        {
+            entity.ToTable("LicenseDeviceHistories");
+            entity.HasKey(e => e.DeviceHistoryId);
+            entity.Property(e => e.LicenseId).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.TerminalId).IsRequired();
+            entity.Property(e => e.OldDeviceId).HasMaxLength(120);
+            entity.Property(e => e.NewDeviceId).HasMaxLength(120);
+            entity.Property(e => e.ActionType).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.AuthorizedBy).HasMaxLength(150).IsRequired();
+            entity.Property(e => e.Reason).HasMaxLength(255);
+            entity.Property(e => e.OccurredAt).HasColumnType("timestamp without time zone");
+
+            entity.HasIndex(e => new { e.TerminalId, e.OccurredAt }).HasDatabaseName("IX_LicenseDeviceHistories_Terminal_OccurredAt");
+        });
+
+        modelBuilder.Entity<LicenseAuditLog>(entity =>
+        {
+            entity.ToTable("LicenseAuditLogs");
+            entity.HasKey(e => e.AuditLogId);
+            entity.Property(e => e.LicenseId).HasMaxLength(64);
+            entity.Property(e => e.DeviceId).HasMaxLength(120);
+            entity.Property(e => e.EventType).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.EventStatus).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.Message).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.Actor).HasMaxLength(150);
+            entity.Property(e => e.IpAddress).HasMaxLength(64);
+            entity.Property(e => e.DeviceClockUtc).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.ServerClockUtc).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.OccurredAt).HasColumnType("timestamp without time zone");
+
+            entity.HasIndex(e => new { e.TerminalId, e.OccurredAt }).HasDatabaseName("IX_LicenseAuditLogs_Terminal_OccurredAt");
+        });
+
+        var dateTimeConverter = new Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<DateTime, DateTime>(
+            v => v.Kind == DateTimeKind.Utc ? DateTime.SpecifyKind(v, DateTimeKind.Unspecified) : v,
+            v => DateTime.SpecifyKind(v, DateTimeKind.Unspecified));
+
+        var nullableDateTimeConverter = new Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<DateTime?, DateTime?>(
+            v => v.HasValue ? (v.Value.Kind == DateTimeKind.Utc ? DateTime.SpecifyKind(v.Value, DateTimeKind.Unspecified) : v.Value) : v,
+            v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Unspecified) : v);
+
+        foreach (var entity in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entity.GetProperties())
+            {
+                if (property.ClrType == typeof(DateTime))
+                {
+                    property.SetValueConverter(dateTimeConverter);
+                }
+                else if (property.ClrType == typeof(DateTime?))
+                {
+                    property.SetValueConverter(nullableDateTimeConverter);
+                }
+            }
+        }
     }
 }

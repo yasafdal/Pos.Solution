@@ -24,6 +24,7 @@ public class ProductService : IProductService
     {
         // Matches: POST /api/Products/create-product
         var response = await _http.PostAsJsonAsync("api/Products/create-product", product);
+        response.EnsureSuccessStatusCode();
 
         return await response.Content.ReadFromJsonAsync<ProductDto>() ?? new ProductDto();
     }
@@ -31,12 +32,21 @@ public class ProductService : IProductService
     public async Task UpdateProductAsync(int id, ProductDto product)
     {
         // Matches: PUT /api/Products/update-product/{id}
-        await _http.PutAsJsonAsync($"api/Products/update-product/{id}", product);
+        var response = await _http.PutAsJsonAsync($"api/Products/update-product/{id}", product);
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task DeleteProductAsync(int id)
     {
         // Matches: DELETE /api/Products/remove-product/{id}
-        await _http.DeleteAsync($"api/Products/remove-product/{id}");
+        var response = await _http.DeleteAsync($"api/Products/remove-product/{id}");
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task ReorderProductsAsync(int categoryId, List<int> orderedProductIds)
+    {
+        // Matches: PUT /api/Products/category/{categoryId}/reorder
+        var response = await _http.PutAsJsonAsync($"api/Products/category/{categoryId}/reorder", orderedProductIds);
+        response.EnsureSuccessStatusCode();
     }
 }

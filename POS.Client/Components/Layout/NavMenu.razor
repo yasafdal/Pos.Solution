@@ -14,51 +14,35 @@
 
 <div class="@NavMenuCssClass nav-scrollable">
     <nav class="nav flex-column py-2">
-        <!-- Dashboard -->
-        <div class="nav-item px-3 mb-1">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All" @onclick="HandleClose">
-                <i class="bi bi-grid-fill nav-icon fs-5"></i>
-                <span class="nav-text">Dashboard</span>
-            </NavLink>
+        <div class="px-3 py-2 mb-1">
+            <div class="text-uppercase text-secondary fw-bold" style="font-size: 0.68rem; letter-spacing: 0.06em;">Cashier Workspace</div>
         </div>
 
-        <!-- New Sale -->
+        <!-- Primary Workspace Entry -->
         <div class="nav-item px-3 mb-1">
             <NavLink class="nav-link" href="new-sale" @onclick="HandleClose">
                 <i class="bi bi-cart-fill nav-icon fs-5"></i>
-                <span class="nav-text">New Sale</span>
+                <span class="nav-text">New Sale Register</span>
             </NavLink>
         </div>
 
-        <!-- Transaction -->
-        <div class="nav-item px-3 mb-1">
-            <NavLink class="nav-link" href="transactions" @onclick="HandleClose">
-                <i class="bi bi-receipt nav-icon fs-5"></i>
-                <span class="nav-text">Transaction</span>
+        <div class="nav-item px-3 mb-2">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All" @onclick="HandleClose">
+                <i class="bi bi-grid-fill nav-icon fs-5"></i>
+                <span class="nav-text">Dashboard Summary</span>
             </NavLink>
         </div>
 
-        <!-- Held Sales -->
-        <div class="nav-item px-3 mb-1">
-            <NavLink class="nav-link" href="held-sales" @onclick="HandleClose">
-                <i class="bi bi-pause-circle-fill nav-icon fs-5"></i>
-                <span class="nav-text">Held Sales</span>
-            </NavLink>
+        <div class="px-3 py-2 mt-1 mb-1 border-top" style="border-color: rgba(255,255,255,0.08) !important;">
+            <div class="text-uppercase text-secondary fw-bold" style="font-size: 0.68rem; letter-spacing: 0.06em;">Administration &amp; Setup</div>
         </div>
 
-        <!-- Cash Drawer -->
-        <div class="nav-item px-3 mb-1">
-            <NavLink class="nav-link" href="cash-drawer" @onclick="HandleClose">
-                <i class="bi bi-cash-stack nav-icon fs-5"></i>
-                <span class="nav-text">Cash Drawer</span>
-            </NavLink>
-        </div>
         @if (ShiftSession.IsSupervisorRole(Session.Role))
         {
             <div class="nav-item px-3 mb-1">
                 <NavLink class="nav-link" href="z-reading" @onclick="HandleClose">
                     <i class="bi bi-file-earmark-lock nav-icon fs-5"></i>
-                    <span class="nav-text">Z-Reading</span>
+                    <span class="nav-text">End-of-Day Z-Reading</span>
                 </NavLink>
             </div>
         }
@@ -69,6 +53,28 @@
                 <i class="bi bi-shield-check nav-icon fs-5"></i>
                 <span class="nav-text">Terminal Setup</span>
             </NavLink>
+        </div>
+
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link" href="printer-settings" @onclick="HandleClose">
+                <i class="bi bi-printer nav-icon fs-5"></i>
+                <span class="nav-text">Printer &amp; Cash Drawer</span>
+            </NavLink>
+        </div>
+
+        <!-- License Information Screen -->
+        <div class="nav-item px-3 mb-1">
+            <NavLink class="nav-link" href="license-info" @onclick="HandleClose">
+                <i class="bi bi-shield-lock-fill nav-icon fs-5"></i>
+                <span class="nav-text">License Information</span>
+            </NavLink>
+        </div>
+
+        <div class="px-3 mt-3">
+            <div class="p-2.5 rounded-3 small text-secondary" style="background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(255,255,255,0.06); font-size: 0.75rem;">
+                <i class="bi bi-Layout-sidebar-inset-reverse text-info me-1"></i>
+                Daily cashier modules (<strong>Transactions</strong>, <strong>Held Sales</strong>, <strong>Reprint</strong>, <strong>Void</strong>, <strong>Cashier</strong>, and <strong>Readings</strong>) are pinned to the bottom workspace bar.
+            </div>
         </div>
     </nav>
 </div>
