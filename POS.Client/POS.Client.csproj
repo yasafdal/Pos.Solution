@@ -13,7 +13,7 @@
         <Nullable>enable</Nullable>
         <MauiXamlInflator>SourceGen</MauiXamlInflator>
         <ApplicationTitle>POS.Client</ApplicationTitle>
-        <ApplicationId>com.companyname.pos.client</ApplicationId>
+        <ApplicationId>com.agres.pos.client</ApplicationId>
         <ApplicationDisplayVersion>1.0.1</ApplicationDisplayVersion>
         <ApplicationVersion>2</ApplicationVersion>
         <WindowsPackageType>None</WindowsPackageType>

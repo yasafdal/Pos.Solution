@@ -16,7 +16,7 @@ namespace POS.Client.Platforms.Android;
 /// </summary>
 public sealed partial class AndroidUsbPrinterTransport : IUsbPrinterTransport, IDisposable
 {
-    private const string ActionUsbPermission = "com.companyname.pos.client.USB_PERMISSION";
+    private const string ActionUsbPermission = "com.agres.pos.client.USB_PERMISSION";
     private readonly SemaphoreSlim _ioGate = new(1, 1);
 
     [GeneratedRegex(@"vid=([0-9a-fA-F]{4}).*pid=([0-9a-fA-F]{4})", RegexOptions.IgnoreCase)]
