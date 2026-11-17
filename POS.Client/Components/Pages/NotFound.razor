@@ -1,5 +1,16 @@
 ﻿@page "/not-found"
 @layout MainLayout
+@inject IJSRuntime Js
 
 <h3>Not Found</h3>
 <p>Sorry, the content you are looking for does not exist.</p>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await MauiProgram.NotifySplashReadyAsync(Js);
+        }
+    }
+}

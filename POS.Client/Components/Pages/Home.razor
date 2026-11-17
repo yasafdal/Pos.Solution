@@ -9,6 +9,7 @@
 @inject POS.Client.Services.IReferenceDataSyncService ReferenceDataSync
 @inject POS.Client.Data.LocalPosDbContext LocalDb
 @inject POS.Shared.Interfaces.IHeldSaleService HeldSaleService
+@inject IJSRuntime Js
 @implements IDisposable
 
 @code {
@@ -32,6 +33,7 @@
             return;
         }
 
+        _ = MauiProgram.NotifySplashReadyAsync(Js);
         TransactionSyncService.OnSyncStateChanged += OnExternalSyncStateChanged;
         ReferenceDataSync.OnSyncCompleted += OnExternalSyncStateChanged;
         await RefreshStatusAsync();

@@ -5,6 +5,7 @@
 @inject IDeviceActivationService ActivationService
 @inject NavigationManager Navigation
 @inject HttpClient Http
+@inject IJSRuntime Js
 
 <div class="pos-activation-card">
     <div class="pos-header">
@@ -56,9 +57,12 @@
         <small class="text-secondary d-block mb-1" style="font-size: 0.78rem;">
             Generates a permanent hardware UUID locally and downloads BIR registration details (PTU, MIN, Serial #) into local SQLite storage.
         </small>
-        <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
-            <i class="bi bi-hdd-network me-1"></i>Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032") <i class="bi bi-pencil-square ms-1"></i>
-        </button>
+        @if (ShowDevServerSwitcher)
+        {
+            <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
+                <i class="bi bi-hdd-network me-1"></i>Server: @CurrentServerDisplay <i class="bi bi-pencil-square ms-1"></i>
+            </button>
+        }
     </div>
 </div>
 
@@ -152,7 +156,10 @@
         if (await ActivationService.IsDeviceProvisionedAsync())
         {
             Navigation.NavigateTo("/login", replace: true);
+            return;
         }
+
+        await MauiProgram.NotifySplashReadyAsync(Js);
     }
 
     private async Task HandleActivateAsync()
@@ -190,8 +197,27 @@
         }
     }
 
+    private static bool ShowDevServerSwitcher =>
+#if DEBUG
+        true;
+#else
+        false;
+#endif
+
+    private string CurrentServerDisplay =>
+#if DEBUG
+        Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032";
+#else
+        string.Empty;
+#endif
+
+#if DEBUG
     private async Task ToggleServerEndpointAsync()
+#else
+    private Task ToggleServerEndpointAsync()
+#endif
     {
+#if DEBUG
         var current = Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032";
         var isLocal = current.Contains("localhost", StringComparison.OrdinalIgnoreCase) || current.Contains("127.0.0.1");
         var nextTarget = isLocal ? "https://dev-uat.agressolutions.com/" : "http://localhost:5032/";
@@ -222,5 +248,8 @@
             });
             StateHasChanged();
         }
+#else
+        return Task.CompletedTask;
+#endif
     }
 }

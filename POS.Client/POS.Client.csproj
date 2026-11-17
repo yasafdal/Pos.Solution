@@ -14,8 +14,8 @@
         <MauiXamlInflator>SourceGen</MauiXamlInflator>
         <ApplicationTitle>POS.Client</ApplicationTitle>
         <ApplicationId>com.companyname.pos.client</ApplicationId>
-        <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-        <ApplicationVersion>1</ApplicationVersion>
+        <ApplicationDisplayVersion>1.0.1</ApplicationDisplayVersion>
+        <ApplicationVersion>2</ApplicationVersion>
         <WindowsPackageType>None</WindowsPackageType>
         <WindowsAppSDKSelfContained Condition="'$(WindowsPackageType)' == 'None'">true</WindowsAppSDKSelfContained>
         <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
@@ -27,11 +27,10 @@
         <MauiIcon Include="Resources\AppIcon\appicon.png" Color="#39414C" />
 
         <!-- Splash Screen -->
-        <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
+        <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#0F172A" BaseSize="200,200" />
 
         <!-- Images -->
         <MauiImage Include="Resources\Images\*" />
-        <MauiImage Update="Resources\Images\dotnet_bot.svg" BaseSize="168,208" />
 
         <!-- Custom Fonts -->
         <MauiFont Include="Resources\Fonts\*" />
@@ -63,6 +62,10 @@
 
     <PropertyGroup Condition="'$(TargetFramework)' != ''">
         <_TargetPlatform>$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)'))</_TargetPlatform>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(_TargetPlatform)' == 'android' and '$(Configuration)' == 'Release'">
+        <RuntimeIdentifiers>android-arm64;android-arm;android-x64</RuntimeIdentifiers>
     </PropertyGroup>
 
     <ItemGroup Condition="'$(_TargetPlatform)' != ''">

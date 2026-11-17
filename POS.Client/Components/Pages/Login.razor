@@ -10,6 +10,7 @@
 @inject HttpClient Http
 @inject IReferenceDataSyncService ReferenceDataSync
 @inject IDeviceActivationService ActivationService
+@inject IJSRuntime Js
 
 <div class="pos-login-card">
     @if (lockStatus?.IsTerminalLocked == true)
@@ -84,11 +85,14 @@
             <div class="helper-text text-center">
                 Terminal &amp; closing cashier restrictions reset automatically at 4:00 AM (Asia/Manila).
             </div>
-            <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
-                <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
-                    <i class="bi bi-hdd-network me-1"></i>Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032") <i class="bi bi-pencil-square ms-1"></i>
-                </button>
-            </div>
+            @if (ShowDevServerSwitcher)
+            {
+                <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
+                    <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
+                        <i class="bi bi-hdd-network me-1"></i>Server: @CurrentServerDisplay <i class="bi bi-pencil-square ms-1"></i>
+                    </button>
+                </div>
+            }
         </div>
     }
     else
@@ -156,11 +160,14 @@
         {
             <div class="helper-text">Tap keypad to enter PIN</div>
         }
-        <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
-            <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
-                <i class="bi bi-hdd-network me-1"></i>Server: @(Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032") <i class="bi bi-pencil-square ms-1"></i>
-            </button>
-        </div>
+        @if (ShowDevServerSwitcher)
+        {
+            <div class="mt-3 pt-2 text-center border-top border-secondary border-opacity-25 w-100">
+                <button type="button" class="btn btn-link text-secondary text-decoration-none p-0 font-monospace" style="font-size: 0.72rem;" @onclick="ToggleServerEndpointAsync" title="Click to switch between Localhost and UAT">
+                    <i class="bi bi-hdd-network me-1"></i>Server: @CurrentServerDisplay <i class="bi bi-pencil-square ms-1"></i>
+                </button>
+            </div>
+        }
     </div>
     }
 </div>
@@ -380,6 +387,7 @@
         }
 
         await RefreshTerminalLockStatusAsync();
+        await MauiProgram.NotifySplashReadyAsync(Js);
 
         _lockCheckTimer = new System.Threading.Timer(async _ =>
         {
@@ -419,8 +427,27 @@
         catch { }
     }
 
+    private static bool ShowDevServerSwitcher =>
+#if DEBUG
+        true;
+#else
+        false;
+#endif
+
+    private string CurrentServerDisplay =>
+#if DEBUG
+        Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032";
+#else
+        string.Empty;
+#endif
+
+#if DEBUG
     private async Task ToggleServerEndpointAsync()
+#else
+    private Task ToggleServerEndpointAsync()
+#endif
     {
+#if DEBUG
         var current = Http.BaseAddress?.ToString().TrimEnd('/') ?? "http://localhost:5032";
         var isLocal = current.Contains("localhost", StringComparison.OrdinalIgnoreCase) || current.Contains("127.0.0.1");
         var nextTarget = isLocal ? "https://dev-uat.agressolutions.com/" : "http://localhost:5032/";
@@ -452,6 +479,9 @@
             });
             StateHasChanged();
         }
+#else
+        return Task.CompletedTask;
+#endif
     }
 
     public void Dispose()

@@ -1,5 +1,6 @@
 using CurrieTechnologies.Razor.SweetAlert2;
 using Microsoft.Extensions.Logging;
+using Microsoft.JSInterop;
 using POS.Shared.Interfaces;
 using POS.Shared.Services;
 using POS.Client.Services;
@@ -25,17 +26,17 @@ namespace POS.Client
     		builder.Logging.AddDebug();
 #endif
 
-            // Configure the HttpClient to point to API (configurable via Preferences, defaults to localhost in DEBUG, UAT in RELEASE)
+            // Configure the HttpClient to point to API (configurable via Preferences in DEBUG, fixed to UAT in RELEASE)
             builder.Services.AddSingleton<PosSessionService>();
             builder.Services.AddScoped(sp =>
             {
 #if DEBUG
                 var defaultUrl = "http://localhost:5032/";
+                var configuredUrl = Microsoft.Maui.Storage.Preferences.Default.Get("UAT_ApiBaseUrl", defaultUrl);
 #else
                 var defaultUrl = "https://dev-uat.agressolutions.com/";
+                var configuredUrl = defaultUrl;
 #endif
-
-                var configuredUrl = Microsoft.Maui.Storage.Preferences.Default.Get("UAT_ApiBaseUrl", defaultUrl);
                 if (string.IsNullOrWhiteSpace(configuredUrl)) configuredUrl = defaultUrl;
                 if (!configuredUrl.EndsWith("/")) configuredUrl += "/";
                 var client = new HttpClient
@@ -121,6 +122,18 @@ namespace POS.Client
 #endif
 
             return builder.Build();
+        }
+
+        internal static async ValueTask NotifySplashReadyAsync(Microsoft.JSInterop.IJSRuntime js)
+        {
+            try
+            {
+                await js.InvokeVoidAsync("posSplash.markReady");
+            }
+            catch
+            {
+                // Ignore if splash overlay is already dismissed or WebView JS runtime is unavailable.
+            }
         }
     }
 }

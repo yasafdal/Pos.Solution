@@ -5,6 +5,192 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>POS.Client</title>
     <base href="/" />
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f172a;
+        }
+
+        #agres-splash-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: clamp(1rem, 4vmin, 2.5rem);
+            background: radial-gradient(circle at 50% 42%, rgba(30, 58, 138, 0.18) 0%, #0f172a 62%), #0f172a;
+            opacity: 1;
+            transition: opacity 0.35s ease;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #agres-splash-overlay.agres-splash-hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .agres-splash-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            max-width: 100%;
+        }
+
+        .agres-logo-stage {
+            width: clamp(104px, 24vmin, 176px);
+            aspect-ratio: 620 / 516;
+            will-change: transform, filter;
+            animation: agresLogoReveal 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.92s both;
+        }
+
+        .agres-logo-svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+            overflow: visible;
+        }
+
+        .agres-leg-left {
+            animation: agresRevealUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0s both;
+        }
+
+        .agres-leg-right {
+            animation: agresRevealDownRight 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0.14s both;
+        }
+
+        .agres-blue-fold {
+            animation: agresFadeIn 0.36s cubic-bezier(0.22, 1, 0.36, 1) 0.24s both;
+        }
+
+        .agres-orange-arrow {
+            transform-box: view-box;
+            transform-origin: 504px 631px;
+            animation: agresArrowSweep 0.62s cubic-bezier(0.16, 1, 0.3, 1) 0.42s both;
+        }
+
+        .agres-brand-text {
+            margin-top: clamp(1rem, 2.8vmin, 1.5rem);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: clamp(0.35rem, 1vmin, 0.55rem);
+        }
+
+        .agres-brand-title {
+            margin: 0;
+            padding-left: 0.24em;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-size: clamp(1.85rem, 5.2vmin, 2.75rem);
+            font-weight: 800;
+            letter-spacing: 0.24em;
+            line-height: 1.05;
+            color: #ffffff;
+            animation: agresTextReveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) 1.15s both;
+        }
+
+        .agres-brand-subtitle {
+            margin: 0;
+            padding-left: 0.30em;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-size: clamp(0.68rem, 1.85vmin, 0.9rem);
+            font-weight: 600;
+            letter-spacing: 0.30em;
+            line-height: 1.2;
+            text-transform: uppercase;
+            color: #94a3b8;
+            animation: agresTextReveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) 1.30s both;
+        }
+
+        @keyframes agresRevealUp {
+            0% {
+                opacity: 0;
+                clip-path: inset(100% 0 0 0);
+            }
+            100% {
+                opacity: 1;
+                clip-path: inset(0 0 0 0);
+            }
+        }
+
+        @keyframes agresRevealDownRight {
+            0% {
+                opacity: 0;
+                clip-path: inset(0 0 100% 0);
+            }
+            100% {
+                opacity: 1;
+                clip-path: inset(0 0 0 0);
+            }
+        }
+
+        @keyframes agresFadeIn {
+            0% {
+                opacity: 0;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+
+        @keyframes agresArrowSweep {
+            0% {
+                opacity: 0;
+                transform: translate(-38px, 30px) scale(0.95);
+                clip-path: inset(0 100% 0 0);
+            }
+            100% {
+                opacity: 1;
+                transform: translate(0, 0) scale(1);
+                clip-path: inset(0 0 0 0);
+            }
+        }
+
+        @keyframes agresLogoReveal {
+            0% {
+                transform: scale(0.96);
+                filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
+            }
+            55% {
+                transform: scale(1.015);
+                filter: drop-shadow(0 0 22px rgba(0, 141, 247, 0.28)) drop-shadow(0 0 12px rgba(250, 138, 10, 0.22));
+            }
+            100% {
+                transform: scale(1);
+                filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.45));
+            }
+        }
+
+        @keyframes agresTextReveal {
+            0% {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .agres-logo-stage,
+            .agres-leg-left,
+            .agres-leg-right,
+            .agres-blue-fold,
+            .agres-orange-arrow,
+            .agres-brand-title,
+            .agres-brand-subtitle {
+                animation: none !important;
+                opacity: 1 !important;
+                transform: none !important;
+                clip-path: none !important;
+            }
+        }
+    </style>
     <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="lib/bootstrap-icons/font/bootstrap-icons.min.css" />
     <link rel="stylesheet" href="app.css" />
@@ -15,9 +201,59 @@
 
 <body>
 
+    <div id="agres-splash-overlay" role="presentation">
+        <div class="agres-splash-content">
+            <div class="agres-logo-stage">
+                <svg class="agres-logo-svg" viewBox="200 248 622 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AGRES">
+                    <defs>
+                        <clipPath id="agres-right-leg-clip">
+                            <polygon points="566,260 802,758 680,758 507,385" />
+                        </clipPath>
+                        <linearGradient id="agres-blue-pillar" x1="0" y1="0" x2="0.2" y2="1">
+                            <stop offset="0%" stop-color="#0492FF" />
+                            <stop offset="100%" stop-color="#007CE2" />
+                        </linearGradient>
+                        <linearGradient id="agres-blue-fold" x1="0" y1="1" x2="1" y2="0">
+                            <stop offset="0%" stop-color="#0A4C9E" />
+                            <stop offset="100%" stop-color="#0D62C9" />
+                        </linearGradient>
+                        <linearGradient id="agres-orange-top" x1="0" y1="1" x2="1" y2="0">
+                            <stop offset="0%" stop-color="#FA8A0A" />
+                            <stop offset="100%" stop-color="#F78508" />
+                        </linearGradient>
+                        <linearGradient id="agres-orange-bottom" x1="0" y1="1" x2="1" y2="0">
+                            <stop offset="0%" stop-color="#C85D03" />
+                            <stop offset="100%" stop-color="#DD6A00" />
+                        </linearGradient>
+                    </defs>
+                    <g class="agres-blue-mark">
+                        <g class="agres-leg-right">
+                            <polygon points="566,260 802,758 680,758 507,385" fill="#192C57" />
+                            <g clip-path="url(#agres-right-leg-clip)">
+                                <polygon points="554,512 655,431 686,442 572,534" fill="#0E1D3E" opacity="0.90" />
+                                <polygon points="596,608 712,516 720,542 622,624" fill="#0E1D3E" opacity="0.82" />
+                            </g>
+                        </g>
+                        <polygon class="agres-leg-left" points="446,260 566,260 329,758 209,758" fill="url(#agres-blue-pillar)" />
+                        <path class="agres-blue-fold" d="M209,758 C320,672 426,568 504,581 L398,685 L329,758 Z" fill="url(#agres-blue-fold)" />
+                    </g>
+                    <g class="agres-orange-arrow">
+                        <polygon points="504,581 682,439 660,400 814,384 752,548 722,511 504,685 398,685" fill="url(#agres-orange-bottom)" />
+                        <polygon points="504,581 504,685 398,685" fill="#BE5A05" />
+                        <polygon points="504,581 682,439 660,400 814,384 504,631" fill="url(#agres-orange-top)" />
+                    </g>
+                </svg>
+            </div>
+            <div class="agres-brand-text">
+                <h1 class="agres-brand-title">AGRES</h1>
+                <p class="agres-brand-subtitle">POINT OF SALE SYSTEM</p>
+            </div>
+        </div>
+    </div>
+
     <div class="status-bar-safe-area"></div>
 
-    <div id="app">Loading...</div>
+    <div id="app"></div>
 
     <div id="blazor-error-ui" data-nosnippet>
         An unhandled error has occurred.
@@ -25,6 +261,44 @@
         <span class="dismiss">🗙</span>
     </div>
 
+    <script>
+        (function () {
+            var bootTime = (window.performance && performance.now) ? performance.now() : Date.now();
+            var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            var minRevealMs = reducedMotion ? 450 : 1850;
+            var hidden = false;
+            var timerId = null;
+
+            function hideOverlay() {
+                if (hidden) return;
+                hidden = true;
+                if (timerId) {
+                    clearTimeout(timerId);
+                    timerId = null;
+                }
+                var el = document.getElementById('agres-splash-overlay');
+                if (!el) return;
+                el.classList.add('agres-splash-hidden');
+                setTimeout(function () {
+                    if (el && el.parentNode) {
+                        el.parentNode.removeChild(el);
+                    }
+                }, 380);
+            }
+
+            window.posSplash = {
+                markReady: function () {
+                    if (hidden) return;
+                    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+                    var remaining = Math.max(0, minRevealMs - (now - bootTime));
+                    if (timerId) clearTimeout(timerId);
+                    timerId = setTimeout(hideOverlay, remaining);
+                }
+            };
+
+            setTimeout(hideOverlay, 6500);
+        })();
+    </script>
     <script src="_content/CurrieTechnologies.Razor.SweetAlert2/sweetAlert2.min.js"></script>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
     <script>

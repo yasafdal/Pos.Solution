@@ -1,6 +1,6 @@
 ; Inno Setup Script para sa POS.Client Single-File Installer
 #define MyAppName "Quick Service POS"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Your Company"
 #define MyAppExeName "POS.Client.exe"
 
@@ -30,7 +30,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Type: filesandordirs; Name: "{app}\{#MyAppExeName}.WebView2"
 
 [Files]
-Source: "..\publish\client-windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.WebView2\*,*.WebView2"
+Source: "..\publish\client-windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.WebView2\*,*.WebView2,*.pdb"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

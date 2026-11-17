@@ -4,6 +4,7 @@
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    min-height: 100dvh;
     background-color: var(--pos-bg-root, #0f172a);
     color: var(--pos-text-primary, #f8fafc);
     overflow-x: hidden;
@@ -142,15 +143,21 @@
 
 .page.has-bottom-nav {
     height: 100vh;
+    height: 100dvh;
     max-height: 100vh;
+    max-height: 100dvh;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow: hidden;
 }
 
 .page.page-new-sale {
     height: 100vh;
+    height: 100dvh;
     max-height: 100vh;
+    max-height: 100dvh;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow: hidden;
 }
 

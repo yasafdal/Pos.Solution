@@ -715,12 +715,12 @@ else
     @if (isWeightModalOpen && weightModalProduct != null)
     {
         <div class="modal fade show d-block pos-sale-modal weight-modal-overlay" tabindex="-1" style="background-color: rgba(15, 23, 42, 0.72); backdrop-filter: blur(5px); z-index: 1060;" role="dialog" aria-modal="true" aria-labelledby="weight-modal-title">
-            <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden" style="background-color: #1e293b; color: #f8fafc;">
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg weight-modal-dialog customization-modal-dialog">
+                <div class="modal-content customization-modal-content weight-modal-content border-0 rounded-4 shadow-lg overflow-hidden">
                     <!-- Header -->
                     <div class="modal-header border-bottom px-4 py-3 border-secondary d-flex justify-content-between align-items-center">
                         <div>
-                            <div class="d-flex align-items-center gap-2">
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
                                 <h4 id="weight-modal-title" class="modal-title fw-bold text-white mb-0">@weightModalProduct.Name</h4>
                                 <span class="badge bg-primary px-2.5 py-1">Weight-Based</span>
                             </div>
@@ -826,7 +826,7 @@ else
 
                         <!-- Complimentary Items / Freebies Section -->
                         <div class="card bg-dark border border-secondary rounded-3 p-3 mb-2">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
+                            <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-2">
                                 <div>
                                     <span class="fw-bold text-white"><i class="bi bi-gift-fill text-danger me-1"></i> Complimentary Inclusions</span>
                                     <span class="badge bg-success ms-2">@WeightModalComplimentarySets Set(s)</span>
@@ -841,7 +841,7 @@ else
                                     @foreach (var grp in weightModalModifierGroups)
                                     {
                                         <div class="mb-2 p-2 rounded bg-opacity-25 bg-secondary">
-                                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-1">
                                                 <span class="fw-semibold text-white small">@grp.ModifierGroupName</span>
                                                 @if (grp.MaxSelections == 1)
                                                 {
@@ -910,16 +910,18 @@ else
 
                     <!-- Footer -->
                     <div class="modal-footer border-top px-4 py-3 border-secondary d-flex justify-content-between align-items-center">
-                        <button type="button" class="btn btn-outline-secondary" @onclick="CloseWeightModal">
-                            Cancel
-                        </button>
-                        <button type="button" 
-                                class="btn btn-primary px-4 py-2 fw-bold d-flex align-items-center gap-2"
-                                disabled="@(WeightModalComputedWeight <= 0m || WeightModalComputedTotal <= 0m)"
-                                @onclick="ConfirmWeightModal">
-                            <i class="bi bi-cart-plus-fill fs-5"></i>
-                            <span>Add to Cart — ₱@WeightModalComputedTotal.ToString("N2")</span>
-                        </button>
+                        <div class="d-flex justify-content-between align-items-center gap-2 w-100">
+                            <button type="button" class="btn btn-outline-secondary" @onclick="CloseWeightModal">
+                                Cancel
+                            </button>
+                            <button type="button" 
+                                    class="btn btn-primary px-4 py-2 fw-bold d-flex align-items-center justify-content-center gap-2"
+                                    disabled="@(WeightModalComputedWeight <= 0m || WeightModalComputedTotal <= 0m)"
+                                    @onclick="ConfirmWeightModal">
+                                <i class="bi bi-cart-plus-fill fs-5"></i>
+                                <span>Add to Cart — ₱@WeightModalComputedTotal.ToString("N2")</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
