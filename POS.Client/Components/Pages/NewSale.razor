@@ -327,7 +327,7 @@ else
                 </div>
 
                 <!-- Cart Items List -->
-                <div class="order-items-scroll @(Cart.Items.Count >= 6 ? "has-scroll" : "no-scroll")">
+                <div class="order-items-scroll @(Cart.Items.Any() ? "has-scroll" : "no-scroll")">
                     @if (!Cart.Items.Any())
                     {
                         <div class="empty-cart text-center py-5">
@@ -457,23 +457,23 @@ else
                 <!-- Order Summary & Checkout -->
                 <div class="order-footer">
                     <div class="order-totals">
-                        <div class="d-flex justify-content-between mb-1">
+                        <div class="order-subtotal-row d-flex justify-content-between mb-1">
                             <span class="text-muted small">Subtotal</span>
                             <span class="fw-semibold small">₱@Cart.Subtotal.ToString("N2")</span>
                         </div>
                         @if (Cart.ActiveDiscountCode != "NONE")
                         {
-                            <div class="d-flex justify-content-between mb-1 text-success small">
+                            <div class="order-discount-row d-flex justify-content-between mb-1 text-success small">
                                 <span>Discount (@Cart.ActiveDiscountCode)</span>
                                 <span class="fw-semibold small">₱-@Cart.ActiveDiscountAmount.ToString("N2")</span>
                             </div>
                         }
-                        <div class="d-flex justify-content-between align-items-baseline mb-2">
-                            <span class="fw-bold fs-6 text-dark">Total</span>
-                            <span class="fw-bolder fs-4 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
+                        <div class="order-total-row d-flex justify-content-between align-items-baseline mb-2">
+                            <span class="order-total-label fw-bold fs-6 text-dark">Total</span>
+                            <span class="order-total-amount fw-bolder fs-4 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
                         </div>
                     </div>
-                    <div class="d-flex gap-2 mb-2">
+                    <div class="order-secondary-actions d-flex gap-2 mb-2">
                         <button type="button"
                                 class="footer-action-btn btn-discount"
                                 disabled="@(!Cart.Items.Any())"
@@ -487,7 +487,7 @@ else
                             <i class="bi bi-pause-fill me-1"></i> Hold Sale
                         </button>
                     </div>
-                    <div class="d-grid">
+                    <div class="order-primary-action d-grid">
                         <button type="button"
                                 class="btn btn-primary w-100 py-2 fw-bold btn-proceed-payment"
                                 disabled="@(isProcessingPayment || openingBusy || openingShiftModal || isPaymentModalOpen || !Cart.Items.Any())"

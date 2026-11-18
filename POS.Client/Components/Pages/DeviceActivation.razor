@@ -1,6 +1,8 @@
 @page "/activate"
 @page "/device-activation"
 @layout Layout.AuthLayout
+@using System.IO
+@using POS.Client.Data
 @using POS.Client.Services
 @inject IDeviceActivationService ActivationService
 @inject NavigationManager Navigation
@@ -50,6 +52,22 @@
         {
             <i class="bi bi-shield-check"></i>
             <span>Activate Device</span>
+        }
+    </button>
+
+    <button type="button"
+            class="btn btn-outline-light btn-sm w-100 fw-semibold rounded-3 mt-3 d-flex align-items-center justify-content-center gap-2"
+            disabled="@(isActivating || isRestoringBackup)"
+            @onclick="HandleRestoreBackupAsync">
+        @if (isRestoringBackup)
+        {
+            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+            <span>Restoring Tablet Backup...</span>
+        }
+        else
+        {
+            <i class="bi bi-cloud-arrow-down-fill"></i>
+            <span>Restore from Tablet Backup (@(hasDetectedLocalBackup ? "Auto-Detected" : "Select .agresbak"))</span>
         }
     </button>
 
@@ -149,6 +167,8 @@
 @code {
     private string activationCode = string.Empty;
     private bool isActivating = false;
+    private bool isRestoringBackup = false;
+    private bool hasDetectedLocalBackup = false;
     private string? errorMessage;
 
     protected override async Task OnInitializedAsync()
@@ -159,7 +179,64 @@
             return;
         }
 
+        hasDetectedLocalBackup = !string.IsNullOrWhiteSpace(LocalDatabaseBackupService.GetDefaultSurvivableBackupFilePath());
         await MauiProgram.NotifySplashReadyAsync(Js);
+    }
+
+    private async Task HandleRestoreBackupAsync()
+    {
+        if (isActivating || isRestoringBackup) return;
+        errorMessage = null;
+        isRestoringBackup = true;
+
+        try
+        {
+            string? backupPath = LocalDatabaseBackupService.GetDefaultSurvivableBackupFilePath();
+            if (string.IsNullOrWhiteSpace(backupPath) || !File.Exists(backupPath))
+            {
+                var picked = await Microsoft.Maui.Storage.FilePicker.Default.PickAsync(new Microsoft.Maui.Storage.PickOptions
+                {
+                    PickerTitle = "Select AGRES POS Backup (.agresbak)"
+                });
+                if (picked == null)
+                    return;
+
+                var tempPickedPath = Path.Combine(Microsoft.Maui.Storage.FileSystem.CacheDirectory, $"picked_{Guid.NewGuid():N}.agresbak");
+                await using (var src = await picked.OpenReadAsync())
+                await using (var dst = File.Create(tempPickedPath))
+                {
+                    await src.CopyToAsync(dst);
+                }
+                backupPath = tempPickedPath;
+            }
+
+            await LocalPosDbContext.WriteLock.WaitAsync();
+            (bool Success, string Message, int PendingOutboxCount) restoreRes;
+            try
+            {
+                restoreRes = LocalDatabaseBackupService.RestoreEncryptedSurvivableBackup(backupPath);
+            }
+            finally
+            {
+                LocalPosDbContext.WriteLock.Release();
+            }
+
+            if (restoreRes.Success && await ActivationService.IsDeviceProvisionedAsync())
+            {
+                Navigation.NavigateTo("/login", replace: true);
+                return;
+            }
+
+            errorMessage = restoreRes.Message;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Backup restore failed: {ex.Message}";
+        }
+        finally
+        {
+            isRestoringBackup = false;
+        }
     }
 
     private async Task HandleActivateAsync()

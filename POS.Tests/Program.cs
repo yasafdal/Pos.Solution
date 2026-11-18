@@ -210,6 +210,10 @@ public static partial class Program
         await RunTestAsync("WM-COMP-01. ReceiptPresentationHelper.ShouldShowFreeModifierLabel Truth Table", TestWeightComplimentary01_ShouldShowFreeModifierLabelTruthTable);
         await RunTestAsync("WM-COMP-02. CartService Weight-Based Unlinked & Linked Complimentary Modifiers + Note Isolation", TestWeightComplimentary02_CartWeightModifiersAndUpdateNotesNoCollapse);
         await RunTestAsync("WM-COMP-03. Receipt, ESC/POS 58mm/80mm, Prep Tickets & Offline Checkout Pipeline for Unlinked/Linked Weight Complimentary Items", TestWeightComplimentary03_ReceiptPrepTicketsAndOfflineCheckoutPipeline);
+        await RunTestAsync("UPD-01. Database Preservation & Versioned Migration: V0 -> V2 upgrade preserves unsynced orders, outbox, sequences, printer config & creates pre-migration backup", TestUpdate01_LegacyV0ToV2MigrationPreservesOfflineDataAndCreatesBackup);
+        await RunTestAsync("UPD-02. Migration Safety: Failed migration rollback restores backup intact & downgrade guard blocks older APK on newer schema", TestUpdate02_FailedMigrationRollbackAndDowngradeProtection);
+        await RunTestAsync("UPD-03. Accidental Uninstall Recovery: AES-GCM encrypted survivable backup (.agresbak) restores DeviceUuid, license & unsynced sales and rejects tampering", TestUpdate03_SurvivableEncryptedBackupAndAccidentalUninstallRestore);
+        await RunTestAsync("UPD-04. Update Security & ABI Stability: ECDSA-signed release manifest, SHA-256 verification, downgrade block & Arm->Arm64 ABI-safe device binding", TestUpdate04_SignedReleaseManifestVerificationAndAbiSafeDeviceBinding);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;

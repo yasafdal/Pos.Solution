@@ -149,8 +149,8 @@ public class DeviceActivationService : IDeviceActivationService
             db.InitializeDatabase();
 
             var priorPrinter = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
-            await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalBranches;");
-            await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTerminalConfigs;");
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalBranches WHERE BranchId != {0};", branchId);
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTerminalConfigs WHERE TerminalId != {0};", terminalId);
             db.ChangeTracker.Clear();
 
             string resolvedBranchCode = branchCode ?? $"BR-{branchId:D2}";
@@ -159,73 +159,80 @@ public class DeviceActivationService : IDeviceActivationService
 
             if (branchId > 0)
             {
-                db.Branches.Add(new LocalBranch
+                var branchEntity = await db.Branches.FirstOrDefaultAsync(b => b.BranchId == branchId);
+                if (branchEntity == null)
                 {
-                    BranchId = branchId,
-                    Name = branchName ?? terminalName,
-                    BranchTagline = cfg?.BranchTagline,
-                    Code = resolvedBranchCode,
-                    Address = cfg?.BranchAddress,
-                    Phone = cfg?.BranchPhone,
-                    TaxType = resolvedBranchTaxType,
-                    VatDisplay = resolvedVatDisplay,
-                    BusinessTypeId = cfg?.BusinessTypeId ?? 1,
-                    BusinessType = cfg?.BusinessType ?? "FNB",
-                    ReceiptLogoUrl = cfg?.ReceiptLogoUrl,
-                    ReceiptLogoDataUri = cfg?.ReceiptLogoDataUri,
-                    ReceiptLogoUpdatedAt = cfg?.ReceiptLogoUpdatedAt,
-                    IsActive = true,
-                    UpdatedAt = DateTime.UtcNow
-                });
+                    branchEntity = new LocalBranch { BranchId = branchId };
+                    db.Branches.Add(branchEntity);
+                }
+                branchEntity.Name = branchName ?? terminalName;
+                branchEntity.BranchTagline = cfg?.BranchTagline;
+                branchEntity.Code = resolvedBranchCode;
+                branchEntity.Address = cfg?.BranchAddress;
+                branchEntity.Phone = cfg?.BranchPhone;
+                branchEntity.TaxType = resolvedBranchTaxType;
+                branchEntity.VatDisplay = resolvedVatDisplay;
+                branchEntity.BusinessTypeId = cfg?.BusinessTypeId ?? 1;
+                branchEntity.BusinessType = cfg?.BusinessType ?? "FNB";
+                branchEntity.ReceiptLogoUrl = cfg?.ReceiptLogoUrl;
+                branchEntity.ReceiptLogoDataUri = cfg?.ReceiptLogoDataUri;
+                branchEntity.ReceiptLogoUpdatedAt = cfg?.ReceiptLogoUpdatedAt;
+                branchEntity.IsActive = true;
+                branchEntity.UpdatedAt = DateTime.UtcNow;
             }
 
-            db.TerminalConfigs.Add(new LocalTerminalConfig
+            var termConfigEntity = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId);
+            if (termConfigEntity == null)
             {
-                TerminalId = terminalId,
-                OutletId = outletId,
-                OutletName = outletName,
-                BranchId = branchId,
-                BranchName = branchName,
-                BranchTagline = cfg?.BranchTagline,
-                BranchCode = resolvedBranchCode,
-                BranchAddress = cfg?.BranchAddress,
-                BranchPhone = cfg?.BranchPhone,
-                ReceiptLogoUrl = cfg?.ReceiptLogoUrl,
-                ReceiptLogoDataUri = cfg?.ReceiptLogoDataUri,
-                ReceiptLogoUpdatedAt = cfg?.ReceiptLogoUpdatedAt,
-                VatDisplay = resolvedVatDisplay,
-                BusinessTypeId = cfg?.BusinessTypeId ?? 1,
-                BusinessType = cfg?.BusinessType ?? "FNB",
-                TerminalCode = terminalCode,
-                TerminalName = terminalName,
-                PTUNumber = ptuNumber,
-                MINNumber = minNumber,
-                SerialNumber = serialNumber,
-                IpAddress = ipAddress,
-                TerminalIdentifier = deviceUuid,
-                DeviceUuid = deviceUuid,
-                IsActivated = true,
-                AllowSync = allowSync,
-                ActivatedAt = DateTime.UtcNow,
-                MenuDisplayMode = menuMode == MenuDisplayMode.ImageAndText
-                    ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
-                BranchTaxType = resolvedBranchTaxType,
-                ReceiptPrinterName = priorPrinter?.ReceiptPrinterName,
-                KitchenPrinterName = priorPrinter?.KitchenPrinterName,
-                BarPrinterName = priorPrinter?.BarPrinterName,
-                IsInitialized = priorPrinter?.IsInitialized ?? false,
-                DefaultOpeningFund = cfg?.DefaultOpeningFund ?? term?.OutletDefaultOpeningFund,
-                OpeningFundOverride = cfg?.OpeningFundOverride ?? term?.OpeningFundOverride,
-                EffectiveOpeningFund = cfg?.EffectiveOpeningFund ?? term?.EffectiveOpeningFund,
-                OpeningFundSource = cfg?.OpeningFundSource ?? term?.OpeningFundSource,
-                ClosedBusinessDate = cfg?.ClosedBusinessDate ?? term?.ClosedBusinessDate ?? priorPrinter?.ClosedBusinessDate,
-                ClosingLockedByCashier = cfg?.ClosingLockedByCashier ?? term?.ClosingLockedByCashier ?? priorPrinter?.ClosingLockedByCashier,
-                ClosingLockedAtUtc = cfg?.ClosingLockedAtUtc ?? term?.ClosingLockedAtUtc ?? priorPrinter?.ClosingLockedAtUtc,
-                ClosingUnlockAtUtc = cfg?.ClosingUnlockAtUtc ?? term?.ClosingUnlockAtUtc ?? priorPrinter?.ClosingUnlockAtUtc,
-                ClosingLockedTickCount64 = priorPrinter?.ClosingLockedTickCount64,
-                LastKnownServerUtc = DateTime.UtcNow,
-                LastKnownServerTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64()
-            });
+                termConfigEntity = new LocalTerminalConfig
+                {
+                    TerminalId = terminalId,
+                    ReceiptPrinterName = priorPrinter?.ReceiptPrinterName,
+                    KitchenPrinterName = priorPrinter?.KitchenPrinterName,
+                    BarPrinterName = priorPrinter?.BarPrinterName,
+                    IsInitialized = priorPrinter?.IsInitialized ?? false
+                };
+                db.TerminalConfigs.Add(termConfigEntity);
+            }
+            termConfigEntity.OutletId = outletId;
+            termConfigEntity.OutletName = outletName;
+            termConfigEntity.BranchId = branchId;
+            termConfigEntity.BranchName = branchName;
+            termConfigEntity.BranchTagline = cfg?.BranchTagline;
+            termConfigEntity.BranchCode = resolvedBranchCode;
+            termConfigEntity.BranchAddress = cfg?.BranchAddress;
+            termConfigEntity.BranchPhone = cfg?.BranchPhone;
+            termConfigEntity.ReceiptLogoUrl = cfg?.ReceiptLogoUrl;
+            termConfigEntity.ReceiptLogoDataUri = cfg?.ReceiptLogoDataUri;
+            termConfigEntity.ReceiptLogoUpdatedAt = cfg?.ReceiptLogoUpdatedAt;
+            termConfigEntity.VatDisplay = resolvedVatDisplay;
+            termConfigEntity.BusinessTypeId = cfg?.BusinessTypeId ?? 1;
+            termConfigEntity.BusinessType = cfg?.BusinessType ?? "FNB";
+            termConfigEntity.TerminalCode = terminalCode;
+            termConfigEntity.TerminalName = terminalName;
+            termConfigEntity.PTUNumber = ptuNumber;
+            termConfigEntity.MINNumber = minNumber;
+            termConfigEntity.SerialNumber = serialNumber;
+            termConfigEntity.IpAddress = ipAddress;
+            termConfigEntity.TerminalIdentifier = deviceUuid;
+            termConfigEntity.DeviceUuid = deviceUuid;
+            termConfigEntity.IsActivated = true;
+            termConfigEntity.AllowSync = allowSync;
+            termConfigEntity.ActivatedAt = DateTime.UtcNow;
+            termConfigEntity.MenuDisplayMode = menuMode == MenuDisplayMode.ImageAndText
+                ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly;
+            termConfigEntity.BranchTaxType = resolvedBranchTaxType;
+            termConfigEntity.DefaultOpeningFund = cfg?.DefaultOpeningFund ?? term?.OutletDefaultOpeningFund;
+            termConfigEntity.OpeningFundOverride = cfg?.OpeningFundOverride ?? term?.OpeningFundOverride;
+            termConfigEntity.EffectiveOpeningFund = cfg?.EffectiveOpeningFund ?? term?.EffectiveOpeningFund;
+            termConfigEntity.OpeningFundSource = cfg?.OpeningFundSource ?? term?.OpeningFundSource;
+            termConfigEntity.ClosedBusinessDate = cfg?.ClosedBusinessDate ?? term?.ClosedBusinessDate ?? priorPrinter?.ClosedBusinessDate;
+            termConfigEntity.ClosingLockedByCashier = cfg?.ClosingLockedByCashier ?? term?.ClosingLockedByCashier ?? priorPrinter?.ClosingLockedByCashier;
+            termConfigEntity.ClosingLockedAtUtc = cfg?.ClosingLockedAtUtc ?? term?.ClosingLockedAtUtc ?? priorPrinter?.ClosingLockedAtUtc;
+            termConfigEntity.ClosingUnlockAtUtc = cfg?.ClosingUnlockAtUtc ?? term?.ClosingUnlockAtUtc ?? priorPrinter?.ClosingUnlockAtUtc;
+            termConfigEntity.ClosingLockedTickCount64 = priorPrinter?.ClosingLockedTickCount64;
+            termConfigEntity.LastKnownServerUtc = DateTime.UtcNow;
+            termConfigEntity.LastKnownServerTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64();
 
             if (response.Cashiers != null && response.Cashiers.Count > 0)
             {
@@ -280,6 +287,7 @@ public class DeviceActivationService : IDeviceActivationService
             }
         }
 
+        LocalDatabaseBackupService.TriggerBackgroundSurvivableBackup(forceImmediate: true);
         return response;
     }
 

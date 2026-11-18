@@ -440,6 +440,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
 
                 await db.SaveChangesAsync();
                 await transaction.CommitAsync();
+                LocalDatabaseBackupService.TriggerBackgroundSurvivableBackup();
 
                 var sessionOutlet = _session.Terminal;
                 string branchName = !string.IsNullOrWhiteSpace(localBranch?.Name)

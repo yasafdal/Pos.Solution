@@ -197,7 +197,7 @@ public class ClientLicenseService : IClientLicenseService
         }
 
         string? deviceUuid = termCfg?.DeviceUuid ?? termCfg?.TerminalIdentifier;
-        string liveDeviceId = DeviceBindingHelper.ComputeDeviceId(deviceUuid);
+        string liveDeviceId = DeviceBindingHelper.ResolveMatchingDeviceId(deviceUuid, localLic?.DeviceId);
 
         int expectedTermId = termCfg?.TerminalId ?? (terminalId > 0 ? terminalId : (localLic?.TerminalId ?? 0));
         int expectedBranchId = termCfg?.BranchId ?? (localLic?.BranchId ?? 0);
@@ -409,6 +409,7 @@ public class ClientLicenseService : IClientLicenseService
         int expectedBranchId;
         int expectedOutletId;
         string? licenseId = null;
+        string? licensedDeviceId = null;
         int? licenseVersion = null;
 
         using (var db = new LocalPosDbContext())
@@ -435,12 +436,13 @@ public class ClientLicenseService : IClientLicenseService
             if (lic != null)
             {
                 licenseId = lic.LicenseId;
+                licensedDeviceId = lic.DeviceId;
                 licenseVersion = lic.LicenseVersion;
             }
         }
 
         _lastOnlineCheckAttemptUtc = nowUtc;
-        var liveDeviceId = DeviceBindingHelper.ComputeDeviceId(deviceUuid);
+        var liveDeviceId = DeviceBindingHelper.ResolveMatchingDeviceId(deviceUuid, licensedDeviceId);
 
         var req = new LicenseValidateRequestDto
         {

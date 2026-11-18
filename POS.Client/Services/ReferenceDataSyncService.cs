@@ -180,7 +180,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     int resolvedBusinessTypeId = data.Branch?.BusinessTypeId ?? data.Terminal.BusinessTypeId ?? 1;
                     string resolvedBusinessType = data.Branch?.BusinessType ?? data.Terminal.BusinessType ?? "FNB";
 
-                    // Clear existing reference tables via SQL and reset ChangeTracker to prevent duplicate PK tracking exceptions
+                    // Clear existing catalog reference tables via SQL and reset ChangeTracker to prevent duplicate PK tracking exceptions
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalProductModifierGroups;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalModifierOptions;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalModifierGroups;");
@@ -188,93 +188,105 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCategories;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTaxes;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalDiscounts;");
-                    await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalBranches;");
-                    await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTerminalConfigs;");
+                    await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalBranches WHERE BranchId != {0};", data.Terminal.BranchId);
+                    await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTerminalConfigs WHERE TerminalId != {0};", data.Terminal.TerminalId);
                     if (data.Cashiers != null && data.Cashiers.Count > 0)
                     {
                         await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
                     }
                     db.ChangeTracker.Clear();
 
-                    // Insert authoritative LocalBranch record
-                    db.Branches.Add(new LocalBranch
+                    // Upsert authoritative LocalBranch record in place
+                    var branchEntity = await db.Branches.FirstOrDefaultAsync(b => b.BranchId == data.Terminal.BranchId);
+                    if (branchEntity == null)
                     {
-                        BranchId = data.Terminal.BranchId,
-                        Name = resolvedBranchName,
-                        BranchTagline = resolvedBranchTagline,
-                        Code = resolvedBranchCode,
-                        Address = resolvedBranchAddress,
-                        Phone = resolvedBranchPhone,
-                        TaxType = resolvedBranchTaxType,
-                        VatDisplay = resolvedVatDisplay,
-                        TrackInventory = data.Branch?.TrackInventory ?? priorBranch?.TrackInventory ?? false,
-                        BusinessTypeId = resolvedBusinessTypeId,
-                        BusinessType = resolvedBusinessType,
-                        ServiceModeId = data.Branch?.ServiceModeId ?? priorBranch?.ServiceModeId,
-                        ReceiptLogoUrl = resolvedLogoUrl,
-                        ReceiptLogoDataUri = resolvedLogoDataUri,
-                        ReceiptLogoUpdatedAt = string.IsNullOrWhiteSpace(resolvedLogoUrl) ? null : (data.Branch?.ReceiptLogoUpdatedAt ?? data.Terminal.ReceiptLogoUpdatedAt),
-                        IsActive = data.Branch?.IsActive ?? true,
-                        UpdatedAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow
-                    });
+                        branchEntity = new LocalBranch { BranchId = data.Terminal.BranchId };
+                        db.Branches.Add(branchEntity);
+                    }
+                    branchEntity.Name = resolvedBranchName;
+                    branchEntity.BranchTagline = resolvedBranchTagline;
+                    branchEntity.Code = resolvedBranchCode;
+                    branchEntity.Address = resolvedBranchAddress;
+                    branchEntity.Phone = resolvedBranchPhone;
+                    branchEntity.TaxType = resolvedBranchTaxType;
+                    branchEntity.VatDisplay = resolvedVatDisplay;
+                    branchEntity.TrackInventory = data.Branch?.TrackInventory ?? priorBranch?.TrackInventory ?? false;
+                    branchEntity.BusinessTypeId = resolvedBusinessTypeId;
+                    branchEntity.BusinessType = resolvedBusinessType;
+                    branchEntity.ServiceModeId = data.Branch?.ServiceModeId ?? priorBranch?.ServiceModeId;
+                    branchEntity.ReceiptLogoUrl = resolvedLogoUrl;
+                    branchEntity.ReceiptLogoDataUri = resolvedLogoDataUri;
+                    branchEntity.ReceiptLogoUpdatedAt = string.IsNullOrWhiteSpace(resolvedLogoUrl) ? null : (data.Branch?.ReceiptLogoUpdatedAt ?? data.Terminal.ReceiptLogoUpdatedAt);
+                    branchEntity.IsActive = data.Branch?.IsActive ?? true;
+                    branchEntity.UpdatedAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow;
 
-                    // Insert new reference data
-                    db.TerminalConfigs.Add(new LocalTerminalConfig
+                    // Upsert LocalTerminalConfig in place to preserve all local-only columns
+                    var termConfigEntity = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == data.Terminal.TerminalId);
+                    if (termConfigEntity == null)
                     {
-                        TerminalId = data.Terminal.TerminalId,
-                        OutletId = data.Terminal.OutletId, OutletName = data.Terminal.OutletName, TerminalCode = data.Terminal.TerminalCode,
-                        IpAddress = data.Terminal.IpAddress, PTUNumber = data.Terminal.PTUNumber, MINNumber = data.Terminal.MINNumber, SerialNumber = data.Terminal.SerialNumber,
-                        BranchId = data.Terminal.BranchId,
-                        BusinessTypeId = resolvedBusinessTypeId,
-                        BusinessType = resolvedBusinessType,
-                        MenuDisplayMode = data.Terminal.MenuDisplayMode == MenuDisplayMode.ImageAndText
-                            ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly,
-                        BranchName = resolvedBranchName,
-                        BranchTagline = resolvedBranchTagline,
-                        BranchCode = resolvedBranchCode,
-                        BranchAddress = resolvedBranchAddress,
-                        BranchPhone = resolvedBranchPhone,
-                        ReceiptLogoUrl = resolvedLogoUrl,
-                        ReceiptLogoDataUri = resolvedLogoDataUri,
-                        ReceiptLogoUpdatedAt = string.IsNullOrWhiteSpace(resolvedLogoUrl) ? null : (data.Branch?.ReceiptLogoUpdatedAt ?? data.Terminal.ReceiptLogoUpdatedAt),
-                        VatDisplay = resolvedVatDisplay,
-                        TerminalName = data.Terminal.TerminalName,
-                        BranchTaxType = resolvedBranchTaxType,
-                        TerminalIdentifier = data.Terminal.DeviceIdentifier,
-                        ReceiptPrinterName = priorConfig?.ReceiptPrinterName,
-                        KitchenPrinterName = priorConfig?.KitchenPrinterName,
-                        BarPrinterName = priorConfig?.BarPrinterName,
-                        IsInitialized = priorConfig?.IsInitialized ?? false,
-                        DeviceUuid = priorConfig?.DeviceUuid,
-                        IsActivated = priorConfig?.IsActivated ?? true,
-                        AllowSync = priorConfig?.AllowSync ?? true,
-                        ActivatedAt = priorConfig?.ActivatedAt,
-                        DefaultOpeningFund = data.Terminal.DefaultOpeningFund,
-                        OpeningFundOverride = data.Terminal.OpeningFundOverride,
-                        EffectiveOpeningFund = data.Terminal.EffectiveOpeningFund ?? data.Terminal.OpeningFundOverride ?? data.Terminal.DefaultOpeningFund,
-                        OpeningFundSource = data.Terminal.OpeningFundSource ?? (data.Terminal.OpeningFundOverride.HasValue
-                            ? "TERMINAL_OVERRIDE"
-                            : (data.Terminal.DefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED")),
-                        ClosedBusinessDate = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
-                            ? data.Terminal.ClosedBusinessDate
-                            : (priorConfig != null && !string.IsNullOrWhiteSpace(priorConfig.ClosedBusinessDate) &&
-                               string.CompareOrdinal(priorConfig.ClosedBusinessDate, POS.Shared.Services.BusinessDayClock.GetBusinessDateString(data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow)) >= 0
-                                ? priorConfig.ClosedBusinessDate : null),
-                        ClosingLockedByCashier = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
-                            ? data.Terminal.ClosingLockedByCashier
-                            : priorConfig?.ClosingLockedByCashier,
-                        ClosingLockedAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
-                            ? data.Terminal.ClosingLockedAtUtc
-                            : priorConfig?.ClosingLockedAtUtc,
-                        ClosingUnlockAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
-                            ? data.Terminal.ClosingUnlockAtUtc
-                            : priorConfig?.ClosingUnlockAtUtc,
-                        ClosingLockedTickCount64 = priorConfig?.ClosingLockedTickCount64 ?? (!string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate) ? POS.Shared.Services.BusinessDayClock.TickCount64() : null),
-                        LastKnownServerUtc = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow,
-                        LastKnownServerTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64(),
-                        LastSyncVersion = data.Version,
-                        LastSyncAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow
-                    });
+                        termConfigEntity = new LocalTerminalConfig
+                        {
+                            TerminalId = data.Terminal.TerminalId,
+                            ReceiptPrinterName = priorConfig?.ReceiptPrinterName,
+                            KitchenPrinterName = priorConfig?.KitchenPrinterName,
+                            BarPrinterName = priorConfig?.BarPrinterName,
+                            IsInitialized = priorConfig?.IsInitialized ?? false,
+                            DeviceUuid = priorConfig?.DeviceUuid,
+                            IsActivated = priorConfig?.IsActivated ?? true,
+                            AllowSync = priorConfig?.AllowSync ?? true,
+                            ActivatedAt = priorConfig?.ActivatedAt
+                        };
+                        db.TerminalConfigs.Add(termConfigEntity);
+                    }
+                    termConfigEntity.OutletId = data.Terminal.OutletId;
+                    termConfigEntity.OutletName = data.Terminal.OutletName;
+                    termConfigEntity.TerminalCode = data.Terminal.TerminalCode;
+                    termConfigEntity.IpAddress = data.Terminal.IpAddress;
+                    termConfigEntity.PTUNumber = data.Terminal.PTUNumber;
+                    termConfigEntity.MINNumber = data.Terminal.MINNumber;
+                    termConfigEntity.SerialNumber = data.Terminal.SerialNumber;
+                    termConfigEntity.BranchId = data.Terminal.BranchId;
+                    termConfigEntity.BusinessTypeId = resolvedBusinessTypeId;
+                    termConfigEntity.BusinessType = resolvedBusinessType;
+                    termConfigEntity.MenuDisplayMode = data.Terminal.MenuDisplayMode == MenuDisplayMode.ImageAndText
+                        ? MenuDisplayMode.ImageAndText : MenuDisplayMode.TextOnly;
+                    termConfigEntity.BranchName = resolvedBranchName;
+                    termConfigEntity.BranchTagline = resolvedBranchTagline;
+                    termConfigEntity.BranchCode = resolvedBranchCode;
+                    termConfigEntity.BranchAddress = resolvedBranchAddress;
+                    termConfigEntity.BranchPhone = resolvedBranchPhone;
+                    termConfigEntity.ReceiptLogoUrl = resolvedLogoUrl;
+                    termConfigEntity.ReceiptLogoDataUri = resolvedLogoDataUri;
+                    termConfigEntity.ReceiptLogoUpdatedAt = string.IsNullOrWhiteSpace(resolvedLogoUrl) ? null : (data.Branch?.ReceiptLogoUpdatedAt ?? data.Terminal.ReceiptLogoUpdatedAt);
+                    termConfigEntity.VatDisplay = resolvedVatDisplay;
+                    termConfigEntity.TerminalName = data.Terminal.TerminalName;
+                    termConfigEntity.BranchTaxType = resolvedBranchTaxType;
+                    termConfigEntity.TerminalIdentifier = data.Terminal.DeviceIdentifier;
+                    termConfigEntity.DefaultOpeningFund = data.Terminal.DefaultOpeningFund;
+                    termConfigEntity.OpeningFundOverride = data.Terminal.OpeningFundOverride;
+                    termConfigEntity.EffectiveOpeningFund = data.Terminal.EffectiveOpeningFund ?? data.Terminal.OpeningFundOverride ?? data.Terminal.DefaultOpeningFund;
+                    termConfigEntity.OpeningFundSource = data.Terminal.OpeningFundSource ?? (data.Terminal.OpeningFundOverride.HasValue
+                        ? "TERMINAL_OVERRIDE"
+                        : (data.Terminal.DefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED"));
+                    termConfigEntity.ClosedBusinessDate = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                        ? data.Terminal.ClosedBusinessDate
+                        : (priorConfig != null && !string.IsNullOrWhiteSpace(priorConfig.ClosedBusinessDate) &&
+                           string.CompareOrdinal(priorConfig.ClosedBusinessDate, POS.Shared.Services.BusinessDayClock.GetBusinessDateString(data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow)) >= 0
+                            ? priorConfig.ClosedBusinessDate : null);
+                    termConfigEntity.ClosingLockedByCashier = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                        ? data.Terminal.ClosingLockedByCashier
+                        : priorConfig?.ClosingLockedByCashier;
+                    termConfigEntity.ClosingLockedAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                        ? data.Terminal.ClosingLockedAtUtc
+                        : priorConfig?.ClosingLockedAtUtc;
+                    termConfigEntity.ClosingUnlockAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                        ? data.Terminal.ClosingUnlockAtUtc
+                        : priorConfig?.ClosingUnlockAtUtc;
+                    termConfigEntity.ClosingLockedTickCount64 = priorConfig?.ClosingLockedTickCount64 ?? (!string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate) ? POS.Shared.Services.BusinessDayClock.TickCount64() : null);
+                    termConfigEntity.LastKnownServerUtc = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow;
+                    termConfigEntity.LastKnownServerTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64();
+                    termConfigEntity.LastSyncVersion = data.Version;
+                    termConfigEntity.LastSyncAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow;
 
                     if (data.Cashiers != null)
                     {
@@ -513,6 +525,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
             }
 
             _lastSyncTime = DateTime.UtcNow;
+            LocalDatabaseBackupService.TriggerBackgroundSurvivableBackup();
             try { OnSyncCompleted?.Invoke(); } catch { }
             return true;
         }

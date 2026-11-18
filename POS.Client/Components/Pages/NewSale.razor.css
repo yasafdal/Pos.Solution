@@ -464,8 +464,14 @@
 .order-items-scroll {
     flex: 1 1 0px;
     min-height: 0;
-    overflow-y: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
     padding: 0.45rem 0.65rem;
+}
+
+.order-items-scroll.no-scroll {
+    overflow-y: auto;
 }
 
 .order-items-scroll.has-scroll {
@@ -739,16 +745,37 @@
 }
 
 .order-footer {
-    padding: 0.75rem 0.85rem;
+    padding: 0.75rem 0.85rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--pos-border-color, #334155);
     background: var(--pos-bg-card, #1e293b);
     flex-shrink: 0;
     margin-top: auto;
 }
 
+.order-totals {
+    min-width: 0;
+}
+
+.order-subtotal-row,
+.order-discount-row,
+.order-total-row {
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.order-total-amount {
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.order-secondary-actions {
+    flex-wrap: wrap;
+}
+
 .footer-action-btn {
     border: 1px solid var(--pos-border-color, #334155);
     border-radius: var(--pos-radius-sm, 8px);
+    min-height: 40px;
     padding: 0.48rem 0.75rem;
     font-size: 0.84rem;
     font-weight: 700;
@@ -756,9 +783,12 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex: 1 1 0;
+    flex: 1 1 110px;
+    min-width: 0;
+    white-space: nowrap;
     transition: all 0.15s ease;
     user-select: none;
+    touch-action: manipulation;
 }
 
 .btn-discount {
@@ -785,12 +815,14 @@
     background: var(--pos-primary-gradient, linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%));
     border: none;
     border-radius: var(--pos-radius-md, 12px);
+    min-height: 44px;
     font-size: 1rem;
     font-weight: 700;
     padding: 0.75rem;
     box-shadow: var(--pos-primary-glow);
     color: #ffffff;
     transition: all 0.2s ease;
+    touch-action: manipulation;
 }
 
 .btn-proceed-payment:hover:not(:disabled) {
@@ -1616,28 +1648,333 @@ body.pos-modal-open {
     }
 }
 
+/* Short-height desktop/laptop/landscape viewports: compact cart header & footer so Proceed to Payment stays visible */
+@media (max-height: 700px) {
+    .order-service-bar {
+        padding: 0.3rem 0.6rem;
+    }
+
+    .service-mode-btn {
+        padding: 0.28rem 0.4rem;
+        font-size: 0.78rem;
+    }
+
+    .order-header {
+        padding: 0.4rem 0.65rem;
+    }
+
+    .order-items-scroll {
+        padding: 0.3rem 0.5rem;
+    }
+
+    .order-items-scroll .empty-cart {
+        padding-top: 0.75rem !important;
+        padding-bottom: 0.75rem !important;
+    }
+
+    .order-footer {
+        padding: 0.45rem 0.65rem calc(0.45rem + env(safe-area-inset-bottom, 0px));
+    }
+
+    .order-subtotal-row,
+    .order-discount-row {
+        margin-bottom: 0.15rem !important;
+    }
+
+    .order-total-row {
+        margin-bottom: 0.35rem !important;
+    }
+
+    .order-total-amount {
+        font-size: 1.2rem !important;
+    }
+
+    .order-secondary-actions {
+        margin-bottom: 0.35rem !important;
+    }
+
+    .footer-action-btn {
+        min-height: 36px;
+        padding: 0.32rem 0.55rem;
+        font-size: 0.8rem;
+    }
+
+    .btn-proceed-payment {
+        min-height: 42px;
+        padding: 0.5rem 0.65rem !important;
+        font-size: 0.92rem;
+    }
+}
+
+@media (max-height: 520px) {
+    .order-service-bar {
+        padding: 0.2rem 0.5rem;
+    }
+
+    .order-header {
+        padding: 0.25rem 0.5rem;
+    }
+
+    .order-items-scroll .empty-cart {
+        padding-top: 0.35rem !important;
+        padding-bottom: 0.35rem !important;
+    }
+
+    .order-items-scroll .empty-cart i {
+        font-size: 1.25rem !important;
+        margin-bottom: 0.15rem !important;
+    }
+
+    .order-footer {
+        padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+    }
+
+    .order-total-row {
+        margin-bottom: 0.25rem !important;
+    }
+
+    .order-total-amount {
+        font-size: 1.08rem !important;
+    }
+
+    .order-secondary-actions {
+        margin-bottom: 0.25rem !important;
+        gap: 0.35rem !important;
+    }
+
+    .footer-action-btn {
+        min-height: 34px;
+        padding: 0.25rem 0.45rem;
+        font-size: 0.76rem;
+    }
+
+    .btn-proceed-payment {
+        min-height: 38px;
+        padding: 0.38rem 0.5rem !important;
+        font-size: 0.88rem;
+    }
+}
+
+/* Mobile / Portrait Stacked Layout */
 @media (max-width: 768px) {
     .new-sale-container {
-        grid-template-columns: 1fr;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        max-height: 100%;
+        min-height: 0;
+        overflow: hidden;
+        gap: 0.35rem;
+        padding: 0.3rem 0.45rem;
+    }
+
+    .catalog-section {
+        flex: 1 1 0;
         height: auto;
-        min-height: 100vh;
-        overflow-y: auto;
-        gap: 0.75rem;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    .catalog-header-bar {
+        padding: 0.25rem 0.5rem;
+        margin-bottom: 0.3rem !important;
+    }
+
+    .catalog-header-bar .terminal-identity {
+        font-size: 0.82rem;
+    }
+
+    .header-action-btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.72rem;
+    }
+
+    .search-bar-wrap {
+        margin-bottom: 0.3rem !important;
+    }
+
+    .search-input {
+        padding-top: 0.35rem !important;
+        padding-bottom: 0.35rem !important;
+        font-size: 0.84rem !important;
+    }
+
+    .categories-bar {
+        margin-bottom: 0.3rem !important;
+        padding-bottom: 0.2rem;
+    }
+
+    .category-pill {
+        min-height: 32px;
+        padding: 0.25rem 0.65rem;
+        font-size: 0.78rem;
     }
 
     .products-grid-scroll {
-        max-height: 55vh;
+        flex: 1 1 0;
+        max-height: none;
+        min-height: 0;
+        padding-bottom: 0.25rem;
     }
 
     .products-grid {
-        grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
-        gap: 0.5rem;
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+        gap: 0.4rem;
     }
-
 
     .order-section {
+        flex: 1.35 1 0;
         height: auto;
-        min-height: 420px;
+        min-height: 0;
+        overflow: hidden;
     }
 
+    .order-card {
+        border-radius: var(--pos-radius-lg, 1rem);
+    }
+
+    .order-service-bar {
+        padding: 0.28rem 0.5rem;
+    }
+
+    .service-mode-btn {
+        padding: 0.24rem 0.35rem;
+        font-size: 0.74rem;
+    }
+
+    .order-header {
+        padding: 0.3rem 0.55rem;
+    }
+
+    .order-items-scroll {
+        flex: 1 1 0px;
+        min-height: 0;
+        padding: 0.28rem 0.48rem;
+    }
+
+    .order-items-scroll .empty-cart {
+        padding-top: 0.45rem !important;
+        padding-bottom: 0.45rem !important;
+    }
+
+    .order-items-scroll .empty-cart i {
+        font-size: 1.25rem !important;
+        margin-bottom: 0.12rem !important;
+    }
+
+    .order-footer {
+        padding: 0.4rem 0.55rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    }
+
+    .order-subtotal-row,
+    .order-discount-row {
+        margin-bottom: 0.1rem !important;
+    }
+
+    .order-total-row {
+        margin-bottom: 0.25rem !important;
+    }
+
+    .order-total-amount {
+        font-size: 1.15rem !important;
+    }
+
+    .order-secondary-actions {
+        margin-bottom: 0.25rem !important;
+        gap: 0.35rem !important;
+    }
+
+    .footer-action-btn {
+        min-height: 36px;
+        padding: 0.28rem 0.45rem;
+        font-size: 0.78rem;
+        flex: 1 1 100px;
+    }
+
+    .btn-proceed-payment {
+        min-height: 40px;
+        padding: 0.45rem 0.6rem !important;
+        font-size: 0.9rem;
+    }
+}
+
+/* Compact-height portrait mobile screens (e.g. 360x640, 320x568): allocate more share to cart so items scroll comfortably and footer never clips */
+@media (max-width: 768px) and (max-height: 680px) {
+    .catalog-section {
+        flex: 0.75 1 0;
+    }
+
+    .order-section {
+        flex: 1.55 1 0;
+    }
+
+    .order-service-bar {
+        padding: 0.2rem 0.45rem;
+    }
+
+    .order-header {
+        padding: 0.25rem 0.5rem;
+    }
+
+    .order-footer {
+        padding: 0.32rem 0.5rem calc(0.32rem + env(safe-area-inset-bottom, 0px));
+    }
+
+    .order-total-row {
+        margin-bottom: 0.2rem !important;
+    }
+
+    .order-total-amount {
+        font-size: 1.08rem !important;
+    }
+
+    .order-secondary-actions {
+        margin-bottom: 0.2rem !important;
+    }
+
+    .footer-action-btn {
+        min-height: 34px;
+        padding: 0.22rem 0.4rem;
+        font-size: 0.75rem;
+    }
+
+    .btn-proceed-payment {
+        min-height: 38px;
+        padding: 0.38rem 0.5rem !important;
+        font-size: 0.88rem;
+    }
+}
+
+/* Android Landscape on compact mobile screens: keep side-by-side split so cart has full viewport height */
+@media (max-width: 900px) and (max-height: 540px) and (orientation: landscape) {
+    .new-sale-container {
+        display: grid;
+        grid-template-columns: 1fr minmax(260px, 44vw);
+        height: 100%;
+        max-height: 100%;
+        min-height: 0;
+        overflow: hidden;
+        gap: 0.4rem;
+        padding: 0.25rem 0.45rem;
+    }
+
+    .catalog-section,
+    .order-section {
+        flex: none;
+        height: 100%;
+        max-height: 100%;
+        min-height: 0;
+    }
+}
+
+/* Extra-narrow phones: stack Discount and Hold Sale when horizontal space cannot fit two buttons */
+@media (max-width: 310px) {
+    .order-secondary-actions {
+        flex-direction: column;
+    }
+
+    .footer-action-btn {
+        flex: 1 1 auto;
+        width: 100%;
+    }
 }

@@ -70,6 +70,35 @@ public static class DeviceBindingHelper
         return $"DEV-{hex[..24]}";
     }
 
+    /// <summary>
+    /// Resolves the live DeviceId and tolerates ABI/architecture transitions (e.g., 32-bit Arm to 64-bit Arm64
+    /// during an Android universal APK upgrade) on the same physical host and DeviceUuid.
+    /// </summary>
+    public static string ResolveMatchingDeviceId(string? deviceUuid, string? licensedDeviceId)
+    {
+        string primary = ComputeDeviceId(deviceUuid);
+        if (string.IsNullOrWhiteSpace(licensedDeviceId) ||
+            string.Equals(primary, licensedDeviceId, StringComparison.OrdinalIgnoreCase) ||
+            HardwareFingerprintProvider != null)
+        {
+            return primary;
+        }
+
+        string hostName = Environment.MachineName.ToUpperInvariant();
+        int procCount = Environment.ProcessorCount;
+        foreach (var arch in new[] { Architecture.Arm64, Architecture.Arm, Architecture.X64, Architecture.X86 })
+        {
+            string candidateFp = $"HOST|{hostName}|{arch}|{procCount}";
+            string candidateId = ComputeDeviceId(deviceUuid, candidateFp);
+            if (string.Equals(candidateId, licensedDeviceId.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return candidateId;
+            }
+        }
+
+        return primary;
+    }
+
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static string? TryReadWindowsMachineGuid()
     {

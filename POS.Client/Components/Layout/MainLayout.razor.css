@@ -343,3 +343,24 @@
         font-size: 0.66rem;
     }
 }
+
+@media (max-height: 540px) {
+    .cashier-bottom-nav {
+        height: 50px;
+        padding: 0.2rem 0.45rem;
+    }
+
+    .workspace-nav-btn {
+        min-height: 40px;
+        padding: 0.15rem 0.25rem;
+        gap: 0.08rem;
+    }
+
+    .workspace-nav-icon {
+        font-size: 1rem;
+    }
+
+    .workspace-nav-label {
+        font-size: 0.62rem;
+    }
+}

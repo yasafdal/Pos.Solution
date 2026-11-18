@@ -64,6 +64,7 @@ namespace POS.Client
             builder.Services.AddScoped<IUserService, UserService>();
             builder.Services.AddScoped<ITerminalService, TerminalService>();
             builder.Services.AddScoped<IDeviceActivationService, DeviceActivationService>();
+            builder.Services.AddScoped<AppUpdateService>();
             ClientLicenseService.StrictEnforcementMode = true;
             builder.Services.AddSingleton<IClientLicenseService, ClientLicenseService>();
             builder.Services.AddScoped<ILicensingApiService, LicensingApiService>();
@@ -120,6 +121,11 @@ namespace POS.Client
 #else
             builder.Services.AddScoped<ITerminalAddressProvider, TerminalAddressProvider>();
 #endif
+
+            using (var startupDb = new POS.Client.Data.LocalPosDbContext())
+            {
+                startupDb.InitializeDatabase();
+            }
 
             return builder.Build();
         }
