@@ -1,6 +1,6 @@
 ; Inno Setup Script para sa POS.Client Single-File Installer
 #define MyAppName "Quick Service POS"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "Your Company"
 #define MyAppExeName "POS.Client.exe"
 

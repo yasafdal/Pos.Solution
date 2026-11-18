@@ -31,8 +31,8 @@ public class AppReleasesController : ControllerBase
 
         int versionCode = int.TryParse(_configuration?["AppReleases:Android:VersionCode"], out int cfgVerCode) && cfgVerCode > 0
             ? cfgVerCode
-            : 2;
-        string versionName = _configuration?["AppReleases:Android:VersionName"] ?? "1.0.1";
+            : 3;
+        string versionName = _configuration?["AppReleases:Android:VersionName"] ?? "1.0.2";
         string sha256 = _configuration?["AppReleases:Android:Sha256"]
             ?? "3A1956E43F2789CAFA3F3DF5D22DAB8FDEBF656E324788FF492570F4044B5097";
         string downloadUrl = _configuration?["AppReleases:Android:DownloadUrl"]

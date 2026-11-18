@@ -1,5 +1,5 @@
 param(
-    [int]$MinVersionCode = 2,
+    [int]$MinVersionCode = 3,
     [string]$ExpectedPackageId = "com.agres.pos.client",
     [string]$ExpectedCertSha256 = "9A:74:09:2B:9A:F0:A0:B9:1C:1A:96:2C:63:B3:3D:E4:01:2C:60:68:FF:1E:19:B9:64:8A:C0:AA:F2:C7:E7:57"
 )

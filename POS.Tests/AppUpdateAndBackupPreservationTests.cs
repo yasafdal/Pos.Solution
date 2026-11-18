@@ -365,12 +365,12 @@ public partial class Program
         var manifest = okRes?.Value as AppReleaseManifestDto;
         Assert(manifest != null, "AppReleasesController must return signed AppReleaseManifestDto.");
 
-        // 1. Valid manifest for upgrade from versionCode 1 -> 2
-        var (isValid, err) = AppUpdateService.ValidateReleaseManifest(manifest, currentVersionCode: 1);
+        // 1. Valid manifest for upgrade from versionCode 2 -> 3
+        var (isValid, err) = AppUpdateService.ValidateReleaseManifest(manifest, currentVersionCode: 2);
         Assert(isValid, $"Expected valid signed manifest, got error: {err}");
 
         // 2. Downgrade / same-version protection
-        var (sameVerValid, _) = AppUpdateService.ValidateReleaseManifest(manifest, currentVersionCode: 2);
+        var (sameVerValid, _) = AppUpdateService.ValidateReleaseManifest(manifest, currentVersionCode: 3);
         Assert(!sameVerValid, "ValidateReleaseManifest must block installing same or older versionCode.");
 
         // 3. Tampered download URL or SHA-256 rejected by ECDSA signature check
