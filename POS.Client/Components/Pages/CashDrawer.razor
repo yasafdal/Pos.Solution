@@ -55,8 +55,8 @@
             <button type="button" class="btn btn-outline-info rounded-3 px-3 py-2 fw-semibold" @onclick='() => Navigation.NavigateTo("/printer-settings")'>
                 <i class="bi bi-printer me-1"></i> Printer &amp; Drawer Setup
             </button>
-            <button type="button" class="btn btn-outline-secondary rounded-3 px-3 py-2 fw-semibold" @onclick="TriggerSyncAndReloadAsync" disabled="@isLoading">
-                <i class="bi bi-cloud-arrow-up me-1"></i> Sync &amp; Refresh
+            <button type="button" class="btn btn-outline-secondary rounded-3 px-3 py-2 fw-semibold" @onclick="TriggerSyncAndReloadAsync" disabled="@isLoading" title="Upload pending sales and refresh latest menu, prices, and settings">
+                <i class="bi bi-cloud-arrow-up me-1"></i> Update Menu &amp; Sales
             </button>
         </div>
     </div>

@@ -13,22 +13,21 @@ namespace POS.Api.Controllers;
 public class ReceiptsController(PosDbContext context, IReceiptService receipts) : ControllerBase
 {
     [HttpGet("{id:long}/receipt")]
+    [Authorize(Policy = POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy)]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<ActionResult<ReceiptDto>> GetReceipt(long id, [FromQuery] bool reprint = false)
     {
-        var owner = await context.Orders.AsNoTracking()
-            .Where(o => o.OrderId == id).Select(o => new { o.CashierId, o.TerminalId }).SingleOrDefaultAsync();
-        if (owner == null) return NotFound();
-
-        // Existing sale creation stores the JWT username, not the numeric NameIdentifier.
-        // Terminal-scoped JWT claims enforce ownership; terminal IP is not an authentication secret.
-        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && !User.IsInRole("SeniorCashier") &&
-            (string.IsNullOrWhiteSpace(User.Identity?.Name) ||
-             !string.Equals(owner.CashierId, User.Identity.Name, StringComparison.OrdinalIgnoreCase)))
+        if (!POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(User))
             return Forbid();
 
-        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && !User.IsInRole("SeniorCashier")
-            && User.FindFirst("terminal_id")?.Value != owner.TerminalId.ToString()) return Forbid();
+        var owner = await context.Orders.AsNoTracking()
+            .Where(o => o.OrderId == id).Select(o => new { o.CashierId, o.BranchId, o.TerminalId }).SingleOrDefaultAsync();
+        if (owner == null) return NotFound();
+
+        if (!POS.Shared.Constants.PosPermissions.IsAdmin(User) &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) &&
+            owner.BranchId != callerBranchId)
+            return Forbid();
         try
         {
             var receipt = await receipts.GetReceiptAsync(id, reprint);

@@ -427,10 +427,15 @@ namespace POS.Api.Controllers
             if (terminal == null || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Branch.IsActive)
                 return Unauthorized(new TerminalSessionTokenResponseDto { Success = false, Message = "Unpaired or inactive terminal." });
 
+            User? cashierUser = null;
             if (!string.IsNullOrWhiteSpace(request.CashierUsername))
             {
+                string trimmedCashier = request.CashierUsername.Trim();
+                cashierUser = await _context.Users.AsNoTracking()
+                    .FirstOrDefaultAsync(u => u.Username == trimmedCashier);
+
                 var lockStatus = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
-                    _context, terminal.TerminalId, request.CashierUsername.Trim());
+                    _context, terminal.TerminalId, trimmedCashier);
                 if (lockStatus.IsCashierRestricted)
                 {
                     return StatusCode(403, new TerminalSessionTokenResponseDto
@@ -453,16 +458,30 @@ namespace POS.Api.Controllers
             if (string.IsNullOrEmpty(jwtKey))
                 return StatusCode(500, new TerminalSessionTokenResponseDto { Success = false, Message = "JWT key not configured." });
 
+            string effectiveName = !string.IsNullOrWhiteSpace(request.CashierUsername)
+                ? (cashierUser?.Username ?? request.CashierUsername.Trim())
+                : terminal.TerminalCode;
+
             var claims = new List<Claim>
             {
-                new Claim(ClaimTypes.NameIdentifier, terminal.TerminalId.ToString()),
-                new Claim(ClaimTypes.Name, terminal.TerminalCode),
+                new Claim(ClaimTypes.NameIdentifier, cashierUser != null ? cashierUser.UserId.ToString() : terminal.TerminalId.ToString()),
+                new Claim(ClaimTypes.Name, effectiveName),
                 new Claim(ClaimTypes.Role, "Terminal"),
+                new Claim("terminal_code", terminal.TerminalCode),
                 new Claim("branch_id", terminal.BranchId.ToString()),
                 new Claim("terminal_id", terminal.TerminalId.ToString()),
                 new Claim("outlet_id", terminal.OutletId.ToString()),
                 new Claim("terminal_uuid", terminal.Uuid ?? uuid)
             };
+
+            if (!string.IsNullOrWhiteSpace(request.CashierUsername))
+            {
+                claims.Add(new Claim("cashier_username", effectiveName));
+                if (!string.IsNullOrWhiteSpace(cashierUser?.Role))
+                {
+                    claims.Add(new Claim(POS.Shared.Constants.PosPermissions.CashierRoleClaimType, cashierUser.Role));
+                }
+            }
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

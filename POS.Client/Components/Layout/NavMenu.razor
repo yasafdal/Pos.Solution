@@ -73,7 +73,14 @@
         <div class="px-3 mt-3">
             <div class="p-2.5 rounded-3 small text-secondary" style="background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(255,255,255,0.06); font-size: 0.75rem;">
                 <i class="bi bi-Layout-sidebar-inset-reverse text-info me-1"></i>
-                Daily cashier modules (<strong>Transactions</strong>, <strong>Held Sales</strong>, <strong>Reprint</strong>, <strong>Void</strong>, <strong>Cashier</strong>, and <strong>Readings</strong>) are pinned to the bottom workspace bar.
+                @if (Session.CanViewTransactionHistory)
+                {
+                    <span>Daily POS modules (<strong>Transactions</strong>, <strong>Held Sales</strong>, <strong>Reprint</strong>, <strong>Void</strong>, <strong>Cashier</strong>, and <strong>Readings</strong>) are pinned to the bottom workspace bar.</span>
+                }
+                else
+                {
+                    <span>Daily cashier modules (<strong>New Sale</strong>, <strong>Held Sales</strong>, <strong>Cashier</strong>, and <strong>Readings</strong>) are pinned to the bottom workspace bar.</span>
+                }
             </div>
         </div>
     </nav>

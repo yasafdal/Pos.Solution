@@ -204,8 +204,12 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
     }
 
     [HttpGet("{id}")]
+    [Authorize(Policy = POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<OrderResponseDto>> GetOrder(long id)
     {
+        if (!POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(User))
+            return Forbid();
+
         var order = await context.Orders
             .Include(o => o.OrderItems)
                 .ThenInclude(i => i.OrderItemModifiers)
@@ -214,9 +218,7 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
 
         if (order == null) return NotFound();
 
-        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && order.BranchId != callerBranchId)
-            return Forbid();
-        if (!User.IsInRole("Admin") && !User.IsInRole("Manager") && int.TryParse(User.FindFirst("terminal_id")?.Value, out int callerTerminalId) && order.TerminalId != callerTerminalId)
+        if (!POS.Shared.Constants.PosPermissions.IsAdmin(User) && int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) && order.BranchId != callerBranchId)
             return Forbid();
 
         return Ok(MapToDto(order));

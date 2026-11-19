@@ -752,6 +752,10 @@
                 TerminalName = localOutlet.TerminalName
             };
 
+            // Clear any prior user's bearer token before activating the new account's session
+            POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
+            Http.DefaultRequestHeaders.Authorization = null;
+
             var sessionToken = "OFFLINE-SESSION-TOKEN";
             Session.SetSession(sessionToken, localCashier.Username, localCashier.Role, outletDto);
 
@@ -881,6 +885,8 @@
                 {
                     token = outlet.Token;
                 }
+                POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
+                Http.DefaultRequestHeaders.Authorization = null;
                 Session.SetSession(token, username, role, outlet);
                 await CacheOnlineLoginAsync(pin, username, role, outlet, deviceUuid);
 

@@ -1,6 +1,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using POS.Client.Data;
+using POS.Shared.Constants;
 using POS.Shared.Models;
 
 namespace POS.Client.Services
@@ -12,6 +13,9 @@ namespace POS.Client.Services
         public string? Token { get; private set; }
         public string? Username { get; private set; }
         public string? Role { get; private set; }
+        public bool CanViewTransactionHistory => IsAuthenticated && PosPermissions.CanViewTransactionHistory(Role);
+
+        public bool HasPermission(string permission) => IsAuthenticated && PosPermissions.HasPermission(Role, permission);
 
         public event Action? OnChange;
 

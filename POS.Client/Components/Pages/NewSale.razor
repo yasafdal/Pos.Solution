@@ -1137,7 +1137,7 @@ else
                                                 </div>
                                                 <div class="pos-method-info">
                                                     <span class="pos-method-name">@pm.Name</span>
-                                                    <span class="pos-method-badge">@(pm.RequiresReference ? "Ref Required" : "Instant")</span>
+                                                    <span class="pos-method-badge">@(IsCashMethod(pm) ? "Cash Tender" : (pm.RequiresReference ? "Ref Required" : "Exact Charge"))</span>
                                                 </div>
                                                 @if (isSelected)
                                                 {
@@ -1171,7 +1171,13 @@ else
                                                         <i class="bi @GetPaymentMethodIconByCode(split.PaymentMethod) text-primary"></i>
                                                         <div>
                                                             <div class="fw-bold small text-dark">@split.PaymentMethod</div>
-                                                            @if (!string.IsNullOrEmpty(split.ReferenceNumber))
+                                                            @if (IsCashMethodCode(split.PaymentMethod))
+                                                            {
+                                                                <div class="text-muted" style="font-size: 0.7rem;">
+                                                                    Tendered: ₱@split.AmountTendered.ToString("N2") • Change: ₱@(Math.Max(0m, split.AmountTendered - split.Amount).ToString("N2"))
+                                                                </div>
+                                                            }
+                                                            else if (!string.IsNullOrEmpty(split.ReferenceNumber))
                                                             {
                                                                 <div class="text-muted" style="font-size: 0.7rem;">Ref: @split.ReferenceNumber</div>
                                                             }
@@ -1247,7 +1253,7 @@ else
                                                 var isSelected = currentSplitMethod?.Code == pm.Code;
                                                 <div class="col-6">
                                                     <button type="button" class="btn btn-sm w-100 py-2 d-flex align-items-center justify-content-center gap-2 fw-semibold @(isSelected ? "btn-primary" : "btn-outline-secondary")"
-                                                            @onclick="() => currentSplitMethod = pm">
+                                                            @onclick="() => SelectSplitPaymentMethod(pm)">
                                                         <i class="bi @GetPaymentMethodIcon(pm)"></i>
                                                         <span>@pm.Name</span>
                                                     </button>
@@ -1261,16 +1267,56 @@ else
                                             <div class="pos-tender-input-wrap">
                                                 <span class="pos-currency-symbol">₱</span>
                                                 <input type="number" min="0.01" step="0.01" inputmode="decimal" class="pos-tender-input"
-                                                       @bind="currentSplitAmount" @bind:event="oninput" />
-                                                <button type="button" class="pos-input-pill-btn" @onclick="() => currentSplitAmount = Math.Max(0m, remaining)">
+                                                       value="@currentSplitAmount"
+                                                       @oninput="OnSplitAmountInput" />
+                                                <button type="button" class="pos-input-pill-btn" @onclick="() => SetSplitAmount(Math.Max(0m, remaining))">
                                                     Max
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <!-- Reference If Required -->
-                                        @if (currentSplitMethod?.RequiresReference == true)
+                                        <!-- Conditional Cash Tendered & Change (Strictly for Cash Split Component Only) -->
+                                        @if (IsCashMethod(currentSplitMethod))
                                         {
+                                            <div class="mb-2">
+                                                <label for="split-cash-tendered" class="form-label small fw-semibold text-dark mb-1">Cash Tendered (₱)</label>
+                                                <div class="pos-tender-input-wrap">
+                                                    <span class="pos-currency-symbol">₱</span>
+                                                    <input id="split-cash-tendered" type="number" min="0" step="0.01" inputmode="decimal" class="pos-tender-input"
+                                                           @bind="cashTendered" @bind:event="oninput" placeholder="0.00" />
+                                                    <button type="button" class="pos-input-pill-btn" title="Set to Exact Split Amount"
+                                                            @onclick="() => cashTendered = currentSplitAmount">
+                                                        Exact
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                @if (cashTendered >= currentSplitAmount)
+                                                {
+                                                    <div class="pos-change-card success">
+                                                        <div>
+                                                            <div class="pos-change-label">CHANGE DUE</div>
+                                                            <small class="opacity-75">Cash split change</small>
+                                                        </div>
+                                                        <div class="pos-change-val">₱@(Math.Max(0m, cashTendered - currentSplitAmount).ToString("N2"))</div>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="pos-change-card warning">
+                                                        <div>
+                                                            <div class="pos-change-label">AMOUNT SHORT</div>
+                                                            <small class="opacity-75">Tendered is below cash split</small>
+                                                        </div>
+                                                        <div class="pos-change-val">-₱@((currentSplitAmount - cashTendered).ToString("N2"))</div>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                        else if (currentSplitMethod?.RequiresReference == true)
+                                        {
+                                            <!-- Reference If Required (Non-Cash Split Component) -->
                                             <div class="mb-3">
                                                 <label class="form-label small fw-semibold text-dark mb-1">
                                                     Reference / Approval Code <span class="text-danger">*</span>
@@ -1279,7 +1325,9 @@ else
                                             </div>
                                         }
 
-                                        <button type="button" class="btn btn-dark w-100 py-2 fw-bold d-flex align-items-center justify-content-center gap-2 rounded-3 mt-2" @onclick="AddPaymentSplit">
+                                        <button type="button" class="btn btn-dark w-100 py-2 fw-bold d-flex align-items-center justify-content-center gap-2 rounded-3 mt-2"
+                                                disabled="@(currentSplitAmount <= 0m || (IsCashMethod(currentSplitMethod) && cashTendered < currentSplitAmount))"
+                                                @onclick="AddPaymentSplit">
                                             <i class="bi bi-plus-circle"></i>
                                             <span>Add This Split</span>
                                         </button>
@@ -1296,39 +1344,9 @@ else
                                     </div>
                                 }
                             }
-                            else if (selectedPaymentMethod != null && selectedPaymentMethod.RequiresReference)
+                            else if (IsCashMethod(selectedPaymentMethod))
                             {
-                                <!-- CARD / E-WALLET / DIGITAL TENDER -->
-                                <div class="pos-action-panel">
-                                    <div class="d-flex align-items-center gap-3 p-3 bg-light rounded-3 mb-3 border">
-                                        <div class="pos-ref-icon-wrap">
-                                            <i class="bi @GetPaymentMethodIcon(selectedPaymentMethod) text-primary fs-3"></i>
-                                        </div>
-                                        <div>
-                                            <h6 class="fw-bold text-dark mb-0">@selectedPaymentMethod.Name</h6>
-                                            <div class="text-muted small">Exact charge: <strong class="text-primary">₱@currentOrderResponse.TotalAmount.ToString("N2")</strong></div>
-                                        </div>
-                                    </div>
-
-                                    <div class="mb-3">
-                                        <label for="ref-number" class="pos-section-label">
-                                            REFERENCE / APPROVAL CODE <span class="text-danger">*</span>
-                                        </label>
-                                        <div class="position-relative">
-                                            <input id="ref-number" type="text" @bind="referenceNumber" @bind:event="oninput"
-                                                   disabled="@isProcessingPayment"
-                                                   class="form-control form-control-lg fw-bold ps-3"
-                                                   placeholder="Enter terminal ref or approval code..." />
-                                        </div>
-                                        <div class="form-text small text-muted mt-2">
-                                            <i class="bi bi-info-circle me-1"></i> Check POS terminal receipt slip or customer's e-wallet success screen.
-                                        </div>
-                                    </div>
-                                </div>
-                            }
-                            else
-                            {
-                                <!-- CASH TENDER -->
+                                <!-- CASH TENDER (Strictly Rendered Only When Selected Payment Method Is CASH) -->
                                 <div class="pos-action-panel">
                                     <!-- Quick Cash Suggestions -->
                                     <div class="d-flex justify-content-between align-items-center mb-2">
@@ -1348,9 +1366,9 @@ else
                                         }
                                     </div>
 
-                                    <!-- Amount Tendered Input -->
+                                    <!-- Cash Tendered Input -->
                                     <div class="mb-2">
-                                        <label for="cash-tendered" class="pos-section-label">AMOUNT TENDERED</label>
+                                        <label for="cash-tendered" class="pos-section-label">CASH TENDERED</label>
                                         <div class="pos-tender-input-wrap">
                                             <span class="pos-currency-symbol">₱</span>
                                             <input id="cash-tendered" type="number" min="0" step="0.01" inputmode="decimal"
@@ -1401,6 +1419,39 @@ else
                                                 <small class="opacity-75">Tendered is below total</small>
                                             </div>
                                             <div class="pos-change-val">-₱@((currentOrderResponse.TotalAmount - cashTendered).ToString("N2"))</div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else if (selectedPaymentMethod != null)
+                            {
+                                <!-- NON-CASH PAYMENT (Card, GCash, Maya, Other Bank / Bank Transfer — Cash Tendered & Change Hidden) -->
+                                <div class="pos-action-panel">
+                                    <div class="d-flex align-items-center gap-3 p-3 bg-light rounded-3 @(selectedPaymentMethod.RequiresReference ? "mb-3" : "mb-0") border">
+                                        <div class="pos-ref-icon-wrap">
+                                            <i class="bi @GetPaymentMethodIcon(selectedPaymentMethod) text-primary fs-3"></i>
+                                        </div>
+                                        <div>
+                                            <h6 class="fw-bold text-dark mb-0">@selectedPaymentMethod.Name</h6>
+                                            <div class="text-muted small">Exact charge: <strong class="text-primary">₱@currentOrderResponse.TotalAmount.ToString("N2")</strong></div>
+                                        </div>
+                                    </div>
+
+                                    @if (selectedPaymentMethod.RequiresReference)
+                                    {
+                                        <div class="mb-3">
+                                            <label for="ref-number" class="pos-section-label">
+                                                REFERENCE / APPROVAL CODE <span class="text-danger">*</span>
+                                            </label>
+                                            <div class="position-relative">
+                                                <input id="ref-number" type="text" @bind="referenceNumber" @bind:event="oninput"
+                                                       disabled="@isProcessingPayment"
+                                                       class="form-control form-control-lg fw-bold ps-3"
+                                                       placeholder="Enter terminal ref or approval code..." />
+                                            </div>
+                                            <div class="form-text small text-muted mt-2">
+                                                <i class="bi bi-info-circle me-1"></i> Check POS terminal receipt slip or customer's e-wallet success screen.
+                                            </div>
                                         </div>
                                     }
                                 </div>
@@ -2863,6 +2914,12 @@ else
     private string? currentSplitRef = null;
     private PaymentMethodDto? currentSplitMethod = null;
 
+    private static bool IsCashMethod(PaymentMethodDto? pm) =>
+        pm != null && IsCashMethodCode(pm.Code);
+
+    private static bool IsCashMethodCode(string? code) =>
+        string.Equals(code?.Trim(), "CASH", StringComparison.OrdinalIgnoreCase);
+
     private void ToggleSplitPayment(bool enable)
     {
         isSplitPaymentMode = enable;
@@ -2872,8 +2929,53 @@ else
             paymentSplits.Clear();
             decimal remaining = currentOrderResponse.TotalAmount;
             currentSplitAmount = remaining;
-            currentSplitMethod = paymentMethods.FirstOrDefault(pm => pm.Code == "CASH") ?? paymentMethods.First();
+            currentSplitMethod = paymentMethods.FirstOrDefault(IsCashMethod) ?? paymentMethods.FirstOrDefault();
+            cashTendered = IsCashMethod(currentSplitMethod) ? remaining : 0m;
             currentSplitRef = string.Empty;
+        }
+        else if (!enable && currentOrderResponse != null)
+        {
+            cashTendered = IsCashMethod(selectedPaymentMethod) ? currentOrderResponse.TotalAmount : 0m;
+        }
+    }
+
+    private void SelectSplitPaymentMethod(PaymentMethodDto pm)
+    {
+        currentSplitMethod = pm;
+        paymentError = null;
+        if (IsCashMethod(pm))
+        {
+            cashTendered = currentSplitAmount;
+            currentSplitRef = string.Empty;
+        }
+        else
+        {
+            cashTendered = 0m;
+        }
+    }
+
+    private void OnSplitAmountInput(ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed >= 0m)
+        {
+            SetSplitAmount(parsed);
+        }
+        else
+        {
+            SetSplitAmount(0m);
+        }
+    }
+
+    private void SetSplitAmount(decimal amount)
+    {
+        currentSplitAmount = amount;
+        if (IsCashMethod(currentSplitMethod))
+        {
+            cashTendered = amount;
+        }
+        else
+        {
+            cashTendered = 0m;
         }
     }
 
@@ -2892,7 +2994,13 @@ else
             paymentError = $"Split amount (₱{currentSplitAmount:N2}) exceeds remaining balance (₱{remaining:N2}).";
             return;
         }
-        if (currentSplitMethod.RequiresReference && string.IsNullOrWhiteSpace(currentSplitRef))
+        bool isCashSplit = IsCashMethod(currentSplitMethod);
+        if (isCashSplit && cashTendered < currentSplitAmount)
+        {
+            paymentError = $"Cash tendered (₱{cashTendered:N2}) is less than cash split amount (₱{currentSplitAmount:N2}).";
+            return;
+        }
+        if (!isCashSplit && currentSplitMethod.RequiresReference && string.IsNullOrWhiteSpace(currentSplitRef))
         {
             paymentError = $"Reference number required for {currentSplitMethod.Name}.";
             return;
@@ -2902,16 +3010,16 @@ else
         {
             PaymentMethod = currentSplitMethod.Code,
             Amount = currentSplitAmount,
-            AmountTendered = currentSplitMethod.Code == "CASH" ? Math.Max(currentSplitAmount, cashTendered) : currentSplitAmount,
-            ReferenceNumber = string.IsNullOrWhiteSpace(currentSplitRef) ? null : currentSplitRef.Trim()
+            AmountTendered = isCashSplit ? cashTendered : currentSplitAmount,
+            ReferenceNumber = isCashSplit || string.IsNullOrWhiteSpace(currentSplitRef) ? null : currentSplitRef.Trim()
         });
 
         paymentError = null;
         currentSplitRef = string.Empty;
         decimal newRemaining = currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount);
         currentSplitAmount = Math.Max(0m, newRemaining);
-        cashTendered = currentSplitAmount;
-        currentSplitMethod = paymentMethods.FirstOrDefault(pm => pm.Code == "CASH") ?? paymentMethods.First();
+        currentSplitMethod = paymentMethods.FirstOrDefault(IsCashMethod) ?? paymentMethods.FirstOrDefault();
+        cashTendered = IsCashMethod(currentSplitMethod) ? currentSplitAmount : 0m;
     }
 
     private void RemovePaymentSplit(int index)
@@ -2923,7 +3031,7 @@ else
             {
                 decimal newRemaining = currentOrderResponse.TotalAmount - paymentSplits.Sum(s => s.Amount);
                 currentSplitAmount = Math.Max(0m, newRemaining);
-                cashTendered = currentSplitAmount;
+                cashTendered = IsCashMethod(currentSplitMethod) ? currentSplitAmount : 0m;
             }
             paymentError = null;
         }
@@ -3325,12 +3433,12 @@ else
             }
 
             currentOrderResponse = order;
-            cashTendered = order.TotalAmount;
             referenceNumber = string.Empty;
             if (paymentMethods.Any())
             {
-                selectedPaymentMethod = paymentMethods.FirstOrDefault(pm => pm.Code == "CASH") ?? paymentMethods.First();
+                selectedPaymentMethod = paymentMethods.FirstOrDefault(IsCashMethod) ?? paymentMethods.First();
             }
+            cashTendered = IsCashMethod(selectedPaymentMethod) ? order.TotalAmount : 0m;
             isPaymentModalOpen = true;
         }
         catch (Exception ex)
@@ -3396,13 +3504,14 @@ else
             {
                 if (selectedPaymentMethod == null) return;
                 string methodCode = selectedPaymentMethod.Code;
-                if (methodCode == "CASH" && cashTendered < currentOrderResponse.TotalAmount)
+                bool isCash = IsCashMethod(selectedPaymentMethod);
+                if (isCash && cashTendered < currentOrderResponse.TotalAmount)
                 {
                     paymentError = $"Amount tendered (₱{cashTendered:N2}) is less than total amount (₱{currentOrderResponse.TotalAmount:N2}).";
                     return;
                 }
 
-                if (selectedPaymentMethod.RequiresReference && string.IsNullOrWhiteSpace(referenceNumber))
+                if (!isCash && selectedPaymentMethod.RequiresReference && string.IsNullOrWhiteSpace(referenceNumber))
                 {
                     paymentError = $"Reference number / approval code is required for {selectedPaymentMethod.Name}.";
                     return;
@@ -3413,8 +3522,8 @@ else
                     OrderId = currentOrderResponse.OrderId,
                     PaymentMethod = methodCode,
                     Amount = currentOrderResponse.TotalAmount,
-                    AmountTendered = methodCode == "CASH" ? cashTendered : currentOrderResponse.TotalAmount,
-                    ReferenceNumber = string.IsNullOrWhiteSpace(referenceNumber) ? null : referenceNumber.Trim(),
+                    AmountTendered = isCash ? cashTendered : currentOrderResponse.TotalAmount,
+                    ReferenceNumber = isCash || string.IsNullOrWhiteSpace(referenceNumber) ? null : referenceNumber.Trim(),
                     ProcessedBy = cashierUsername,
                     CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
                     CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
@@ -3424,6 +3533,7 @@ else
             }
 
             var saleMethod = selectedPaymentMethod?.Code ?? "CASH";
+            bool isCashSaleMethod = IsCashMethodCode(saleMethod);
 
             var saleCreateDto = new OrderCreateDto
             {
@@ -3470,12 +3580,12 @@ else
                 }).ToList()
             };
 
-            decimal tenderAmount = saleMethod == "CASH" ? cashTendered : currentOrderResponse.TotalAmount;
+            decimal tenderAmount = isCashSaleMethod ? cashTendered : currentOrderResponse.TotalAmount;
             var checkoutResult = await OfflineCheckoutService.ProcessSaleAsync(
                 saleCreateDto,
                 tenderAmount,
                 saleMethod,
-                referenceNumber,
+                isCashSaleMethod ? null : referenceNumber,
                 cashierUsername);
 
             if (!checkoutResult.Success)
@@ -3747,15 +3857,20 @@ else
     {
         selectedPaymentMethod = pm;
         paymentError = null;
-        if (pm.Code == "CASH" && currentOrderResponse != null)
+        if (IsCashMethod(pm) && currentOrderResponse != null)
         {
             cashTendered = currentOrderResponse.TotalAmount;
+            referenceNumber = string.Empty;
+        }
+        else
+        {
+            cashTendered = 0m;
         }
     }
 
     private void AddCashBill(decimal bill)
     {
-        if (currentOrderResponse == null) return;
+        if (currentOrderResponse == null || !IsCashMethod(selectedPaymentMethod)) return;
         if (cashTendered == currentOrderResponse.TotalAmount)
         {
             cashTendered = bill;
@@ -3774,8 +3889,9 @@ else
             return Math.Abs(paymentSplits.Sum(s => s.Amount) - currentOrderResponse.TotalAmount) > 0.01m;
         }
         if (selectedPaymentMethod == null) return true;
-        if (selectedPaymentMethod.RequiresReference && string.IsNullOrWhiteSpace(referenceNumber)) return true;
-        if (selectedPaymentMethod.Code == "CASH" && cashTendered < currentOrderResponse.TotalAmount) return true;
+        bool isCash = IsCashMethod(selectedPaymentMethod);
+        if (!isCash && selectedPaymentMethod.RequiresReference && string.IsNullOrWhiteSpace(referenceNumber)) return true;
+        if (isCash && cashTendered < currentOrderResponse.TotalAmount) return true;
         return false;
     }
 
@@ -3799,6 +3915,7 @@ else
             var createDto = new HeldSaleCreateDto
             {
                 BranchId = Session.Terminal?.BranchId ?? 1,
+                OutletId = Session.Terminal?.OutletId ?? 1,
                 TerminalId = Session.Terminal?.TerminalId ?? 1,
                 CashierId = Session.Username ?? "cashier",
                 CustomerName = string.IsNullOrWhiteSpace(noteResult.Value) ? "Walk-in" : noteResult.Value.Trim(),
@@ -3817,14 +3934,19 @@ else
                     BasePrice = ci.BasePrice,
                     LineTotal = ci.LineTotal,
                     PricingMethod = ci.PricingMethod,
+                    UnitOfMeasure = ci.UnitOfMeasure,
                     TargetAmount = ci.TargetAmount,
                     IsComplimentary = ci.IsComplimentary,
                     ParentProductId = ci.ParentProductId,
+                    IsKitchenItem = ci.IsKitchenItem,
+                    IsBarItem = ci.IsBarItem,
                     TaxName = ci.TaxName ?? "VATable",
                     SpecialInstructions = ci.SpecialInstructions,
                     Modifiers = ci.SelectedModifiers?.Select(m => new HeldSaleModifierDto
                     {
                         ModifierOptionId = m.ModifierOptionId,
+                        ProductId = m.ProductId,
+                        ProductName = m.ProductName,
                         ModifierName = m.Name,
                         AdditionalPrice = m.Price
                     }).ToList() ?? new()
@@ -3835,6 +3957,10 @@ else
             if (held != null)
             {
                 Cart.Clear();
+                if (Layout != null)
+                {
+                    await Layout.RefreshHeldCountAsync();
+                }
                 await Swal.FireAsync("Sale Held!", $"Transaction successfully parked as {held.HoldReference}.", SweetAlertIcon.Success);
                 Navigation.NavigateTo("/held-sales");
             }

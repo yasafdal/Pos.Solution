@@ -23,6 +23,8 @@
     <Compile Include="../POS.Client/Data/LocalDatabaseBackupService.cs" Link="LocalDatabaseBackupService.cs" />
     <Compile Include="../POS.Client/Data/LocalDatabaseMigrator.cs" Link="LocalDatabaseMigrator.cs" />
     <Compile Include="../POS.Client/Services/AppUpdateService.cs" Link="AppUpdateService.cs" />
+    <Compile Include="../POS.Client/Services/ClientHeldSaleService.cs" Link="ClientHeldSaleService.cs" />
+    <Compile Include="../POS.Client/Services/ClientTransactionService.cs" Link="ClientTransactionService.cs" />
     <Compile Include="../POS.Client/Services/PosSessionService.cs" Link="PosSessionService.cs" />
     <Compile Include="../POS.Client/Services/CartService.cs" Link="CartService.cs" />
     <Compile Include="../POS.Client/Services/ClientLicenseService.cs" Link="ClientLicenseService.cs" />

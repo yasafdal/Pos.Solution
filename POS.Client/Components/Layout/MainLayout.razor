@@ -44,7 +44,7 @@
                 @if (_pendingCount > 0 || _uploadingCount > 0)
                 {
                     <span class="badge bg-primary text-white d-inline-flex align-items-center gap-1 py-1 px-2" title="@(_pendingCount + _uploadingCount) transaction(s) pending sync">
-                        <i class="bi bi-arrow-repeat @(_isSyncing || _uploadingCount > 0 ? "spinner-border spinner-border-sm" : "")"></i> @(_pendingCount + _uploadingCount) pending
+                        <i class="bi bi-arrow-repeat @(_uploadingCount > 0 ? "spinner-border spinner-border-sm" : "")"></i> @(_pendingCount + _uploadingCount) pending
                     </span>
                 }
                 else if (_failedCount > 0)
@@ -59,14 +59,6 @@
                         <i class="bi bi-check2-all text-success"></i> <span class="d-none d-sm-inline">Synced</span>
                     </span>
                 }
-
-                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 d-inline-flex align-items-center gap-1 text-white border-secondary"
-                        disabled="@_isSyncing"
-                        @onclick="TriggerSyncNowAsync"
-                        title="Synchronize catalog and pending transactions immediately">
-                    <i class="bi bi-arrow-clockwise @(_isSyncing ? "spinner-border spinner-border-sm" : "")"></i>
-                    <span class="d-none d-md-inline">Sync Now</span>
-                </button>
             </div>
 
             <div class="d-flex align-items-center gap-2">
@@ -170,13 +162,16 @@
                 <span class="workspace-nav-label">New Sale</span>
             </button>
 
-            <button type="button"
-                    class="workspace-nav-btn @(IsTransactionsAllActive ? "active" : "")"
-                    @onclick='() => NavigateWorkspace("/transactions")'
-                    title="Transaction History">
-                <i class="bi bi-receipt workspace-nav-icon"></i>
-                <span class="workspace-nav-label">Transactions</span>
-            </button>
+            @if (Session.CanViewTransactionHistory)
+            {
+                <button type="button"
+                        class="workspace-nav-btn @(IsTransactionsAllActive ? "active" : "")"
+                        @onclick='() => NavigateWorkspace("/transactions")'
+                        title="Transaction History">
+                    <i class="bi bi-receipt workspace-nav-icon"></i>
+                    <span class="workspace-nav-label">Transactions</span>
+                </button>
+            }
 
             <button type="button"
                     class="workspace-nav-btn @(IsHeldSalesActive ? "active" : "")"
@@ -192,21 +187,24 @@
                 <span class="workspace-nav-label">Held Sales</span>
             </button>
 
-            <button type="button"
-                    class="workspace-nav-btn @(IsReprintActive ? "active" : "")"
-                    @onclick='() => NavigateWorkspace("/transactions?mode=reprint")'
-                    title="Find and Reprint Receipts">
-                <i class="bi bi-printer-fill workspace-nav-icon"></i>
-                <span class="workspace-nav-label">Reprint</span>
-            </button>
+            @if (Session.CanViewTransactionHistory)
+            {
+                <button type="button"
+                        class="workspace-nav-btn @(IsReprintActive ? "active" : "")"
+                        @onclick='() => NavigateWorkspace("/transactions?mode=reprint")'
+                        title="Find and Reprint Receipts">
+                    <i class="bi bi-printer-fill workspace-nav-icon"></i>
+                    <span class="workspace-nav-label">Reprint</span>
+                </button>
 
-            <button type="button"
-                    class="workspace-nav-btn workspace-nav-btn-danger @(IsVoidActive ? "active" : "")"
-                    @onclick='() => NavigateWorkspace("/transactions?mode=void")'
-                    title="Void Transaction (Supervisor PIN Required)">
-                <i class="bi bi-x-circle-fill workspace-nav-icon"></i>
-                <span class="workspace-nav-label">Void</span>
-            </button>
+                <button type="button"
+                        class="workspace-nav-btn workspace-nav-btn-danger @(IsVoidActive ? "active" : "")"
+                        @onclick='() => NavigateWorkspace("/transactions?mode=void")'
+                        title="Void Transaction (Supervisor PIN Required)">
+                    <i class="bi bi-x-circle-fill workspace-nav-icon"></i>
+                    <span class="workspace-nav-label">Void</span>
+                </button>
+            }
 
             <button type="button"
                     class="workspace-nav-btn @(IsCashierActive ? "active" : "")"
@@ -235,88 +233,12 @@
     private int _uploadingCount = 0;
     private int _failedCount = 0;
     private string? _lastFailedError = null;
-    private bool _isSyncing = false;
     private DateTime? _lastSyncTime;
     private POS.Shared.Models.LicenseEvaluationResultDto? _licenseEvaluation;
     private System.Threading.Timer? _statusTimer;
 
     public TerminalConnectivityState ConnectivityState => _connectivityState;
     public int PendingCount => _pendingCount;
-
-    private async Task TriggerSyncNowAsync()
-    {
-        if (_isSyncing) return;
-        _isSyncing = true;
-        StateHasChanged();
-        try
-        {
-            _connectivityState = await ConnectivityService.CheckConnectivityAsync();
-            if (_connectivityState != TerminalConnectivityState.OnlineAndHealthy)
-            {
-                var serverUrl = Http.BaseAddress?.ToString().TrimEnd('/') ?? "server";
-                await Swal.FireAsync(new SweetAlertOptions
-                {
-                    Toast = true,
-                    Position = SweetAlertPosition.TopEnd,
-                    ShowConfirmButton = false,
-                    Timer = 4000,
-                    Icon = SweetAlertIcon.Warning,
-                    Title = $"Server unreachable ({serverUrl}). Verify POS.Api is running."
-                });
-                return;
-            }
-
-            var success = await BackgroundSyncService.TriggerManualSyncAsync();
-            if (Session.Terminal != null)
-            {
-                await LicenseService.ValidateOnlineAsync(Http, Session.Terminal.TerminalId, force: true);
-            }
-            await Session.RefreshCachedMenuDisplayModeAsync();
-            await CheckStatusAsync();
-
-            if (success)
-            {
-                await Swal.FireAsync(new SweetAlertOptions
-                {
-                    Toast = true,
-                    Position = SweetAlertPosition.TopEnd,
-                    ShowConfirmButton = false,
-                    Timer = 3000,
-                    Icon = SweetAlertIcon.Success,
-                    Title = "Sync completed! Catalog and reference data updated."
-                });
-            }
-            else
-            {
-                await Swal.FireAsync(new SweetAlertOptions
-                {
-                    Toast = true,
-                    Position = SweetAlertPosition.TopEnd,
-                    ShowConfirmButton = false,
-                    Timer = 4000,
-                    Icon = SweetAlertIcon.Warning,
-                    Title = "Sync could not be completed. Check server connection."
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            await Swal.FireAsync(new SweetAlertOptions
-            {
-                Toast = true,
-                Position = SweetAlertPosition.TopEnd,
-                ShowConfirmButton = false,
-                Timer = 4000,
-                Icon = SweetAlertIcon.Error,
-                Title = $"Sync error: {ex.Message}"
-            });
-        }
-        finally
-        {
-            _isSyncing = false;
-            StateHasChanged();
-        }
-    }
 
     private int _heldCount = 0;
 
@@ -373,10 +295,17 @@
     private void NavigateWorkspace(string targetUrl)
     {
         isNavVisible = false;
+        if (!Session.CanViewTransactionHistory &&
+            targetUrl.TrimStart('/').StartsWith("transactions", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
         Navigation.NavigateTo(targetUrl);
     }
 
     private void OnCartStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnSessionStateChanged() => _ = InvokeAsync(StateHasChanged);
 
     private void OnReferenceSyncCompleted() => _ = InvokeAsync(async () =>
     {
@@ -386,13 +315,13 @@
 
     private void OnTransactionSyncStateChanged() => _ = InvokeAsync(CheckStatusAsync);
 
-    private async Task RefreshHeldCountAsync()
+    public async Task RefreshHeldCountAsync()
     {
-        if (!Session.IsAuthenticated || Session.Terminal == null || _connectivityState != TerminalConnectivityState.OnlineAndHealthy)
+        if (!Session.IsAuthenticated || Session.Terminal == null)
             return;
         try
         {
-            var held = await HeldSaleService.GetHeldSalesAsync(null, Session.Terminal.TerminalId);
+            var held = await HeldSaleService.GetHeldSalesAsync(Session.Terminal.BranchId, Session.Terminal.TerminalId, Session.Terminal.OutletId);
             _heldCount = held?.Count ?? 0;
         }
         catch { }
@@ -418,6 +347,7 @@
     {
         Navigation.LocationChanged += OnLocationChanged;
         Cart.OnChange += OnCartStateChanged;
+        Session.OnChange += OnSessionStateChanged;
         ReferenceDataSync.OnSyncCompleted += OnReferenceSyncCompleted;
         TransactionSyncService.OnSyncStateChanged += OnTransactionSyncStateChanged;
         try
@@ -517,6 +447,7 @@
     {
         Navigation.LocationChanged -= OnLocationChanged;
         Cart.OnChange -= OnCartStateChanged;
+        Session.OnChange -= OnSessionStateChanged;
         ReferenceDataSync.OnSyncCompleted -= OnReferenceSyncCompleted;
         TransactionSyncService.OnSyncStateChanged -= OnTransactionSyncStateChanged;
         _statusTimer?.Dispose();

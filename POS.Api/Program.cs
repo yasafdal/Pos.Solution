@@ -51,6 +51,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(ctx.User)));
+});
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {

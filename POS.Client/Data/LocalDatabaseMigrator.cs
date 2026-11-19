@@ -310,6 +310,14 @@ public static class LocalDatabaseMigrator
                 CreatedAt TEXT NOT NULL,
                 ResumedAt TEXT NULL
             );");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "BranchId", "INTEGER NOT NULL DEFAULT 1");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "TerminalId", "INTEGER NOT NULL DEFAULT 1");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "CashierId", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "HoldReference", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "Status", "TEXT NOT NULL DEFAULT 'HELD'");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "PayloadJson", "TEXT NOT NULL DEFAULT '{}'");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "CreatedAt", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "ResumedAt", "TEXT NULL");
 
         ExecuteNonQuery(conn, tx, @"
             CREATE TABLE IF NOT EXISTS LocalCashiers (

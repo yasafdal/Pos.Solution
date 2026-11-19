@@ -139,13 +139,17 @@ public class ReturnsController(PosDbContext context) : ControllerBase
     }
 
     [HttpGet("voids")]
+    [Authorize(Policy = POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<IEnumerable<VoidResponseDto>>> GetVoids(
         [FromQuery] int? branchId,
         [FromQuery] int? terminalId,
         CancellationToken cancellationToken = default,
         [FromQuery] int? outletId = null)
     {
-        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        if (!POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(User))
+            return Forbid();
+
+        if (!POS.Shared.Constants.PosPermissions.IsAdmin(User) && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
         {
             if (branchId.HasValue && branchId.Value != claimBranchId)
                 return Forbid();
@@ -222,13 +226,17 @@ public class ReturnsController(PosDbContext context) : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Policy = POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<IEnumerable<ReturnResponseDto>>> GetReturns(
         [FromQuery] int? branchId,
         [FromQuery] int? terminalId,
         CancellationToken cancellationToken = default,
         [FromQuery] int? outletId = null)
     {
-        if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
+        if (!POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(User))
+            return Forbid();
+
+        if (!POS.Shared.Constants.PosPermissions.IsAdmin(User) && int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId))
         {
             if (branchId.HasValue && branchId.Value != claimBranchId)
                 return Forbid();
@@ -316,14 +324,23 @@ public class ReturnsController(PosDbContext context) : ControllerBase
     }
 
     [HttpGet("{id:long}")]
+    [Authorize(Policy = POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<ReturnResponseDto>> GetReturnById(long id, CancellationToken cancellationToken = default)
     {
+        if (!POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(User))
+            return Forbid();
+
         var r = await context.SalesReturns
             .AsNoTracking()
             .Include(r => r.ReturnItems)
             .SingleOrDefaultAsync(r => r.ReturnId == id, cancellationToken);
 
         if (r == null) return NotFound();
+
+        if (!POS.Shared.Constants.PosPermissions.IsAdmin(User) &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) &&
+            r.BranchId != claimBranchId)
+            return Forbid();
 
         var orderItems = await context.OrderItems
             .AsNoTracking()

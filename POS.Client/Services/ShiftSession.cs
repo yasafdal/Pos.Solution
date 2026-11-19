@@ -767,15 +767,8 @@ public static class ShiftSession
         };
     }
 
-    public static bool IsSupervisorRole(string? role)
-    {
-        if (string.IsNullOrWhiteSpace(role)) return false;
-        var clean = role.Trim();
-        return clean.Equals("Admin", StringComparison.OrdinalIgnoreCase) ||
-               clean.Equals("Manager", StringComparison.OrdinalIgnoreCase) ||
-               clean.Equals("Senior Cashier", StringComparison.OrdinalIgnoreCase) ||
-               clean.Equals("SeniorCashier", StringComparison.OrdinalIgnoreCase);
-    }
+    public static bool IsSupervisorRole(string? role) =>
+        POS.Shared.Constants.PosPermissions.IsSupervisorRole(role);
 
     public static CashDrawerShiftDto RedactForCashier(CashDrawerShiftDto dto)
     {

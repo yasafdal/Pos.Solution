@@ -183,9 +183,21 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                         await transaction.RollbackAsync();
                         return new OfflineCheckoutResultDto { Success = false, ErrorMessage = $"Split payment amounts (₱{splitSum:N2}) must equal total payable (₱{totalAmount:N2})." };
                     }
-                    tendered = createDto.Splits.Sum(s => s.AmountTendered > 0m ? s.AmountTendered : s.Amount);
+                    foreach (var s in createDto.Splits!)
+                    {
+                        bool isCashSplit = string.Equals(s.PaymentMethod?.Trim(), "CASH", StringComparison.OrdinalIgnoreCase);
+                        if (isCashSplit && s.AmountTendered > 0m && s.AmountTendered < s.Amount)
+                        {
+                            await transaction.RollbackAsync();
+                            return new OfflineCheckoutResultDto { Success = false, ErrorMessage = $"Insufficient cash tendered (₱{s.AmountTendered:N2}) for cash split (₱{s.Amount:N2})." };
+                        }
+                    }
+                    tendered = createDto.Splits.Sum(s =>
+                        string.Equals(s.PaymentMethod?.Trim(), "CASH", StringComparison.OrdinalIgnoreCase)
+                            ? (s.AmountTendered > 0m ? s.AmountTendered : s.Amount)
+                            : s.Amount);
                     changeAmount = Math.Max(0m, createDto.Splits
-                        .Where(s => string.Equals(s.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
+                        .Where(s => string.Equals(s.PaymentMethod?.Trim(), "CASH", StringComparison.OrdinalIgnoreCase))
                         .Sum(s => Math.Max(0m, (s.AmountTendered > 0m ? s.AmountTendered : s.Amount) - s.Amount)));
                 }
                 else
@@ -355,9 +367,13 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     foreach (var split in createDto.Splits!)
                     {
                         string splitMethod = string.IsNullOrWhiteSpace(split.PaymentMethod) ? "CASH" : split.PaymentMethod.Trim().ToUpperInvariant();
-                        decimal splitTendered = splitMethod == "CASH" ? (split.AmountTendered > 0m ? split.AmountTendered : split.Amount) : split.Amount;
-                        decimal splitChange = splitMethod == "CASH" ? Math.Max(0m, splitTendered - split.Amount) : 0m;
-                        string? splitRef = string.IsNullOrWhiteSpace(split.ReferenceNumber) ? null : split.ReferenceNumber.Trim();
+                        bool isCashSplit = splitMethod == "CASH";
+                        decimal splitTendered = isCashSplit ? (split.AmountTendered > 0m ? split.AmountTendered : split.Amount) : split.Amount;
+                        decimal splitChange = isCashSplit ? Math.Max(0m, splitTendered - split.Amount) : 0m;
+                        string? splitRef = isCashSplit || string.IsNullOrWhiteSpace(split.ReferenceNumber) ? null : split.ReferenceNumber.Trim();
+                        split.PaymentMethod = splitMethod;
+                        split.AmountTendered = splitTendered;
+                        split.ReferenceNumber = splitRef;
                         db.Payments.Add(new LocalPayment
                         {
                             OrderId = localTransactionId,

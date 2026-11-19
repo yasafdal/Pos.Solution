@@ -1,21 +1,47 @@
 @page "/transactions"
 @inject PosSessionService Session
 @inject NavigationManager Navigation
-@inject ITransactionService TransactionService
+@inject POS.Client.Services.IClientTransactionHistoryService TransactionService
 @inject IReceiptPrinter ReceiptPrinter
 @inject SweetAlertService Swal
 @inject IUserService UserService
 @inject HttpClient Http
 @inject POS.Client.Services.IPosConnectivityService ConnectivityService
+@inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
+@inject POS.Client.Services.IOfflineTransactionSyncService TransactionSyncService
+@using POS.Shared.Constants
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
 @using POS.Shared.Services
 @using POS.Client.Data
 @using Microsoft.EntityFrameworkCore
+@implements IDisposable
 
 @if (!Session.IsAuthenticated)
 {
-    Navigation.NavigateTo("/login");
+    <div class="p-4 text-center text-muted">
+        <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+        Redirecting to login...
+    </div>
+}
+else if (!Session.CanViewTransactionHistory)
+{
+    <div class="p-4">
+        <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 rounded-4 p-4" role="alert">
+            <div>
+                <h5 class="fw-bold mb-1"><i class="bi bi-shield-lock-fill me-2"></i>Access Restricted</h5>
+                <div class="small">Transaction History is restricted to authorized supervisory roles (Admin, Manager, or Senior Cashier).</div>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-primary fw-bold rounded-3 px-4 py-2" @onclick='() => Navigation.NavigateTo("/new-sale", replace: true)'>
+                    <i class="bi bi-cart-fill me-1"></i> Go to New Sale
+                </button>
+                <button type="button" class="btn btn-outline-dark fw-semibold rounded-3 px-3 py-2" @onclick='() => Navigation.NavigateTo("/", replace: true)'>
+                    Dashboard
+                </button>
+            </div>
+        </div>
+    </div>
 }
 else
 {
@@ -442,8 +468,65 @@ else
         return baseDate.AddHours(4);
     }
 
+    protected override void OnInitialized()
+    {
+        if (!Session.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/login", replace: true);
+            return;
+        }
+
+        if (!Session.CanViewTransactionHistory)
+        {
+            transactions = new();
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        TransactionSyncService.OnSyncStateChanged += HandleBackgroundSyncOrConnectivityChanged;
+        ConnectivityService.ConnectivityChanged += HandleConnectivityChanged;
+    }
+
+    private void HandleConnectivityChanged(object? sender, POS.Client.Services.TerminalConnectivityState state) =>
+        HandleBackgroundSyncOrConnectivityChanged();
+
+    private void HandleBackgroundSyncOrConnectivityChanged()
+    {
+        if (!Session.IsAuthenticated || !Session.CanViewTransactionHistory)
+            return;
+
+        _ = InvokeAsync(async () =>
+        {
+            await LoadTransactions();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        TransactionSyncService.OnSyncStateChanged -= HandleBackgroundSyncOrConnectivityChanged;
+        ConnectivityService.ConnectivityChanged -= HandleConnectivityChanged;
+    }
+
     protected override async Task OnParametersSetAsync()
     {
+        if (!Session.IsAuthenticated)
+        {
+            transactions = new();
+            Navigation.NavigateTo("/login", replace: true);
+            return;
+        }
+
+        if (!Session.CanViewTransactionHistory)
+        {
+            transactions = new();
+            isDetailModalOpen = false;
+            isVoidModalOpen = false;
+            isReturnModalOpen = false;
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
         var targetMode = string.IsNullOrWhiteSpace(Mode) ? "all" : Mode.Trim().ToLowerInvariant();
         if (targetMode != "reprint" && targetMode != "void")
         {
@@ -464,11 +547,12 @@ else
 
     private void SetWorkspaceMode(string mode)
     {
+        if (!Session.CanViewTransactionHistory) return;
         var url = mode == "all" ? "/transactions" : $"/transactions?mode={mode}";
         Navigation.NavigateTo(url);
     }
 
-    // Cashier scope is fixed: this terminal's branch + outlet, current business day only (4:00 AM cutoff).
+    // Terminal scope is fixed: this terminal's branch + terminal, current business day only (4:00 AM cutoff).
     // The user-editable filter fields (invoice #, status) never override it.
     private void ApplyTerminalScope()
     {
@@ -486,6 +570,12 @@ else
     {
         loadError = null;
         isOfflineMode = false;
+        if (!Session.IsAuthenticated || !Session.CanViewTransactionHistory)
+        {
+            transactions = new();
+            return;
+        }
+
         if (Session.Terminal == null)
         {
             // Without an outlet the query would be unscoped and return every terminal's sales.
@@ -511,7 +601,24 @@ else
         {
             try
             {
-                transactions = await TransactionService.GetTransactionsAsync(filter);
+                await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+                try
+                {
+                    using var checkDb = new POS.Client.Data.LocalPosDbContext();
+                    checkDb.InitializeDatabase();
+                    if (await checkDb.SyncOutboxes.AsNoTracking().AnyAsync(o => o.Status == "PENDING" || o.Status == "RETRY_PENDING"))
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try { await BackgroundSyncService.TriggerManualSyncAsync(); } catch { }
+                        });
+                    }
+                }
+                catch { }
+
+                var onlineList = await TransactionService.GetTransactionsAsync(filter) ?? new();
+                var localList = await QueryLocalTransactionsAsync();
+                transactions = MergeOnlineAndLocalTransactions(onlineList, localList);
                 return;
             }
             catch (Exception ex)
@@ -523,108 +630,49 @@ else
         await LoadLocalTransactionsAsync();
     }
 
+    private static List<OrderResponseDto> MergeOnlineAndLocalTransactions(
+        List<OrderResponseDto> onlineList,
+        List<OrderResponseDto> localList)
+    {
+        var merged = new List<OrderResponseDto>(onlineList);
+        var seenInvoices = new HashSet<string>(
+            onlineList.Where(o => !string.IsNullOrWhiteSpace(o.InvoiceNumber)).Select(o => o.InvoiceNumber!.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+        var seenOrderNumbers = new HashSet<string>(
+            onlineList.Where(o => !string.IsNullOrWhiteSpace(o.OrderNumber)).Select(o => o.OrderNumber.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var localTx in localList)
+        {
+            bool existsOnline =
+                (!string.IsNullOrWhiteSpace(localTx.InvoiceNumber) && seenInvoices.Contains(localTx.InvoiceNumber.Trim())) ||
+                (!string.IsNullOrWhiteSpace(localTx.OrderNumber) && seenOrderNumbers.Contains(localTx.OrderNumber.Trim()));
+
+            if (!existsOnline)
+            {
+                merged.Add(localTx);
+            }
+        }
+
+        return merged
+            .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.OrderId)
+            .Take(100)
+            .ToList();
+    }
+
     private async Task LoadLocalTransactionsAsync()
     {
+        if (!Session.IsAuthenticated || !Session.CanViewTransactionHistory)
+        {
+            transactions = new();
+            return;
+        }
+
         try
         {
             isOfflineMode = true;
-            using var db = new POS.Client.Data.LocalPosDbContext();
-            db.InitializeDatabase();
-
-            var startLocal = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDayStartLocal();
-            var targetTerminalId = Session.Terminal!.TerminalId;
-            var targetCashier = Session.Username;
-            bool isSupervisor = Session.Role == "Admin" || Session.Role == "Manager" || Session.Role == "SeniorCashier";
-
-            var query = db.Orders.AsNoTracking()
-                .Where(o => o.TerminalId == targetTerminalId && o.CreatedAt >= startLocal);
-
-            if (!isSupervisor && !string.IsNullOrWhiteSpace(targetCashier))
-            {
-                query = query.Where(o => o.CashierId == targetCashier);
-            }
-
-            if (!string.IsNullOrWhiteSpace(filter.InvoiceNumber))
-            {
-                query = query.Where(o => o.InvoiceNumber.Contains(filter.InvoiceNumber));
-            }
-
-            if (!string.IsNullOrWhiteSpace(filter.PaymentStatus))
-            {
-                query = query.Where(o => o.PaymentStatus == filter.PaymentStatus);
-            }
-
-            var localOrders = await query
-                .OrderByDescending(o => o.CreatedAt)
-                .Take(100)
-                .ToListAsync();
-
-            var orderGuids = localOrders.Select(o => o.OrderId).ToList();
-            var localItems = await db.OrderItems.AsNoTracking()
-                .Where(i => orderGuids.Contains(i.OrderId))
-                .OrderBy(i => i.OrderItemId)
-                .ToListAsync();
-            var localPayments = await db.Payments.AsNoTracking()
-                .Where(p => orderGuids.Contains(p.OrderId))
-                .ToListAsync();
-            var productMetadata = await OfflineCheckoutService.LoadLocalProductMetadataAsync(
-                db,
-                localItems.Select(i => i.ProductId));
-
-            var mappedList = new List<OrderResponseDto>();
-            long syntheticId = 1;
-            foreach (var lo in localOrders)
-            {
-                var dto = new OrderResponseDto
-                {
-                    OrderId = syntheticId++,
-                    OrderNumber = !string.IsNullOrWhiteSpace(lo.OrderNumber) ? lo.OrderNumber : lo.InvoiceNumber,
-                    InvoiceNumber = lo.InvoiceNumber,
-                    BranchId = lo.BranchId,
-                    TerminalId = lo.TerminalId,
-                    CashierId = lo.CashierId,
-                    OrderType = lo.OrderType,
-                    TableNumber = lo.TableNumber,
-                    HeadCount = lo.HeadCount,
-                    OrderStatus = lo.OrderStatus,
-                    PaymentStatus = lo.PaymentStatus,
-                    Subtotal = lo.Subtotal,
-                    DiscountAmount = lo.DiscountAmount,
-                    DiscountCode = lo.DiscountCode,
-                    CustomerName = lo.CustomerName,
-                    CustomerAddress = lo.CustomerAddress,
-                    CustomerTin = lo.CustomerTin,
-                    CustomerBusinessStyle = lo.CustomerBusinessStyle,
-                    TotalAmount = lo.TotalAmount,
-                    VatableSales = lo.VatableSales,
-                    VatExemptSales = lo.VatExemptSales,
-                    ZeroRatedSales = lo.ZeroRatedSales,
-                    VatAmount = lo.VatAmount,
-                    CreatedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(lo.CreatedAt),
-                    TransactionTimestamp = new DateTimeOffset(
-                        POS.Shared.Services.BusinessDayClock.NormalizeLocal(lo.CreatedAt),
-                        TimeSpan.FromMinutes(lo.DeviceUtcOffsetMinutes ?? POS.Shared.Services.BusinessDayClock.GetDeviceUtcOffsetMinutes())),
-                    DeviceTimeZoneId = lo.DeviceTimeZoneId,
-                    DeviceUtcOffsetMinutes = lo.DeviceUtcOffsetMinutes,
-                    ServerReceivedAtUtc = lo.ServerReceivedAtUtc.HasValue ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(lo.ServerReceivedAtUtc.Value) : null,
-                    Items = OfflineCheckoutService.MapLocalOrderItems(
-                        localItems.Where(i => i.OrderId == lo.OrderId),
-                        productMetadata),
-                    Payments = localPayments.Where(p => p.OrderId == lo.OrderId).Select(p => new PaymentResponseDto
-                    {
-                        PaymentId = p.PaymentId,
-                        PaymentMethod = p.PaymentMethod,
-                        Amount = p.Amount,
-                        AmountTendered = p.TenderedAmount,
-                        ChangeAmount = p.ChangeAmount,
-                        PaymentStatus = p.PaymentStatus,
-                        PaidAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(p.PaidAt)
-                    }).ToList()
-                };
-                mappedList.Add(dto);
-            }
-
-            transactions = mappedList;
+            transactions = await QueryLocalTransactionsAsync();
         }
         catch (Exception ex)
         {
@@ -633,17 +681,22 @@ else
         }
     }
 
+    private Task<List<OrderResponseDto>> QueryLocalTransactionsAsync() =>
+        TransactionService.GetLocalTransactionsAsync(filter);
+
     private void ResetFilters()
     {
+        if (!Session.CanViewTransactionHistory) return;
         filter = new TransactionFilterDto();
         _ = LoadTransactions();
     }
 
     private async Task ViewDetails(long orderId)
     {
+        if (!Session.CanViewTransactionHistory) return;
         try
         {
-            if (isOfflineMode)
+            if (isOfflineMode || orderId <= 0)
             {
                 selectedOrder = transactions?.FirstOrDefault(t => t.OrderId == orderId);
                 if (selectedOrder != null)
@@ -674,6 +727,7 @@ else
 
     private async Task ReprintPreparationTickets(OrderResponseDto target)
     {
+        if (!Session.CanViewTransactionHistory) return;
         try
         {
             using var db = new POS.Client.Data.LocalPosDbContext();
@@ -717,7 +771,8 @@ else
 
     private async Task ReprintInvoice(long orderId)
     {
-        if (isOfflineMode)
+        if (!Session.CanViewTransactionHistory) return;
+        if (isOfflineMode || orderId <= 0)
         {
             var target = transactions?.FirstOrDefault(t => t.OrderId == orderId);
             if (target != null)
@@ -767,37 +822,10 @@ else
             }
         }
 
-        // If cashier is not authorized, prompt for Manager/SeniorCashier PIN or credentials override
-        if (Session.Role != "Admin" && Session.Role != "Manager" && Session.Role != "SeniorCashier")
+        if (!Session.CanViewTransactionHistory)
         {
-            var pinResult = await Swal.FireAsync(new SweetAlertOptions
-            {
-                Title = "Supervisor Authorization Required",
-                Text = "Enter Manager or Senior Cashier PIN to authorize reprinting:",
-                Input = SweetAlertInputType.Password,
-                ShowCancelButton = true,
-                ConfirmButtonText = "Authorize Reprint"
-            });
-
-            if (!pinResult.IsConfirmed || string.IsNullOrWhiteSpace(pinResult.Value))
-                return;
-
-            try
-            {
-                var auth = await UserService.PinLoginAsync(pinResult.Value);
-                if (auth == null || (auth.Value.Role != "Admin" && auth.Value.Role != "Manager" && auth.Value.Role != "SeniorCashier"))
-                {
-                    await Swal.FireAsync("Access Denied", "Invalid supervisor PIN or insufficient privileges.", SweetAlertIcon.Error);
-                    return;
-                }
-                // Temporarily attach supervisor token for this reprint request
-                Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", auth.Value.Token);
-            }
-            catch (Exception ex)
-            {
-                await Swal.FireAsync("Authorization Error", ex.Message, SweetAlertIcon.Error);
-                return;
-            }
+            await Swal.FireAsync("Access Denied", "Your role is not authorized to reprint historical receipts.", SweetAlertIcon.Error);
+            return;
         }
 
         try
@@ -832,6 +860,7 @@ else
 
     private void OpenVoidModal(OrderResponseDto order)
     {
+        if (!Session.CanViewTransactionHistory) return;
         isDetailModalOpen = false;
         selectedOrder = order;
         voidReason = "";
@@ -843,6 +872,7 @@ else
 
     private async Task ConfirmVoid()
     {
+        if (!Session.CanViewTransactionHistory) return;
         if (isOfflineMode)
         {
             await Swal.FireAsync("Offline Mode", "Void operations require an active online connection to verify supervisor authorization.", SweetAlertIcon.Warning);
@@ -878,6 +908,7 @@ else
 
     private void OpenReturnModal(OrderResponseDto order)
     {
+        if (!Session.CanViewTransactionHistory) return;
         isDetailModalOpen = false;
         selectedOrder = order;
         returnReason = "";
@@ -896,6 +927,7 @@ else
 
     private async Task ConfirmReturn()
     {
+        if (!Session.CanViewTransactionHistory) return;
         if (isOfflineMode)
         {
             await Swal.FireAsync("Offline Mode", "Return and refund operations require an active online connection to verify supervisor authorization.", SweetAlertIcon.Warning);

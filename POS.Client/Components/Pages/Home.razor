@@ -209,14 +209,14 @@ else
                 <div class="card stat-card shadow-sm border-0 rounded-4 p-3 h-100">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <span class="stat-label">Terminal Status</span>
-                        <button class="btn btn-sm btn-outline-secondary py-0 px-2 rounded-2" @onclick="ManualSyncAsync" disabled="@_isSyncing" title="Sync Pending Transactions">
+                        <button class="btn btn-sm btn-outline-secondary py-0 px-2 rounded-2" @onclick="ManualSyncAsync" disabled="@_isSyncing" title="Upload pending sales and refresh latest menu, prices, and settings">
                             @if (_isSyncing)
                             {
                                 <span class="spinner-border spinner-border-sm" role="status"></span>
                             }
                             else
                             {
-                                <i class="bi bi-arrow-repeat"></i> <span class="small">Sync</span>
+                                <i class="bi bi-arrow-repeat"></i> <span class="small">Update Menu &amp; Sales</span>
                             }
                         </button>
                     </div>
@@ -270,9 +270,12 @@ else
         </div>
 
         <!-- Quick Operational Actions Grid -->
+        @{
+            var actionColClass = Session.CanViewTransactionHistory ? "col-12 col-md-6 col-xl-3" : "col-12 col-md-4";
+        }
         <h6 class="fw-bold text-uppercase text-secondary small mb-3 letter-spacing-1">Operations Hub</h6>
         <div class="row g-3 mb-4">
-            <div class="col-12 col-md-6 col-xl-3">
+            <div class="@actionColClass">
                 <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
                      role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/new-sale"))">
                     <div class="action-icon-wrap bg-primary text-white shadow-sm">
@@ -285,7 +288,7 @@ else
                 </div>
             </div>
 
-            <div class="col-12 col-md-6 col-xl-3">
+            <div class="@actionColClass">
                 <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
                      role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/held-sales"))">
                     <div class="action-icon-wrap bg-warning text-dark shadow-sm">
@@ -298,20 +301,23 @@ else
                 </div>
             </div>
 
-            <div class="col-12 col-md-6 col-xl-3">
-                <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
-                     role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/transactions"))">
-                    <div class="action-icon-wrap bg-info text-dark shadow-sm">
-                        <i class="bi bi-receipt fs-4"></i>
-                    </div>
-                    <div>
-                        <h6 class="fw-bold mb-0 text-dark">Transactions</h6>
-                        <small class="text-muted">Receipts, reprints & returns</small>
+            @if (Session.CanViewTransactionHistory)
+            {
+                <div class="@actionColClass">
+                    <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
+                         role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/transactions"))">
+                        <div class="action-icon-wrap bg-info text-dark shadow-sm">
+                            <i class="bi bi-receipt fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="fw-bold mb-0 text-dark">Transactions</h6>
+                            <small class="text-muted">Receipts, reprints & returns</small>
+                        </div>
                     </div>
                 </div>
-            </div>
+            }
 
-            <div class="col-12 col-md-6 col-xl-3">
+            <div class="@actionColClass">
                 <div class="action-tile p-3 rounded-4 bg-white border shadow-sm h-100 d-flex align-items-center gap-3"
                      role="button" tabindex="0" @onclick="@(() => Navigation.NavigateTo("/cash-drawer"))">
                     <div class="action-icon-wrap bg-success text-white shadow-sm">

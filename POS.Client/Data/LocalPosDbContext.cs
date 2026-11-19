@@ -110,7 +110,11 @@ public class LocalPosDbContext : DbContext
         modelBuilder.Entity<LocalPayment>().ToTable("LocalPayments");
         modelBuilder.Entity<LocalSyncOutbox>().ToTable("LocalSyncOutboxes");
         modelBuilder.Entity<LocalSyncAuditLog>().ToTable("LocalSyncAuditLogs");
-        modelBuilder.Entity<LocalHeldSale>().ToTable("LocalHeldSales");
+        modelBuilder.Entity<LocalHeldSale>(entity =>
+        {
+            entity.ToTable("LocalHeldSales");
+            entity.Property(e => e.HeldSaleId).ValueGeneratedNever();
+        });
         modelBuilder.Entity<LocalCashier>().ToTable("LocalCashiers");
         modelBuilder.Entity<LocalCashMovementCategory>().ToTable("LocalCashMovementCategories");
         modelBuilder.Entity<LocalCashDrawerShift>().ToTable("LocalCashDrawerShifts");

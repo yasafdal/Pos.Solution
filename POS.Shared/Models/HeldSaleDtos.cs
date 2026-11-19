@@ -6,6 +6,7 @@ namespace POS.Shared.Models;
 public class HeldSaleCreateDto
 {
     public int BranchId { get; set; }
+    public int OutletId { get; set; }
     public int TerminalId { get; set; }
     public string CashierId { get; set; } = null!;
     public string? CustomerName { get; set; }
@@ -53,9 +54,12 @@ public class HeldSaleItemDto
     public decimal BasePrice { get; set; }
     public decimal LineTotal { get; set; }
     public string? PricingMethod { get; set; }
+    public string? UnitOfMeasure { get; set; }
     public decimal? TargetAmount { get; set; }
     public bool IsComplimentary { get; set; } = false;
     public int? ParentProductId { get; set; }
+    public bool IsKitchenItem { get; set; }
+    public bool IsBarItem { get; set; }
     public string TaxName { get; set; } = "VATable";
     public string? SpecialInstructions { get; set; }
     public List<HeldSaleModifierDto> Modifiers { get; set; } = new();

@@ -335,7 +335,9 @@ public class DeviceActivationService : IDeviceActivationService
         if (httpClient == null)
             return new BearerTokenResult(false, ErrorMessage: "HTTP client is unavailable.");
 
-        if (!forceRefresh && session != null && TryGetValidToken(session.Token, session.Username) is string validSessionToken)
+        if (!forceRefresh && session != null &&
+            TryGetValidToken(session.Token, session.Username) is string validSessionToken &&
+            TokenHasCashierIdentity(validSessionToken, session.Username))
         {
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", validSessionToken);
             return new BearerTokenResult(true);
@@ -380,7 +382,16 @@ public class DeviceActivationService : IDeviceActivationService
                         httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", dto.Token);
                         if (session != null && session.Terminal != null)
                         {
-                            session.SetSession(dto.Token, session.Username ?? string.Empty, session.Role ?? "Cashier", session.Terminal);
+                            // Preserve an existing valid non-expired cashier JWT in Session; upgrade bare terminal/offline tokens
+                            if (TryGetValidToken(session.Token, session.Username) is string existingValidSessionToken &&
+                                TokenHasCashierIdentity(existingValidSessionToken, session.Username))
+                            {
+                                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", existingValidSessionToken);
+                            }
+                            else
+                            {
+                                session.SetSession(dto.Token, session.Username ?? string.Empty, session.Role ?? "Cashier", session.Terminal);
+                            }
                         }
                         return new BearerTokenResult(true);
                     }
@@ -480,14 +491,21 @@ public class DeviceActivationService : IDeviceActivationService
 
             if (!string.IsNullOrWhiteSpace(expectedUsername))
             {
+                if (root.TryGetProperty("cashier_username", out var cuProp))
+                {
+                    var cu = cuProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(cu) && !string.Equals(cu, expectedUsername, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                }
+
                 string? name = null;
                 if (root.TryGetProperty("unique_name", out var unProp)) name = unProp.GetString();
                 else if (root.TryGetProperty("name", out var nProp)) name = nProp.GetString();
                 else if (root.TryGetProperty("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name", out var soapProp)) name = soapProp.GetString();
 
                 string? role = null;
-                if (root.TryGetProperty("role", out var rProp)) role = rProp.GetString();
-                else if (root.TryGetProperty("http://schemas.microsoft.com/ws/2008/06/identity/claims/role", out var soapRProp)) role = soapRProp.GetString();
+                if (root.TryGetProperty("role", out var rProp) && rProp.ValueKind == JsonValueKind.String) role = rProp.GetString();
+                else if (root.TryGetProperty("http://schemas.microsoft.com/ws/2008/06/identity/claims/role", out var soapRProp) && soapRProp.ValueKind == JsonValueKind.String) role = soapRProp.GetString();
 
                 if (!string.Equals(role, "Terminal", StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(name) &&
@@ -498,6 +516,47 @@ public class DeviceActivationService : IDeviceActivationService
             }
 
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TokenHasCashierIdentity(string token, string? expectedUsername)
+    {
+        if (string.IsNullOrWhiteSpace(expectedUsername))
+            return true;
+
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length != 3) return false;
+
+            string payload = parts[1].Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var bytes = Convert.FromBase64String(payload);
+            using var doc = JsonDocument.Parse(bytes);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("cashier_username", out var cuProp) &&
+                string.Equals(cuProp.GetString(), expectedUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string? name = null;
+            if (root.TryGetProperty("unique_name", out var unProp)) name = unProp.GetString();
+            else if (root.TryGetProperty("name", out var nProp)) name = nProp.GetString();
+            else if (root.TryGetProperty("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name", out var soapProp)) name = soapProp.GetString();
+
+            return !string.IsNullOrWhiteSpace(name) &&
+                   string.Equals(name, expectedUsername, StringComparison.OrdinalIgnoreCase);
         }
         catch
         {

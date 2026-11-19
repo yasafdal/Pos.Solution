@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using POS.Api.Models;
+using POS.Shared.Constants;
 using POS.Shared.Models;
 using POS.Shared.Interfaces;
 
@@ -17,8 +18,9 @@ namespace POS.Api.Controllers;
 [Authorize]
 public class TransactionsController(PosDbContext context, IReceiptService receiptService) : ControllerBase
 {
-    private bool IsSupervisor() =>
-        User.IsInRole("Admin") || User.IsInRole("Manager") || User.IsInRole("SeniorCashier");
+    private bool CanViewTransactionHistory() => PosPermissions.CanViewTransactionHistory(User);
+
+    private bool IsAdmin() => PosPermissions.IsAdmin(User);
 
     // Orders.CreatedAt is stored as device-local wall-clock time in a 'timestamp without time zone' column.
     private static DateTime ToUtcUnspecified(DateTime value) =>
@@ -29,6 +31,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDayStartLocal();
 
     [HttpGet]
+    [Authorize(Policy = PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<IEnumerable<OrderResponseDto>>> GetTransactions(
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
@@ -46,6 +49,9 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         CancellationToken cancellationToken = default,
         [FromQuery] int? outletId = null)
     {
+        if (!CanViewTransactionHistory())
+            return Forbid();
+
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
@@ -56,67 +62,21 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             .Include(o => o.Payments)
             .AsQueryable();
 
-        // Non-Admin/Manager/SeniorCashier users (Ordinary Cashiers) can only view their own transactions
-        if (!IsSupervisor())
+        // Terminal-bound supervisors (token carries branch_id) stay inside their branch; Admins are global.
+        if (!IsAdmin() && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
         {
-            var currentUsername = User.Identity?.Name;
-            if (!string.IsNullOrWhiteSpace(currentUsername))
-            {
-                query = query.Where(o => o.CashierId == currentUsername);
-            }
-            else
-            {
-                return Forbid();
-            }
-
-            // Enforce branch and outlet scoping from token claims if present
-            var branchClaim = User.FindFirst("branch_id")?.Value;
-            var outletClaim = User.FindFirst("terminal_id")?.Value;
-            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
-
-            if (int.TryParse(branchClaim, out var bClaimId))
-            {
-                if (branchId.HasValue && branchId.Value != bClaimId) return Forbid();
-                query = query.Where(o => o.BranchId == bClaimId);
-            }
-            else if (branchId.HasValue)
-            {
-                query = query.Where(o => o.BranchId == branchId.Value);
-            }
-
-            if (int.TryParse(outletClaim, out var oClaimId))
-            {
-                if (terminalId.HasValue && terminalId.Value != oClaimId) return Forbid();
-                query = query.Where(o => o.TerminalId == oClaimId);
-            }
-            else if (terminalId.HasValue)
-            {
-                query = query.Where(o => o.TerminalId == terminalId.Value);
-            }
-
-            // Safety net: 4:00 AM cutoff of current business day (sales reset at 4am)
-            var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
-            var requested = dateFrom.HasValue ? ToUtcUnspecified(dateFrom.Value) : floor;
-            dateFrom = requested < floor ? floor : requested;
+            if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
+            branchId = supBranchId;
         }
-        else
-        {
-            // Terminal-bound supervisors (token carries branch_id) stay inside their branch; Admins are global.
-            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
-            {
-                if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
-                branchId = supBranchId;
-            }
 
-            if (branchId.HasValue)
-                query = query.Where(o => o.BranchId == branchId.Value);
+        if (branchId.HasValue)
+            query = query.Where(o => o.BranchId == branchId.Value);
 
-            if (terminalId.HasValue)
-                query = query.Where(o => o.TerminalId == terminalId.Value);
+        if (terminalId.HasValue)
+            query = query.Where(o => o.TerminalId == terminalId.Value);
 
-            if (!string.IsNullOrWhiteSpace(cashierId))
-                query = query.Where(o => o.CashierId == cashierId);
-        }
+        if (!string.IsNullOrWhiteSpace(cashierId))
+            query = query.Where(o => o.CashierId == cashierId);
 
         if (outletId.HasValue)
         {
@@ -279,12 +239,12 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
     }
 
     [HttpGet("{id}")]
+    [Authorize(Policy = PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<OrderResponseDto>> GetTransactionById(long id, CancellationToken cancellationToken = default)
     {
-        var receipt = await receiptService.GetReceiptAsync(id, false);
-        if (receipt == null) return NotFound();
+        if (!CanViewTransactionHistory())
+            return Forbid();
 
-        // Map receipt to OrderResponseDto
         var order = await context.Orders.AsNoTracking()
             .Include(o => o.OrderItems).ThenInclude(i => i.OrderItemModifiers)
             .Include(o => o.Payments)
@@ -292,25 +252,13 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
 
         if (order == null) return NotFound();
 
-        if (!IsSupervisor())
-        {
-            if (string.IsNullOrWhiteSpace(User.Identity?.Name) ||
-                !string.Equals(order.CashierId, User.Identity.Name, StringComparison.OrdinalIgnoreCase))
-                return Forbid();
+        if (!IsAdmin() &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) &&
+            order.BranchId != supBranchId)
+            return Forbid();
 
-            var branchClaim = User.FindFirst("branch_id")?.Value;
-            if (int.TryParse(branchClaim, out var bClaimId) && order.BranchId != bClaimId)
-                return Forbid();
-
-            var outletClaim = User.FindFirst("terminal_id")?.Value;
-            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
-            if (int.TryParse(outletClaim, out var oClaimId) && order.TerminalId != oClaimId)
-                return Forbid();
-
-            var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
-            if (order.CreatedAt < floor)
-                return Forbid();
-        }
+        var receipt = await receiptService.GetReceiptAsync(id, false);
+        if (receipt == null) return NotFound();
 
         var branch = await context.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.BranchId == order.BranchId, cancellationToken);
         var terminal = order.TerminalId > 0
@@ -373,10 +321,10 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
     }
 
     [HttpGet("{id}/receipt")]
+    [Authorize(Policy = PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<ReceiptDto>> GetTransactionReceipt(long id, [FromQuery] bool reprint = false, CancellationToken cancellationToken = default)
     {
-        // If reprinting, require Admin, Manager, or SeniorCashier authorization
-        if (reprint && !User.IsInRole("Admin") && !User.IsInRole("Manager") && !User.IsInRole("SeniorCashier"))
+        if (!CanViewTransactionHistory())
         {
             return Forbid();
         }
@@ -385,21 +333,10 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             .Where(o => o.OrderId == id).Select(o => new { o.CashierId, o.BranchId, o.TerminalId }).SingleOrDefaultAsync(cancellationToken);
         if (owner == null) return NotFound();
 
-        if (!IsSupervisor())
-        {
-            if (string.IsNullOrWhiteSpace(User.Identity?.Name) ||
-                !string.Equals(owner.CashierId, User.Identity.Name, StringComparison.OrdinalIgnoreCase))
-                return Forbid();
-
-            var branchClaim = User.FindFirst("branch_id")?.Value;
-            if (int.TryParse(branchClaim, out var bClaimId) && owner.BranchId != bClaimId)
-                return Forbid();
-
-            var outletClaim = User.FindFirst("terminal_id")?.Value;
-            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
-            if (int.TryParse(outletClaim, out var oClaimId) && owner.TerminalId != oClaimId)
-                return Forbid();
-        }
+        if (!IsAdmin() &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) &&
+            owner.BranchId != supBranchId)
+            return Forbid();
 
         var receipt = await receiptService.GetReceiptAsync(id, reprint);
         if (receipt == null) return NotFound();
@@ -441,13 +378,24 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
     }
 
     [HttpGet("{id:long}/void")]
+    [Authorize(Policy = PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<VoidResponseDto>> GetTransactionVoid(long id, CancellationToken cancellationToken = default)
     {
+        if (!CanViewTransactionHistory())
+            return Forbid();
+
         var voidRecord = await context.TransactionVoids
             .AsNoTracking()
+            .Include(v => v.OriginalOrder)
             .SingleOrDefaultAsync(v => v.OriginalOrderId == id, cancellationToken);
 
         if (voidRecord == null) return NotFound("No void record found for this transaction.");
+
+        if (!IsAdmin() &&
+            voidRecord.OriginalOrder != null &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) &&
+            voidRecord.OriginalOrder.BranchId != supBranchId)
+            return Forbid();
 
         return Ok(new VoidResponseDto
         {
@@ -464,6 +412,7 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
     }
 
     [HttpGet("summary")]
+    [Authorize(Policy = PosPermissions.TransactionHistoryPolicy)]
     public async Task<ActionResult<TransactionSummaryDto>> GetTransactionSummary(
         [FromQuery] DateTime? dateFrom,
         [FromQuery] DateTime? dateTo,
@@ -473,6 +422,9 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
         CancellationToken cancellationToken = default,
         [FromQuery] int? outletId = null)
     {
+        if (!CanViewTransactionHistory())
+            return Forbid();
+
         var query = context.Orders.AsNoTracking().Where(o => o.PaymentStatus == "PAID");
         if (outletId.HasValue)
         {
@@ -480,64 +432,21 @@ public class TransactionsController(PosDbContext context, IReceiptService receip
             query = query.Where(o => o.OutletId == outId || context.Terminals.Any(t => t.TerminalId == o.TerminalId && t.OutletId == outId));
         }
 
-        if (!IsSupervisor())
+        // Terminal-bound supervisors (token carries branch_id) stay inside their branch; Admins are global.
+        if (!IsAdmin() && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
         {
-            var currentUsername = User.Identity?.Name;
-            if (!string.IsNullOrWhiteSpace(currentUsername))
-            {
-                query = query.Where(o => o.CashierId == currentUsername);
-            }
-            else
-            {
-                return Forbid();
-            }
-
-            var branchClaim = User.FindFirst("branch_id")?.Value;
-            var outletClaim = User.FindFirst("terminal_id")?.Value;
-            if (string.IsNullOrWhiteSpace(outletClaim)) return Forbid();
-
-            if (int.TryParse(branchClaim, out var bClaimId))
-            {
-                if (branchId.HasValue && branchId.Value != bClaimId) return Forbid();
-                query = query.Where(o => o.BranchId == bClaimId);
-            }
-            else if (branchId.HasValue)
-            {
-                query = query.Where(o => o.BranchId == branchId.Value);
-            }
-
-            if (int.TryParse(outletClaim, out var oClaimId))
-            {
-                if (terminalId.HasValue && terminalId.Value != oClaimId) return Forbid();
-                query = query.Where(o => o.TerminalId == oClaimId);
-            }
-            else if (terminalId.HasValue)
-            {
-                query = query.Where(o => o.TerminalId == terminalId.Value);
-            }
-
-            var floor = ToUtcUnspecified(GetBusinessDayCutoffUtc());
-            var requested = dateFrom.HasValue ? ToUtcUnspecified(dateFrom.Value) : floor;
-            dateFrom = requested < floor ? floor : requested;
+            if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
+            branchId = supBranchId;
         }
-        else
-        {
-            // Terminal-bound supervisors (token carries branch_id) stay inside their branch; Admins are global.
-            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
-            {
-                if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
-                branchId = supBranchId;
-            }
 
-            if (branchId.HasValue)
-                query = query.Where(o => o.BranchId == branchId.Value);
+        if (branchId.HasValue)
+            query = query.Where(o => o.BranchId == branchId.Value);
 
-            if (terminalId.HasValue)
-                query = query.Where(o => o.TerminalId == terminalId.Value);
+        if (terminalId.HasValue)
+            query = query.Where(o => o.TerminalId == terminalId.Value);
 
-            if (!string.IsNullOrWhiteSpace(cashierId))
-                query = query.Where(o => o.CashierId == cashierId);
-        }
+        if (!string.IsNullOrWhiteSpace(cashierId))
+            query = query.Where(o => o.CashierId == cashierId);
 
         if (dateFrom.HasValue)
             query = query.Where(o => o.CreatedAt >= ToUtcUnspecified(dateFrom.Value));

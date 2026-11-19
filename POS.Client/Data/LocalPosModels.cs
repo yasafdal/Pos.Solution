@@ -336,6 +336,7 @@ public class LocalSyncAuditLog
 public class LocalHeldSale
 {
     [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.None)]
     public long HeldSaleId { get; set; }
     public int BranchId { get; set; }
     public int TerminalId { get; set; }

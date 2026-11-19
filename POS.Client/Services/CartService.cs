@@ -155,6 +155,89 @@ namespace POS.Client.Services
             NotifyStateChanged();
         }
 
+        public void RestoreHeldSale(
+            HeldSaleDto heldSale,
+            IReadOnlyDictionary<int, (bool IsKitchenItem, bool IsBarItem, string? UnitOfMeasure, string? PricingMethod)>? catalogLookup = null)
+        {
+            ArgumentNullException.ThrowIfNull(heldSale);
+            _items.Clear();
+            activeDiscountCode = "NONE";
+            activeDiscountAmount = 0.00m;
+            customerCardNumber = null;
+
+            string? lastWeightParentCartItemId = null;
+            int? lastWeightParentProductId = null;
+
+            foreach (var item in heldSale.Items ?? new())
+            {
+                if (item.Quantity <= 0m) continue;
+
+                (bool IsKitchenItem, bool IsBarItem, string? UnitOfMeasure, string? PricingMethod) meta = default;
+                bool hasMeta = catalogLookup != null && catalogLookup.TryGetValue(item.ProductId, out meta);
+
+                var mods = (item.Modifiers ?? new()).Select(m => new ModifierOptionDto
+                {
+                    ModifierOptionId = m.ModifierOptionId,
+                    ProductId = m.ProductId,
+                    ProductName = m.ProductName,
+                    Name = m.ModifierName,
+                    Price = m.AdditionalPrice
+                }).ToList();
+
+                string? resolvedPricing = !string.IsNullOrWhiteSpace(item.PricingMethod)
+                    ? item.PricingMethod
+                    : (hasMeta ? meta.PricingMethod : null);
+                string? resolvedUom = !string.IsNullOrWhiteSpace(item.UnitOfMeasure)
+                    ? item.UnitOfMeasure
+                    : (hasMeta ? meta.UnitOfMeasure : null);
+                bool isKitchen = item.IsKitchenItem || (hasMeta && meta.IsKitchenItem);
+                bool isBar = item.IsBarItem || (hasMeta && meta.IsBarItem);
+
+                var cartItem = new CartItem
+                {
+                    CartItemId = Guid.NewGuid().ToString(),
+                    ProductId = item.ProductId,
+                    ProductName = item.ProductName,
+                    ProductShortCode = item.ProductShortCode,
+                    BasePrice = item.IsComplimentary ? 0m : item.BasePrice,
+                    PricingMethod = resolvedPricing,
+                    UnitOfMeasure = resolvedUom ?? (string.Equals(resolvedPricing, "WeightBased", StringComparison.OrdinalIgnoreCase) ? "kg" : null),
+                    Quantity = item.Quantity,
+                    TargetAmount = item.IsComplimentary ? null : item.TargetAmount,
+                    IsComplimentary = item.IsComplimentary,
+                    ParentProductId = item.ParentProductId,
+                    SelectedModifiers = mods,
+                    TaxName = string.IsNullOrWhiteSpace(item.TaxName) ? "VATable" : item.TaxName,
+                    IsKitchenItem = isKitchen,
+                    IsBarItem = isBar,
+                    SpecialInstructions = CartItem.NormalizeSpecialInstructions(item.SpecialInstructions)
+                };
+
+                if (cartItem.IsWeightBased && !cartItem.IsComplimentary)
+                {
+                    lastWeightParentCartItemId = cartItem.CartItemId;
+                    lastWeightParentProductId = cartItem.ProductId;
+                }
+                else if (cartItem.IsComplimentary && lastWeightParentCartItemId != null &&
+                         (!cartItem.ParentProductId.HasValue || cartItem.ParentProductId == lastWeightParentProductId))
+                {
+                    cartItem.ParentCartItemId = lastWeightParentCartItemId;
+                    cartItem.ParentProductId ??= lastWeightParentProductId;
+                }
+
+                _items.Add(cartItem);
+            }
+
+            if (!string.IsNullOrWhiteSpace(heldSale.DiscountCode) && heldSale.DiscountCode != "NONE")
+            {
+                activeDiscountCode = heldSale.DiscountCode;
+                activeDiscountAmount = heldSale.DiscountAmount;
+                customerCardNumber = heldSale.CustomerCardNumber;
+            }
+
+            NotifyStateChanged();
+        }
+
         public void UpdateSpecialInstructions(CartItem item, string? specialInstructions)
         {
             if (item == null || !_items.Contains(item))

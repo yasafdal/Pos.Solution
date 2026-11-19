@@ -103,7 +103,10 @@ else
     {
         try
         {
-            heldSales = await HeldSaleService.GetHeldSalesAsync(null, Session.Terminal?.TerminalId);
+            heldSales = await HeldSaleService.GetHeldSalesAsync(
+                Session.Terminal?.BranchId,
+                Session.Terminal?.TerminalId,
+                Session.Terminal?.OutletId);
         }
         catch (Exception ex)
         {
@@ -135,39 +138,13 @@ else
                 using var localDb = new POS.Client.Data.LocalPosDbContext();
                 localDb.InitializeDatabase();
                 var prodIds = resumed.Items.Select(i => i.ProductId).Distinct().ToList();
-                var localProds = localDb.Products
+                var catalogLookup = localDb.Products
                     .Where(p => prodIds.Contains(p.ProductId))
-                    .ToDictionary(p => p.ProductId);
+                    .ToDictionary(
+                        p => p.ProductId,
+                        p => (p.IsKitchenItem, p.IsBarItem, p.UnitOfMeasure, p.PricingMethod));
 
-                Cart.Clear();
-                foreach (var item in resumed.Items)
-                {
-                    localProds.TryGetValue(item.ProductId, out var lp);
-                    var product = new ProductDto
-                    {
-                        ProductId = item.ProductId,
-                        Name = item.ProductName,
-                        ShortCode = item.ProductShortCode,
-                        Price = item.BasePrice,
-                        TaxName = item.TaxName,
-                        IsKitchenItem = lp?.IsKitchenItem ?? false,
-                        IsBarItem = lp?.IsBarItem ?? false
-                    };
-
-                    var mods = item.Modifiers.Select(m => new ModifierOptionDto
-                    {
-                        ModifierOptionId = m.ModifierOptionId,
-                        Name = m.ModifierName,
-                        Price = m.AdditionalPrice
-                    }).ToList();
-
-                    Cart.AddItem(product, (int)item.Quantity, mods, item.SpecialInstructions);
-                }
-
-                if (!string.IsNullOrWhiteSpace(resumed.DiscountCode) && resumed.DiscountCode != "NONE")
-                {
-                    Cart.ApplyDiscount(resumed.DiscountCode, resumed.DiscountAmount, resumed.CustomerCardNumber);
-                }
+                Cart.RestoreHeldSale(resumed, catalogLookup);
 
                 await Swal.FireAsync("Resumed!", $"Held sale {resumed.HoldReference} loaded into active cart.", SweetAlertIcon.Success);
                 Navigation.NavigateTo("/new-sale");

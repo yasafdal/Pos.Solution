@@ -214,6 +214,12 @@ public static partial class Program
         await RunTestAsync("UPD-02. Migration Safety: Failed migration rollback restores backup intact & downgrade guard blocks older APK on newer schema", TestUpdate02_FailedMigrationRollbackAndDowngradeProtection);
         await RunTestAsync("UPD-03. Accidental Uninstall Recovery: AES-GCM encrypted survivable backup (.agresbak) restores DeviceUuid, license & unsynced sales and rejects tampering", TestUpdate03_SurvivableEncryptedBackupAndAccidentalUninstallRestore);
         await RunTestAsync("UPD-04. Update Security & ABI Stability: ECDSA-signed release manifest, SHA-256 verification, downgrade block & Arm->Arm64 ABI-safe device binding", TestUpdate04_SignedReleaseManifestVerificationAndAbiSafeDeviceBinding);
+        await RunTestAsync("UPD-05. Proceed to Payment Conditional Cash Tendered: Cash vs Card/GCash/Other Bank single & split payment isolation", TestUpdate05_PaymentConditionalCashTenderedAndSplitNonCashIsolation);
+        await RunTestAsync("UPD-06. BUG 1 UAT: Offline transactions preserve cashier identity across reconnect, sync idempotently & never disappear from Transaction History", TestUpdate06_Bug1_OfflineTransactionsRemainVisibleOnReconnectAndSync);
+        await RunTestAsync("UPD-07. BUG 2 UAT: Held Sales persist in SQLite offline & online, survive offline restart, restore weight/modifiers/discounts & sync checkout once", TestUpdate07_Bug2_HeldSalesOfflinePersistenceRestartResumeAndCheckoutSync);
+        await RunTestAsync("RBAC-01. Transaction History RBAC API Matrix: Admin/Manager/SeniorCashier allowed (branch-scoped), Cashier & bare Terminal denied across all history/order/receipt/return endpoints", TestRbac01_ApiMultiEndpointRoleMatrix);
+        await RunTestAsync("RBAC-02. Transaction History RBAC Offline & Client Service: Cashier blocked on local SQLite & client service after restart, while New Sale, current receipt, Held Sales & offline sync work intact", TestRbac02_ClientServiceOfflineSqliteAndCashierWorkflowPreservation);
+        await RunTestAsync("RBAC-03. Transaction History RBAC Account Switching: Switching Admin -> Cashier -> Manager never retains prior role permissions or bearer token", TestRbac03_AccountSwitchingClearsPriorPermissionsAndToken);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
@@ -1003,22 +1009,26 @@ public static partial class Program
         });
         await db.SaveChangesAsync();
 
-        // Cashier 1 token scoped to Branch 1, Terminal 1
-        var controller = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, terminalId: 1);
+        // Cashier 1 token scoped to Branch 1, Terminal 1 -> MUST be forbidden from Transaction History (even own orders)
+        var cashierController = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, terminalId: 1);
+        var cashierRes = await cashierController.GetTransactions(null, null, null, null, null, null, null, null, null, null, null);
+        Assert(cashierRes.Result is ForbidResult, "Cashier must be forbidden from viewing Transaction History, including own orders.");
 
-        // Standard fetch
-        var res = await controller.GetTransactions(null, null, null, null, null, null, null, null, null, null, null);
+        // Manager token scoped to Branch 1 -> allowed to view Branch 1 transactions, forbidden from other branches
+        var managerController = CreateTransactionsController(db, "manager1", "Manager", branchId: 1, terminalId: 1);
+        var res = await managerController.GetTransactions(null, null, null, terminalId: 1, null, null, null, null, null, null, null);
         var ok = (List<OrderResponseDto>)((OkObjectResult)res.Result!).Value!;
-        Assert(ok.Count == 1, $"Cashier should see exactly 1 order, got {ok.Count}");
-        Assert(ok[0].OrderId == 101, $"Expected OrderId 101, got {ok[0].OrderId}");
+        Assert(ok.Count == 2, $"Manager scoped to Terminal 1 should see 2 orders (101 & 103), got {ok.Count}");
 
-        // Attempting to filter by a different outlet must be forbidden (403)
-        var crossOutletRes = await controller.GetTransactions(null, null, null, terminalId: 2, null, null, null, null, null, null, null);
-        Assert(crossOutletRes.Result is ForbidResult, "Querying a different outlet than token claim must return ForbidResult");
+        // Attempting to filter by a different branch than Manager's token claim must be forbidden (403)
+        var crossBranchRes = await managerController.GetTransactions(null, null, branchId: 99, null, null, null, null, null, null, null, null);
+        Assert(crossBranchRes.Result is ForbidResult, "Manager querying a different branch than token claim must return ForbidResult");
 
-        // Attempting to filter by a different branch must be forbidden (403)
-        var crossBranchRes = await controller.GetTransactions(null, null, branchId: 99, null, null, null, null, null, null, null, null);
-        Assert(crossBranchRes.Result is ForbidResult, "Querying a different branch than token claim must return ForbidResult");
+        // Admin can view all orders across terminals
+        var adminController = CreateTransactionsController(db, "admin1", "Admin", branchId: null, terminalId: null);
+        var adminRes = await adminController.GetTransactions(null, null, null, null, null, null, null, null, null, null, null);
+        var adminOk = (List<OrderResponseDto>)((OkObjectResult)adminRes.Result!).Value!;
+        Assert(adminOk.Count == 3, $"Admin should see all 3 orders, got {adminOk.Count}");
     }
 
     private static async Task Test20_Transactions4AmCutoff()
@@ -1067,12 +1077,15 @@ public static partial class Program
         });
         await db.SaveChangesAsync();
 
-        var controller = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, terminalId: 1);
+        var cashierController = CreateTransactionsController(db, "cashier1", "Cashier", branchId: 1, terminalId: 1);
+        var cashierRes = await cashierController.GetTransactions(null, null, null, null, null, null, null, null, null, null, null);
+        Assert(cashierRes.Result is ForbidResult, "Cashier must be forbidden from TransactionsController.GetTransactions.");
 
-        // Fetch without dateFrom: server must apply 4 AM floor and not return the old order
-        var res = await controller.GetTransactions(null, null, null, null, null, null, null, null, null, null, null);
+        var managerController = CreateTransactionsController(db, "manager1", "Manager", branchId: 1, terminalId: 1);
+        var cutoff = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDayStartLocal();
+        var res = await managerController.GetTransactions(cutoff, null, null, null, null, null, null, null, null, null, null);
         var ok = (List<OrderResponseDto>)((OkObjectResult)res.Result!).Value!;
-        Assert(ok.Count == 1 && ok[0].OrderId == 202, $"Expected only today's order, got {ok.Count} orders");
+        Assert(ok.Count == 1 && ok[0].OrderId == 202, $"Expected only today's order after 4 AM cutoff, got {ok.Count} orders");
     }
 
     private static async Task Test21_VoidAndReturnStrictPinEnforcement()
