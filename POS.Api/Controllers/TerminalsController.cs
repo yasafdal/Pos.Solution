@@ -452,6 +452,14 @@ namespace POS.Api.Controllers
                         Message = lockStatus.LockMessage ?? "Terminal is locked for the remainder of the business day."
                     });
                 }
+                if (lockStatus.IsShiftOwnedByAnotherCashier)
+                {
+                    return StatusCode(409, new TerminalSessionTokenResponseDto
+                    {
+                        Success = false,
+                        Message = lockStatus.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
+                    });
+                }
             }
 
             var jwtKey = _configuration["Jwt:Key"];

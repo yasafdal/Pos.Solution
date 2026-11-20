@@ -19,29 +19,39 @@ public class DiscountService : IDiscountService
         return await _http.GetFromJsonAsync<List<DiscountTypeDto>>("api/discounts") ?? new List<DiscountTypeDto>();
     }
 
+    private static async Task EnsureSuccessOrThrowMessageAsync(HttpResponseMessage response)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var body = (await response.Content.ReadAsStringAsync())?.Trim().Trim('"');
+        throw new InvalidOperationException(
+            string.IsNullOrWhiteSpace(body)
+                ? $"Request failed ({(int)response.StatusCode} {response.ReasonPhrase})."
+                : body);
+    }
+
     public async Task<DiscountTypeDto> CreateDiscountAsync(DiscountTypeDto dto)
     {
         var response = await _http.PostAsJsonAsync("api/discounts/create-discount", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowMessageAsync(response);
         return await response.Content.ReadFromJsonAsync<DiscountTypeDto>() ?? new DiscountTypeDto();
     }
 
     public async Task UpdateDiscountAsync(int id, DiscountTypeDto dto)
     {
         var response = await _http.PutAsJsonAsync($"api/discounts/update-discount/{id}", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowMessageAsync(response);
     }
 
     public async Task DeleteDiscountAsync(int id)
     {
         var response = await _http.DeleteAsync($"api/discounts/remove-discount/{id}");
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowMessageAsync(response);
     }
 
     public async Task<OrderCalculationResultDto> CalculateOrderAsync(OrderCalculationRequestDto request)
     {
         var response = await _http.PostAsJsonAsync("api/discounts/calculate", request);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowMessageAsync(response);
         return await response.Content.ReadFromJsonAsync<OrderCalculationResultDto>() ?? new OrderCalculationResultDto();
     }
 

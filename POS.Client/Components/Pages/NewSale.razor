@@ -59,7 +59,7 @@ else
                 </div>
                 <div class="d-flex align-items-center gap-2">
                     <button type="button" class="header-action-btn header-btn-switch" @onclick="SwitchCashier"><i class="bi bi-arrow-left-right me-1"></i>Switch Cashier</button>
-                    <button type="button" class="header-action-btn header-btn-lock" @onclick="LockTerminal"><i class="bi bi-lock me-1"></i>Lock Terminal</button>
+                    <button type="button" class="header-action-btn header-btn-logout" @onclick="Logout"><i class="bi bi-box-arrow-right me-1"></i>Logout</button>
                 </div>
             </header>
 
@@ -470,7 +470,7 @@ else
                         }
                         <div class="order-total-row d-flex justify-content-between align-items-baseline mb-2">
                             <span class="order-total-label fw-bold fs-6 text-dark">Total</span>
-                            <span class="order-total-amount fw-bolder fs-4 text-primary">₱@((Cart.Subtotal - Cart.ActiveDiscountAmount).ToString("N2"))</span>
+                            <span class="order-total-amount fw-bolder fs-4 text-primary">₱@Cart.TotalAmount.ToString("N2")</span>
                         </div>
                     </div>
                     <div class="order-secondary-actions d-flex gap-2 mb-2">
@@ -1568,22 +1568,21 @@ else
                             <div class="col-md-6">
                                 <div class="border rounded-3 p-2">
                                     <div class="d-flex justify-content-between align-items-center px-2 py-1 bg-light rounded-2 mb-2">
-                                        <span class="fw-bold small">Bills</span>
-                                        <span class="fw-bold small text-primary font-monospace">₱@OpeningBillsSubtotal.ToString("N2")</span>
+                                        <span class="fw-bold small">Bills (₱1,000 – ₱50)</span>
+                                        <span class="small text-secondary fw-semibold">Qty</span>
                                     </div>
                                     @foreach (var row in openingDenominationRows.Where(r => r.Type == "BILL"))
                                     {
-                                        <div class="d-flex align-items-center justify-content-between py-1 px-1 border-bottom border-light">
-                                            <span class="fw-semibold small" style="min-width: 65px;">@row.Label</span>
-                                            <div class="input-group input-group-sm" style="max-width: 140px;">
-                                                <button type="button" class="btn btn-outline-secondary" disabled="@(openingBusy || row.Quantity <= 0)" @onclick="() => StepOpeningDenomination(row, -1)">-</button>
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-2 border-bottom border-light">
+                                            <span class="fw-semibold small" style="min-width: 72px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 152px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(openingBusy || row.Quantity <= 0)" @onclick="() => StepOpeningDenomination(row, -1)">−</button>
                                                 <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
                                                        value="@row.RawQuantity"
                                                        disabled="@openingBusy"
                                                        @oninput="e => OnOpeningDenominationChanged(row, e.Value?.ToString())" />
                                                 <button type="button" class="btn btn-outline-secondary" disabled="@openingBusy" @onclick="() => StepOpeningDenomination(row, 1)">+</button>
                                             </div>
-                                            <span class="small font-monospace fw-semibold text-end" style="min-width: 85px;">₱@row.Subtotal.ToString("N2")</span>
                                         </div>
                                     }
                                 </div>
@@ -1591,22 +1590,21 @@ else
                             <div class="col-md-6">
                                 <div class="border rounded-3 p-2">
                                     <div class="d-flex justify-content-between align-items-center px-2 py-1 bg-light rounded-2 mb-2">
-                                        <span class="fw-bold small">Coins</span>
-                                        <span class="fw-bold small text-primary font-monospace">₱@OpeningCoinsSubtotal.ToString("N2")</span>
+                                        <span class="fw-bold small">Coins (₱20 – ₱0.01)</span>
+                                        <span class="small text-secondary fw-semibold">Qty</span>
                                     </div>
                                     @foreach (var row in openingDenominationRows.Where(r => r.Type == "COIN"))
                                     {
-                                        <div class="d-flex align-items-center justify-content-between py-1 px-1 border-bottom border-light">
-                                            <span class="fw-semibold small" style="min-width: 65px;">@row.Label</span>
-                                            <div class="input-group input-group-sm" style="max-width: 140px;">
-                                                <button type="button" class="btn btn-outline-secondary" disabled="@(openingBusy || row.Quantity <= 0)" @onclick="() => StepOpeningDenomination(row, -1)">-</button>
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-2 border-bottom border-light">
+                                            <span class="fw-semibold small" style="min-width: 72px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 152px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(openingBusy || row.Quantity <= 0)" @onclick="() => StepOpeningDenomination(row, -1)">−</button>
                                                 <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
                                                        value="@row.RawQuantity"
                                                        disabled="@openingBusy"
                                                        @oninput="e => OnOpeningDenominationChanged(row, e.Value?.ToString())" />
                                                 <button type="button" class="btn btn-outline-secondary" disabled="@openingBusy" @onclick="() => StepOpeningDenomination(row, 1)">+</button>
                                             </div>
-                                            <span class="small font-monospace fw-semibold text-end" style="min-width: 85px;">₱@row.Subtotal.ToString("N2")</span>
                                         </div>
                                     }
                                 </div>
@@ -1673,16 +1671,17 @@ else
         Navigation.NavigateTo("/login");
     }
 
-    private async Task LockTerminal()
+    private async Task Logout()
     {
         if (Layout != null)
         {
-            await Layout.LockTerminalAsync();
+            await Layout.LogoutAsync();
             return;
         }
         Session.ClearSession();
+        POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
         Http.DefaultRequestHeaders.Authorization = null;
-        Navigation.NavigateTo("/login");
+        Navigation.NavigateTo("/login", replace: true);
     }
 
     private string selectedServiceMode = "DINING";
@@ -3148,7 +3147,7 @@ else
             case POS.Client.Services.ShiftVerificationIssue.Locked:
                 Session.ClearSession();
                 Http.DefaultRequestHeaders.Authorization = null;
-                Navigation.NavigateTo("/terminal-locked", replace: true);
+                Navigation.NavigateTo(result.LockStatus?.IsTerminalLocked == true ? "/terminal-locked" : "/login", replace: true);
                 return false;
 
             case POS.Client.Services.ShiftVerificationIssue.AuthorizationRejected:
@@ -3322,6 +3321,11 @@ else
                 HeadCount = headCount > 0 ? headCount : (int?)null,
                 DiscountAmount = Cart.ActiveDiscountAmount,
                 DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
+                DiscountMethod = Cart.ActiveDiscountMethod,
+                DiscountValue = Cart.ActiveDiscountValue,
+                ManualDiscountPercentage = Cart.ManualDiscountPercentage,
+                ManualDiscountAmount = Cart.ManualDiscountAmount,
+                PromoDiscountAmount = Cart.PromoDiscountAmount,
                 CustomerCardNumber = Cart.CustomerCardNumber,
                 CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
                 CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
@@ -3355,24 +3359,25 @@ else
             };
 
             // Local-First: Always prepare payment preview locally without creating an unpaid server order first.
-            var calcReq = new OrderCalculationRequestDto
+            var calcReq = Cart.BuildCalculationRequest(
+                !string.IsNullOrWhiteSpace(terminal.BranchTaxType) ? terminal.BranchTaxType : "VAT-Registered");
+            OrderCalculationResultDto calcRes;
+            try
             {
-                BranchTaxType = !string.IsNullOrWhiteSpace(terminal.BranchTaxType) ? terminal.BranchTaxType : "VAT-Registered",
-                DiscountCode = createDto.DiscountCode ?? "NONE",
-                Items = createDto.Items.Select(i => new CartItemCalculationDto
-                {
-                    ProductId = i.ProductId,
-                    ProductName = i.ProductName ?? "Product",
-                    Quantity = i.Quantity,
-                    UnitPrice = i.IsComplimentary ? 0m : i.BasePrice,
-                    TargetAmount = i.IsComplimentary ? 0m : i.TargetAmount,
-                    ModifierTotal = i.IsComplimentary ? 0m : (i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m),
-                    IsComplimentary = i.IsComplimentary,
-                    TaxName = i.TaxName ?? "VATable",
-                    IsEligibleForStatutoryDiscount = true
-                }).ToList()
-            };
-            var calcRes = new POS.Shared.Services.LocalDiscountCalculationService().CalculateOrder(calcReq);
+                calcRes = new POS.Shared.Services.LocalDiscountCalculationService().CalculateOrder(calcReq);
+            }
+            catch (ArgumentException ex)
+            {
+                paymentError = ex.Message;
+                await Swal.FireAsync("Invalid Discount", ex.Message, SweetAlertIcon.Warning);
+                return;
+            }
+            if (calcRes.TotalAmount < 0m)
+            {
+                paymentError = "Transaction total cannot be negative. Please review applied discounts.";
+                await Swal.FireAsync("Invalid Transaction Total", paymentError, SweetAlertIcon.Error);
+                return;
+            }
 
             var order = new OrderResponseDto
             {
@@ -3505,7 +3510,12 @@ else
                 if (selectedPaymentMethod == null) return;
                 string methodCode = selectedPaymentMethod.Code;
                 bool isCash = IsCashMethod(selectedPaymentMethod);
-                if (isCash && cashTendered < currentOrderResponse.TotalAmount)
+                if (currentOrderResponse.TotalAmount < 0m)
+                {
+                    paymentError = "Transaction total cannot be negative. Please review applied discounts.";
+                    return;
+                }
+                if (isCash && (cashTendered < 0m || cashTendered < currentOrderResponse.TotalAmount))
                 {
                     paymentError = $"Amount tendered (₱{cashTendered:N2}) is less than total amount (₱{currentOrderResponse.TotalAmount:N2}).";
                     return;
@@ -3548,6 +3558,11 @@ else
                 HeadCount = headCount > 0 ? headCount : (int?)null,
                 DiscountAmount = Cart.ActiveDiscountAmount,
                 DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
+                DiscountMethod = Cart.ActiveDiscountMethod,
+                DiscountValue = Cart.ActiveDiscountValue,
+                ManualDiscountPercentage = Cart.ManualDiscountPercentage,
+                ManualDiscountAmount = Cart.ManualDiscountAmount,
+                PromoDiscountAmount = Cart.PromoDiscountAmount,
                 CustomerCardNumber = Cart.CustomerCardNumber,
                 CustomerName = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
                 CustomerAddress = string.IsNullOrWhiteSpace(customerAddress) ? null : customerAddress.Trim(),
@@ -3924,7 +3939,7 @@ else
                 DiscountAmount = Cart.ActiveDiscountAmount,
                 DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
                 CustomerCardNumber = Cart.CustomerCardNumber,
-                TotalAmount = Cart.Subtotal - Cart.ActiveDiscountAmount,
+                TotalAmount = Cart.TotalAmount,
                 Items = Cart.Items.Select(ci => new HeldSaleItemDto
                 {
                     ProductId = ci.ProductId,

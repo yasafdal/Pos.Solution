@@ -15,29 +15,107 @@
         <i class="bi bi-file-earmark-bar-graph-fill text-info fs-4"></i>
         <div>
             <h5 class="fw-bold text-light mb-0">POS Readings &amp; Fiscal Reports</h5>
-            <small class="text-secondary">Shift Declaration, Supervisor X-Reading, and End-of-Day Z-Reading</small>
+            <small class="text-secondary">Anytime Read-Only X-Reading, Cashier Access Controls, and End-of-Day Z-Reading</small>
         </div>
     </div>
-    <div class="d-flex gap-2">
-        <button type="button" class="btn btn-sm btn-outline-info rounded-3 px-3 fw-semibold" @onclick='() => Navigation.NavigateTo("/cash-drawer")'>
-            <i class="bi bi-cash-stack me-1"></i> X-Reading &amp; Shift Closing
+    <div class="d-flex flex-wrap gap-2">
+        <button type="button" class="btn btn-sm @(activeTab == "x" ? "btn-info text-dark fw-bold" : "btn-outline-info fw-semibold") rounded-3 px-3" @onclick='() => SwitchTabAsync("x")'>
+            <i class="bi bi-file-earmark-text me-1"></i> X-Reading (Anytime Audit)
         </button>
-        <button type="button" class="btn btn-sm btn-primary rounded-3 px-3 fw-bold">
+        <button type="button" class="btn btn-sm @(activeTab == "z" ? "btn-primary fw-bold" : "btn-outline-primary fw-semibold") rounded-3 px-3" @onclick='() => SwitchTabAsync("z")'>
             <i class="bi bi-file-earmark-lock me-1"></i> Z-Reading (End of Day)
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary rounded-3 px-3 fw-semibold" @onclick='() => Navigation.NavigateTo("/cash-drawer")'>
+            <i class="bi bi-cash-stack me-1"></i> Close Cashier / Shift
         </button>
     </div>
 </div>
 
-@if (!Session.IsAuthenticated || !ShiftSession.IsSupervisorRole(Session.Role))
+@if (!Session.IsAuthenticated)
+{
+    <div class="p-4">
+        <div class="alert alert-warning rounded-4 p-4" role="alert">Please sign in to access POS Readings.</div>
+    </div>
+}
+else if (activeTab == "x")
+{
+    <section class="z-reading-page" aria-labelledby="x-title">
+        <h3 id="x-title">X-Reading — Anytime Audit Snapshot</h3>
+        <p class="text-secondary">@Session.Terminal?.BranchName / @Session.Terminal?.OutletName — @Session.Terminal?.TerminalName</p>
+        <div class="z-reading-notice">
+            <strong>Strictly Read-Only Audit Report.</strong>
+            Generates live accumulated figures for the Business Date (04:00–04:00 PHT) even while cashiers are actively working.
+            Can be run repeatedly online or offline. Never closes shifts, locks cashiers/terminals, or resets counters.
+        </div>
+        @if (xError != null) { <div class="alert alert-danger" role="alert">@xError</div> }
+        @if (xNotice != null) { <div class="alert alert-info" role="status">@xNotice</div> }
+
+        <div class="z-reading-controls">
+            <div>
+                <label for="x-date">Business date</label>
+                <input id="x-date" class="form-control" type="date" value="@xBusinessDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)" @onchange="ChangeXDate" disabled="@xBusy" />
+            </div>
+            @if (!Authorized)
+            {
+                <div>
+                    <label for="x-sup-pin">Supervisor PIN</label>
+                    <input id="x-sup-pin" class="form-control" type="password" inputmode="numeric" @bind="xSupervisorPin" @bind:event="oninput" placeholder="Enter supervisor PIN" disabled="@xBusy" />
+                </div>
+            }
+            <button type="button" class="btn btn-info text-dark fw-bold" disabled="@xBusy" @onclick="GenerateXReadingAsync">
+                <i class="bi bi-arrow-repeat me-1"></i> @(xBusy ? "Generating..." : "Generate X-Reading")
+            </button>
+            @if (xReport != null)
+            {
+                <button type="button" class="btn btn-outline-primary fw-semibold" disabled="@xBusy" @onclick="PrintXReadingAsync">
+                    <i class="bi bi-printer me-1"></i> Print X-Reading
+                </button>
+            }
+        </div>
+
+        @if (xReport != null)
+        {
+            <div class="z-reading-checks" role="status">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                    <h5 class="mb-0">X-Reading Snapshot — Business Date @xReport.BusinessDate</h5>
+                    <span class="badge @(xReport.ActiveShiftCount > 0 ? "bg-success" : "bg-secondary")">
+                        @xReport.ActiveShiftCount Open Shift(s) / @xReport.ClosedShiftCount Closed Shift(s)
+                    </span>
+                </div>
+                <div class="row g-2 small mb-2">
+                    <div class="col-6 col-md-3"><strong>Gross Sales:</strong> ₱@xReport.GrossSales.ToString("N2")</div>
+                    <div class="col-6 col-md-3"><strong>Discounts:</strong> ₱@xReport.TotalDiscounts.ToString("N2")</div>
+                    <div class="col-6 col-md-3"><strong>Voids / Refunds:</strong> ₱@xReport.TotalRefundsAndVoids.ToString("N2")</div>
+                    <div class="col-6 col-md-3"><strong>Net Sales:</strong> ₱@xReport.NetSales.ToString("N2")</div>
+                </div>
+                <div class="small text-secondary">Generated At: @POS.Shared.Services.BusinessDayClock.FormatManila(xReport.GeneratedAt, "yyyy-MM-dd HH:mm:ss") PHT</div>
+                @if (xReport.CashierSummaries.Count > 0)
+                {
+                    <div class="mt-2 small">
+                        <strong>Per-Cashier Breakdown:</strong>
+                        <ul class="mb-0 mt-1">
+                            @foreach (var cs in xReport.CashierSummaries)
+                            {
+                                <li>@cs.CashierId — @(cs.OpenShifts > 0 ? "OPEN" : "CLOSED") (@cs.ShiftCount shift(s), @cs.TransactionCount tx) — Gross ₱@cs.GrossSales.ToString("N2") / Net ₱@cs.NetSales.ToString("N2")</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+            <iframe class="z-reading-preview" title="X-Reading audit report preview" sandbox="" srcdoc="@XReadingHtmlFormatter.Format(xReport)"></iframe>
+        }
+    </section>
+}
+else if (!Authorized)
 {
     <div class="p-4">
         <div class="alert alert-warning d-flex flex-wrap justify-content-between align-items-center gap-3 rounded-4 p-4" role="alert">
             <div>
-                <h6 class="fw-bold mb-1"><i class="bi bi-shield-lock-fill me-2"></i>Supervisor Authorization Required for Z-Reading</h6>
-                <div class="small">End-of-Day Z-Reading totals and report generation require a Supervisor, Manager, or Admin session. For Cashier Blind Closing Declaration and Supervisor X-Reading, open the Cash Drawer &amp; Shift module.</div>
+                <h6 class="fw-bold mb-1"><i class="bi bi-shield-lock-fill me-2"></i>Senior Cashier or Supervisor Authorization Required for Z-Reading</h6>
+                <div class="small">End-of-Day Z-Reading finalization requires a Senior Cashier, Manager, or Admin session. Use the Anytime X-Reading tab (with Supervisor PIN) for mid-day audit readings.</div>
             </div>
-            <button type="button" class="btn btn-dark fw-bold rounded-3 px-4 py-2" @onclick='() => Navigation.NavigateTo("/cash-drawer")'>
-                <i class="bi bi-cash-stack me-1"></i> Go to Shift &amp; X-Reading
+            <button type="button" class="btn btn-dark fw-bold rounded-3 px-4 py-2" @onclick='() => SwitchTabAsync("x")'>
+                <i class="bi bi-file-earmark-text me-1"></i> Open Anytime X-Reading
             </button>
         </div>
     </div>
@@ -50,7 +128,7 @@ else
         <div class="z-reading-notice">
             <strong>Finalize on the original terminal only.</strong>
             Business dates run from 04:00 to next 04:00, Philippine time. X-Reading printing is not a prerequisite.
-            Generation saves an immutable report; printing is a separate step. Invoice sequences are never reset here.
+            Finalizing Z-Reading permanently saves an immutable report and <strong>locks this terminal until 4:00 AM</strong> for the finalized Business Date.
         </div>
         @if (error != null) { <div class="alert alert-danger" role="alert">@error</div> }
         @if (notice != null) { <div class="alert alert-info" role="status">@notice</div> }
@@ -82,7 +160,7 @@ else
             </div>
             <label class="z-reading-confirm">
                 <input type="checkbox" @bind="confirmed" disabled="@busy" />
-                <span>I have closed the shifts, resolved pending payments/orders, and synchronized every device using this terminal identity. No other device or offline copy has unuploaded transactions. This report cannot be regenerated or edited.</span>
+                <span>I have closed all cashier shifts, verified cash accountability, resolved pending payments/orders, and synchronized every device using this terminal identity. Finalizing this Z-Reading will lock this terminal until 4:00 AM and cannot be undone.</span>
             </label>
             <div class="z-reading-actions">
                 <button type="button" class="btn btn-primary" disabled="@(busy || !confirmed || blockers.Count > 0 || !readiness.CanGenerate)" @onclick="GenerateAsync">
@@ -93,7 +171,7 @@ else
         @if (report != null)
         {
             <div class="z-reading-notice" role="status">
-                <strong>Finalized report — Z @report.ZNumber</strong>. Generation is complete. Printing does not create another report.
+                <strong>Finalized report — Z @report.ZNumber</strong>. Terminal is locked for Business Date @report.BusinessDate.ToString("yyyy-MM-dd") until 4:00 AM. Printing does not create another report.
                 @if (unknownPrint) { <span class="text-warning">A previous print outcome is unknown. Check the printer before requesting another copy.</span> }
             </div>
             @if (unknownPrint)
@@ -106,17 +184,61 @@ else
                     <input id="z-print-reason" class="form-control" @bind="printReason" @bind:event="oninput" maxlength="255" disabled="@busy" placeholder="e.g. Original copy, paper jam, supervisor copy" />
                 </div>
                 <button type="button" class="btn btn-primary" disabled="@(busy || string.IsNullOrWhiteSpace(printReason) || (unknownPrint && !pendingPrintAcknowledged))" @onclick="PrintAsync">@(busy ? "Working..." : "Print saved report / Reprint")</button>
+                <button type="button" class="btn btn-danger fw-bold" disabled="@busy" @onclick="LockAndSignOut">
+                    <i class="bi bi-shield-lock-fill me-1"></i> Lock Terminal &amp; Sign Out
+                </button>
             </div>
             <details class="z-reading-audit"><summary>Print audit (@printAudit.Count attempts)</summary>
                 <ul>@foreach (var a in printAudit) { <li>@POS.Shared.Services.BusinessDayClock.FormatManila(a.StartedAt, "yyyy-MM-dd HH:mm:ss") PHT — @a.RequestedBy — @a.Status — @(a.IsReprint ? "REPRINT" : "Original attempt") — @a.Reason @a.ErrorMessage</li> }</ul>
             </details>
             <iframe class="z-reading-preview" title="Saved Z-Reading report preview" sandbox="" srcdoc="@ZReadingHtmlFormatter.Format(report)"></iframe>
         }
+
+        @if (activeRestrictions.Count > 0)
+        {
+            <div class="z-reading-checks mt-3">
+                <h5>Closed Cashiers Today (Supervisor Reopen)</h5>
+                <p class="small text-secondary mb-2">These cashiers have completed Close Cashier on this terminal for the current Business Date. Historical closed shift records are preserved immutably when reopening access.</p>
+                @if (reopenNotice != null) { <div class="alert alert-success py-2 small">@reopenNotice</div> }
+                @if (reopenError != null) { <div class="alert alert-danger py-2 small">@reopenError</div> }
+                <div class="mb-2">
+                    <label for="reopen-reason" class="small">Reopen Reason (Required)</label>
+                    <input id="reopen-reason" class="form-control form-control-sm" @bind="reopenReason" @bind:event="oninput" maxlength="500" placeholder="e.g. Cashier closed early by mistake — resuming evening shift" disabled="@reopenBusy" />
+                </div>
+                <ul class="list-unstyled mb-0">
+                    @foreach (var r in activeRestrictions)
+                    {
+                        <li class="d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 border-top border-secondary border-opacity-25">
+                            <div class="small">
+                                <strong>@r.CashierId</strong> — Closed @POS.Shared.Services.BusinessDayClock.FormatManila(r.ClosedAtUtc, "HH:mm") PHT (Business Date @r.BusinessDate)
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-warning fw-semibold"
+                                    disabled="@(reopenBusy || string.IsNullOrWhiteSpace(reopenReason))"
+                                    @onclick="() => ReopenCashierAsync(r)">
+                                <i class="bi bi-unlock me-1"></i> Reopen Access
+                            </button>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
     </section>
 }
 
 @code {
-    private DateOnly businessDate = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDate().AddDays(-1);
+    private string activeTab = "z";
+    private DateOnly businessDate = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDate();
+    private DateOnly xBusinessDate = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDate();
+    private XReadingReportDto? xReport;
+    private bool xBusy;
+    private string? xError, xNotice;
+    private string xSupervisorPin = string.Empty;
+
+    private List<CashierClosingRestrictionDto> activeRestrictions = new();
+    private string reopenReason = string.Empty;
+    private bool reopenBusy;
+    private string? reopenError, reopenNotice;
+
     private ZReadingReadinessDto? readiness;
     private ZReadingReportDto? report;
     private List<string> blockers = new();
@@ -132,7 +254,117 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        if (Authorized) await RefreshAsync();
+        if (!Authorized)
+        {
+            activeTab = "x";
+            return;
+        }
+        await RefreshAsync();
+        await LoadActiveCashierRestrictionsAsync();
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        activeTab = tab;
+        if (tab == "z" && Authorized && readiness == null && report == null)
+        {
+            await RefreshAsync();
+            await LoadActiveCashierRestrictionsAsync();
+        }
+    }
+
+    private void ChangeXDate(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParseExact(e.Value?.ToString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+        {
+            xBusinessDate = d;
+            xReport = null;
+        }
+    }
+
+    private async Task GenerateXReadingAsync()
+    {
+        if (xBusy || Session.Terminal == null) return;
+        xBusy = true; xError = null; xNotice = null;
+        try
+        {
+            var connState = await Connectivity.CheckConnectivityAsync();
+            bool offline = connState != TerminalConnectivityState.OnlineAndHealthy || Session.Token == "OFFLINE-SESSION-TOKEN";
+            xReport = await ShiftSession.GetAnytimeXReadingAsync(
+                Http,
+                Session.Terminal.TerminalId,
+                xBusinessDate,
+                offline: offline,
+                supervisorPin: Authorized ? null : xSupervisorPin,
+                isSupervisorCaller: Authorized,
+                reprint: false);
+            xNotice = offline
+                ? "Read-only X-Reading generated from local SQLite (offline mode). No shifts or counters were modified."
+                : "Read-only X-Reading snapshot generated. No shifts, locks, or counters were modified.";
+        }
+        catch (Exception ex) { xError = ex.Message; }
+        finally { xBusy = false; }
+    }
+
+    private async Task PrintXReadingAsync()
+    {
+        if (xBusy || xReport == null) return;
+        xBusy = true; xError = null;
+        try
+        {
+            await Printer.PrintXReadingAsync(xReport, Session.Terminal?.ReceiptPrinterName);
+            xNotice = "X-Reading sent to receipt printer (read-only snapshot).";
+        }
+        catch (Exception ex) { xError = $"Printing X-Reading failed: {ex.Message}"; }
+        finally { xBusy = false; }
+    }
+
+    private async Task LoadActiveCashierRestrictionsAsync()
+    {
+        if (Session.Terminal == null) return;
+        try
+        {
+            var connState = await Connectivity.CheckConnectivityAsync();
+            bool offline = connState != TerminalConnectivityState.OnlineAndHealthy || Session.Token == "OFFLINE-SESSION-TOKEN";
+            var lockState = await ShiftSession.GetTerminalLockStatusAsync(Http, Session.Terminal.TerminalId, null, offline);
+            activeRestrictions = lockState.ActiveCashierRestrictions ?? new List<CashierClosingRestrictionDto>();
+        }
+        catch { }
+    }
+
+    private async Task ReopenCashierAsync(CashierClosingRestrictionDto restriction)
+    {
+        if (reopenBusy || Session.Terminal == null || string.IsNullOrWhiteSpace(reopenReason)) return;
+        reopenBusy = true; reopenError = null; reopenNotice = null;
+        try
+        {
+            var connState = await Connectivity.CheckConnectivityAsync();
+            bool offline = connState != TerminalConnectivityState.OnlineAndHealthy || Session.Token == "OFFLINE-SESSION-TOKEN";
+            await ShiftSession.ReopenCashierRestrictionAsync(
+                Http,
+                new ReopenCashierRestrictionRequestDto
+                {
+                    TerminalId = Session.Terminal.TerminalId,
+                    CashierId = restriction.CashierId,
+                    BusinessDate = restriction.BusinessDate,
+                    Reason = reopenReason.Trim()
+                },
+                Session.Username ?? string.Empty,
+                Session.Role,
+                offline);
+            reopenReason = string.Empty;
+            reopenNotice = $"Reopened access for cashier '{restriction.CashierId}' on {restriction.BusinessDate}. Historical closed shift records remain preserved.";
+            await LoadActiveCashierRestrictionsAsync();
+        }
+        catch (Exception ex) { reopenError = ex.Message; }
+        finally { reopenBusy = false; }
+    }
+
+    private void LockAndSignOut()
+    {
+        Session.ClearSession();
+        Http.DefaultRequestHeaders.Authorization = null;
+        Navigation.NavigateTo("/terminal-locked", replace: true);
     }
 
     private async Task ChangeDate(ChangeEventArgs e)
@@ -218,9 +450,17 @@ else
                 await CheckResponseAsync(response);
                 report = await response.Content.ReadFromJsonAsync<ZReadingReportDto>() ?? throw new InvalidOperationException("Empty response. Load the saved report before retrying; the operation ID has been retained.");
                 confirmed = false;
-                notice = "Report finalized and saved. Nothing has been printed yet.";
+                notice = $"Z-Reading #{report.ZNumber} finalized and saved. Terminal is now locked for Business Date {businessDate:yyyy-MM-dd} until 4:00 AM. You may print the saved report before signing out.";
             }
             finally { LocalPosDbContext.WriteLock.Release(); }
+            if (report != null && Session.Terminal != null)
+            {
+                await ShiftSession.ApplyLocalTerminalZLockAsync(
+                    Session.Terminal.TerminalId,
+                    businessDate,
+                    Session.Username ?? "Supervisor",
+                    report.GeneratedAt);
+            }
             await LoadPrintAuditAsync();
         }
         catch (Exception ex) { error = ex.Message + " If the request timed out, load the saved report before retrying. The same operation ID will be reused."; }

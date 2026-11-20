@@ -38,6 +38,14 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
     [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<DiscountType>> CreateDiscount(DiscountType dto)
     {
+        if (dto == null || string.IsNullOrWhiteSpace(dto.Code) || string.IsNullOrWhiteSpace(dto.Name))
+            return BadRequest("Discount Code and Name are required.");
+
+        var validationError = POS.Shared.Services.LocalDiscountCalculationService.ValidateDiscountTypeDefinition(
+            dto.Code, dto.DiscountMethod, dto.DiscountValue);
+        if (validationError != null)
+            return BadRequest(validationError);
+
         context.DiscountTypes.Add(dto);
         await context.SaveChangesAsync();
         return CreatedAtAction(nameof(GetDiscount), new { id = dto.DiscountTypeId }, dto);
@@ -51,6 +59,11 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
         if (id != dto.DiscountTypeId) return BadRequest("ID mismatch");
         var discount = await context.DiscountTypes.FindAsync(id);
         if (discount == null) return NotFound();
+
+        var validationError = POS.Shared.Services.LocalDiscountCalculationService.ValidateDiscountTypeDefinition(
+            dto.Code ?? discount.Code, dto.DiscountMethod, dto.DiscountValue);
+        if (validationError != null)
+            return BadRequest(validationError);
 
         discount.Name = dto.Name;
         discount.DiscountCategory = dto.DiscountCategory;
@@ -79,15 +92,33 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
 
     // POST: api/discounts/calculate
     [HttpPost("calculate")]
-    public ActionResult<OrderCalculationResultDto> CalculateDiscount(OrderCalculationRequestDto request)
+    public async Task<ActionResult<OrderCalculationResultDto>> CalculateDiscount(OrderCalculationRequestDto request)
     {
         if (request == null || request.Items == null || request.Items.Count == 0)
             return BadRequest("Calculation request cannot be empty.");
 
         try
         {
+            var code = (request.DiscountCode ?? "NONE").Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(code) && code != "NONE" && code != "MANUAL"
+                && !POS.Shared.Services.LocalDiscountCalculationService.IsStatutoryVatExemptCode(code)
+                && string.IsNullOrWhiteSpace(request.DiscountMethod) && !request.DiscountValue.HasValue)
+            {
+                var configured = await context.DiscountTypes.AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.IsActive && d.Code.ToUpper() == code);
+                if (configured != null)
+                {
+                    request.DiscountMethod = configured.DiscountMethod;
+                    request.DiscountValue = configured.DiscountValue;
+                }
+            }
+
             var result = calculationService.CalculateOrder(request);
             return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {

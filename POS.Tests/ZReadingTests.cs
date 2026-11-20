@@ -15,6 +15,7 @@ public static partial class Program
         await using var connection = conn;
         var date = new DateOnly(2026, 10, 29); var (start, _) = ZReadingService.Period(date);
         shift.Status = "CLOSED"; shift.OpenedAt = start.AddHours(1); shift.ClosedAt = start.AddHours(8);
+        shift.ActualCountedBalance = shift.OpeningFloat; shift.ClosingOriginalDeclarationJson = "{}";
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, ConfiguredBy = "verified" });
         var order = new Order { OrderNumber = "Z-UNRECONCILED", BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1", OrderType = "DINE_IN", OrderStatus = "COMPLETED", PaymentStatus = "PAID", CreatedAt = start.AddHours(1), InvoiceIssuedAt = start.AddHours(1), InvoiceNumber = "Z-UNRECONCILED", Subtotal = 100, TotalAmount = 100 };
         order.Payments.Add(new Payment { PaymentMethod = "CASH", Amount = 80, PaymentStatus = "PAID", ProcessedBy = "cashier1", PaidAt = start.AddHours(1) });
@@ -46,6 +47,7 @@ public static partial class Program
         ready = await service.ReadinessAsync(1, date);
         Assert(!ready.IsReady && ready.Blockers.Any(x => x.Contains("shift")), "Open shift blocks finalization.");
         shift.Status = "CLOSED"; shift.ClosedAt = start.AddHours(8);
+        shift.ActualCountedBalance = shift.OpeningFloat; shift.ClosingOriginalDeclarationJson = "{}";
         await db.SaveChangesAsync();
         var request = new GenerateZReadingRequest { TerminalId = 1, BusinessDate = date, ClientOperationId = "prereq", DeviceIdentifier = "test" };
         try { await service.GenerateAsync(request, "manager1"); throw new Exception("Missing explicit device completeness accepted."); }
@@ -70,6 +72,7 @@ public static partial class Program
         await using var connection = conn;
         var date = new DateOnly(2026, 10, 29); var (start, _) = ZReadingService.Period(date);
         shift.Status = "CLOSED"; shift.OpenedAt = start.AddHours(1); shift.ClosedAt = start.AddHours(8);
+        shift.ActualCountedBalance = shift.OpeningFloat; shift.ClosingOriginalDeclarationJson = "{}";
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, ConfiguredBy = "verified" });
         await db.SaveChangesAsync();
         dynamic service = new ZReadingService(db, new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ZReading:Enabled"] = "true" }).Build());
@@ -121,6 +124,7 @@ public static partial class Program
         var date = new DateOnly(2026, 10, 29);
         var (start, end) = ZReadingService.Period(date);
         shift.Status = "CLOSED"; shift.OpenedAt = start.AddHours(1); shift.ClosedAt = start.AddHours(8);
+        shift.ActualCountedBalance = shift.OpeningFloat; shift.ClosingOriginalDeclarationJson = "{}";
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, OpeningAccumulatedSales = 10m, AccumulatedGrossSales = 10m, ConfiguredBy = "verified" });
         var old = new Order { OrderId = 701, OrderNumber = "Z-OLD", TerminalId = 1, OutletId = 1, BranchId = 1, CashierId = "cashier1", ShiftId = 1, OrderType = "DINE_IN", OrderStatus = "COMPLETED", PaymentStatus = "PAID", CreatedAt = start.AddDays(-1), InvoiceIssuedAt = start.AddDays(-1), InvoiceNumber = "ZI-OLD", Subtotal = 56m, TotalAmount = 56m, VatableSales = 50m, VatAmount = 6m };
         old.OrderItems.Add(new OrderItem { OrderItemId = 701, ProductId = 1, ProductName = "Historical coffee", Quantity = .5m, UnitPrice = 112m, LineTotal = 56m, VatAmount = 6m });
@@ -159,6 +163,8 @@ public static partial class Program
         var date = new DateOnly(2026, 10, 29);
         shift.OpenedAt = new DateTime(2026, 10, 28, 21, 0, 0);
         shift.ClosedAt = shift.OpenedAt.AddHours(4);
+        shift.ActualCountedBalance = shift.OpeningFloat;
+        shift.ClosingOriginalDeclarationJson = "{}";
         await db.SaveChangesAsync();
         var type = typeof(ShiftLifecycle).Assembly.GetType("POS.Api.Models.ZReadingTerminalState");
         Assert(type != null, "Explicit provisioned terminal state is missing.");

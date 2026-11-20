@@ -299,6 +299,7 @@ public static class ShiftSession
 
             DateTime nowUtc = BusinessDayClock.UtcNow();
             long nowTicks = BusinessDayClock.TickCount64();
+            var localActiveRestrictions = await GetLocalActiveCashierRestrictionsAsync(db, terminalId, nowUtc, nowTicks);
             localLock = localTerm != null
                 ? BusinessDayClock.EvaluateLock(
                     terminalId: localTerm.TerminalId,
@@ -312,12 +313,20 @@ public static class ShiftSession
                     currentTickCount64: nowTicks,
                     lockedAtTickCount64: localTerm.ClosingLockedTickCount64,
                     lastKnownServerUtc: localTerm.LastKnownServerUtc,
-                    lastKnownServerTickCount64: localTerm.LastKnownServerTickCount64)
-                : new TerminalClosingLockDto
-                {
-                    TerminalId = terminalId,
-                    CurrentBusinessDate = BusinessDayClock.GetBusinessDateString(nowUtc)
-                };
+                    lastKnownServerTickCount64: localTerm.LastKnownServerTickCount64,
+                    additionalClosedCashiersToday: localActiveRestrictions.Select(r => r.CashierId))
+                : BusinessDayClock.EvaluateLock(
+                    terminalId: terminalId,
+                    closedBusinessDate: null,
+                    lockedByCashier: null,
+                    lockedAtUtc: null,
+                    unlockAtUtc: null,
+                    candidateCashierUsername: username,
+                    authoritativeServerUtc: null,
+                    deviceUtcNow: nowUtc,
+                    currentTickCount64: nowTicks,
+                    additionalClosedCashiersToday: localActiveRestrictions.Select(r => r.CashierId));
+            localLock.ActiveCashierRestrictions = localActiveRestrictions;
 
             if (localLock.IsCashierRestricted || localLock.IsTerminalLocked)
             {
@@ -356,20 +365,28 @@ public static class ShiftSession
                         Issue = ShiftVerificationIssue.DifferentCashierOpen,
                         Shift = localOpenShift,
                         LockStatus = localLock,
-                        ErrorMessage = $"This drawer is currently open under cashier '{localOpenShift.CashierId}'. Close that shift before opening your own."
+                        ErrorMessage = TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
                     };
                 }
             }
             else
             {
+                string currentBizDate = BusinessDayClock.GetBusinessDateString(nowUtc);
+                string normalizedUser = username.ToLowerInvariant();
                 localLatestClosedShift = (await db.CashDrawerShifts.AsNoTracking()
-                    .Where(s => s.TerminalId == terminalId && s.Status == "CLOSED")
+                    .Where(s => s.TerminalId == terminalId && s.Status == "CLOSED" && s.CashierId.ToLower() == normalizedUser)
                     .ToListAsync())
                     .OrderByDescending(s => s.ClosedAt ?? s.OpenedAt)
                     .ThenByDescending(s => s.ShiftId)
                     .FirstOrDefault();
 
-                localClosedForCurrentDay = IsClosedInCurrentBusinessDay(localLatestClosedShift, nowUtc);
+                bool wasReopenedToday = await db.CashierClosingRestrictions.AsNoTracking()
+                    .AnyAsync(r => r.TerminalId == terminalId
+                                && r.BusinessDate == currentBizDate
+                                && r.Status == "REOPENED"
+                                && r.CashierId.ToLower() == normalizedUser);
+
+                localClosedForCurrentDay = !wasReopenedToday && IsClosedInCurrentBusinessDay(localLatestClosedShift, nowUtc);
             }
         }
         catch (Exception ex)
@@ -951,17 +968,204 @@ public static class ShiftSession
         };
     }
 
-    public static void ApplyLocalClosingLock(LocalTerminalConfig? termCfg, string cashierId, DateTime closedAtUtc)
+    /// <summary>
+    /// Applies a Terminal-level Z-Reading finalization lock locally until 4:00 AM next Business Date.
+    /// NEVER call this from Close Cashier; call ApplyLocalCashierClosingRestrictionAsync instead.
+    /// </summary>
+    public static void ApplyLocalClosingLock(LocalTerminalConfig? termCfg, string finalizedBy, DateTime finalizedAtUtc)
     {
         if (termCfg == null) return;
-        var utcClosed = closedAtUtc.Kind == DateTimeKind.Utc
-            ? closedAtUtc
-            : DateTime.SpecifyKind(closedAtUtc, DateTimeKind.Utc);
-        termCfg.ClosedBusinessDate = POS.Shared.Services.BusinessDayClock.GetBusinessDateString(utcClosed);
-        termCfg.ClosingLockedByCashier = cashierId;
-        termCfg.ClosingLockedAtUtc = utcClosed;
-        termCfg.ClosingUnlockAtUtc = POS.Shared.Services.BusinessDayClock.GetNextBusinessDayStartUtc(utcClosed);
-        termCfg.ClosingLockedTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64();
+        var utcFinalized = BusinessDayClock.NormalizeUtc(finalizedAtUtc);
+        termCfg.ClosedBusinessDate = BusinessDayClock.GetBusinessDateString(utcFinalized);
+        termCfg.ClosingLockedByCashier = finalizedBy;
+        termCfg.ClosingLockedAtUtc = utcFinalized;
+        termCfg.ClosingUnlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(utcFinalized);
+        termCfg.ClosingLockedTickCount64 = BusinessDayClock.TickCount64();
+    }
+
+    /// <summary>
+    /// Persists a Terminal-level Z-Reading lock locally after Z-Reading finalization succeeds for the current Business Date.
+    /// </summary>
+    public static async Task ApplyLocalTerminalZLockAsync(
+        int terminalId,
+        DateOnly businessDate,
+        string finalizedBy,
+        DateTime finalizedAtUtc)
+    {
+        var nowUtc = BusinessDayClock.UtcNow();
+        var unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(businessDate);
+        string dateStr = businessDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        string currentBizDateStr = BusinessDayClock.GetBusinessDateString(nowUtc);
+        if (string.CompareOrdinal(dateStr, currentBizDateStr) < 0 || nowUtc >= unlockAtUtc)
+            return;
+
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var termCfg = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId)
+                          ?? await db.TerminalConfigs.FirstOrDefaultAsync();
+            if (termCfg != null)
+            {
+                var utcFinalized = BusinessDayClock.NormalizeUtc(finalizedAtUtc);
+                termCfg.ClosedBusinessDate = dateStr;
+                termCfg.ClosingLockedByCashier = finalizedBy;
+                termCfg.ClosingLockedAtUtc = utcFinalized;
+                termCfg.ClosingUnlockAtUtc = unlockAtUtc;
+                termCfg.ClosingLockedTickCount64 = BusinessDayClock.TickCount64();
+                await db.SaveChangesAsync();
+            }
+        }
+        finally { LocalPosDbContext.WriteLock.Release(); }
+    }
+
+    /// <summary>
+    /// Persists a cashier-level Close Cashier restriction (CashierId + TerminalId + BusinessDate) locally.
+    /// Does NOT lock the terminal for other cashiers and does NOT block the same cashier on other terminals.
+    /// </summary>
+    public static async Task ApplyLocalCashierClosingRestrictionAsync(
+        LocalPosDbContext db,
+        int branchId,
+        int terminalId,
+        string cashierId,
+        long? shiftId,
+        string? clientShiftId,
+        string? clientCloseId,
+        DateTime closedAtUtc,
+        string syncStatus = "PENDING")
+    {
+        if (terminalId <= 0 || string.IsNullOrWhiteSpace(cashierId)) return;
+        var utcClosed = BusinessDayClock.NormalizeUtc(closedAtUtc);
+        var bizDate = BusinessDayClock.GetBusinessDateString(utcClosed);
+        var unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(utcClosed);
+        string normalizedCashier = cashierId.Trim().ToLowerInvariant();
+
+        LocalCashierClosingRestriction? existing = null;
+        if (!string.IsNullOrWhiteSpace(clientCloseId))
+        {
+            existing = await db.CashierClosingRestrictions.FirstOrDefaultAsync(
+                r => r.TerminalId == terminalId && r.ClientCloseId == clientCloseId);
+        }
+        if (existing == null && shiftId.HasValue && shiftId.Value != 0)
+        {
+            existing = await db.CashierClosingRestrictions.FirstOrDefaultAsync(
+                r => r.TerminalId == terminalId && r.ShiftId == shiftId.Value);
+        }
+        if (existing == null)
+        {
+            existing = await db.CashierClosingRestrictions.FirstOrDefaultAsync(
+                r => r.TerminalId == terminalId
+                     && r.BusinessDate == bizDate
+                     && r.Status == "ACTIVE"
+                     && r.CashierId.ToLower() == normalizedCashier);
+        }
+
+        if (existing == null)
+        {
+            db.CashierClosingRestrictions.Add(new LocalCashierClosingRestriction
+            {
+                ClientRestrictionId = Guid.NewGuid().ToString("N"),
+                BranchId = branchId,
+                TerminalId = terminalId,
+                CashierId = cashierId.Trim(),
+                BusinessDate = bizDate,
+                ShiftId = shiftId,
+                ClientShiftId = clientShiftId,
+                ClientCloseId = clientCloseId,
+                ClosedAtUtc = utcClosed,
+                UnlockAtUtc = unlockAtUtc,
+                ClosedAtTickCount64 = BusinessDayClock.TickCount64(),
+                Status = "ACTIVE",
+                SyncStatus = syncStatus
+            });
+        }
+        else if (existing.Status == "ACTIVE")
+        {
+            existing.ShiftId ??= shiftId;
+            if (string.IsNullOrWhiteSpace(existing.ClientShiftId)) existing.ClientShiftId = clientShiftId;
+            if (string.IsNullOrWhiteSpace(existing.ClientCloseId)) existing.ClientCloseId = clientCloseId;
+            if (string.Equals(syncStatus, "SYNCED", StringComparison.OrdinalIgnoreCase))
+                existing.SyncStatus = "SYNCED";
+        }
+    }
+
+    public static async Task<List<CashierClosingRestrictionDto>> GetLocalActiveCashierRestrictionsAsync(
+        LocalPosDbContext db,
+        int terminalId,
+        DateTime effectiveNowUtc,
+        long? currentTickCount64 = null)
+    {
+        if (terminalId <= 0) return new List<CashierClosingRestrictionDto>();
+        string currentBizDate = BusinessDayClock.GetBusinessDateString(effectiveNowUtc);
+        var rows = await db.CashierClosingRestrictions
+            .AsNoTracking()
+            .Where(r => r.TerminalId == terminalId && r.Status == "ACTIVE")
+            .OrderByDescending(r => r.ClosedAtUtc)
+            .ToListAsync();
+
+        var active = new List<CashierClosingRestrictionDto>();
+        foreach (var r in rows)
+        {
+            var closedUtc = BusinessDayClock.NormalizeUtc(r.ClosedAtUtc);
+            var unlockUtc = r.UnlockAtUtc != default
+                ? BusinessDayClock.NormalizeUtc(r.UnlockAtUtc)
+                : BusinessDayClock.GetNextBusinessDayStartUtc(closedUtc);
+
+            bool activeByDate = string.CompareOrdinal(r.BusinessDate, currentBizDate) >= 0 && effectiveNowUtc < unlockUtc;
+
+            // Offline clock-rollback tamper guard using monotonic tick count
+            bool activeByTamper = false;
+            if (!activeByDate && r.ClosedAtTickCount64.HasValue && currentTickCount64.HasValue && currentTickCount64.Value >= r.ClosedAtTickCount64.Value)
+            {
+                var elapsedTicks = TimeSpan.FromMilliseconds(currentTickCount64.Value - r.ClosedAtTickCount64.Value);
+                var requiredWait = unlockUtc - closedUtc;
+                if (effectiveNowUtc < closedUtc.AddMinutes(-2) && elapsedTicks < requiredWait)
+                    activeByTamper = true;
+            }
+
+            if (activeByDate || activeByTamper)
+            {
+                active.Add(new CashierClosingRestrictionDto
+                {
+                    RestrictionId = r.ServerRestrictionId ?? 0,
+                    ClientRestrictionId = r.ClientRestrictionId,
+                    BranchId = r.BranchId,
+                    TerminalId = r.TerminalId,
+                    CashierId = r.CashierId,
+                    BusinessDate = r.BusinessDate,
+                    ShiftId = r.ShiftId,
+                    ClientShiftId = r.ClientShiftId,
+                    ClientCloseId = r.ClientCloseId,
+                    ClosedAtUtc = closedUtc,
+                    UnlockAtUtc = unlockUtc,
+                    Status = r.Status,
+                    ReopenedBy = r.ReopenedBy,
+                    ReopenedAtUtc = r.ReopenedAtUtc,
+                    ReopenReason = r.ReopenReason
+                });
+            }
+        }
+        return active;
+    }
+
+    private static void ApplyActiveShiftOwnershipToLock(
+        TerminalClosingLockDto status,
+        string? ownerCashierId,
+        long? activeShiftId,
+        string? candidateCashierUsername)
+    {
+        if (string.IsNullOrWhiteSpace(ownerCashierId))
+            return;
+
+        status.ActiveShiftOwnerCashierId = ownerCashierId.Trim();
+        status.ActiveShiftId = activeShiftId;
+        if (!string.IsNullOrWhiteSpace(candidateCashierUsername) &&
+            !string.Equals(ownerCashierId.Trim(), candidateCashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            status.IsShiftOwnedByAnotherCashier = true;
+            status.ActiveShiftOwnershipMessage = TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage;
+        }
     }
 
     public static async Task<TerminalClosingLockDto> GetTerminalLockStatusAsync(
@@ -988,12 +1192,15 @@ public static class ShiftSession
                         {
                             using var db = new LocalPosDbContext();
                             db.InitializeDatabase();
+                            var serverNowUtc = remoteLock.ServerUtcNow ?? BusinessDayClock.UtcNow();
+                            var nowTick = BusinessDayClock.TickCount64();
+                            var currentBizDate = BusinessDayClock.GetBusinessDateString(serverNowUtc);
+
                             var localTerm = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId)
                                             ?? await db.TerminalConfigs.FirstOrDefaultAsync();
                             if (localTerm != null)
                             {
-                                var nowTick = POS.Shared.Services.BusinessDayClock.TickCount64();
-                                localTerm.LastKnownServerUtc = remoteLock.ServerUtcNow;
+                                localTerm.LastKnownServerUtc = serverNowUtc;
                                 localTerm.LastKnownServerTickCount64 = nowTick;
 
                                 if (remoteLock.IsTerminalLocked)
@@ -1003,40 +1210,108 @@ public static class ShiftSession
                                     localTerm.ClosingLockedAtUtc = remoteLock.LockedAtUtc;
                                     localTerm.ClosingUnlockAtUtc = remoteLock.UnlockAtUtc;
                                     localTerm.ClosingLockedTickCount64 ??= nowTick;
-                                    await db.SaveChangesAsync();
-                                    return remoteLock;
                                 }
-
-                                bool hasPendingLocalClose = !string.IsNullOrWhiteSpace(localTerm.ClosedBusinessDate) &&
-                                    string.CompareOrdinal(
-                                        localTerm.ClosedBusinessDate,
-                                        POS.Shared.Services.BusinessDayClock.GetBusinessDateString(remoteLock.ServerUtcNow ?? POS.Shared.Services.BusinessDayClock.UtcNow())) >= 0 &&
-                                    await db.SyncOutboxes.AnyAsync(o => o.EntityType == "SHIFT_CLOSE" && o.Status != "SYNCED");
-
-                                if (!hasPendingLocalClose)
+                                else
                                 {
                                     localTerm.ClosedBusinessDate = null;
                                     localTerm.ClosingLockedByCashier = null;
                                     localTerm.ClosingLockedAtUtc = null;
                                     localTerm.ClosingUnlockAtUtc = null;
                                     localTerm.ClosingLockedTickCount64 = null;
-                                    await db.SaveChangesAsync();
-                                    return remoteLock;
                                 }
-
-                                await db.SaveChangesAsync();
-                                return POS.Shared.Services.BusinessDayClock.EvaluateLock(
-                                    terminalId: localTerm.TerminalId,
-                                    closedBusinessDate: localTerm.ClosedBusinessDate,
-                                    lockedByCashier: localTerm.ClosingLockedByCashier,
-                                    lockedAtUtc: localTerm.ClosingLockedAtUtc,
-                                    unlockAtUtc: localTerm.ClosingUnlockAtUtc,
-                                    candidateCashierUsername: cashierUsername,
-                                    authoritativeServerUtc: remoteLock.ServerUtcNow);
                             }
+
+                            // Sync active cashier closing restrictions from server while preserving unsynced local restrictions/reopens
+                            var localRowsToday = await db.CashierClosingRestrictions
+                                .Where(r => r.TerminalId == terminalId && r.BusinessDate == currentBizDate)
+                                .ToListAsync();
+                            var serverRestrictions = remoteLock.ActiveCashierRestrictions ?? new List<CashierClosingRestrictionDto>();
+
+                            foreach (var localRow in localRowsToday)
+                            {
+                                if (localRow.SyncStatus == "SYNCED" &&
+                                    !serverRestrictions.Any(sr =>
+                                        string.Equals(sr.CashierId, localRow.CashierId, StringComparison.OrdinalIgnoreCase) &&
+                                        string.Equals(sr.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    localRow.Status = "REOPENED";
+                                }
+                            }
+                            foreach (var sr in serverRestrictions)
+                            {
+                                var existing = localRowsToday.FirstOrDefault(l =>
+                                    (sr.RestrictionId > 0 && l.ServerRestrictionId == sr.RestrictionId) ||
+                                    (!string.IsNullOrWhiteSpace(sr.ClientCloseId) && l.ClientCloseId == sr.ClientCloseId) ||
+                                    string.Equals(l.CashierId, sr.CashierId, StringComparison.OrdinalIgnoreCase));
+                                if (existing == null)
+                                {
+                                    db.CashierClosingRestrictions.Add(new LocalCashierClosingRestriction
+                                    {
+                                        ClientRestrictionId = !string.IsNullOrWhiteSpace(sr.ClientRestrictionId) ? sr.ClientRestrictionId : Guid.NewGuid().ToString("N"),
+                                        ServerRestrictionId = sr.RestrictionId > 0 ? sr.RestrictionId : null,
+                                        BranchId = sr.BranchId,
+                                        TerminalId = sr.TerminalId,
+                                        CashierId = sr.CashierId,
+                                        BusinessDate = sr.BusinessDate,
+                                        ShiftId = sr.ShiftId,
+                                        ClientShiftId = sr.ClientShiftId,
+                                        ClientCloseId = sr.ClientCloseId,
+                                        ClosedAtUtc = BusinessDayClock.NormalizeUtc(sr.ClosedAtUtc),
+                                        UnlockAtUtc = BusinessDayClock.NormalizeUtc(sr.UnlockAtUtc),
+                                        ClosedAtTickCount64 = nowTick,
+                                        Status = sr.Status,
+                                        ReopenedBy = sr.ReopenedBy,
+                                        ReopenedAtUtc = sr.ReopenedAtUtc,
+                                        ReopenReason = sr.ReopenReason,
+                                        SyncStatus = "SYNCED"
+                                    });
+                                }
+                                else if (existing.SyncStatus == "SYNCED")
+                                {
+                                    existing.ServerRestrictionId = sr.RestrictionId > 0 ? sr.RestrictionId : existing.ServerRestrictionId;
+                                    existing.Status = sr.Status;
+                                    existing.UnlockAtUtc = BusinessDayClock.NormalizeUtc(sr.UnlockAtUtc);
+                                }
+                            }
+
+                            await db.SaveChangesAsync();
+
+                            // Merge any pending local unsynced cashier restrictions (e.g. offline SHIFT_CLOSE awaiting upload)
+                            var mergedActive = await GetLocalActiveCashierRestrictionsAsync(db, terminalId, serverNowUtc, nowTick);
+                            var mergedStatus = BusinessDayClock.EvaluateLock(
+                                terminalId: terminalId,
+                                closedBusinessDate: remoteLock.IsTerminalLocked ? remoteLock.ClosedBusinessDate : null,
+                                lockedByCashier: remoteLock.IsTerminalLocked ? remoteLock.LockedByCashier : null,
+                                lockedAtUtc: remoteLock.IsTerminalLocked ? remoteLock.LockedAtUtc : null,
+                                unlockAtUtc: remoteLock.IsTerminalLocked ? remoteLock.UnlockAtUtc : null,
+                                candidateCashierUsername: cashierUsername,
+                                authoritativeServerUtc: serverNowUtc,
+                                additionalClosedCashiersToday: mergedActive.Select(r => r.CashierId));
+                            mergedStatus.ActiveCashierRestrictions = mergedActive;
+
+                            // Enforce single active open shift ownership: honor unsynced local open shift first, else server open shift
+                            LocalCashDrawerShift? localOpenOnline = null;
+                            try { localOpenOnline = await GetLocalActiveOpenShiftAsync(db, terminalId, asNoTracking: true); } catch { }
+                            if (localOpenOnline != null && localOpenOnline.ShiftId < 0)
+                            {
+                                ApplyActiveShiftOwnershipToLock(mergedStatus, localOpenOnline.CashierId, localOpenOnline.ShiftId, cashierUsername);
+                            }
+                            else if (!string.IsNullOrWhiteSpace(remoteLock.ActiveShiftOwnerCashierId))
+                            {
+                                bool locallyClosedPendingUpload = remoteLock.ActiveShiftId.HasValue &&
+                                    await db.CashDrawerShifts.AsNoTracking().AnyAsync(s =>
+                                        s.ShiftId == remoteLock.ActiveShiftId.Value &&
+                                        s.Status == "CLOSED" &&
+                                        !string.IsNullOrWhiteSpace(s.ClientCloseId));
+                                if (!locallyClosedPendingUpload)
+                                {
+                                    ApplyActiveShiftOwnershipToLock(mergedStatus, remoteLock.ActiveShiftOwnerCashierId, remoteLock.ActiveShiftId, cashierUsername);
+                                }
+                            }
+
+                            return mergedStatus;
                         }
                         finally { LocalPosDbContext.WriteLock.Release(); }
-                        return remoteLock;
                     }
                 }
             }
@@ -1055,16 +1330,32 @@ public static class ShiftSession
                 ? await localDb.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == terminalId)
                 : null) ?? await localDb.TerminalConfigs.FirstOrDefaultAsync();
 
+            var nowUtc = BusinessDayClock.UtcNow();
+            var nowTicks = BusinessDayClock.TickCount64();
+            int effectiveTerminalId = cached?.TerminalId ?? terminalId;
+            var localActiveRestrictions = await GetLocalActiveCashierRestrictionsAsync(localDb, effectiveTerminalId, nowUtc, nowTicks);
+            LocalCashDrawerShift? localOpenOffline = null;
+            try { localOpenOffline = await GetLocalActiveOpenShiftAsync(localDb, effectiveTerminalId, asNoTracking: true); } catch { }
+
             if (cached == null)
             {
-                return new TerminalClosingLockDto
-                {
-                    TerminalId = terminalId,
-                    ServerUtcNow = POS.Shared.Services.BusinessDayClock.UtcNow()
-                };
+                var statusNoTerm = BusinessDayClock.EvaluateLock(
+                    terminalId: terminalId,
+                    closedBusinessDate: null,
+                    lockedByCashier: null,
+                    lockedAtUtc: null,
+                    unlockAtUtc: null,
+                    candidateCashierUsername: cashierUsername,
+                    authoritativeServerUtc: null,
+                    deviceUtcNow: nowUtc,
+                    currentTickCount64: nowTicks,
+                    additionalClosedCashiersToday: localActiveRestrictions.Select(r => r.CashierId));
+                statusNoTerm.ActiveCashierRestrictions = localActiveRestrictions;
+                ApplyActiveShiftOwnershipToLock(statusNoTerm, localOpenOffline?.CashierId, localOpenOffline?.ShiftId, cashierUsername);
+                return statusNoTerm;
             }
 
-            var status = POS.Shared.Services.BusinessDayClock.EvaluateLock(
+            var status = BusinessDayClock.EvaluateLock(
                 terminalId: cached.TerminalId,
                 closedBusinessDate: cached.ClosedBusinessDate,
                 lockedByCashier: cached.ClosingLockedByCashier,
@@ -1072,11 +1363,14 @@ public static class ShiftSession
                 unlockAtUtc: cached.ClosingUnlockAtUtc,
                 candidateCashierUsername: cashierUsername,
                 authoritativeServerUtc: null,
-                deviceUtcNow: POS.Shared.Services.BusinessDayClock.UtcNow(),
-                currentTickCount64: POS.Shared.Services.BusinessDayClock.TickCount64(),
+                deviceUtcNow: nowUtc,
+                currentTickCount64: nowTicks,
                 lockedAtTickCount64: cached.ClosingLockedTickCount64,
                 lastKnownServerUtc: cached.LastKnownServerUtc,
-                lastKnownServerTickCount64: cached.LastKnownServerTickCount64);
+                lastKnownServerTickCount64: cached.LastKnownServerTickCount64,
+                additionalClosedCashiersToday: localActiveRestrictions.Select(r => r.CashierId));
+            status.ActiveCashierRestrictions = localActiveRestrictions;
+            ApplyActiveShiftOwnershipToLock(status, localOpenOffline?.CashierId, localOpenOffline?.ShiftId, cashierUsername);
 
             if (!status.IsTerminalLocked && !string.IsNullOrWhiteSpace(cached.ClosedBusinessDate))
             {
@@ -1219,6 +1513,9 @@ public static class ShiftSession
             using var tx = await db.Database.BeginTransactionAsync();
             var termCfg = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == request.TerminalId && t.BranchId == request.BranchId && t.OutletId > 0);
             if (termCfg == null) throw new InvalidOperationException("Refresh terminal ownership online before opening offline.");
+            var nowUtcOpen = BusinessDayClock.UtcNow();
+            var nowTicksOpen = BusinessDayClock.TickCount64();
+            var activeRestrictionsOpen = await GetLocalActiveCashierRestrictionsAsync(db, termCfg.TerminalId, nowUtcOpen, nowTicksOpen);
             var lockStatus = POS.Shared.Services.BusinessDayClock.EvaluateLock(
                 terminalId: termCfg.TerminalId,
                 closedBusinessDate: termCfg.ClosedBusinessDate,
@@ -1227,11 +1524,12 @@ public static class ShiftSession
                 unlockAtUtc: termCfg.ClosingUnlockAtUtc,
                 candidateCashierUsername: cashier,
                 authoritativeServerUtc: null,
-                deviceUtcNow: POS.Shared.Services.BusinessDayClock.UtcNow(),
-                currentTickCount64: POS.Shared.Services.BusinessDayClock.TickCount64(),
+                deviceUtcNow: nowUtcOpen,
+                currentTickCount64: nowTicksOpen,
                 lockedAtTickCount64: termCfg.ClosingLockedTickCount64,
                 lastKnownServerUtc: termCfg.LastKnownServerUtc,
-                lastKnownServerTickCount64: termCfg.LastKnownServerTickCount64);
+                lastKnownServerTickCount64: termCfg.LastKnownServerTickCount64,
+                additionalClosedCashiersToday: activeRestrictionsOpen.Select(r => r.CashierId));
             if (lockStatus.IsCashierRestricted || lockStatus.IsTerminalLocked)
                 throw new InvalidOperationException(lockStatus.CashierRestrictionMessage ?? lockStatus.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
             if (!string.IsNullOrWhiteSpace(termCfg.ClosedBusinessDate))
@@ -1251,6 +1549,9 @@ public static class ShiftSession
             var existing = await GetLocalActiveOpenShiftAsync(db, request.TerminalId, asNoTracking: false);
             if (existing != null)
             {
+                if (!string.Equals(existing.CashierId, cashier, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+
                 if (!string.IsNullOrWhiteSpace(request.ClientShiftId) &&
                     string.Equals(existing.ClientShiftId, request.ClientShiftId, StringComparison.Ordinal) &&
                     existing.BranchId == request.BranchId &&
@@ -1370,9 +1671,16 @@ public static class ShiftSession
                 try
                 {
                     using var lockDb = new LocalPosDbContext(); lockDb.InitializeDatabase();
-                    var lockTerm = await lockDb.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == serverDto.TerminalId)
-                                   ?? await lockDb.TerminalConfigs.FirstOrDefaultAsync();
-                    ApplyLocalClosingLock(lockTerm, serverDto.CashierId, serverDto.ClosedAt ?? request.ClosedAt ?? POS.Shared.Services.BusinessDayClock.UtcNow());
+                    await ApplyLocalCashierClosingRestrictionAsync(
+                        lockDb,
+                        serverDto.BranchId,
+                        serverDto.TerminalId,
+                        serverDto.CashierId,
+                        serverDto.ShiftId,
+                        serverDto.ClientShiftId,
+                        serverDto.ClientCloseId ?? request.ClientCloseId,
+                        serverDto.ClosedAt ?? request.ClosedAt ?? BusinessDayClock.UtcNow(),
+                        syncStatus: "SYNCED");
                     await lockDb.SaveChangesAsync();
                 }
                 finally { LocalPosDbContext.WriteLock.Release(); }
@@ -1483,9 +1791,16 @@ public static class ShiftSession
                 });
             }
 
-            var localTerm = await db.TerminalConfigs.FirstOrDefaultAsync(t => t.TerminalId == shift.TerminalId)
-                            ?? await db.TerminalConfigs.FirstOrDefaultAsync();
-            ApplyLocalClosingLock(localTerm, shift.CashierId, closedAtUtc);
+            await ApplyLocalCashierClosingRestrictionAsync(
+                db,
+                shift.BranchId,
+                shift.TerminalId,
+                shift.CashierId,
+                shift.ShiftId,
+                shift.ClientShiftId,
+                shift.ClientCloseId,
+                closedAtUtc,
+                syncStatus: "PENDING");
 
             await db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -1667,6 +1982,526 @@ public static class ShiftSession
             await tx.CommitAsync();
 
             return await BuildLocalShiftDtoAsync(db, shift, isReprint: false, includeSupervisorReconciliation: true);
+        }
+        finally { LocalPosDbContext.WriteLock.Release(); }
+    }
+
+    /// <summary>
+    /// Generates an anytime strictly read-only X-Reading audit snapshot for the current (or specified) Business Date.
+    /// Works online via GET api/cash-drawer/x-reading AND offline from SQLite without mutating shifts, locks, or counters.
+    /// </summary>
+    public static async Task<XReadingReportDto> GetAnytimeXReadingAsync(
+        HttpClient? http,
+        int terminalId,
+        DateOnly? businessDate = null,
+        bool offline = false,
+        string? supervisorPin = null,
+        bool isSupervisorCaller = false,
+        bool reprint = false)
+    {
+        if (terminalId <= 0)
+            throw new InvalidOperationException("Valid terminal is required to generate an X-Reading.");
+
+        var nowUtc = BusinessDayClock.UtcNow();
+        var targetDate = businessDate ?? BusinessDayClock.GetBusinessDate(nowUtc);
+        string dateStr = targetDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        if (!offline && http != null && DeviceActivationService.HasValidOnlineBearerToken(http, null))
+        {
+            try
+            {
+                AttachActiveTerminalTokenIfMissing(http);
+                var queryParts = new List<string>
+                {
+                    $"terminalId={terminalId}",
+                    $"businessDate={Uri.EscapeDataString(dateStr)}",
+                    $"reprint={(reprint ? "true" : "false")}"
+                };
+                if (!string.IsNullOrWhiteSpace(supervisorPin))
+                    queryParts.Add($"supervisorPin={Uri.EscapeDataString(supervisorPin.Trim())}");
+
+                using var response = await http.GetAsync($"api/cash-drawer/x-reading?{string.Join("&", queryParts)}");
+                if (response.IsSuccessStatusCode)
+                {
+                    var remote = await response.Content.ReadFromJsonAsync<XReadingReportDto>();
+                    if (remote != null)
+                        return remote;
+                }
+                else if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    throw new InvalidOperationException("Supervisor role or valid supervisor PIN is required to generate an X-Reading.");
+                }
+                else if (!IsTransientStatusCode(response.StatusCode) && response.StatusCode != HttpStatusCode.Unauthorized)
+                {
+                    string err = await SafeReadErrorMessageAsync(response);
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(err) ? $"X-Reading request failed (HTTP {(int)response.StatusCode})." : err);
+                }
+            }
+            catch (HttpRequestException) { /* fallback to local SQLite */ }
+            catch (TaskCanceledException) { /* fallback to local SQLite */ }
+            catch (TimeoutException) { /* fallback to local SQLite */ }
+        }
+
+        // Offline / local SQLite strictly read-only aggregation (ZERO writes, ZERO mutations)
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+
+        bool authorizedOffline = isSupervisorCaller;
+        if (!authorizedOffline && !string.IsNullOrWhiteSpace(supervisorPin))
+        {
+            var sup = await VerifyLocalSupervisorPinAsync(db, supervisorPin);
+            authorizedOffline = sup != null;
+        }
+        if (!authorizedOffline)
+            throw new InvalidOperationException("Supervisor role or valid supervisor PIN is required to generate an X-Reading offline.");
+
+        var termCfg = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == terminalId)
+                      ?? await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
+
+        var (periodStartUtc, periodEndUtc) = BusinessDayClock.GetPeriodUtc(targetDate);
+        var effectiveEndUtc = nowUtc < periodEndUtc ? nowUtc : periodEndUtc;
+
+        var allTerminalShifts = await db.CashDrawerShifts.AsNoTracking()
+            .Where(s => s.TerminalId == terminalId)
+            .OrderBy(s => s.OpenedAt)
+            .ToListAsync();
+
+        var dayShifts = allTerminalShifts.Where(s =>
+        {
+            var openedUtc = BusinessDayClock.NormalizeUtc(s.OpenedAt);
+            var closedUtc = s.ClosedAt.HasValue ? BusinessDayClock.NormalizeUtc(s.ClosedAt.Value) : (DateTime?)null;
+            return (openedUtc >= periodStartUtc && openedUtc < periodEndUtc)
+                || (closedUtc.HasValue && closedUtc.Value >= periodStartUtc && closedUtc.Value < periodEndUtc)
+                || (string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase) && openedUtc < periodEndUtc);
+        }).ToList();
+
+        var dayShiftIds = dayShifts.Select(s => s.ShiftId).ToHashSet();
+        var dayClientShiftIds = dayShifts.Where(s => !string.IsNullOrWhiteSpace(s.ClientShiftId)).Select(s => s.ClientShiftId!).ToHashSet(StringComparer.Ordinal);
+
+        var allOrders = await db.Orders.AsNoTracking()
+            .Where(o => o.TerminalId == terminalId)
+            .OrderBy(o => o.CreatedAt)
+            .ToListAsync();
+
+        var periodOrders = allOrders.Where(o =>
+        {
+            var createdUtc = BusinessDayClock.NormalizeUtc(o.CreatedAt);
+            bool inWindow = createdUtc >= periodStartUtc && createdUtc <= effectiveEndUtc;
+            bool inDayShift = (o.ShiftId.HasValue && dayShiftIds.Contains(o.ShiftId.Value))
+                || (!string.IsNullOrWhiteSpace(o.ClientShiftId) && dayClientShiftIds.Contains(o.ClientShiftId));
+            return inWindow || inDayShift;
+        }).ToList();
+
+        var periodOrderIds = periodOrders.Select(o => o.OrderId).ToHashSet(StringComparer.Ordinal);
+        var allPayments = periodOrderIds.Count > 0
+            ? await db.Payments.AsNoTracking().Where(p => periodOrderIds.Contains(p.OrderId)).ToListAsync()
+            : new List<LocalPayment>();
+
+        var paidOrders = periodOrders.Where(o => string.Equals(o.PaymentStatus, "PAID", StringComparison.OrdinalIgnoreCase) && !string.Equals(o.OrderStatus, "VOIDED", StringComparison.OrdinalIgnoreCase)).ToList();
+        var voidOrders = periodOrders.Where(o => string.Equals(o.PaymentStatus, "VOIDED", StringComparison.OrdinalIgnoreCase) || string.Equals(o.OrderStatus, "VOIDED", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        decimal grossSales = Math.Round(paidOrders.Sum(o => o.Subtotal) + voidOrders.Sum(o => o.Subtotal), 2, MidpointRounding.AwayFromZero);
+        decimal totalDiscounts = Math.Round(paidOrders.Sum(o => o.DiscountAmount), 2, MidpointRounding.AwayFromZero);
+        decimal voidTotal = Math.Round(voidOrders.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
+        decimal netSales = Math.Round(paidOrders.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
+
+        var invoices = periodOrders
+            .Where(o => !string.IsNullOrWhiteSpace(o.InvoiceNumber))
+            .OrderBy(o => o.CreatedAt)
+            .Select(o => o.InvoiceNumber)
+            .ToList();
+
+        int activeShiftCount = dayShifts.Count(s => string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase));
+        int closedShiftCount = dayShifts.Count(s => string.Equals(s.Status, "CLOSED", StringComparison.OrdinalIgnoreCase));
+
+        decimal totalOpeningFloat = Math.Round(dayShifts.Sum(s => s.OpeningFloat), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashSales = Math.Round(dayShifts.Sum(s => s.TotalCashSales), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashRefunds = Math.Round(dayShifts.Sum(s => s.TotalCashRefunds), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashIn = Math.Round(dayShifts.Sum(s => s.TotalCashIn), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashOut = Math.Round(dayShifts.Sum(s => s.TotalCashOut), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashDrops = Math.Round(dayShifts.Sum(s => s.TotalCashDrops), 2, MidpointRounding.AwayFromZero);
+        decimal expectedCashInDrawer = Math.Round(dayShifts.Sum(s => s.ExpectedBalance), 2, MidpointRounding.AwayFromZero);
+        decimal countedCashInDrawer = Math.Round(dayShifts.Where(s => s.ActualCountedBalance.HasValue).Sum(s => s.ActualCountedBalance!.Value), 2, MidpointRounding.AwayFromZero);
+        decimal cashNet = Math.Round(totalCashSales - totalCashRefunds, 2, MidpointRounding.AwayFromZero);
+        decimal closedExpectedCash = Math.Round(dayShifts.Where(s => string.Equals(s.Status, "CLOSED", StringComparison.OrdinalIgnoreCase)).Sum(s => s.ExpectedBalance), 2, MidpointRounding.AwayFromZero);
+        decimal cashVariance = activeShiftCount == 0 && closedShiftCount > 0
+            ? Math.Round(countedCashInDrawer - closedExpectedCash, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+
+        var configuredMethods = await db.PaymentMethods.AsNoTracking().OrderBy(m => m.DisplayOrder).ThenBy(m => m.Name).ToListAsync();
+        var reconciliations = new List<PaymentMethodReconciliationDto>
+        {
+            new()
+            {
+                PaymentMethodCode = "CASH",
+                PaymentMethodName = "Cash (Drawer)",
+                IsCash = true,
+                IsActive = true,
+                DisplayOrder = 0,
+                GrossSalesAmount = totalCashSales,
+                RefundAmount = totalCashRefunds,
+                NetSalesAmount = cashNet,
+                ExpectedAmount = expectedCashInDrawer,
+                DeclaredAmount = countedCashInDrawer,
+                Variance = cashVariance,
+                Status = activeShiftCount > 0 ? "IN_PROGRESS" : PaymentMethodReconciliationDto.ComputeStatus(cashVariance)
+            }
+        };
+
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "CASH" };
+        var nonCashCodes = new List<string>();
+        foreach (var pm in configuredMethods.Where(m => m.IsActive))
+            if (seenCodes.Add(pm.Code)) nonCashCodes.Add(pm.Code);
+        foreach (var p in allPayments)
+        {
+            if (!string.IsNullOrWhiteSpace(p.PaymentMethod) && seenCodes.Add(p.PaymentMethod.Trim()))
+                nonCashCodes.Add(p.PaymentMethod.Trim().ToUpperInvariant());
+        }
+
+        foreach (var code in nonCashCodes)
+        {
+            var cfg = configuredMethods.FirstOrDefault(m => string.Equals(m.Code, code, StringComparison.OrdinalIgnoreCase));
+            decimal mGross = Math.Round(allPayments
+                .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(p.PaymentStatus, "PAID", StringComparison.OrdinalIgnoreCase) || string.Equals(p.PaymentStatus, "REFUNDED", StringComparison.OrdinalIgnoreCase)))
+                .Sum(p => p.Amount), 2, MidpointRounding.AwayFromZero);
+            decimal mRef = Math.Round(allPayments
+                .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(p.PaymentStatus, "REFUNDED", StringComparison.OrdinalIgnoreCase))
+                .Sum(p => p.Amount), 2, MidpointRounding.AwayFromZero);
+            decimal mNet = Math.Round(mGross - mRef, 2, MidpointRounding.AwayFromZero);
+            reconciliations.Add(new PaymentMethodReconciliationDto
+            {
+                PaymentMethodCode = cfg?.Code ?? code.ToUpperInvariant(),
+                PaymentMethodName = cfg?.Name ?? code.ToUpperInvariant(),
+                IsCash = false,
+                IsActive = cfg?.IsActive ?? false,
+                DisplayOrder = cfg?.DisplayOrder ?? 999,
+                GrossSalesAmount = mGross,
+                RefundAmount = mRef,
+                NetSalesAmount = mNet,
+                ExpectedAmount = mNet,
+                DeclaredAmount = 0m,
+                Variance = 0m,
+                Status = activeShiftCount > 0 ? "IN_PROGRESS" : "READ_ONLY"
+            });
+        }
+
+        var cashierNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in dayShifts) if (!string.IsNullOrWhiteSpace(s.CashierId)) cashierNames.Add(s.CashierId.Trim());
+        foreach (var o in periodOrders) if (!string.IsNullOrWhiteSpace(o.CashierId)) cashierNames.Add(o.CashierId.Trim());
+
+        var cashierSummaries = new List<XReadingCashierSummaryDto>();
+        foreach (var cashier in cashierNames.OrderBy(c => c, StringComparer.OrdinalIgnoreCase))
+        {
+            var cShifts = dayShifts.Where(s => string.Equals(s.CashierId, cashier, StringComparison.OrdinalIgnoreCase)).ToList();
+            var cOrders = periodOrders.Where(o => string.Equals(o.CashierId, cashier, StringComparison.OrdinalIgnoreCase)).ToList();
+            var cPaid = cOrders.Where(o => string.Equals(o.PaymentStatus, "PAID", StringComparison.OrdinalIgnoreCase) && !string.Equals(o.OrderStatus, "VOIDED", StringComparison.OrdinalIgnoreCase)).ToList();
+            var cVoid = cOrders.Where(o => string.Equals(o.PaymentStatus, "VOIDED", StringComparison.OrdinalIgnoreCase) || string.Equals(o.OrderStatus, "VOIDED", StringComparison.OrdinalIgnoreCase)).ToList();
+            cashierSummaries.Add(new XReadingCashierSummaryDto
+            {
+                CashierId = cashier,
+                ShiftCount = cShifts.Count,
+                OpenShifts = cShifts.Count(s => string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase)),
+                ClosedShifts = cShifts.Count(s => string.Equals(s.Status, "CLOSED", StringComparison.OrdinalIgnoreCase)),
+                TransactionCount = cPaid.Count,
+                GrossSales = Math.Round(cPaid.Sum(o => o.Subtotal) + cVoid.Sum(o => o.Subtotal), 2, MidpointRounding.AwayFromZero),
+                NetSales = Math.Round(cPaid.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero)
+            });
+        }
+
+        var openShift = dayShifts.LastOrDefault(s => string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase));
+        return new XReadingReportDto
+        {
+            ShiftId = openShift?.ShiftId ?? dayShifts.LastOrDefault()?.ShiftId ?? 0,
+            ClientShiftId = openShift?.ClientShiftId ?? dayShifts.LastOrDefault()?.ClientShiftId,
+            BranchId = termCfg?.BranchId ?? 0,
+            BranchName = termCfg?.BranchName ?? "Main Branch",
+            BranchCode = termCfg?.BranchCode,
+            BranchAddress = termCfg?.BranchAddress,
+            BranchPhone = termCfg?.BranchPhone,
+            OutletId = termCfg?.OutletId ?? 0,
+            OutletName = termCfg?.OutletName ?? string.Empty,
+            TerminalId = terminalId,
+            TerminalCode = termCfg?.TerminalCode ?? string.Empty,
+            TerminalName = termCfg?.TerminalName ?? $"Terminal #{terminalId}",
+            PTUNumber = termCfg?.PTUNumber,
+            MINNumber = termCfg?.MINNumber,
+            SerialNumber = termCfg?.SerialNumber,
+            CashierId = activeShiftCount > 0
+                ? (openShift?.CashierId ?? "ACTIVE SHIFT")
+                : (cashierSummaries.Count == 1 ? cashierSummaries[0].CashierId : "ALL CASHIERS"),
+            OpenedAt = dayShifts.FirstOrDefault()?.OpenedAt ?? periodStartUtc,
+            ClosedAt = activeShiftCount == 0 ? dayShifts.LastOrDefault()?.ClosedAt : null,
+            GeneratedAt = nowUtc,
+            BusinessDate = dateStr,
+            IsAnytimeAudit = true,
+            ActiveShiftCount = activeShiftCount,
+            ClosedShiftCount = closedShiftCount,
+            CashierSummaries = cashierSummaries,
+            IsReprint = reprint,
+            ReportingPeriodStart = periodStartUtc,
+            ReportingPeriodEnd = effectiveEndUtc,
+            ReportingPeriodMatchesShift = dayShifts.Count == 1,
+            BeginningInvoiceNumber = invoices.FirstOrDefault(),
+            EndingInvoiceNumber = invoices.LastOrDefault(),
+            CompletedTransactionsCount = paidOrders.Count,
+            VoidedTransactionsCount = voidOrders.Count,
+            ReturnTransactionsCount = 0,
+            GrossSales = grossSales,
+            TotalDiscounts = totalDiscounts,
+            TotalRefundsAndVoids = voidTotal,
+            NetSales = netSales,
+            VatableSales = Math.Round(paidOrders.Sum(o => o.VatableSales), 2, MidpointRounding.AwayFromZero),
+            VatExemptSales = Math.Round(paidOrders.Sum(o => o.VatExemptSales), 2, MidpointRounding.AwayFromZero),
+            ZeroRatedSales = Math.Round(paidOrders.Sum(o => o.ZeroRatedSales), 2, MidpointRounding.AwayFromZero),
+            VatAmount = Math.Round(paidOrders.Sum(o => o.VatAmount), 2, MidpointRounding.AwayFromZero),
+            ShiftTransactionsCount = paidOrders.Count,
+            ShiftGrossSales = grossSales,
+            ShiftDiscounts = totalDiscounts,
+            ShiftRefundsAndVoids = voidTotal,
+            ShiftNetSales = netSales,
+            ShiftCashNetSales = cashNet,
+            ShiftNonCashNetSales = Math.Round(reconciliations.Where(r => !r.IsCash).Sum(r => r.NetSalesAmount), 2, MidpointRounding.AwayFromZero),
+            OpeningFloat = totalOpeningFloat,
+            CashSalesCollected = totalCashSales,
+            CashRefunds = totalCashRefunds,
+            NetCashSales = cashNet,
+            TotalCashIn = totalCashIn,
+            TotalCashOut = totalCashOut,
+            TotalCashDrops = totalCashDrops,
+            ExpectedCashInDrawer = expectedCashInDrawer,
+            CountedCashInDrawer = countedCashInDrawer,
+            CashVariance = cashVariance,
+            CashReconciliationStatus = activeShiftCount > 0 ? "IN_PROGRESS" : PaymentMethodReconciliationDto.ComputeStatus(cashVariance),
+            HasRecordedDenominations = false,
+            PaymentReconciliations = reconciliations,
+            IsOverallBalanced = activeShiftCount == 0 && cashVariance == 0m,
+            OverallStatus = activeShiftCount > 0
+                ? $"IN PROGRESS ({activeShiftCount} OPEN SHIFT)"
+                : (closedShiftCount == 0 ? "NO SHIFTS" : PaymentMethodReconciliationDto.ComputeStatus(cashVariance))
+        };
+    }
+
+    /// <summary>
+    /// Authorized supervisor reopen workflow allowing a closed cashier to sign back in on the same terminal/Business Date.
+    /// Preserves all closed CashDrawerShift records immutably and queues idempotent offline sync when disconnected.
+    /// </summary>
+    public static async Task<CashierClosingRestrictionDto> ReopenCashierRestrictionAsync(
+        HttpClient? http,
+        ReopenCashierRestrictionRequestDto request,
+        string callerUsername,
+        string? callerRole,
+        bool offline)
+    {
+        if (request == null || request.TerminalId <= 0)
+            throw new InvalidOperationException("Valid terminal is required.");
+        if (string.IsNullOrWhiteSpace(request.CashierId))
+            throw new InvalidOperationException("Cashier username is required.");
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new InvalidOperationException("A reason is required to reopen cashier access.");
+
+        var nowUtc = BusinessDayClock.UtcNow();
+        request.ClientOperationId = string.IsNullOrWhiteSpace(request.ClientOperationId)
+            ? $"REOPEN-{Guid.NewGuid():N}"
+            : request.ClientOperationId.Trim();
+        request.BusinessDate = string.IsNullOrWhiteSpace(request.BusinessDate)
+            ? BusinessDayClock.GetBusinessDateString(nowUtc)
+            : request.BusinessDate.Trim();
+        request.CashierId = request.CashierId.Trim();
+        request.Reason = request.Reason.Trim();
+
+        if (!offline && http != null && DeviceActivationService.HasValidOnlineBearerToken(http, null))
+        {
+            try
+            {
+                AttachActiveTerminalTokenIfMissing(http);
+                using var response = await http.PostAsJsonAsync("api/cash-drawer/cashier-restrictions/reopen", request);
+                if (response.IsSuccessStatusCode)
+                {
+                    var dto = await response.Content.ReadFromJsonAsync<CashierClosingRestrictionDto>();
+                    if (dto != null)
+                    {
+                        await MarkLocalCashierReopenedAsync(
+                            request.TerminalId,
+                            request.CashierId,
+                            request.BusinessDate,
+                            dto.ReopenedBy ?? callerUsername,
+                            request.Reason,
+                            request.ClientOperationId,
+                            syncStatus: "SYNCED",
+                            queueOutboxPayload: null);
+                        return dto;
+                    }
+                }
+                else if (!IsTransientStatusCode(response.StatusCode) && response.StatusCode != HttpStatusCode.Unauthorized)
+                {
+                    string err = await SafeReadErrorMessageAsync(response);
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(err)
+                        ? $"Failed to reopen cashier access (HTTP {(int)response.StatusCode})."
+                        : err);
+                }
+            }
+            catch (HttpRequestException) { /* fallback to offline */ }
+            catch (TaskCanceledException) { /* fallback to offline */ }
+            catch (TimeoutException) { /* fallback to offline */ }
+        }
+
+        // Offline supervisor verification (never persist plaintext PIN in outbox)
+        string? approverUsername = null;
+        string? approverPinHash = null;
+        using (var authDb = new LocalPosDbContext())
+        {
+            authDb.InitializeDatabase();
+            if (!string.IsNullOrWhiteSpace(request.SupervisorPin))
+            {
+                var sup = await VerifyLocalSupervisorPinAsync(authDb, request.SupervisorPin);
+                if (sup == null)
+                    throw new InvalidOperationException("Invalid supervisor PIN or user does not have supervisor privileges.");
+                approverUsername = sup.Username;
+                approverPinHash = sup.PinHash;
+            }
+            else if (IsSupervisorRole(callerRole))
+            {
+                var localSup = await authDb.Cashiers.AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Username.ToLower() == callerUsername.Trim().ToLower());
+                approverUsername = callerUsername.Trim();
+                approverPinHash = localSup?.PinHash;
+                if (string.IsNullOrWhiteSpace(approverPinHash))
+                    throw new InvalidOperationException("Enter your supervisor PIN to authorize offline cashier reopening.");
+            }
+            else
+            {
+                throw new InvalidOperationException("Supervisor authorization (role or supervisor PIN) is required to reopen cashier access.");
+            }
+        }
+
+        var outboxRequest = new ReopenCashierRestrictionRequestDto
+        {
+            ClientOperationId = request.ClientOperationId,
+            TerminalId = request.TerminalId,
+            CashierId = request.CashierId,
+            BusinessDate = request.BusinessDate,
+            Reason = request.Reason,
+            SupervisorPin = null,
+            SupervisorPinHash = approverPinHash,
+            ApprovedBy = approverUsername
+        };
+
+        return await MarkLocalCashierReopenedAsync(
+            request.TerminalId,
+            request.CashierId,
+            request.BusinessDate,
+            approverUsername!,
+            request.Reason,
+            request.ClientOperationId,
+            syncStatus: "PENDING",
+            queueOutboxPayload: outboxRequest);
+    }
+
+    private static async Task<CashierClosingRestrictionDto> MarkLocalCashierReopenedAsync(
+        int terminalId,
+        string cashierId,
+        string businessDate,
+        string reopenedBy,
+        string reason,
+        string clientOperationId,
+        string syncStatus,
+        ReopenCashierRestrictionRequestDto? queueOutboxPayload)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            using var tx = await db.Database.BeginTransactionAsync();
+
+            var nowUtc = BusinessDayClock.UtcNow();
+            string normCashier = cashierId.Trim().ToLowerInvariant();
+            var activeRows = await db.CashierClosingRestrictions
+                .Where(r => r.TerminalId == terminalId
+                         && r.BusinessDate == businessDate
+                         && r.Status == "ACTIVE"
+                         && r.CashierId.ToLower() == normCashier)
+                .ToListAsync();
+
+            if (activeRows.Count == 0 && queueOutboxPayload != null)
+            {
+                var alreadyReopened = await db.CashierClosingRestrictions
+                    .FirstOrDefaultAsync(r => r.TerminalId == terminalId && r.ClientOperationId == clientOperationId);
+                if (alreadyReopened != null)
+                {
+                    await tx.RollbackAsync();
+                    return new CashierClosingRestrictionDto
+                    {
+                        RestrictionId = alreadyReopened.ServerRestrictionId ?? 0,
+                        ClientRestrictionId = alreadyReopened.ClientRestrictionId,
+                        BranchId = alreadyReopened.BranchId,
+                        TerminalId = alreadyReopened.TerminalId,
+                        CashierId = alreadyReopened.CashierId,
+                        BusinessDate = alreadyReopened.BusinessDate,
+                        ShiftId = alreadyReopened.ShiftId,
+                        ClientShiftId = alreadyReopened.ClientShiftId,
+                        ClientCloseId = alreadyReopened.ClientCloseId,
+                        ClosedAtUtc = alreadyReopened.ClosedAtUtc,
+                        UnlockAtUtc = alreadyReopened.UnlockAtUtc,
+                        Status = alreadyReopened.Status,
+                        ReopenedBy = alreadyReopened.ReopenedBy,
+                        ReopenedAtUtc = alreadyReopened.ReopenedAtUtc,
+                        ReopenReason = alreadyReopened.ReopenReason
+                    };
+                }
+                throw new InvalidOperationException("No active cashier closing restriction found locally for this cashier, terminal, and business date.");
+            }
+
+            foreach (var row in activeRows)
+            {
+                row.Status = "REOPENED";
+                row.ReopenedBy = reopenedBy;
+                row.ReopenedAtUtc = nowUtc;
+                row.ReopenReason = reason;
+                row.ClientOperationId = clientOperationId;
+                row.SyncStatus = syncStatus;
+            }
+
+            if (queueOutboxPayload != null)
+            {
+                bool alreadyQueued = await db.SyncOutboxes.AnyAsync(o => o.EntityType == "CASHIER_REOPEN" && o.EntityId == clientOperationId);
+                if (!alreadyQueued)
+                {
+                    db.SyncOutboxes.Add(new LocalSyncOutbox
+                    {
+                        EntityType = "CASHIER_REOPEN",
+                        EntityId = clientOperationId,
+                        PayloadJson = JsonSerializer.Serialize(queueOutboxPayload),
+                        Status = "PENDING",
+                        CreatedAt = nowUtc
+                    });
+                }
+            }
+
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            var first = activeRows.FirstOrDefault();
+            return new CashierClosingRestrictionDto
+            {
+                RestrictionId = first?.ServerRestrictionId ?? 0,
+                ClientRestrictionId = first?.ClientRestrictionId,
+                BranchId = first?.BranchId ?? 0,
+                TerminalId = terminalId,
+                CashierId = cashierId,
+                BusinessDate = businessDate,
+                ShiftId = first?.ShiftId,
+                ClientShiftId = first?.ClientShiftId,
+                ClientCloseId = first?.ClientCloseId,
+                ClosedAtUtc = first?.ClosedAtUtc ?? nowUtc,
+                UnlockAtUtc = first?.UnlockAtUtc ?? BusinessDayClock.GetNextBusinessDayStartUtc(nowUtc),
+                Status = "REOPENED",
+                ReopenedBy = reopenedBy,
+                ReopenedAtUtc = nowUtc,
+                ReopenReason = reason
+            };
         }
         finally { LocalPosDbContext.WriteLock.Release(); }
     }

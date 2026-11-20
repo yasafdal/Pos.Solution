@@ -100,7 +100,7 @@
     letter-spacing: -0.01em;
 }
 
-/* Header Action Buttons (Switch Cashier / Lock Terminal) */
+/* Header Action Buttons (Switch Cashier / Logout) */
 .header-action-btn {
     border: none;
     border-radius: var(--pos-radius-sm, 8px);
@@ -125,12 +125,12 @@
     transform: translateY(-1px);
 }
 
-.header-btn-lock {
+.header-btn-logout {
     background: var(--pos-danger-gradient, linear-gradient(135deg, #ef4444 0%, #dc2626 100%));
     box-shadow: 0 2px 4px rgba(239, 68, 68, 0.25);
 }
 
-.header-btn-lock:hover {
+.header-btn-logout:hover {
     background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
     transform: translateY(-1px);
 }

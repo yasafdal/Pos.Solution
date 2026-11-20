@@ -38,11 +38,18 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
             if (date != result.NextBusinessDate) result.Blockers.Add($"Generate sequentially; next business date is {result.NextBusinessDate:yyyy-MM-dd}.");
             if (state.OpeningAccumulatedSales < 0 || state.AccumulatedGrossSales < state.OpeningAccumulatedSales) result.Blockers.Add("Invalid provisioned accumulated sales state.");
         }
-        if (end > DateTime.UtcNow && !configuration.GetValue<bool>("ZReading:BypassPeriodEndForTesting"))
-            result.Blockers.Add("Business period has not ended.");
+        var nowUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
+        var currentBizDate = POS.Shared.Services.BusinessDayClock.GetBusinessDate(nowUtc);
+        if (date > currentBizDate && !configuration.GetValue<bool>("ZReading:BypassPeriodEndForTesting"))
+            result.Blockers.Add($"Cannot finalize future business date {date:yyyy-MM-dd}; current business date is {currentBizDate:yyyy-MM-dd}.");
         if (await db.CashDrawerShifts.AnyAsync(x => x.TerminalId == terminalId && x.OpenedAt < end &&
             (x.Status == "OPEN" || x.ClosedAt == null || (x.ClosedAt > start && (x.OpenedAt < start || x.ClosedAt > end))), ct))
             result.Blockers.Add("Open, incomplete, or cross-period shift requires reviewed closure/handoff.");
+        if (await db.CashDrawerShifts.AnyAsync(x => x.TerminalId == terminalId && x.Status == "CLOSED" &&
+            x.OpenedAt >= start && x.OpenedAt < end &&
+            (!x.ActualCountedBalance.HasValue ||
+             (string.IsNullOrEmpty(x.ClosingDenominationsJson) && string.IsNullOrEmpty(x.ClosingOriginalDeclarationJson))), ct))
+            result.Blockers.Add("Required cashier cash accountability (denomination count and declaration) is incomplete for one or more closed shifts.");
         if (await db.CashDrawerMovements.AnyAsync(x => x.TerminalId == terminalId && x.CreatedAt < end &&
             (x.Status == "PENDING_APPROVAL" || x.Status == "FAILED_CONFLICT" || x.Status == "NEEDS_ATTENTION"), ct))
             result.Blockers.Add("Cash movement approval or synchronization conflict is unresolved.");
@@ -208,7 +215,7 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
             Id = Guid.NewGuid(), TerminalId = terminal.TerminalId, BranchId = terminal.BranchId, OutletId = terminal.OutletId,
             TerminalCode = terminal.TerminalCode, TerminalName = terminal.Name,
             BusinessDate = request.BusinessDate, PeriodStartUtc = ready.PeriodStartUtc, PeriodEndUtc = ready.PeriodEndUtc,
-            GeneratedAt = DateTime.UtcNow, GeneratedBy = generatedBy, ClientOperationId = request.ClientOperationId,
+            GeneratedAt = POS.Shared.Services.BusinessDayClock.UtcNow(), GeneratedBy = generatedBy, ClientOperationId = request.ClientOperationId,
             ZNumber = checked(state.LastZNumber + 1), ResetCounter = state.ResetCounter, PreviousAccumulatedSales = state.AccumulatedGrossSales
         };
         await AggregateAsync(report, ct);
@@ -225,6 +232,11 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
         state.LastZNumber = report.ZNumber.Value;
         state.LastBusinessDate = report.BusinessDate;
         state.AccumulatedGrossSales = report.PresentAccumulatedSales;
+
+        // Lock this terminal atomically inside the same transaction so failed Z-Readings never partially lock the terminal
+        await TerminalClosingLockGuard.LockTerminalOnZReadingAsync(
+            db, request.TerminalId, request.BusinessDate, generatedBy, report.GeneratedAt, ct);
+
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return report;

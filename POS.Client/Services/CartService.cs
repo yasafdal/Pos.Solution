@@ -18,33 +18,191 @@ namespace POS.Client.Services
         public IReadOnlyList<CartItem> Items => _items.AsReadOnly();
 
         public decimal Subtotal => _items.Sum(i => i.LineTotal);
-        public decimal TotalAmount => System.Math.Max(0m, Subtotal - activeDiscountAmount);
+        public decimal TotalAmount => System.Math.Max(0m, activeCalculatedTotal ?? (Subtotal - activeDiscountAmount));
         public decimal Total => TotalAmount;
         public decimal TotalItems => _items.Sum(i => i.Quantity);
 
         public event Action? OnChange;
         private string activeDiscountCode = "NONE";
         private decimal activeDiscountAmount = 0.00m;
+        private string? activeDiscountMethod;
+        private decimal? activeDiscountValue;
+        private decimal manualDiscountPercentage = 0.00m;
+        private decimal manualDiscountAmount = 0.00m;
+        private decimal promoDiscountAmount = 0.00m;
+        private string activeBranchTaxType = "VAT-Registered";
+        private decimal? activeCalculatedTotal;
         private string? customerCardNumber;
 
         public string ActiveDiscountCode => activeDiscountCode;
         public decimal ActiveDiscountAmount => activeDiscountAmount;
+        public string? ActiveDiscountMethod => activeDiscountMethod;
+        public decimal? ActiveDiscountValue => activeDiscountValue;
+        public decimal ManualDiscountPercentage => manualDiscountPercentage;
+        public decimal ManualDiscountAmount => manualDiscountAmount;
+        public decimal PromoDiscountAmount => promoDiscountAmount;
         public string? CustomerCardNumber => customerCardNumber;
 
         public void ApplyDiscount(string code, decimal amount, string? cardNumber = null)
         {
-            activeDiscountCode = code;
-            activeDiscountAmount = amount;
+            ApplyDiscount(code, amount, cardNumber, null, null, 0m, 0m, 0m, null, null);
+        }
+
+        public void ApplyDiscount(
+            string code,
+            decimal amount,
+            string? cardNumber,
+            string? discountMethod,
+            decimal? discountValue,
+            decimal manualPercentage = 0m,
+            decimal manualAmount = 0m,
+            decimal promoAmount = 0m,
+            string? branchTaxType = null,
+            decimal? calculatedTotal = null)
+        {
+            if (amount < 0m)
+                throw new ArgumentOutOfRangeException(nameof(amount), "Invalid discount value: discount amount cannot be negative.");
+            if (manualPercentage < 0m || manualPercentage > POS.Shared.Services.LocalDiscountCalculationService.MaxPercentageLimit)
+                throw new ArgumentOutOfRangeException(nameof(manualPercentage), "Discount percentage cannot exceed the allowed limit (0% to 100%).");
+            if (manualAmount < 0m)
+                throw new ArgumentOutOfRangeException(nameof(manualAmount), "Invalid discount value: discount amount cannot be negative.");
+            if (promoAmount < 0m)
+                throw new ArgumentOutOfRangeException(nameof(promoAmount), "Invalid discount value: promotional discount amount cannot be negative.");
+
+            decimal subtotal = Subtotal;
+            string normalizedCode = string.IsNullOrWhiteSpace(code) ? "NONE" : code.Trim().ToUpperInvariant();
+            if (normalizedCode == "NONE")
+            {
+                ClearDiscount();
+                return;
+            }
+
+            if (amount > subtotal + 0.01m)
+                throw new ArgumentOutOfRangeException(nameof(amount), "Discount amount cannot exceed the eligible amount.");
+
+            activeDiscountCode = normalizedCode;
+            activeDiscountAmount = System.Math.Min(subtotal, System.Math.Round(amount, 2));
+            activeDiscountMethod = string.IsNullOrWhiteSpace(discountMethod) ? null : discountMethod.Trim().ToUpperInvariant();
+            activeDiscountValue = discountValue;
+            manualDiscountPercentage = manualPercentage;
+            manualDiscountAmount = manualAmount;
+            promoDiscountAmount = promoAmount;
+            if (!string.IsNullOrWhiteSpace(branchTaxType))
+                activeBranchTaxType = branchTaxType.Trim();
+            activeCalculatedTotal = calculatedTotal.HasValue
+                ? System.Math.Max(0m, System.Math.Round(calculatedTotal.Value, 2))
+                : System.Math.Max(0m, System.Math.Round(subtotal - activeDiscountAmount, 2));
             customerCardNumber = cardNumber;
             NotifyStateChanged();
         }
 
-        public void ClearDiscount()
+        public OrderCalculationRequestDto BuildCalculationRequest(string? branchTaxType = null)
+        {
+            string resolvedTaxType = !string.IsNullOrWhiteSpace(branchTaxType)
+                ? branchTaxType.Trim()
+                : (!string.IsNullOrWhiteSpace(session.Terminal?.BranchTaxType) ? session.Terminal!.BranchTaxType : activeBranchTaxType);
+
+            decimal resolvedPromo = promoDiscountAmount;
+            if (resolvedPromo == 0m
+                && activeDiscountCode != "NONE"
+                && activeDiscountCode != "MANUAL"
+                && activeDiscountCode != "EMPLOYEE"
+                && !POS.Shared.Services.LocalDiscountCalculationService.IsStatutoryCode(activeDiscountCode)
+                && string.IsNullOrWhiteSpace(activeDiscountMethod)
+                && !activeDiscountValue.HasValue
+                && activeDiscountAmount > 0m)
+            {
+                resolvedPromo = activeDiscountAmount;
+            }
+
+            return new OrderCalculationRequestDto
+            {
+                BranchTaxType = resolvedTaxType,
+                DiscountCode = activeDiscountCode,
+                DiscountMethod = activeDiscountMethod,
+                DiscountValue = activeDiscountValue,
+                ManualDiscountPercentage = manualDiscountPercentage,
+                ManualDiscountAmount = manualDiscountAmount,
+                PromoDiscountAmount = resolvedPromo,
+                Items = _items.Select(ci => new CartItemCalculationDto
+                {
+                    ProductId = ci.ProductId,
+                    ProductName = ci.ProductName,
+                    Quantity = ci.Quantity,
+                    UnitPrice = ci.IsComplimentary ? 0m : ci.BasePrice,
+                    TargetAmount = ci.IsComplimentary ? 0m : ci.TargetAmount,
+                    ModifierTotal = ci.IsComplimentary ? 0m : ci.SelectedModifiers.Sum(m => m.Price),
+                    IsComplimentary = ci.IsComplimentary,
+                    TaxName = ci.TaxName ?? "VATable",
+                    IsEligibleForStatutoryDiscount = true
+                }).ToList()
+            };
+        }
+
+        private void ClearDiscountInternal()
         {
             activeDiscountCode = "NONE";
             activeDiscountAmount = 0.00m;
+            activeDiscountMethod = null;
+            activeDiscountValue = null;
+            manualDiscountPercentage = 0.00m;
+            manualDiscountAmount = 0.00m;
+            promoDiscountAmount = 0.00m;
+            activeCalculatedTotal = null;
             customerCardNumber = null;
+        }
+
+        public void ClearDiscount()
+        {
+            ClearDiscountInternal();
             NotifyStateChanged();
+        }
+
+        private void RecalculateActiveDiscount()
+        {
+            if (_items.Count == 0)
+            {
+                ClearDiscountInternal();
+                return;
+            }
+
+            if (activeDiscountCode == "NONE")
+            {
+                activeDiscountAmount = 0.00m;
+                activeCalculatedTotal = null;
+                return;
+            }
+
+            decimal subtotal = Subtotal;
+            if (subtotal <= 0m)
+            {
+                activeDiscountAmount = 0.00m;
+                activeCalculatedTotal = 0.00m;
+                return;
+            }
+
+            // Cap fixed amounts to the updated eligible subtotal if the cashier reduced quantities or removed items
+            if (manualDiscountAmount > subtotal)
+                manualDiscountAmount = subtotal;
+            if (promoDiscountAmount > subtotal)
+                promoDiscountAmount = subtotal;
+            if (activeDiscountMethod == "FIXED" && activeDiscountValue.HasValue && activeDiscountValue.Value > subtotal)
+                activeDiscountValue = subtotal;
+            if (activeDiscountAmount > subtotal)
+                activeDiscountAmount = subtotal;
+
+            try
+            {
+                var req = BuildCalculationRequest();
+                var calc = new POS.Shared.Services.LocalDiscountCalculationService().CalculateOrder(req);
+                activeDiscountAmount = System.Math.Min(subtotal, System.Math.Max(0m, calc.DiscountAmount));
+                activeCalculatedTotal = System.Math.Max(0m, calc.TotalAmount);
+            }
+            catch
+            {
+                activeDiscountAmount = System.Math.Min(subtotal, System.Math.Max(0m, activeDiscountAmount));
+                activeCalculatedTotal = System.Math.Max(0m, System.Math.Round(subtotal - activeDiscountAmount, 2));
+            }
         }
 
         private static bool ModifiersEqual(List<ModifierOptionDto> a, List<ModifierOptionDto> b)
@@ -104,6 +262,7 @@ namespace POS.Client.Services
                     SpecialInstructions = normalizedInstructions
                 });
             }
+            RecalculateActiveDiscount();
             NotifyStateChanged();
         }
 
@@ -152,6 +311,7 @@ namespace POS.Client.Services
                 }
             }
 
+            RecalculateActiveDiscount();
             NotifyStateChanged();
         }
 
@@ -161,9 +321,7 @@ namespace POS.Client.Services
         {
             ArgumentNullException.ThrowIfNull(heldSale);
             _items.Clear();
-            activeDiscountCode = "NONE";
-            activeDiscountAmount = 0.00m;
-            customerCardNumber = null;
+            ClearDiscountInternal();
 
             string? lastWeightParentCartItemId = null;
             int? lastWeightParentProductId = null;
@@ -230,8 +388,10 @@ namespace POS.Client.Services
 
             if (!string.IsNullOrWhiteSpace(heldSale.DiscountCode) && heldSale.DiscountCode != "NONE")
             {
-                activeDiscountCode = heldSale.DiscountCode;
-                activeDiscountAmount = heldSale.DiscountAmount;
+                decimal restoredSubtotal = Subtotal;
+                activeDiscountCode = heldSale.DiscountCode.Trim().ToUpperInvariant();
+                activeDiscountAmount = System.Math.Min(restoredSubtotal, System.Math.Max(0m, System.Math.Round(heldSale.DiscountAmount, 2)));
+                activeCalculatedTotal = System.Math.Max(0m, System.Math.Round(restoredSubtotal - activeDiscountAmount, 2));
                 customerCardNumber = heldSale.CustomerCardNumber;
             }
 
@@ -272,6 +432,7 @@ namespace POS.Client.Services
             if (item != null && TotalItems < int.MaxValue)
             {
                 item.Quantity++;
+                RecalculateActiveDiscount();
                 NotifyStateChanged();
             }
         }
@@ -281,6 +442,7 @@ namespace POS.Client.Services
             if (item != null && _items.Contains(item) && TotalItems < int.MaxValue)
             {
                 item.Quantity++;
+                RecalculateActiveDiscount();
                 NotifyStateChanged();
             }
         }
@@ -298,6 +460,7 @@ namespace POS.Client.Services
                 {
                     _items.Remove(item);
                 }
+                RecalculateActiveDiscount();
                 NotifyStateChanged();
             }
         }
@@ -314,6 +477,7 @@ namespace POS.Client.Services
                 {
                     _items.Remove(item);
                 }
+                RecalculateActiveDiscount();
                 NotifyStateChanged();
             }
         }
@@ -341,6 +505,7 @@ namespace POS.Client.Services
                         (!string.IsNullOrEmpty(cartId) && i.ParentCartItemId == cartId) ||
                         (string.IsNullOrEmpty(i.ParentCartItemId) && prodId > 0 && i.ParentProductId == prodId)));
                 }
+                RecalculateActiveDiscount();
                 NotifyStateChanged();
             }
         }

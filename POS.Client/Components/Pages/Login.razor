@@ -21,7 +21,7 @@
                 <i class="bi bi-shield-lock-fill fs-2"></i>
             </div>
             <h2 class="pos-title">POS Terminal Locked</h2>
-            <p class="pos-subtitle text-danger fw-semibold">Closed for the Current Business Day</p>
+            <p class="pos-subtitle text-danger fw-semibold">Z-Reading Finalized for Current Business Day</p>
         </div>
 
         @if (!string.IsNullOrEmpty(errorMessage))
@@ -34,7 +34,7 @@
 
         <div class="w-100 rounded-4 p-3 mb-3" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(239, 68, 68, 0.35);">
             <div class="small text-light mb-3" style="line-height: 1.5;">
-                @(lockStatus.LockMessage ?? "This POS Terminal has completed Cashier Closing for the current business day. No cashier login or transactions are permitted until 4:00 AM (Asia/Manila).")
+                @(lockStatus.LockMessage ?? "End-of-Day Z-Reading has been finalized for this POS Terminal for the current business day. No logins or sales are permitted until 4:00 AM (Asia/Manila).")
             </div>
 
             <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
@@ -46,13 +46,13 @@
                 <span class="fw-semibold text-white font-monospace">@(lockStatus.ClosedBusinessDate ?? "—")</span>
             </div>
             <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
-                <span class="text-secondary">Closed By (Restricted)</span>
-                <span class="fw-semibold text-warning">@(lockStatus.LockedByCashier ?? "Cashier")</span>
+                <span class="text-secondary">Z-Reading Finalized By</span>
+                <span class="fw-semibold text-warning">@(lockStatus.LockedByCashier ?? "Supervisor")</span>
             </div>
             @if (lockStatus.LockedAtUtc.HasValue)
             {
                 <div class="d-flex justify-content-between py-1 border-top border-secondary border-opacity-25 small">
-                    <span class="text-secondary">Closed At</span>
+                    <span class="text-secondary">Finalized At</span>
                     <span class="text-white">@POS.Shared.Services.BusinessDayClock.FormatManilaDateTime(lockStatus.LockedAtUtc.Value)</span>
                 </div>
             }
@@ -112,6 +112,13 @@
         <div class="pos-error-badge">
             <i class="bi bi-exclamation-circle-fill me-1"></i>
             <span>@errorMessage</span>
+        </div>
+    }
+    else if (!string.IsNullOrWhiteSpace(lockStatus?.ActiveShiftOwnerCashierId))
+    {
+        <div class="w-100 rounded-3 px-3 py-2 mb-3 small text-center" style="background: rgba(59, 130, 246, 0.14); border: 1px solid rgba(59, 130, 246, 0.35); color: #bfdbfe;">
+            <i class="bi bi-person-lock me-1"></i>
+            Open shift assigned to <strong>@lockStatus.ActiveShiftOwnerCashierId</strong>. Only this cashier may resume until Close Cashier is completed.
         </div>
     }
 
@@ -543,6 +550,7 @@
                         db.Database, "DELETE FROM LocalCashiers;");
                     db.ChangeTracker.Clear();
 
+                    var cashierSyncUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
                     foreach (var u in validPinUsers)
                     {
                         db.Cashiers.Add(new POS.Client.Data.LocalCashier
@@ -550,12 +558,14 @@
                             UserId = u.UserId,
                             Username = u.Username,
                             Role = u.Role,
-                            PinHash = ComputePinHash(u.PinCode!)
+                            PinHash = ComputePinHash(u.PinCode!),
+                            SyncedAtUtc = cashierSyncUtc
                         });
                     }
                 }
                 else
                 {
+                    var cashierSyncUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
                     string pinHash = ComputePinHash(rawPin);
                     var existingCashier = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
                         db.Cashiers, c => c.Username == username || c.PinHash == pinHash);
@@ -564,6 +574,7 @@
                         existingCashier.Username = username;
                         existingCashier.Role = role;
                         existingCashier.PinHash = pinHash;
+                        existingCashier.SyncedAtUtc = cashierSyncUtc;
                     }
                     else
                     {
@@ -573,7 +584,8 @@
                             UserId = nextId,
                             Username = username,
                             Role = role,
-                            PinHash = pinHash
+                            PinHash = pinHash,
+                            SyncedAtUtc = cashierSyncUtc
                         });
                     }
                 }
@@ -724,6 +736,13 @@
                     currentLock.LockMessage ??
                     "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
             }
+            if (currentLock.IsShiftOwnedByAnotherCashier)
+            {
+                lockStatus = currentLock;
+                throw new InvalidOperationException(
+                    currentLock.ActiveShiftOwnershipMessage ??
+                    TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+            }
 
             var localBranch = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
                 Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Branches),
@@ -759,35 +778,64 @@
             var sessionToken = "OFFLINE-SESSION-TOKEN";
             Session.SetSession(sessionToken, localCashier.Username, localCashier.Role, outletDto);
 
-            if (await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session))
+            var tokenProbe = await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenWithStatusAsync(Http, Session, forceRefresh: false);
+            if (!tokenProbe.Success && !tokenProbe.IsTransientError &&
+                tokenProbe.RejectionStatus is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Locked or System.Net.HttpStatusCode.Conflict)
+            {
+                Session.ClearSession();
+                POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
+                Http.DefaultRequestHeaders.Authorization = null;
+                await RefreshTerminalLockStatusAsync();
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(tokenProbe.ErrorMessage)
+                    ? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
+                    : tokenProbe.ErrorMessage);
+            }
+
+            if (tokenProbe.Success)
             {
                 try
                 {
-                    try
+                    var auth = await UserService.PinLoginAsync(rawPin, localOutlet.TerminalId, localOutlet.BranchId);
+                    if (auth != null && !string.IsNullOrWhiteSpace(auth.Value.Token))
                     {
-                        var auth = await UserService.PinLoginAsync(rawPin, localOutlet.TerminalId, localOutlet.BranchId);
-                        if (auth != null && !string.IsNullOrWhiteSpace(auth.Value.Token))
-                        {
-                            sessionToken = auth.Value.Token;
-                            Session.SetSession(sessionToken, auth.Value.Username, auth.Value.Role, outletDto);
-                            Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", sessionToken);
+                        sessionToken = auth.Value.Token;
+                        Session.SetSession(sessionToken, auth.Value.Username, auth.Value.Role, outletDto);
+                        Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", sessionToken);
 
-                            await Http.PostAsJsonAsync("api/cashier-sessions/activate", new CashierSessionActivateDto
-                            {
-                                BranchId = localOutlet.BranchId,
-                                TerminalId = localOutlet.TerminalId,
-                                DeviceIdentifier = localOutlet.DeviceUuid ?? localOutlet.TerminalIdentifier ?? string.Empty
-                            });
+                        using var actResp = await Http.PostAsJsonAsync("api/cashier-sessions/activate", new CashierSessionActivateDto
+                        {
+                            BranchId = localOutlet.BranchId,
+                            TerminalId = localOutlet.TerminalId,
+                            DeviceIdentifier = localOutlet.DeviceUuid ?? localOutlet.TerminalIdentifier ?? string.Empty
+                        });
+                        if (actResp.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Locked or System.Net.HttpStatusCode.Conflict)
+                        {
+                            string actErr = (await actResp.Content.ReadAsStringAsync()).Trim('"');
+                            Session.ClearSession();
+                            POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
+                            Http.DefaultRequestHeaders.Authorization = null;
+                            await RefreshTerminalLockStatusAsync();
+                            throw new InvalidOperationException(string.IsNullOrWhiteSpace(actErr)
+                                ? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
+                                : actErr);
                         }
-                    }
-                    catch
-                    {
-                        // Non-fatal: continue with offline session if online cashier session activation fails
                     }
 
                     await ReferenceDataSync.SyncReferenceDataAsync(localOutlet.TerminalId, Http);
                 }
-                catch { }
+                catch (InvalidOperationException)
+                {
+                    // Authoritative server rejection (403/409/423): NEVER swallow or fall back to offline login!
+                    Session.ClearSession();
+                    POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
+                    Http.DefaultRequestHeaders.Authorization = null;
+                    await RefreshTerminalLockStatusAsync();
+                    throw;
+                }
+                catch
+                {
+                    // Non-fatal network error: continue with verified local offline session
+                }
             }
 
             await Session.RefreshCachedMenuDisplayModeAsync();
@@ -873,6 +921,13 @@
                         postAuthLock.LockMessage ??
                         "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
                 }
+                if (postAuthLock.IsShiftOwnedByAnotherCashier)
+                {
+                    lockStatus = postAuthLock;
+                    throw new InvalidOperationException(
+                        postAuthLock.ActiveShiftOwnershipMessage ??
+                        TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                }
 
                 var deviceUuid = provisioned.DeviceUuid;
                 var outlet = await TerminalService.ResolveTerminalAsync(null, token, deviceUuid);
@@ -894,20 +949,34 @@
                 Http.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
-                // Notify backend cashier session activation
+                // Notify backend cashier session activation (strictly enforcing open shift ownership)
                 try
                 {
-                    await Http.PostAsJsonAsync("api/cashier-sessions/activate", new CashierSessionActivateDto
+                    using var actResponse = await Http.PostAsJsonAsync("api/cashier-sessions/activate", new CashierSessionActivateDto
                     {
                         BranchId = outlet.BranchId,
                         TerminalId = outlet.TerminalId,
                         DeviceIdentifier = deviceUuid
                     });
+                    if (actResponse.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Locked or System.Net.HttpStatusCode.Conflict)
+                    {
+                        string actErr = (await actResponse.Content.ReadAsStringAsync()).Trim('"');
+                        Session.ClearSession();
+                        Http.DefaultRequestHeaders.Authorization = null;
+                        await RefreshTerminalLockStatusAsync();
+                        throw new InvalidOperationException(string.IsNullOrWhiteSpace(actErr)
+                            ? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
+                            : actErr);
+                    }
 
                     // Ensure token is attached for reference data sync call
                     Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
                     var syncResult = await ReferenceDataSync.SyncReferenceDataAsync(outlet.TerminalId, Http);
                     Console.WriteLine($"[Login] ReferenceDataSync result: {syncResult} for TerminalId: {outlet.TerminalId}");
+                }
+                catch (InvalidOperationException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {

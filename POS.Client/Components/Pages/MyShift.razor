@@ -153,50 +153,24 @@ else
 
                     <div class="row g-3 mt-1">
                         <div class="col-12 col-md-6">
-                            <div class="pos-shift-subpanel rounded-3 p-3 h-100">
-                                <div class="d-flex justify-content-between mb-2 pb-1 border-bottom border-secondary border-opacity-25">
-                                    <span class="fw-bold small text-warning">COINS (₱0.01 – ₱20)</span>
-                                    <span class="small text-light fw-bold font-monospace">₱@CoinsSubtotal.ToString("N2")</span>
-                                </div>
-                                <div class="d-flex flex-column gap-2">
-                                    @foreach (var row in denominationRows.Where(r => r.Type == "COIN"))
-                                    {
-                                        <div class="d-flex align-items-center justify-content-between gap-2">
-                                            <span class="fw-bold text-light small" style="min-width: 68px;">₱@FormatDenom(row.Denomination)</span>
-                                            <div class="input-group input-group-sm" style="max-width: 132px;">
-                                                <button type="button" class="btn btn-outline-secondary px-2" disabled="@(busy || row.Quantity <= 0)" @onclick="() => StepQty(row, -1)">−</button>
-                                                <input type="text" inputmode="numeric" class="form-control text-center fw-bold bg-dark text-light border-secondary @(row.HasError ? "is-invalid" : "")"
-                                                       value="@row.RawQuantity" disabled="@busy"
-                                                       @oninput="(e) => OnQtyInput(row, e.Value?.ToString())" />
-                                                <button type="button" class="btn btn-outline-secondary px-2" disabled="@busy" @onclick="() => StepQty(row, 1)">+</button>
-                                            </div>
-                                            <span class="font-monospace small text-info text-end" style="min-width: 82px;">₱@row.Subtotal.ToString("N2")</span>
-                                        </div>
-                                    }
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-12 col-md-6">
                             <div class="pos-shift-subpanel rounded-3 p-3 h-100 d-flex flex-column justify-content-between">
                                 <div>
                                     <div class="d-flex justify-content-between mb-2 pb-1 border-bottom border-secondary border-opacity-25">
-                                        <span class="fw-bold small text-success">BILLS (₱20 – ₱1,000)</span>
-                                        <span class="small text-light fw-bold font-monospace">₱@BillsSubtotal.ToString("N2")</span>
+                                        <span class="fw-bold small text-success">BILLS (₱1,000 – ₱50)</span>
+                                        <span class="small text-secondary text-uppercase fw-semibold">Quantity</span>
                                     </div>
                                     <div class="d-flex flex-column gap-2">
                                         @foreach (var row in denominationRows.Where(r => r.Type == "BILL"))
                                         {
                                             <div class="d-flex align-items-center justify-content-between gap-2">
-                                                <span class="fw-bold text-light small" style="min-width: 68px;">₱@FormatDenom(row.Denomination)</span>
-                                                <div class="input-group input-group-sm" style="max-width: 132px;">
+                                                <span class="fw-bold text-light small" style="min-width: 76px;">₱@FormatDenom(row.Denomination)</span>
+                                                <div class="input-group input-group-sm" style="max-width: 152px;">
                                                     <button type="button" class="btn btn-outline-secondary px-2" disabled="@(busy || row.Quantity <= 0)" @onclick="() => StepQty(row, -1)">−</button>
                                                     <input type="text" inputmode="numeric" class="form-control text-center fw-bold bg-dark text-light border-secondary @(row.HasError ? "is-invalid" : "")"
                                                            value="@row.RawQuantity" disabled="@busy"
                                                            @oninput="(e) => OnQtyInput(row, e.Value?.ToString())" />
                                                     <button type="button" class="btn btn-outline-secondary px-2" disabled="@busy" @onclick="() => StepQty(row, 1)">+</button>
                                                 </div>
-                                                <span class="font-monospace small text-success text-end" style="min-width: 82px;">₱@row.Subtotal.ToString("N2")</span>
                                             </div>
                                         }
                                     </div>
@@ -204,6 +178,30 @@ else
                                 <div class="mt-3 pt-2 border-top border-secondary border-opacity-25 d-flex justify-content-between align-items-center">
                                     <span class="small fw-bold text-secondary">TOTAL COUNTED CASH</span>
                                     <span class="fs-5 fw-bolder text-success font-monospace">₱@TotalCountedCash.ToString("N2")</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <div class="pos-shift-subpanel rounded-3 p-3 h-100">
+                                <div class="d-flex justify-content-between mb-2 pb-1 border-bottom border-secondary border-opacity-25">
+                                    <span class="fw-bold small text-warning">COINS (₱20 – ₱0.01)</span>
+                                    <span class="small text-secondary text-uppercase fw-semibold">Quantity</span>
+                                </div>
+                                <div class="d-flex flex-column gap-2">
+                                    @foreach (var row in denominationRows.Where(r => r.Type == "COIN"))
+                                    {
+                                        <div class="d-flex align-items-center justify-content-between gap-2">
+                                            <span class="fw-bold text-light small" style="min-width: 76px;">₱@FormatDenom(row.Denomination)</span>
+                                            <div class="input-group input-group-sm" style="max-width: 152px;">
+                                                <button type="button" class="btn btn-outline-secondary px-2" disabled="@(busy || row.Quantity <= 0)" @onclick="() => StepQty(row, -1)">−</button>
+                                                <input type="text" inputmode="numeric" class="form-control text-center fw-bold bg-dark text-light border-secondary @(row.HasError ? "is-invalid" : "")"
+                                                       value="@row.RawQuantity" disabled="@busy"
+                                                       @oninput="(e) => OnQtyInput(row, e.Value?.ToString())" />
+                                                <button type="button" class="btn btn-outline-secondary px-2" disabled="@busy" @onclick="() => StepQty(row, 1)">+</button>
+                                            </div>
+                                        </div>
+                                    }
                                 </div>
                             </div>
                         </div>
@@ -511,7 +509,7 @@ else
                         {
                             Session.ClearSession();
                             Http.DefaultRequestHeaders.Authorization = null;
-                            Navigation.NavigateTo("/terminal-locked", replace: true);
+                            Navigation.NavigateTo(serverLock.IsTerminalLocked ? "/terminal-locked" : "/login", replace: true);
                             return;
                         }
                         error = tokenResult.ErrorMessage ?? "Online session authorization was denied (HTTP 403 Forbidden). Please re-authenticate online.";
@@ -534,7 +532,7 @@ else
             {
                 Session.ClearSession();
                 Http.DefaultRequestHeaders.Authorization = null;
-                Navigation.NavigateTo("/terminal-locked", replace: true);
+                Navigation.NavigateTo(lockState.IsTerminalLocked ? "/terminal-locked" : "/login", replace: true);
                 return;
             }
 
@@ -746,7 +744,7 @@ else
 
             Session.ClearSession();
             Http.DefaultRequestHeaders.Authorization = null;
-            Navigation.NavigateTo("/terminal-locked", replace: true);
+            Navigation.NavigateTo("/login", replace: true);
         }
         catch (Exception ex) { error = ex.Message; }
         finally { busy = false; }

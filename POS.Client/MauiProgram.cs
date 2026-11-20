@@ -78,6 +78,7 @@ namespace POS.Client
             builder.Services.AddScoped<ClientTransactionService>();
             builder.Services.AddScoped<IClientTransactionHistoryService>(sp => sp.GetRequiredService<ClientTransactionService>());
             builder.Services.AddScoped<ITransactionService>(sp => sp.GetRequiredService<ClientTransactionService>());
+            builder.Services.AddScoped<IOfflineVoidService, OfflineVoidService>();
             builder.Services.AddScoped<IHeldSaleService, ClientHeldSaleService>();
             builder.Services.AddSingleton<IEscPosNetworkTransport, EscPosTcpTransport>();
             builder.Services.AddSingleton<EthernetPrinterConnection>();

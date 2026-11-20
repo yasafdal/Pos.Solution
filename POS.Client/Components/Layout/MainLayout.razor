@@ -65,8 +65,8 @@
                 <button type="button" class="header-action-btn header-btn-switch" @onclick="SwitchCashier">
                     <i class="bi bi-arrow-left-right me-1"></i>Switch Cashier
                 </button>
-                <button type="button" class="header-action-btn header-btn-lock" @onclick="LockTerminal">
-                    <i class="bi bi-lock me-1"></i>Lock Terminal
+                <button type="button" class="header-action-btn header-btn-logout" @onclick="RequestLogout">
+                    <i class="bi bi-box-arrow-right me-1"></i>Logout
                 </button>
             </div>
         </header>
@@ -165,7 +165,7 @@
             @if (Session.CanViewTransactionHistory)
             {
                 <button type="button"
-                        class="workspace-nav-btn @(IsTransactionsAllActive ? "active" : "")"
+                        class="workspace-nav-btn @(IsTransactionsActive ? "active" : "")"
                         @onclick='() => NavigateWorkspace("/transactions")'
                         title="Transaction History">
                     <i class="bi bi-receipt workspace-nav-icon"></i>
@@ -187,25 +187,6 @@
                 <span class="workspace-nav-label">Held Sales</span>
             </button>
 
-            @if (Session.CanViewTransactionHistory)
-            {
-                <button type="button"
-                        class="workspace-nav-btn @(IsReprintActive ? "active" : "")"
-                        @onclick='() => NavigateWorkspace("/transactions?mode=reprint")'
-                        title="Find and Reprint Receipts">
-                    <i class="bi bi-printer-fill workspace-nav-icon"></i>
-                    <span class="workspace-nav-label">Reprint</span>
-                </button>
-
-                <button type="button"
-                        class="workspace-nav-btn workspace-nav-btn-danger @(IsVoidActive ? "active" : "")"
-                        @onclick='() => NavigateWorkspace("/transactions?mode=void")'
-                        title="Void Transaction (Supervisor PIN Required)">
-                    <i class="bi bi-x-circle-fill workspace-nav-icon"></i>
-                    <span class="workspace-nav-label">Void</span>
-                </button>
-            }
-
             <button type="button"
                     class="workspace-nav-btn @(IsCashierActive ? "active" : "")"
                     @onclick='() => NavigateWorkspace("/cash-drawer")'
@@ -223,10 +204,122 @@
             </button>
         </nav>
     }
+
+    @if (_showSessionExitModal)
+    {
+        bool isSwitch = string.Equals(_sessionExitMode, "switch", StringComparison.OrdinalIgnoreCase);
+        bool hasUnheldCart = Cart.Items.Count > 0;
+        bool canProceedWithoutHolding = !hasUnheldCart || _confirmDiscardCart;
+        <div class="pos-confirm-backdrop"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="session-exit-modal-title"
+             @onclick="HandleSessionExitBackdropClick">
+            <div class="pos-confirm-modal" @onclick:stopPropagation="true">
+                <div class="pos-confirm-header">
+                    <div class="pos-confirm-icon-badge" aria-hidden="true">
+                        <i class="bi @(isSwitch ? "bi-arrow-left-right" : "bi-box-arrow-right")"></i>
+                    </div>
+                    <div class="pos-confirm-heading">
+                        <h5 id="session-exit-modal-title" class="pos-confirm-title">@(isSwitch ? "Switch Cashier?" : "Logout?")</h5>
+                        @if (!string.IsNullOrWhiteSpace(Session.Username))
+                        {
+                            <span class="pos-confirm-user-pill">
+                                <i class="bi bi-person-circle me-1"></i>@Session.Username
+                            </span>
+                        }
+                    </div>
+                    <button type="button"
+                            class="pos-confirm-close"
+                            @onclick="CancelSessionExit"
+                            disabled="@_isExitingSession"
+                            aria-label="Close">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+
+                <div class="pos-confirm-body">
+                    <p class="pos-confirm-message">
+                        @if (isSwitch)
+                        {
+                            <span>Are you sure you want to switch cashier? This ends your login session on this terminal, but does <strong>not</strong> close your cash drawer shift. If your shift is still open, you must log back in and complete Close Cashier before another cashier can sign in.</span>
+                        }
+                        else
+                        {
+                            <span>Are you sure you want to log out? Your login session will end, while your open cash drawer shift and sales records remain assigned to you until you complete Close Cashier.</span>
+                        }
+                    </p>
+
+                    @if (hasUnheldCart)
+                    {
+                        <div class="mt-3 p-3 rounded-3 small" style="background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4); color: #fde68a;">
+                            <div class="fw-bold mb-1">
+                                <i class="bi bi-cart-exclamation-fill me-1"></i>
+                                Active Unheld Cart (@CartItem.FormatQuantity(Cart.TotalItems) item(s) — ₱@Cart.TotalAmount.ToString("N2"))
+                            </div>
+                            <div class="mb-2" style="color: #fef3c7;">
+                                Hold this sale to preserve the customer's order, or explicitly confirm discarding it before signing out.
+                            </div>
+                            <label class="d-flex align-items-center gap-2 mb-0" style="cursor: pointer; color: #f8fafc;">
+                                <input type="checkbox" @bind="_confirmDiscardCart" disabled="@_isExitingSession" />
+                                <span>Discard unheld cart items and continue</span>
+                            </label>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(_sessionExitError))
+                    {
+                        <div class="pos-confirm-error" role="alert">
+                            <i class="bi bi-exclamation-triangle-fill me-2"></i>@_sessionExitError
+                        </div>
+                    }
+                </div>
+
+                <div class="pos-confirm-footer flex-wrap">
+                    <button type="button"
+                            class="pos-confirm-btn pos-confirm-btn-cancel"
+                            @onclick="CancelSessionExit"
+                            disabled="@_isExitingSession">
+                        Cancel
+                    </button>
+                    @if (hasUnheldCart)
+                    {
+                        <button type="button"
+                                class="pos-confirm-btn btn btn-info text-dark fw-bold border-0"
+                                @onclick="HoldCartAndExitSessionAsync"
+                                disabled="@_isExitingSession">
+                            <i class="bi bi-pause-circle-fill me-1"></i>
+                            <span>@(isSwitch ? "Hold Sale & Switch" : "Hold Sale & Logout")</span>
+                        </button>
+                    }
+                    <button type="button"
+                            class="pos-confirm-btn pos-confirm-btn-primary"
+                            @onclick="ConfirmSessionExitAsync"
+                            disabled="@(_isExitingSession || !canProceedWithoutHolding)">
+                        @if (_isExitingSession)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            <span>@(isSwitch ? "Switching..." : "Logging out...")</span>
+                        }
+                        else
+                        {
+                            <i class="bi @(isSwitch ? "bi-arrow-left-right" : "bi-box-arrow-right") me-2"></i>
+                            <span>@(hasUnheldCart ? (isSwitch ? "Discard & Switch" : "Discard & Logout") : (isSwitch ? "Switch Cashier" : "Logout"))</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
     private bool isNavVisible = false;
+    private bool _showSessionExitModal = false;
+    private string _sessionExitMode = "logout"; // "logout" or "switch"
+    private bool _isExitingSession = false;
+    private bool _confirmDiscardCart = false;
+    private string? _sessionExitError = null;
     private TerminalConnectivityState _connectivityState = TerminalConnectivityState.OnlineAndHealthy;
     private TerminalConnectivityState _previousConnectivityState = TerminalConnectivityState.Unknown;
     private int _pendingCount = 0;
@@ -252,29 +345,6 @@
         }
     }
 
-    private string CurrentTransactionMode
-    {
-        get
-        {
-            try
-            {
-                var uri = new Uri(Navigation.Uri);
-                var query = uri.Query;
-                if (string.IsNullOrWhiteSpace(query)) return string.Empty;
-                foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var kv = part.Split('=', 2);
-                    if (kv.Length == 2 && kv[0].Equals("mode", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return Uri.UnescapeDataString(kv[1]).Trim().ToLowerInvariant();
-                    }
-                }
-            }
-            catch { }
-            return string.Empty;
-        }
-    }
-
     private bool IsNonWorkspacePage =>
         CurrentRelativePath.Equals("login", StringComparison.OrdinalIgnoreCase) ||
         CurrentRelativePath.Equals("activate", StringComparison.OrdinalIgnoreCase) ||
@@ -286,9 +356,7 @@
     private bool IsNewSalePage => CurrentRelativePath.Equals("new-sale", StringComparison.OrdinalIgnoreCase);
     private bool IsDashboardActive => string.IsNullOrEmpty(CurrentRelativePath) || CurrentRelativePath.Equals("dashboard", StringComparison.OrdinalIgnoreCase);
     private bool IsHeldSalesActive => CurrentRelativePath.Equals("held-sales", StringComparison.OrdinalIgnoreCase);
-    private bool IsTransactionsAllActive => CurrentRelativePath.Equals("transactions", StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(CurrentTransactionMode);
-    private bool IsReprintActive => CurrentRelativePath.Equals("transactions", StringComparison.OrdinalIgnoreCase) && CurrentTransactionMode == "reprint";
-    private bool IsVoidActive => CurrentRelativePath.Equals("transactions", StringComparison.OrdinalIgnoreCase) && CurrentTransactionMode == "void";
+    private bool IsTransactionsActive => CurrentRelativePath.Equals("transactions", StringComparison.OrdinalIgnoreCase);
     private bool IsCashierActive => CurrentRelativePath.Equals("cash-drawer", StringComparison.OrdinalIgnoreCase) || CurrentRelativePath.Equals("my-shift", StringComparison.OrdinalIgnoreCase);
     private bool IsReadingsActive => CurrentRelativePath.Equals("z-reading", StringComparison.OrdinalIgnoreCase);
 
@@ -338,9 +406,9 @@
         await SwitchCashier();
     }
 
-    public async Task LockTerminalAsync()
+    public async Task LogoutAsync()
     {
-        await LockTerminal();
+        await RequestLogout();
     }
 
     protected override async Task OnInitializedAsync()
@@ -403,11 +471,23 @@
                     Session.Terminal.TerminalId,
                     Session.Username,
                     _connectivityState != TerminalConnectivityState.OnlineAndHealthy);
-                if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
+                if (lockState.IsTerminalLocked)
+                {
+                    // Allow supervisor on /z-reading to finish printing the just-finalized Z-Reading before locking out
+                    if (!CurrentRelativePath.Equals("z-reading", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Session.ClearSession();
+                        Http.DefaultRequestHeaders.Authorization = null;
+                        Navigation.NavigateTo("/terminal-locked", replace: true);
+                        return;
+                    }
+                }
+                else if (lockState.IsCashierRestricted || lockState.IsShiftOwnedByAnotherCashier)
                 {
                     Session.ClearSession();
+                    POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
                     Http.DefaultRequestHeaders.Authorization = null;
-                    Navigation.NavigateTo("/terminal-locked", replace: true);
+                    Navigation.NavigateTo("/login", replace: true);
                     return;
                 }
             }
@@ -470,6 +550,7 @@
                 db.InitializeDatabase();
                 await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
                 db.ChangeTracker.Clear();
+                var syncedUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
                 foreach (var u in validUsers)
                 {
                     var pinHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(u.PinCode!.Trim())));
@@ -478,7 +559,8 @@
                         UserId = u.UserId,
                         Username = u.Username,
                         Role = u.Role ?? "Cashier",
-                        PinHash = pinHash
+                        PinHash = pinHash,
+                        SyncedAtUtc = syncedUtc
                     });
                 }
                 await db.SaveChangesAsync();
@@ -541,32 +623,157 @@
         catch { }
     }
 
-    private async Task LockTerminal()
+    private Task RequestLogout()
     {
-        await CacheCurrentOutletAsync(Session.Terminal);
-        Session.ClearSession();
-        POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
-        Http.DefaultRequestHeaders.Authorization = null;
-        Navigation.NavigateTo("/login");
+        if (_isExitingSession) return Task.CompletedTask;
+        _sessionExitMode = "logout";
+        _sessionExitError = null;
+        _confirmDiscardCart = false;
+        _showSessionExitModal = true;
+        StateHasChanged();
+        return Task.CompletedTask;
     }
 
-    private async Task SwitchCashier()
+    private Task SwitchCashier()
     {
-        bool confirmed = await Js.InvokeAsync<bool>("confirm", "Switch cashier? The current user will be signed out of this terminal.");
-        if (!confirmed) return;
+        if (_isExitingSession) return Task.CompletedTask;
+        _sessionExitMode = "switch";
+        _sessionExitError = null;
+        _confirmDiscardCart = false;
+        _showSessionExitModal = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
 
+    private void CancelSessionExit()
+    {
+        if (_isExitingSession) return;
+        _showSessionExitModal = false;
+        _sessionExitError = null;
+        _confirmDiscardCart = false;
+    }
+
+    private void HandleSessionExitBackdropClick()
+    {
+        if (!_isExitingSession)
+        {
+            CancelSessionExit();
+        }
+    }
+
+    private async Task HoldCartAndExitSessionAsync()
+    {
+        if (_isExitingSession) return;
+        _isExitingSession = true;
+        _sessionExitError = null;
+
+        try
+        {
+            if (Cart.Items.Count > 0 && Session.Terminal != null)
+            {
+                var createDto = new POS.Shared.Models.HeldSaleCreateDto
+                {
+                    BranchId = Session.Terminal.BranchId,
+                    OutletId = Session.Terminal.OutletId,
+                    TerminalId = Session.Terminal.TerminalId,
+                    CashierId = Session.Username ?? "cashier",
+                    CustomerName = "Walk-in",
+                    Notes = $"Held before {(_sessionExitMode == "switch" ? "Switch Cashier" : "Logout")} at {POS.Shared.Services.BusinessDayClock.FormatManila(DateTime.UtcNow, "HH:mm")}",
+                    Subtotal = Cart.Subtotal,
+                    DiscountAmount = Cart.ActiveDiscountAmount,
+                    DiscountCode = Cart.ActiveDiscountCode != "NONE" ? Cart.ActiveDiscountCode : null,
+                    CustomerCardNumber = Cart.CustomerCardNumber,
+                    TotalAmount = Cart.TotalAmount,
+                    Items = Cart.Items.Select(ci => new POS.Shared.Models.HeldSaleItemDto
+                    {
+                        ProductId = ci.ProductId,
+                        ProductName = ci.ProductName,
+                        ProductShortCode = ci.ProductShortCode,
+                        Quantity = ci.Quantity,
+                        BasePrice = ci.BasePrice,
+                        LineTotal = ci.LineTotal,
+                        PricingMethod = ci.PricingMethod,
+                        UnitOfMeasure = ci.UnitOfMeasure,
+                        TargetAmount = ci.TargetAmount,
+                        IsComplimentary = ci.IsComplimentary,
+                        ParentProductId = ci.ParentProductId,
+                        IsKitchenItem = ci.IsKitchenItem,
+                        IsBarItem = ci.IsBarItem,
+                        TaxName = ci.TaxName ?? "VATable",
+                        SpecialInstructions = ci.SpecialInstructions,
+                        Modifiers = ci.SelectedModifiers?.Select(m => new POS.Shared.Models.HeldSaleModifierDto
+                        {
+                            ModifierOptionId = m.ModifierOptionId,
+                            ProductId = m.ProductId,
+                            ProductName = m.ProductName,
+                            ModifierName = m.Name,
+                            AdditionalPrice = m.Price
+                        }).ToList() ?? new()
+                    }).ToList()
+                };
+
+                var held = await HeldSaleService.CreateHeldSaleAsync(createDto);
+                if (held == null)
+                {
+                    _sessionExitError = "Failed to hold the current sale. Please try again or cancel.";
+                    return;
+                }
+
+                Cart.Clear();
+                await RefreshHeldCountAsync();
+            }
+
+            await PerformSignOutCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            _sessionExitError = $"Unable to hold sale and sign out: {ex.Message}";
+        }
+        finally
+        {
+            _isExitingSession = false;
+        }
+    }
+
+    private async Task ConfirmSessionExitAsync()
+    {
+        if (_isExitingSession) return;
+        if (Cart.Items.Count > 0 && !_confirmDiscardCart)
+        {
+            _sessionExitError = "Hold the active cart or check the confirmation box to discard unheld items before signing out.";
+            return;
+        }
+
+        _isExitingSession = true;
+        _sessionExitError = null;
+
+        try
+        {
+            await PerformSignOutCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            _sessionExitError = $"Unable to sign out: {ex.Message}";
+        }
+        finally
+        {
+            _isExitingSession = false;
+        }
+    }
+
+    /// <summary>
+    /// Ends client authentication ONLY while preserving the cashier's open CashDrawerShift and terminal shift ownership.
+    /// Does NOT close shifts, apply Close Cashier restrictions, or release terminal ownership.
+    /// </summary>
+    private async Task PerformSignOutCoreAsync()
+    {
         var currentOutlet = Session.Terminal;
         await CacheCurrentOutletAsync(currentOutlet);
         Session.ClearSession();
         POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
         Http.DefaultRequestHeaders.Authorization = null;
-        if (currentOutlet != null)
-        {
-            Navigation.NavigateTo($"/login?terminalId={currentOutlet.TerminalId}");
-        }
-        else
-        {
-            Navigation.NavigateTo("/login");
-        }
+        _showSessionExitModal = false;
+        _confirmDiscardCart = false;
+        Navigation.NavigateTo("/login", replace: true);
     }
 }

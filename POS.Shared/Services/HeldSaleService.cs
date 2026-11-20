@@ -36,6 +36,14 @@ public class HeldSaleService(HttpClient http) : IHeldSaleService
         var url = $"api/held-sales/{id}/resume";
         if (terminalId.HasValue) url += $"?terminalId={terminalId.Value}";
         using var response = await http.PostAsync(url, null);
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            var body = (await response.Content.ReadAsStringAsync()).Trim().Trim('"');
+            throw new System.InvalidOperationException(
+                string.IsNullOrWhiteSpace(body)
+                    ? POS.Shared.Constants.HeldSalePolicies.ExpiredHeldSaleResumeMessage
+                    : body);
+        }
         if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<HeldSaleDto>();
     }

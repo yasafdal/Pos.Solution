@@ -17,6 +17,11 @@ public class OrderCreateDto
     public decimal DiscountAmount { get; set; }
     public int? DiscountTypeId { get; set; }
     public string? DiscountCode { get; set; }
+    public string? DiscountMethod { get; set; }
+    public decimal? DiscountValue { get; set; }
+    public decimal ManualDiscountPercentage { get; set; }
+    public decimal ManualDiscountAmount { get; set; }
+    public decimal PromoDiscountAmount { get; set; }
     public string? CustomerCardNumber { get; set; }
     public string? CustomerName { get; set; }
     public string? CustomerAddress { get; set; }

@@ -190,22 +190,21 @@
                             <div class="col-md-6">
                                 <div class="pos-subpanel rounded-3 p-2">
                                     <div class="d-flex justify-content-between align-items-center px-2 py-1 mb-1 border-bottom border-secondary border-opacity-25">
-                                        <span class="fw-bold small text-light">Bills</span>
-                                        <span class="fw-bold small text-info font-monospace">₱@OpeningBillsSubtotal.ToString("N2")</span>
+                                        <span class="fw-bold small text-success"><i class="bi bi-cash me-1"></i>Bills (₱1,000 – ₱50)</span>
+                                        <span class="small text-secondary">Qty</span>
                                     </div>
                                     @foreach (var row in openingDenominationRows.Where(r => r.Type == "BILL"))
                                     {
-                                        <div class="d-flex align-items-center justify-content-between py-1 px-1">
-                                            <span class="small fw-semibold text-light" style="min-width: 58px;">@row.Label</span>
-                                            <div class="input-group input-group-sm" style="max-width: 132px;">
-                                                <button type="button" class="btn btn-outline-secondary" disabled="@(isSubmittingShift || row.Quantity <= 0)" @onclick="() => StepOpeningDenominationQuantity(row, -1)">-</button>
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-2">
+                                            <span class="small fw-semibold text-light" style="min-width: 68px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 148px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(isSubmittingShift || row.Quantity <= 0)" @onclick="() => StepOpeningDenominationQuantity(row, -1)">−</button>
                                                 <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
                                                        value="@row.RawQuantity"
                                                        disabled="@isSubmittingShift"
                                                        @oninput="e => OnOpeningDenominationInputChanged(row, e.Value?.ToString())" />
                                                 <button type="button" class="btn btn-outline-secondary" disabled="@isSubmittingShift" @onclick="() => StepOpeningDenominationQuantity(row, 1)">+</button>
                                             </div>
-                                            <span class="small font-monospace text-light text-end" style="min-width: 78px;">₱@row.Subtotal.ToString("N2")</span>
                                         </div>
                                     }
                                 </div>
@@ -213,22 +212,21 @@
                             <div class="col-md-6">
                                 <div class="pos-subpanel rounded-3 p-2">
                                     <div class="d-flex justify-content-between align-items-center px-2 py-1 mb-1 border-bottom border-secondary border-opacity-25">
-                                        <span class="fw-bold small text-light">Coins</span>
-                                        <span class="fw-bold small text-info font-monospace">₱@OpeningCoinsSubtotal.ToString("N2")</span>
+                                        <span class="fw-bold small text-warning"><i class="bi bi-circle-fill me-1" style="font-size: 0.55rem;"></i>Coins (₱20 – ₱0.01)</span>
+                                        <span class="small text-secondary">Qty</span>
                                     </div>
                                     @foreach (var row in openingDenominationRows.Where(r => r.Type == "COIN"))
                                     {
-                                        <div class="d-flex align-items-center justify-content-between py-1 px-1">
-                                            <span class="small fw-semibold text-light" style="min-width: 58px;">@row.Label</span>
-                                            <div class="input-group input-group-sm" style="max-width: 132px;">
-                                                <button type="button" class="btn btn-outline-secondary" disabled="@(isSubmittingShift || row.Quantity <= 0)" @onclick="() => StepOpeningDenominationQuantity(row, -1)">-</button>
+                                        <div class="d-flex align-items-center justify-content-between py-1 px-2">
+                                            <span class="small fw-semibold text-light" style="min-width: 68px;">@row.Label</span>
+                                            <div class="input-group input-group-sm" style="max-width: 148px;">
+                                                <button type="button" class="btn btn-outline-secondary" disabled="@(isSubmittingShift || row.Quantity <= 0)" @onclick="() => StepOpeningDenominationQuantity(row, -1)">−</button>
                                                 <input type="text" inputmode="numeric" class="form-control text-center font-monospace @(row.HasError ? "is-invalid" : "")"
                                                        value="@row.RawQuantity"
                                                        disabled="@isSubmittingShift"
                                                        @oninput="e => OnOpeningDenominationInputChanged(row, e.Value?.ToString())" />
                                                 <button type="button" class="btn btn-outline-secondary" disabled="@isSubmittingShift" @onclick="() => StepOpeningDenominationQuantity(row, 1)">+</button>
                                             </div>
-                                            <span class="small font-monospace text-light text-end" style="min-width: 78px;">₱@row.Subtotal.ToString("N2")</span>
                                         </div>
                                     }
                                 </div>
@@ -633,73 +631,25 @@
                 }
 
                 <div class="row g-3">
-                    <!-- Coins Column (Side-by-side on desktop, stacked on mobile) -->
-                    <div class="col-12 col-md-6">
-                        <div class="pos-subpanel rounded-3 p-3 h-100">
-                            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary border-opacity-25">
-                                <span class="fw-bold text-uppercase small text-warning">
-                                    <i class="bi bi-circle-fill me-1" style="font-size: 0.55rem;"></i>Coins (₱0.01 – ₱20)
-                                </span>
-                                <span class="small fw-bold text-light font-monospace">Subtotal: ₱@CoinsSubtotal.ToString("N2")</span>
-                            </div>
-
-                            <div class="d-flex flex-column gap-2">
-                                @foreach (var row in denominationRows.Where(r => r.Type == "COIN"))
-                                {
-                                    <div class="pos-denom-row d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 @(row.HasError ? "border border-danger" : "")">
-                                        <div class="fw-bold text-light" style="min-width: 76px; font-size: 0.92rem;">
-                                            ₱@FormatDenomValue(row.Denomination)
-                                            @if (row.Denomination == 20m)
-                                            {
-                                                <span class="badge bg-secondary ms-1" style="font-size: 0.62rem;">Coin</span>
-                                            }
-                                        </div>
-                                        <div class="input-group input-group-sm" style="max-width: 144px;">
-                                            <button type="button" class="btn btn-outline-secondary px-2"
-                                                    disabled="@(isSubmittingShift || row.Quantity <= 0)"
-                                                    @onclick="() => StepDenominationQuantity(row, -1)">−</button>
-                                            <input type="text"
-                                                   inputmode="numeric"
-                                                   class="form-control text-center fw-bold pos-denom-input @(row.HasError ? "is-invalid" : "")"
-                                                   value="@row.RawQuantity"
-                                                   disabled="@isSubmittingShift"
-                                                   @oninput="(e) => OnDenominationInputChanged(row, e.Value?.ToString())" />
-                                            <button type="button" class="btn btn-outline-secondary px-2"
-                                                    disabled="@isSubmittingShift"
-                                                    @onclick="() => StepDenominationQuantity(row, 1)">+</button>
-                                        </div>
-                                        <div class="text-end fw-semibold text-info font-monospace" style="min-width: 92px; font-size: 0.9rem;">
-                                            ₱@row.Subtotal.ToString("N2")
-                                        </div>
-                                    </div>
-                                }
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Bills Column (Side-by-side on desktop, stacked on mobile) -->
+                    <!-- Bills Column (Highest to Lowest: ₱1,000 – ₱50) -->
                     <div class="col-12 col-md-6">
                         <div class="pos-subpanel rounded-3 p-3 h-100 d-flex flex-column justify-content-between">
                             <div>
                                 <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary border-opacity-25">
                                     <span class="fw-bold text-uppercase small text-success">
-                                        <i class="bi bi-cash me-1"></i>Bills (₱20 – ₱1,000)
+                                        <i class="bi bi-cash me-1"></i>Bills (₱1,000 – ₱50)
                                     </span>
-                                    <span class="small fw-bold text-light font-monospace">Subtotal: ₱@BillsSubtotal.ToString("N2")</span>
+                                    <span class="small text-secondary text-uppercase fw-semibold">Quantity</span>
                                 </div>
 
                                 <div class="d-flex flex-column gap-2">
                                     @foreach (var row in denominationRows.Where(r => r.Type == "BILL"))
                                     {
                                         <div class="pos-denom-row d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 @(row.HasError ? "border border-danger" : "")">
-                                            <div class="fw-bold text-light" style="min-width: 76px; font-size: 0.92rem;">
+                                            <div class="fw-bold text-light" style="min-width: 84px; font-size: 0.95rem;">
                                                 ₱@FormatDenomValue(row.Denomination)
-                                                @if (row.Denomination == 20m)
-                                                {
-                                                    <span class="badge bg-success bg-opacity-75 ms-1" style="font-size: 0.62rem;">Bill</span>
-                                                }
                                             </div>
-                                            <div class="input-group input-group-sm" style="max-width: 144px;">
+                                            <div class="input-group input-group-sm" style="max-width: 164px;">
                                                 <button type="button" class="btn btn-outline-secondary px-2"
                                                         disabled="@(isSubmittingShift || row.Quantity <= 0)"
                                                         @onclick="() => StepDenominationQuantity(row, -1)">−</button>
@@ -713,9 +663,6 @@
                                                         disabled="@isSubmittingShift"
                                                         @onclick="() => StepDenominationQuantity(row, 1)">+</button>
                                             </div>
-                                            <div class="text-end fw-semibold text-success font-monospace" style="min-width: 92px; font-size: 0.9rem;">
-                                                ₱@row.Subtotal.ToString("N2")
-                                            </div>
                                         </div>
                                     }
                                 </div>
@@ -726,9 +673,43 @@
                                     <span class="text-uppercase small fw-bold text-secondary">Total Counted Cash</span>
                                     <span class="fs-4 fw-bolder text-success font-monospace">₱@TotalCountedCash.ToString("N2")</span>
                                 </div>
-                                <small class="text-secondary d-block text-end" style="font-size: 0.78rem;">
-                                    Coins ₱@CoinsSubtotal.ToString("N2") + Bills ₱@BillsSubtotal.ToString("N2")
-                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Coins Column (Highest to Lowest: ₱20 – ₱0.01) -->
+                    <div class="col-12 col-md-6">
+                        <div class="pos-subpanel rounded-3 p-3 h-100">
+                            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary border-opacity-25">
+                                <span class="fw-bold text-uppercase small text-warning">
+                                    <i class="bi bi-circle-fill me-1" style="font-size: 0.55rem;"></i>Coins (₱20 – ₱0.01)
+                                </span>
+                                <span class="small text-secondary text-uppercase fw-semibold">Quantity</span>
+                            </div>
+
+                            <div class="d-flex flex-column gap-2">
+                                @foreach (var row in denominationRows.Where(r => r.Type == "COIN"))
+                                {
+                                    <div class="pos-denom-row d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 @(row.HasError ? "border border-danger" : "")">
+                                        <div class="fw-bold text-light" style="min-width: 84px; font-size: 0.95rem;">
+                                            ₱@FormatDenomValue(row.Denomination)
+                                        </div>
+                                        <div class="input-group input-group-sm" style="max-width: 164px;">
+                                            <button type="button" class="btn btn-outline-secondary px-2"
+                                                    disabled="@(isSubmittingShift || row.Quantity <= 0)"
+                                                    @onclick="() => StepDenominationQuantity(row, -1)">−</button>
+                                            <input type="text"
+                                                   inputmode="numeric"
+                                                   class="form-control text-center fw-bold pos-denom-input @(row.HasError ? "is-invalid" : "")"
+                                                   value="@row.RawQuantity"
+                                                   disabled="@isSubmittingShift"
+                                                   @oninput="(e) => OnDenominationInputChanged(row, e.Value?.ToString())" />
+                                            <button type="button" class="btn btn-outline-secondary px-2"
+                                                    disabled="@isSubmittingShift"
+                                                    @onclick="() => StepDenominationQuantity(row, 1)">+</button>
+                                        </div>
+                                    </div>
+                                }
                             </div>
                         </div>
                     </div>
@@ -901,8 +882,8 @@
                                         @foreach (var d in denominationRows.Where(r => r.Quantity > 0))
                                         {
                                             <div class="d-flex justify-content-between text-secondary py-1" style="font-size: 0.8rem;">
-                                                <span>@d.Label × @d.Quantity</span>
-                                                <span class="font-monospace text-light">₱@d.Subtotal.ToString("N2")</span>
+                                                <span class="text-light fw-semibold">@d.Label</span>
+                                                <span class="font-monospace">× @d.Quantity</span>
                                             </div>
                                         }
                                     </div>
@@ -1673,13 +1654,22 @@
                                     <span class="fw-bold text-success font-monospace">₱@RecountTotalCash.ToString("N2")</span>
                                 </div>
                                 <div class="d-flex flex-column gap-1" style="max-height: 280px; overflow-y: auto;">
-                                    @foreach (var row in recountDenominationRows)
+                                    <div class="small fw-bold text-success text-uppercase px-2 pt-1">Bills (₱1,000 – ₱50)</div>
+                                    @foreach (var row in recountDenominationRows.Where(r => r.Type == "BILL"))
                                     {
                                         <div class="d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 pos-denom-row">
                                             <span class="small fw-semibold" style="min-width: 90px;">@row.Label</span>
-                                            <input type="number" min="0" step="1" class="form-control form-control-sm text-center fw-bold pos-denom-input" style="max-width: 90px;"
+                                            <input type="number" min="0" step="1" class="form-control form-control-sm text-center fw-bold pos-denom-input" style="max-width: 110px;"
                                                    @bind="row.Quantity" @bind:event="oninput" />
-                                            <span class="small font-monospace text-info text-end" style="min-width: 78px;">₱@row.Subtotal.ToString("N2")</span>
+                                        </div>
+                                    }
+                                    <div class="small fw-bold text-warning text-uppercase px-2 pt-2">Coins (₱20 – ₱0.01)</div>
+                                    @foreach (var row in recountDenominationRows.Where(r => r.Type == "COIN"))
+                                    {
+                                        <div class="d-flex align-items-center justify-content-between gap-2 py-1 px-2 rounded-2 pos-denom-row">
+                                            <span class="small fw-semibold" style="min-width: 90px;">@row.Label</span>
+                                            <input type="number" min="0" step="1" class="form-control form-control-sm text-center fw-bold pos-denom-input" style="max-width: 110px;"
+                                                   @bind="row.Quantity" @bind:event="oninput" />
                                         </div>
                                     }
                                 </div>
@@ -2566,7 +2556,7 @@
 
             Session.ClearSession();
             Http.DefaultRequestHeaders.Authorization = null;
-            Navigation.NavigateTo("/terminal-locked", replace: true);
+            Navigation.NavigateTo("/login", replace: true);
         }
         catch (Exception ex)
         {
@@ -2938,7 +2928,7 @@
                         {
                             Session.ClearSession();
                             Http.DefaultRequestHeaders.Authorization = null;
-                            Navigation.NavigateTo("/terminal-locked", replace: true);
+                            Navigation.NavigateTo(serverLock.IsTerminalLocked ? "/terminal-locked" : "/login", replace: true);
                             return;
                         }
                         throw new InvalidOperationException(tokenResult.ErrorMessage ?? "Online session authorization was denied (HTTP 403 Forbidden).");
@@ -2959,7 +2949,7 @@
             {
                 Session.ClearSession();
                 Http.DefaultRequestHeaders.Authorization = null;
-                Navigation.NavigateTo("/terminal-locked", replace: true);
+                Navigation.NavigateTo(lockState.IsTerminalLocked ? "/terminal-locked" : "/login", replace: true);
                 return;
             }
 
@@ -3122,7 +3112,7 @@
                         {
                             Session.ClearSession();
                             Http.DefaultRequestHeaders.Authorization = null;
-                            Navigation.NavigateTo("/terminal-locked", replace: true);
+                            Navigation.NavigateTo(serverLock.IsTerminalLocked ? "/terminal-locked" : "/login", replace: true);
                             return;
                         }
                         ShowAlert(tokenResult.ErrorMessage ?? "Online session authorization was denied (HTTP 403 Forbidden).", isError: true);
@@ -3145,7 +3135,7 @@
             {
                 Session.ClearSession();
                 Http.DefaultRequestHeaders.Authorization = null;
-                Navigation.NavigateTo("/terminal-locked", replace: true);
+                Navigation.NavigateTo(lockState.IsTerminalLocked ? "/terminal-locked" : "/login", replace: true);
                 return;
             }
 

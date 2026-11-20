@@ -189,24 +189,39 @@ public static class LocalDatabaseBackupService
             }
             CryptographicOperations.ZeroMemory(key);
 
-            var destPath = !string.IsNullOrWhiteSpace(customOutputPath)
-                ? Path.GetFullPath(customOutputPath)
-                : Path.Combine(GetSurvivableBackupDirectory(resolvedSource), DefaultSurvivableFileName);
+            byte[] encryptedPayload = new byte[MagicHeader.Length + salt.Length + nonce.Length + tag.Length + cipherBytes.Length];
+            int offset = 0;
+            Buffer.BlockCopy(MagicHeader, 0, encryptedPayload, offset, MagicHeader.Length); offset += MagicHeader.Length;
+            Buffer.BlockCopy(salt, 0, encryptedPayload, offset, salt.Length); offset += salt.Length;
+            Buffer.BlockCopy(nonce, 0, encryptedPayload, offset, nonce.Length); offset += nonce.Length;
+            Buffer.BlockCopy(tag, 0, encryptedPayload, offset, tag.Length); offset += tag.Length;
+            Buffer.BlockCopy(cipherBytes, 0, encryptedPayload, offset, cipherBytes.Length);
 
-            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-            var tempEncPath = destPath + ".tmp";
-
-            using (var fs = new FileStream(tempEncPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            string? destPath = null;
+#if ANDROID
+            bool hasTestOverride = AppContext.GetData("POS.SurvivableBackupDirectory") is string ov && !string.IsNullOrWhiteSpace(ov);
+            if (string.IsNullOrWhiteSpace(customOutputPath) && !hasTestOverride && OperatingSystem.IsAndroidVersionAtLeast(29))
             {
-                fs.Write(MagicHeader, 0, MagicHeader.Length);
-                fs.Write(salt, 0, salt.Length);
-                fs.Write(nonce, 0, nonce.Length);
-                fs.Write(tag, 0, tag.Length);
-                fs.Write(cipherBytes, 0, cipherBytes.Length);
-                fs.Flush( flushToDisk: true);
+                destPath = TryWriteAndroidMediaStoreBackup(encryptedPayload);
             }
+#endif
+            if (string.IsNullOrWhiteSpace(destPath))
+            {
+                destPath = !string.IsNullOrWhiteSpace(customOutputPath)
+                    ? Path.GetFullPath(customOutputPath)
+                    : Path.Combine(GetSurvivableBackupDirectory(resolvedSource), DefaultSurvivableFileName);
 
-            File.Move(tempEncPath, destPath, overwrite: true);
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                var tempEncPath = destPath + ".tmp";
+
+                using (var fs = new FileStream(tempEncPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    fs.Write(encryptedPayload, 0, encryptedPayload.Length);
+                    fs.Flush(flushToDisk: true);
+                }
+
+                File.Move(tempEncPath, destPath, overwrite: true);
+            }
 
             // Also keep a copy inside internal backups so it is always reachable even if external storage permissions change
             try
@@ -214,7 +229,7 @@ public static class LocalDatabaseBackupService
                 var internalCopy = Path.Combine(GetInternalBackupDirectory(resolvedSource), DefaultSurvivableFileName);
                 if (!string.Equals(destPath, internalCopy, StringComparison.OrdinalIgnoreCase))
                 {
-                    File.Copy(destPath, internalCopy, overwrite: true);
+                    File.WriteAllBytes(internalCopy, encryptedPayload);
                 }
             }
             catch
@@ -443,4 +458,88 @@ public static class LocalDatabaseBackupService
         {
         }
     }
+
+#if ANDROID
+    [System.Runtime.Versioning.SupportedOSPlatform("android29.0")]
+    private static string? TryWriteAndroidMediaStoreBackup(byte[] encryptedPayload)
+    {
+        try
+        {
+            var resolver = Android.App.Application.Context?.ContentResolver;
+            var collection = Android.Provider.MediaStore.Files.GetContentUri("external");
+            if (resolver == null || collection == null)
+                return null;
+
+            const string relativePath = "Documents/AgresPOS_Backups";
+            Android.Net.Uri? existingUri = null;
+
+            string[] projection = { Android.Provider.IBaseColumns.Id };
+            string selection = $"{Android.Provider.MediaStore.IMediaColumns.DisplayName} = ? AND {Android.Provider.MediaStore.IMediaColumns.RelativePath} LIKE ?";
+            string[] selectionArgs = { DefaultSurvivableFileName, $"{relativePath}%" };
+
+            using (var cursor = resolver.Query(collection, projection, selection, selectionArgs, null))
+            {
+                if (cursor != null && cursor.MoveToFirst())
+                {
+                    long id = cursor.GetLong(0);
+                    existingUri = Android.Content.ContentUris.WithAppendedId(collection, id);
+                }
+            }
+
+            if (existingUri != null)
+            {
+                try
+                {
+                    using var stream = resolver.OpenOutputStream(existingUri, "wt");
+                    if (stream != null)
+                    {
+                        stream.Write(encryptedPayload, 0, encryptedPayload.Length);
+                        stream.Flush();
+                        return existingUri.ToString();
+                    }
+                }
+                catch
+                {
+                    // Fall through to inserting a fresh MediaStore entry if the prior URI is no longer writable
+                }
+            }
+
+            using var values = new Android.Content.ContentValues();
+            values.Put(Android.Provider.MediaStore.IMediaColumns.DisplayName, DefaultSurvivableFileName);
+            values.Put(Android.Provider.MediaStore.IMediaColumns.MimeType, "application/octet-stream");
+            values.Put(Android.Provider.MediaStore.IMediaColumns.RelativePath, relativePath);
+            values.Put(Android.Provider.MediaStore.IMediaColumns.IsPending, 1);
+
+            var itemUri = resolver.Insert(collection, values);
+            if (itemUri == null)
+                return null;
+
+            try
+            {
+                using (var stream = resolver.OpenOutputStream(itemUri, "w"))
+                {
+                    if (stream == null)
+                        return null;
+                    stream.Write(encryptedPayload, 0, encryptedPayload.Length);
+                    stream.Flush();
+                }
+
+                using var publishValues = new Android.Content.ContentValues();
+                publishValues.Put(Android.Provider.MediaStore.IMediaColumns.IsPending, 0);
+                resolver.Update(itemUri, publishValues, null, null);
+                return itemUri.ToString();
+            }
+            catch
+            {
+                try { resolver.Delete(itemUri, null, null); } catch { }
+                return null;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LocalDatabaseBackupService] Android MediaStore backup failed: {ex.Message}");
+            return null;
+        }
+    }
+#endif
 }

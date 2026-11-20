@@ -366,6 +366,23 @@
             return;
         }
 
+        var discountValidationError = POS.Shared.Services.LocalDiscountCalculationService.ValidateDiscountTypeDefinition(
+            currentDiscount.Code,
+            currentDiscount.DiscountMethod,
+            currentDiscount.DiscountValue);
+        if (discountValidationError != null)
+        {
+            await Swal.FireAsync(new SweetAlertOptions
+            {
+                Title = "Invalid Discount Value",
+                Text = discountValidationError,
+                Icon = SweetAlertIcon.Warning,
+                ConfirmButtonText = "OK",
+                ConfirmButtonColor = "#2563eb"
+            });
+            return;
+        }
+
         try
         {
             isSaving = true;

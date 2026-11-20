@@ -79,9 +79,15 @@ public class OfflineCheckoutService : IOfflineCheckoutService
         }
 
         bool hasSplits = createDto.Splits is { Count: > 0 };
-        if (!hasSplits && paymentMethod == "CASH" && amountTendered <= 0m)
+        if (!hasSplits && paymentMethod == "CASH" && amountTendered < 0m)
         {
             return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "A valid cash tendered amount is required for checkout." };
+        }
+
+        if (createDto.DiscountAmount < 0m || createDto.ManualDiscountPercentage < 0m || createDto.ManualDiscountPercentage > LocalDiscountCalculationService.MaxPercentageLimit
+            || createDto.ManualDiscountAmount < 0m || createDto.PromoDiscountAmount < 0m)
+        {
+            return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "Invalid discount value. Discount percentage must be between 0% and 100% and discount amounts cannot be negative." };
         }
 
         var licenseGate = await ClientLicenseService.CheckOperationalGateAsync(createDto.TerminalId);
@@ -110,7 +116,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 if (confirmedShift.BranchId != createDto.BranchId)
                     throw new InvalidOperationException("Open shift branch does not match the active terminal branch.");
                 if (!string.Equals(confirmedShift.CashierId, cashierId, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("This drawer belongs to another cashier. Close that shift before opening your own.");
+                    throw new InvalidOperationException(TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
                 if (!confirmedShift.OpeningConfirmed || (createDto.ShiftId.HasValue && createDto.ShiftId != confirmedShift.ShiftId))
                     throw new InvalidOperationException("Open a shift and confirm opening float before offline payment.");
                 createDto.ShiftId = confirmedShift.ShiftId;
@@ -124,6 +130,9 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     (_session.Terminal?.OutletId > 0 && _session.Terminal.OutletId != outletConfig.OutletId))
                     throw new InvalidOperationException("Terminal ownership must be refreshed online before offline checkout.");
 
+                var checkoutNowUtc = BusinessDayClock.UtcNow();
+                var checkoutNowTicks = BusinessDayClock.TickCount64();
+                var activeRestrictions = await ShiftSession.GetLocalActiveCashierRestrictionsAsync(db, outletConfig.TerminalId, checkoutNowUtc, checkoutNowTicks);
                 var lockStatus = BusinessDayClock.EvaluateLock(
                     terminalId: outletConfig.TerminalId,
                     closedBusinessDate: outletConfig.ClosedBusinessDate,
@@ -132,11 +141,12 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     unlockAtUtc: outletConfig.ClosingUnlockAtUtc,
                     candidateCashierUsername: cashierId,
                     authoritativeServerUtc: null,
-                    deviceUtcNow: BusinessDayClock.UtcNow(),
-                    currentTickCount64: BusinessDayClock.TickCount64(),
+                    deviceUtcNow: checkoutNowUtc,
+                    currentTickCount64: checkoutNowTicks,
                     lockedAtTickCount64: outletConfig.ClosingLockedTickCount64,
                     lastKnownServerUtc: outletConfig.LastKnownServerUtc,
-                    lastKnownServerTickCount64: outletConfig.LastKnownServerTickCount64);
+                    lastKnownServerTickCount64: outletConfig.LastKnownServerTickCount64,
+                    additionalClosedCashiersToday: activeRestrictions.Select(r => r.CashierId));
                 if (lockStatus.IsCashierRestricted || lockStatus.IsTerminalLocked)
                     throw new InvalidOperationException(lockStatus.CashierRestrictionMessage ?? lockStatus.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
 
@@ -149,10 +159,42 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     : outletConfig.BranchTaxType;
 
                 // 2. Calculate taxes and discounts first (before incrementing sequence) using decimal precision
+                string normalizedDiscountCode = (createDto.DiscountCode ?? "NONE").Trim().ToUpperInvariant();
+                if (string.IsNullOrWhiteSpace(normalizedDiscountCode)) normalizedDiscountCode = "NONE";
+
+                string? resolvedMethod = createDto.DiscountMethod;
+                decimal? resolvedValue = createDto.DiscountValue;
+                decimal resolvedPromoAmount = createDto.PromoDiscountAmount;
+
+                if (normalizedDiscountCode != "NONE" && normalizedDiscountCode != "MANUAL"
+                    && !LocalDiscountCalculationService.IsStatutoryVatExemptCode(normalizedDiscountCode)
+                    && string.IsNullOrWhiteSpace(resolvedMethod) && !resolvedValue.HasValue)
+                {
+                    var localDisc = await db.Discounts.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Code.ToUpper() == normalizedDiscountCode);
+                    if (localDisc != null)
+                    {
+                        resolvedMethod = localDisc.DiscountMethod;
+                        resolvedValue = localDisc.DiscountValue;
+                    }
+                    else if (resolvedPromoAmount == 0m && createDto.DiscountAmount > 0m
+                        && !LocalDiscountCalculationService.IsStatutoryCode(normalizedDiscountCode)
+                        && normalizedDiscountCode != "EMPLOYEE")
+                    {
+                        // Ad-hoc / resumed held-sale promo discount validated strictly <= eligible subtotal
+                        resolvedPromoAmount = createDto.DiscountAmount;
+                    }
+                }
+
                 var calcReq = new OrderCalculationRequestDto
                 {
                     BranchTaxType = branchTaxType,
-                    DiscountCode = createDto.DiscountCode ?? "NONE",
+                    DiscountCode = normalizedDiscountCode,
+                    DiscountMethod = resolvedMethod,
+                    DiscountValue = resolvedValue,
+                    ManualDiscountPercentage = createDto.ManualDiscountPercentage,
+                    ManualDiscountAmount = createDto.ManualDiscountAmount,
+                    PromoDiscountAmount = resolvedPromoAmount,
                     Items = createDto.Items.Select(i => new CartItemCalculationDto
                     {
                         ProductId = i.ProductId,
@@ -168,10 +210,25 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 };
 
                 var calculator = new LocalDiscountCalculationService();
-                var calcRes = calculator.CalculateOrder(calcReq);
+                OrderCalculationResultDto calcRes;
+                try
+                {
+                    calcRes = calculator.CalculateOrder(calcReq);
+                }
+                catch (ArgumentException ex)
+                {
+                    await transaction.RollbackAsync();
+                    return new OfflineCheckoutResultDto { Success = false, ErrorMessage = ex.Message };
+                }
 
-                decimal subtotal = calcRes.Subtotal;
-                decimal totalAmount = calcRes.TotalAmount;
+                decimal subtotal = Math.Max(0m, calcRes.Subtotal);
+                decimal totalAmount = Math.Max(0m, calcRes.TotalAmount);
+
+                if (!hasSplits && paymentMethod == "CASH" && totalAmount > 0m && amountTendered <= 0m)
+                {
+                    await transaction.RollbackAsync();
+                    return new OfflineCheckoutResultDto { Success = false, ErrorMessage = "A valid cash tendered amount is required for checkout." };
+                }
 
                 decimal tendered;
                 decimal changeAmount;

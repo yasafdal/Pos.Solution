@@ -220,6 +220,23 @@ public static partial class Program
         await RunTestAsync("RBAC-01. Transaction History RBAC API Matrix: Admin/Manager/SeniorCashier allowed (branch-scoped), Cashier & bare Terminal denied across all history/order/receipt/return endpoints", TestRbac01_ApiMultiEndpointRoleMatrix);
         await RunTestAsync("RBAC-02. Transaction History RBAC Offline & Client Service: Cashier blocked on local SQLite & client service after restart, while New Sale, current receipt, Held Sales & offline sync work intact", TestRbac02_ClientServiceOfflineSqliteAndCashierWorkflowPreservation);
         await RunTestAsync("RBAC-03. Transaction History RBAC Account Switching: Switching Admin -> Cashier -> Manager never retains prior role permissions or bearer token", TestRbac03_AccountSwitchingClearsPriorPermissionsAndToken);
+        await RunTestAsync("HELD-EXP-01. Held Sales Auto-Expiration (3:59 AM / 4:00 AM Cutoff): Server auto-cancels previous Business Date, preserves items/audit, idempotent & multi-terminal safe", TestHeldExp01_Boundary359Vs400AmExpirationIdempotencyAndIsolation);
+        await RunTestAsync("HELD-EXP-02. Held Sales Resume Protection: Direct/stale resume of previous-day Held Sale blocked with exact expiration message & persisted as CANCELLED", TestHeldExp02_ResumeProtectionForDirectOrStaleReference);
+        await RunTestAsync("HELD-EXP-03. Held Sales Offline Expiration & Reconnect Sync: Offline auto-cancel, restart persistence, blocked resume & server/SQLite agreement on reconnect", TestHeldExp03_OfflineExpirationRestartPersistenceAndReconnectSync);
+        await RunTestAsync("VOID-OFF-01. Online Void Regression: Supervisor PIN, cashier/username rejection, Cash vs Non-Cash refunds & inventory restoration", TestVoidOff01_OnlineVoidRegressionAndRefundInventoryIntegrity);
+        await RunTestAsync("VOID-OFF-02. Offline Void E2E: Local atomic void, restart persistence, Order->VOID sync ordering, inventory restore & idempotent replay", TestVoidOff02_EndToEndOfflineVoidRestartReconnectSyncAndIdempotency);
+        await RunTestAsync("VOID-OFF-03. Offline Void Security & Conflicts: Missing/expired supervisor, Cashier self-approval, cross-terminal, tampered proof & 409 CONFLICT preservation", TestVoidOff03_SecurityMatrixAndServerConflictPreservation);
+        await RunTestAsync("VOID-OFF-04. Offline Void Payment Matrix: Cash/Card/GCash/Split drawer isolation, linked modifier inventory restore & local void overlay", TestVoidOff04_PaymentMethodMatrixSplitVoidAndOverlay);
+        await RunTestAsync("DISC-VAL-01. Discount Validation: Manual % (0/10/50/100/12.5/150/10000/-5), zero-VAT-at-100%, API & admin definition guards", TestDiscVal01_ManualPercentageAndAdminDefinitionValidation);
+        await RunTestAsync("DISC-VAL-02. Discount Validation: Manual & configured FIXED discounts (0/100/exact/decimal/over-subtotal/negative/huge)", TestDiscVal02_ManualAndConfiguredFixedAmountDiscounts);
+        await RunTestAsync("DISC-VAL-03. Discount Validation: Stacked item+order/manual+promo, statutory SC/PWD/SP/BNPC preservation & CartService auto-recalculation", TestDiscVal03_CombinedStackedStatutoryAndCartRecalculation);
+        await RunTestAsync("DISC-VAL-04. Discount Validation E2E: OrdersController, OfflineCheckout (100% zero-total, weight-based, split), Sync & HeldSale guards", TestDiscVal04_EndToEndApiOfflineCheckoutZeroTotalSplitSyncAndHeldSaleGuards);
+        await RunTestAsync("WF-01. Close Cashier Separation: Restricts ONLY CashierId+TerminalId+BusinessDate (Cashier A works on T2; Cashier B works on T1; failed close never restricts)", TestWorkflow01_CloseCashierScopeAndMultiTerminalIsolation);
+        await RunTestAsync("WF-02. Anytime Read-Only X-Reading: Runs repeatedly while shifts are OPEN across multiple cashiers with zero mutations & Supervisor role/PIN auth", TestWorkflow02_AnytimeReadOnlyXReadingWhileShiftsOpenAndRepeatable);
+        await RunTestAsync("WF-03. Z-Reading End-of-Day Finalization: Role/open-shift/accountability guards, atomic Terminal+BusinessDate lock (T2 stays open), failed Z never locks & 4:00 AM reset", TestWorkflow03_ZReadingGuardsAtomicTerminalLockMultiTerminalAnd4AmReset);
+        await RunTestAsync("WF-04. Offline Close Cashier, Offline X-Reading, Supervisor Reopen Audit & Idempotent Reconnect Sync", TestWorkflow04_OfflineCloseCashierAnytimeXReadingSupervisorReopenAndIdempotentSync);
+        await RunTestAsync("OWN-01. Logout vs Close Cashier & Single Shift Ownership (Online): Logout preserves shift, blocks Cashier B across all endpoints, Cashier A resumes without duplicates, Close releases ownership", TestShiftOwnership01_OnlineLogoutResumeCloseReleaseMultiTerminalAndReadings);
+        await RunTestAsync("OWN-02. Logout & Shift Ownership (Offline E2E): Offline blocked login, restart persistence, network-fail safety, offline X-Reading, Close release & idempotent reconnect sync", TestShiftOwnership02_OfflineLogoutBlockedLoginRestartPersistenceAndReconnectSync);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
@@ -1333,17 +1350,21 @@ public static partial class Program
             });
             Assert(closeRes is OkObjectResult, "CloseShift must succeed.");
 
-            // 2. Verify Terminal lock state persisted in DB & active CashierSessions closed
+            // 2. Verify Cashier-level closing restriction persisted in DB (NOT Terminal Z-Reading lock!) & only cashier1's session closed
             var terminalInDb = await db.Terminals.FindAsync(1);
-            Assert(terminalInDb!.ClosedBusinessDate == "2026-10-20", $"Expected ClosedBusinessDate 2026-10-20, got {terminalInDb.ClosedBusinessDate}");
-            Assert(terminalInDb.ClosingLockedByCashier == "cashier1", $"Expected ClosingLockedByCashier cashier1, got {terminalInDb.ClosingLockedByCashier}");
-            Assert(terminalInDb.ClosingUnlockAtUtc == new DateTime(2026, 10, 20, 20, 0, 0, DateTimeKind.Utc),
-                $"Expected ClosingUnlockAtUtc 2026-10-20 20:00:00 UTC (4:00 AM Manila next day), got {terminalInDb.ClosingUnlockAtUtc}");
+            Assert(terminalInDb!.ClosedBusinessDate == null,
+                $"Close Cashier must NOT lock Terminal.ClosedBusinessDate for other cashiers, got {terminalInDb.ClosedBusinessDate}");
 
-            var activeSessionsAfterClose = await db.CashierSessions.CountAsync(s => s.TerminalId == 1 && s.Status == "ACTIVE");
-            Assert(activeSessionsAfterClose == 0, "Closing shift must terminate all active CashierSessions on that terminal.");
+            var restrictionInDb = await db.CashierClosingRestrictions.SingleOrDefaultAsync(r => r.TerminalId == 1 && r.CashierId == "cashier1" && r.BusinessDate == "2026-10-20");
+            Assert(restrictionInDb != null && restrictionInDb.Status == "ACTIVE",
+                "CloseShift must create an ACTIVE CashierClosingRestriction for (cashier1, Terminal 1, 2026-10-20).");
+            Assert(restrictionInDb!.UnlockAtUtc == new DateTime(2026, 10, 20, 20, 0, 0, DateTimeKind.Utc),
+                $"Expected UnlockAtUtc 2026-10-20 20:00:00 UTC (4:00 AM Manila next day), got {restrictionInDb.UnlockAtUtc}");
 
-            // 3. Verify AuthController blocks BOTH Cashier A (403 Cashier Restricted) and Cashier B (423 Terminal Locked)
+            var activeSessionsAfterClose = await db.CashierSessions.CountAsync(s => s.TerminalId == 1 && s.CashierId == "cashier1" && s.Status == "ACTIVE");
+            Assert(activeSessionsAfterClose == 0, "Closing shift must terminate the closing cashier's active CashierSession on that terminal.");
+
+            // 3. Verify AuthController blocks Cashier A (403 Cashier Restricted) while ALLOWING Cashier B (200 OK) on Terminal 1!
             var jwtBuilder = new Microsoft.Extensions.Configuration.ConfigurationBuilder();
             jwtBuilder.Add(new Microsoft.Extensions.Configuration.Memory.MemoryConfigurationSource
             {
@@ -1361,11 +1382,10 @@ public static partial class Program
             var pinRes1 = pinLoginCashier1 as ObjectResult;
             Assert(pinRes1 != null && pinRes1.StatusCode == 403, $"Cashier who closed terminal must get 403 Forbidden, got {pinRes1?.StatusCode}");
 
-            var pinLoginCashier2 = await authController.PinLogin(new PinLoginDto { PinCode = "2222", TerminalId = 1, BranchId = 1 });
-            var pinRes2 = pinLoginCashier2 as ObjectResult;
-            Assert(pinRes2 != null && pinRes2.StatusCode == 423, $"Other cashiers on closed terminal must get 423 Locked, got {pinRes2?.StatusCode}");
+            var pinLoginCashier2BeforeZ = await authController.PinLogin(new PinLoginDto { PinCode = "2222", TerminalId = 1, BranchId = 1 });
+            Assert(pinLoginCashier2BeforeZ is OkObjectResult, "Other cashiers (cashier2) MUST be allowed to log in on Terminal 1 after cashier1 closes!");
 
-            // 4. Verify CashierSessionsController, CashDrawerController.OpenShift, and OrdersController are all blocked before 4:00 AM
+            // 4. Verify CashierSessionsController blocks cashier1 (403) while allowing cashier2, then Z-Reading locks Terminal 1 (423 for everyone!)
             var sessionsController1 = new CashierSessionsController(db)
             {
                 ControllerContext = cashDrawerCashier1.ControllerContext
@@ -1378,8 +1398,34 @@ public static partial class Program
             {
                 ControllerContext = cashDrawerCashier2.ControllerContext
             };
+            var activateRes2BeforeZ = await sessionsController2.ActivateSession(new CashierSessionActivateDto { BranchId = 1, TerminalId = 1 });
+            Assert(activateRes2BeforeZ is OkObjectResult, "ActivateSession for cashier2 must succeed before Z-Reading finalization.");
+
+            // Now finalize Z-Reading for 2026-10-20 -> atomically locks Terminal 1 for ALL cashiers until 4:00 AM!
+            db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = new DateOnly(2026, 10, 20), ConfiguredBy = "verified" });
+            await db.SaveChangesAsync();
+            var zSvc = new ZReadingService(db, BuildWorkflowJwtConfig());
+            await zSvc.GenerateAsync(new GenerateZReadingRequest
+            {
+                TerminalId = 1,
+                BusinessDate = new DateOnly(2026, 10, 20),
+                ClientOperationId = "lock01-z-1",
+                DeviceIdentifier = "test",
+                AllLocalOutboxesDrained = true,
+                NoUnresolvedLocalTransactions = true,
+                SoleDeviceCompletenessConfirmed = true
+            }, "manager1");
+
+            var terminalAfterZ = await db.Terminals.FindAsync(1);
+            Assert(terminalAfterZ!.ClosedBusinessDate == "2026-10-20" && terminalAfterZ.ClosingLockedByCashier == "manager1",
+                "Z-Reading finalization must lock Terminal.ClosedBusinessDate for the finalized Business Date.");
+
+            var pinLoginCashier2AfterZ = await authController.PinLogin(new PinLoginDto { PinCode = "2222", TerminalId = 1, BranchId = 1 });
+            var pinRes2 = pinLoginCashier2AfterZ as ObjectResult;
+            Assert(pinRes2 != null && pinRes2.StatusCode == 423, $"After Z-Reading, all cashiers on locked terminal must get 423 Locked, got {pinRes2?.StatusCode}");
+
             var activateRes2 = await sessionsController2.ActivateSession(new CashierSessionActivateDto { BranchId = 1, TerminalId = 1 });
-            Assert((activateRes2 as ObjectResult)?.StatusCode == 423, "ActivateSession for other cashier on locked terminal must return 423.");
+            Assert((activateRes2 as ObjectResult)?.StatusCode == 423, "ActivateSession for other cashier on Z-Reading-locked terminal must return 423.");
 
             var openWhileLocked = await cashDrawerCashier2.OpenShift(new OpenShiftDto
             {

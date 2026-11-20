@@ -236,6 +236,7 @@ public class DeviceActivationService : IDeviceActivationService
 
             if (response.Cashiers != null && response.Cashiers.Count > 0)
             {
+                var syncedUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
                 await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
                 foreach (var cashier in response.Cashiers)
                 {
@@ -244,7 +245,8 @@ public class DeviceActivationService : IDeviceActivationService
                         UserId = cashier.UserId,
                         Username = cashier.Username,
                         Role = cashier.Role,
-                        PinHash = cashier.PinHash
+                        PinHash = cashier.PinHash,
+                        SyncedAtUtc = syncedUtc
                     });
                 }
             }
@@ -409,9 +411,9 @@ public class DeviceActivationService : IDeviceActivationService
                         ? $"Session token request rejected with HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase})."
                         : rawError.Trim();
 
-                    if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Locked or HttpStatusCode.Unauthorized or HttpStatusCode.BadRequest)
+                    if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Locked or HttpStatusCode.Conflict or HttpStatusCode.Unauthorized or HttpStatusCode.BadRequest)
                     {
-                        if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Locked)
+                        if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Locked or HttpStatusCode.Conflict)
                         {
                             ActiveTerminalToken = null;
                             httpClient.DefaultRequestHeaders.Authorization = null;

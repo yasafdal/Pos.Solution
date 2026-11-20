@@ -58,6 +58,21 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             return BadRequest("Invalid transaction synchronization request.");
         }
 
+        var financialValidationError = POS.Shared.Services.LocalDiscountCalculationService.ValidateSyncedTransactionTotals(
+            request.Subtotal,
+            request.DiscountAmount,
+            request.TotalAmount,
+            request.VatableSales,
+            request.VatExemptSales,
+            request.ZeroRatedSales,
+            request.VatAmount,
+            request.Items,
+            request.Payments);
+        if (financialValidationError != null)
+        {
+            return BadRequest(financialValidationError);
+        }
+
         var serverReceivedAtUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
         if (request.TransactionDate == default && request.TransactionTimestamp.HasValue)
         {
@@ -831,6 +846,338 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             ServerStatus = movement.Status,
             ReferenceNumber = movement.ReferenceNumber,
             CommittedAt = movement.PostedAt ?? movement.CreatedAt
+        });
+    }
+
+    [HttpPost("voids")]
+    public async Task<ActionResult<OfflineVoidSyncResponse>> SyncVoid([FromBody] OfflineVoidSyncRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.ClientVoidId) || string.IsNullOrWhiteSpace(request.VoidReason))
+        {
+            return BadRequest(new OfflineVoidSyncResponse
+            {
+                Success = false,
+                Message = "Invalid offline void synchronization request."
+            });
+        }
+
+        string clientVoidId = request.ClientVoidId.Trim();
+        if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() &&
+            !POS.Shared.Constants.PosPermissions.IsAdmin(User) &&
+            !POS.Shared.Constants.PosPermissions.CanApproveVoid(User))
+        {
+            return Forbid();
+        }
+        if (!POS.Shared.Constants.PosPermissions.IsAdmin(User) &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int callerBranchId) &&
+            request.BranchId != callerBranchId)
+        {
+            return Forbid();
+        }
+
+        // 1. Idempotency check by ClientVoidId
+        var existingByClientId = await context.TransactionVoids
+            .AsNoTracking()
+            .FirstOrDefaultAsync(v => v.ClientVoidId == clientVoidId, cancellationToken);
+        if (existingByClientId != null)
+        {
+            return Ok(new OfflineVoidSyncResponse
+            {
+                Success = true,
+                Message = "Offline void already synchronized (idempotent replay).",
+                ClientVoidId = clientVoidId,
+                ServerVoidId = existingByClientId.VoidId,
+                ServerOrderId = existingByClientId.OriginalOrderId,
+                ReversalReference = existingByClientId.ReversalReference,
+                ServerStatus = existingByClientId.Status,
+                InventoryRestored = false,
+                AcknowledgedAt = existingByClientId.VoidedAt
+            });
+        }
+
+        // 2. Cryptographic supervisor authorization re-verification on server (never trust client role claims alone)
+        if (string.IsNullOrWhiteSpace(request.SupervisorPinHash) || string.IsNullOrWhiteSpace(request.ApprovedBy) || string.IsNullOrWhiteSpace(request.AuthorizationProofHash))
+        {
+            return Conflict(new OfflineVoidSyncResponse
+            {
+                Success = false,
+                IsConflict = true,
+                Message = "Offline void rejected: missing verifiable supervisor authorization proof.",
+                ClientVoidId = clientVoidId,
+                ServerStatus = "CONFLICT"
+            });
+        }
+
+        var usersWithPins = await context.Users
+            .AsNoTracking()
+            .Where(u => u.PinCode != null && u.PinCode != "")
+            .ToListAsync(cancellationToken);
+
+        var matchedSupervisor = usersWithPins.FirstOrDefault(u =>
+            string.Equals(u.Username, request.ApprovedBy.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            POS.Shared.Constants.PosPermissions.CanApproveVoid(u.Role) &&
+            POS.Shared.Helpers.VoidAuthorizationHelper.FixedTimeEqualsHex(
+                POS.Shared.Helpers.VoidAuthorizationHelper.ComputePinHash(u.PinCode!),
+                request.SupervisorPinHash));
+
+        if (matchedSupervisor == null)
+        {
+            return Conflict(new OfflineVoidSyncResponse
+            {
+                Success = false,
+                IsConflict = true,
+                Message = $"Offline void conflict: approving supervisor '{request.ApprovedBy}' failed server credential or role verification.",
+                ClientVoidId = clientVoidId,
+                ServerStatus = "CONFLICT"
+            });
+        }
+
+        string refKey = !string.IsNullOrWhiteSpace(request.OriginalInvoiceNumber)
+            ? request.OriginalInvoiceNumber!
+            : (request.OriginalOrderNumber ?? request.LocalTransactionId ?? request.OriginalOrderId?.ToString() ?? string.Empty);
+
+        string expectedProof = POS.Shared.Helpers.VoidAuthorizationHelper.ComputeAuthorizationProofHash(
+            clientVoidId,
+            refKey,
+            request.BranchId,
+            request.TerminalId,
+            request.DeviceIdentifier,
+            matchedSupervisor.Username,
+            request.SupervisorPinHash,
+            request.VoidedAtUtc);
+
+        if (!POS.Shared.Helpers.VoidAuthorizationHelper.FixedTimeEqualsHex(expectedProof, request.AuthorizationProofHash))
+        {
+            return Conflict(new OfflineVoidSyncResponse
+            {
+                Success = false,
+                IsConflict = true,
+                Message = "Offline void conflict: authorization proof signature mismatch (possible credential replay or payload tampering).",
+                ClientVoidId = clientVoidId,
+                ServerStatus = "CONFLICT"
+            });
+        }
+
+        using var tx = await context.Database.BeginTransactionAsync(
+            context.Database.IsNpgsql() ? System.Data.IsolationLevel.ReadCommitted : System.Data.IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            // 3. Locate the target Order in PostgreSQL (by server OrderId, LocalTransactionId idempotency record, or InvoiceNumber)
+            Order? order = null;
+            if (request.OriginalOrderId.HasValue && request.OriginalOrderId.Value > 0)
+            {
+                order = await context.Orders
+                    .Include(o => o.OrderItems).ThenInclude(i => i.OrderItemModifiers)
+                    .Include(o => o.Payments)
+                    .SingleOrDefaultAsync(o => o.OrderId == request.OriginalOrderId.Value, cancellationToken);
+            }
+            if (order == null && !string.IsNullOrWhiteSpace(request.LocalTransactionId))
+            {
+                var idem = await context.OfflineSyncIdempotencyRecords.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.LocalTransactionId == request.LocalTransactionId, cancellationToken);
+                if (idem != null && idem.ServerOrderId > 0)
+                {
+                    order = await context.Orders
+                        .Include(o => o.OrderItems).ThenInclude(i => i.OrderItemModifiers)
+                        .Include(o => o.Payments)
+                        .SingleOrDefaultAsync(o => o.OrderId == idem.ServerOrderId, cancellationToken);
+                }
+            }
+            if (order == null && !string.IsNullOrWhiteSpace(request.OriginalInvoiceNumber))
+            {
+                order = await context.Orders
+                    .Include(o => o.OrderItems).ThenInclude(i => i.OrderItemModifiers)
+                    .Include(o => o.Payments)
+                    .FirstOrDefaultAsync(o => o.InvoiceNumber == request.OriginalInvoiceNumber && o.TerminalId == request.TerminalId && o.BranchId == request.BranchId, cancellationToken);
+            }
+
+            if (order == null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return NotFound(new OfflineVoidSyncResponse
+                {
+                    Success = false,
+                    Message = "Original order has not yet synchronized to server. Retry after order upload completes.",
+                    ClientVoidId = clientVoidId,
+                    ServerStatus = "PENDING_ORDER"
+                });
+            }
+
+            if (order.BranchId != request.BranchId || order.TerminalId != request.TerminalId)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return Conflict(new OfflineVoidSyncResponse
+                {
+                    Success = false,
+                    IsConflict = true,
+                    Message = "Offline void conflict: target order belongs to a different branch or terminal.",
+                    ClientVoidId = clientVoidId,
+                    ServerOrderId = order.OrderId,
+                    ServerStatus = "CONFLICT"
+                });
+            }
+
+            if (order.OrderStatus == "VOIDED")
+            {
+                var existingVoid = await context.TransactionVoids.AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.OriginalOrderId == order.OrderId, cancellationToken);
+                await tx.RollbackAsync(cancellationToken);
+                if (existingVoid != null && string.Equals(existingVoid.ClientVoidId, clientVoidId, StringComparison.Ordinal))
+                {
+                    return Ok(new OfflineVoidSyncResponse
+                    {
+                        Success = true,
+                        Message = "Offline void already synchronized (idempotent replay).",
+                        ClientVoidId = clientVoidId,
+                        ServerVoidId = existingVoid.VoidId,
+                        ServerOrderId = order.OrderId,
+                        ReversalReference = existingVoid.ReversalReference,
+                        ServerStatus = existingVoid.Status,
+                        AcknowledgedAt = existingVoid.VoidedAt
+                    });
+                }
+
+                return Conflict(new OfflineVoidSyncResponse
+                {
+                    Success = false,
+                    IsConflict = true,
+                    Message = $"Offline void conflict: Order {order.InvoiceNumber ?? order.OrderNumber} was already voided.",
+                    ClientVoidId = clientVoidId,
+                    ServerOrderId = order.OrderId,
+                    ServerStatus = "CONFLICT"
+                });
+            }
+
+            var voidedUtc = request.VoidedAtUtc == default ? DateTime.UtcNow : NormalizeUtc(request.VoidedAtUtc);
+            string reversalRef = !string.IsNullOrWhiteSpace(request.ReversalReference)
+                ? request.ReversalReference.Trim()
+                : "VOID-" + clientVoidId[..Math.Min(8, clientVoidId.Length)].ToUpperInvariant();
+
+            var voidRecord = new TransactionVoid
+            {
+                OriginalOrderId = order.OrderId,
+                OriginalInvoiceNumber = order.InvoiceNumber ?? request.OriginalInvoiceNumber,
+                VoidReason = request.VoidReason.Trim(),
+                RequestedBy = string.IsNullOrWhiteSpace(request.RequestedBy) ? (User.Identity?.Name ?? "system") : request.RequestedBy.Trim(),
+                ApprovedBy = matchedSupervisor.Username,
+                RequestedAt = voidedUtc,
+                ApprovedAt = voidedUtc,
+                VoidedAt = voidedUtc,
+                Status = "APPROVED",
+                ReversalReference = reversalRef,
+                ClientVoidId = clientVoidId
+            };
+
+            context.TransactionVoids.Add(voidRecord);
+            await context.SaveChangesAsync(cancellationToken);
+
+            order.OrderStatus = "VOIDED";
+            order.PaymentStatus = "VOIDED";
+
+            decimal cashRefundTotal = 0m;
+            foreach (var payment in order.Payments.Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid))
+            {
+                payment.PaymentStatus = "REFUNDED";
+                bool isCash = string.Equals(payment.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase);
+                if (isCash) cashRefundTotal += payment.Amount;
+
+                context.Refunds.Add(new Refund
+                {
+                    VoidId = voidRecord.VoidId,
+                    OriginalPaymentId = payment.PaymentId,
+                    RefundMethod = payment.PaymentMethod,
+                    RefundAmount = payment.Amount,
+                    ReferenceNumber = reversalRef,
+                    Status = isCash ? "COMPLETED" : "PENDING_MANUAL_REFUND",
+                    RequestedAt = voidedUtc,
+                    CompletedAt = voidedUtc
+                });
+            }
+
+            if (cashRefundTotal > 0m)
+            {
+                CashDrawerShift? targetShift = null;
+                if (order.ShiftId.HasValue && order.ShiftId.Value > 0)
+                {
+                    targetShift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == order.ShiftId.Value, cancellationToken);
+                }
+                if (targetShift == null && !string.IsNullOrWhiteSpace(request.ClientShiftId))
+                {
+                    targetShift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ClientShiftId == request.ClientShiftId, cancellationToken);
+                }
+                if (targetShift == null)
+                {
+                    targetShift = await context.CashDrawerShifts
+                        .Where(s => s.TerminalId == order.TerminalId && s.Status == "OPEN")
+                        .OrderByDescending(s => s.OpenedAt)
+                        .FirstOrDefaultAsync(cancellationToken);
+                }
+
+                if (targetShift != null)
+                {
+                    targetShift.TotalCashRefunds += cashRefundTotal;
+                    CashDrawerController.RecalculateShiftExpectedBalance(targetShift);
+                }
+            }
+
+            bool restored = await ReturnsController.RestoreInventoryForVoidedOrderAsync(
+                context, order, reversalRef, matchedSupervisor.Username, voidedUtc, cancellationToken);
+
+            await context.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+
+            return Ok(new OfflineVoidSyncResponse
+            {
+                Success = true,
+                Message = "Offline transaction void synchronized and committed.",
+                ClientVoidId = clientVoidId,
+                ServerVoidId = voidRecord.VoidId,
+                ServerOrderId = order.OrderId,
+                ReversalReference = reversalRef,
+                ServerStatus = voidRecord.Status,
+                InventoryRestored = restored,
+                AcknowledgedAt = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return StatusCode(500, new OfflineVoidSyncResponse
+            {
+                Success = false,
+                Message = $"Offline void synchronization error: {ex.Message}",
+                ClientVoidId = clientVoidId
+            });
+        }
+    }
+
+    [HttpGet("voids/{clientVoidId}/status")]
+    public async Task<IActionResult> GetVoidSyncStatus(string clientVoidId, CancellationToken cancellationToken = default)
+    {
+        var voidRec = await context.TransactionVoids
+            .AsNoTracking()
+            .Include(v => v.OriginalOrder)
+            .FirstOrDefaultAsync(v => v.ClientVoidId == clientVoidId, cancellationToken);
+
+        if (voidRec == null)
+            return NotFound(new { Status = "PENDING_OR_NOT_FOUND", ClientVoidId = clientVoidId });
+
+        if (voidRec.OriginalOrder != null &&
+            User.FindFirst("terminal_id")?.Value != voidRec.OriginalOrder.TerminalId.ToString() &&
+            !POS.Shared.Constants.PosPermissions.IsAdmin(User) &&
+            !POS.Shared.Constants.PosPermissions.CanApproveVoid(User))
+            return Forbid();
+
+        return Ok(new
+        {
+            Status = "SYNCED",
+            ClientVoidId = clientVoidId,
+            ServerVoidId = voidRec.VoidId,
+            ServerOrderId = voidRec.OriginalOrderId,
+            ReversalReference = voidRec.ReversalReference,
+            ServerStatus = voidRec.Status,
+            CommittedAt = voidRec.VoidedAt
         });
     }
     private async Task<string?> ValidateHistoricalRecovery(Terminal terminal, DateTime occurredAt, string identifier, string kind, string? reason)

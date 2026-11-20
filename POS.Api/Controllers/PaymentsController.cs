@@ -41,6 +41,11 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
             await transaction.RollbackAsync();
             return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
         }
+        if (lockState.IsShiftOwnedByAnotherCashier)
+        {
+            await transaction.RollbackAsync();
+            return Conflict(lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+        }
         var activeShift = await context.CashDrawerShifts.FirstOrDefaultAsync(s => s.TerminalId == order.TerminalId && s.Status == "OPEN" && s.OpeningConfirmed && s.CashierId == cashier && s.BranchId == order.BranchId);
         if (order.CashierId != cashier) return Forbid();
         if (activeShift == null) return Conflict("Open a shift and explicitly confirm opening float before payment.");

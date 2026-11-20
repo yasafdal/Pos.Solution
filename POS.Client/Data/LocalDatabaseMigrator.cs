@@ -7,7 +7,7 @@ namespace POS.Client.Data;
 
 public static class LocalDatabaseMigrator
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 5;
 
     public static void Migrate(DbConnection conn, string dbPath, Action ensureCreatedAction)
     {
@@ -67,6 +67,36 @@ public static class LocalDatabaseMigrator
                     ExecuteNonQuery(conn, tx2, "PRAGMA user_version = 2;");
                     tx2.Commit();
                     currentVersion = 2;
+                }
+
+                if (currentVersion < 3)
+                {
+                    MaybeSimulateFailure(3);
+                    using var tx3 = conn.BeginTransaction();
+                    ApplyMigrationV3(conn, tx3);
+                    ExecuteNonQuery(conn, tx3, "PRAGMA user_version = 3;");
+                    tx3.Commit();
+                    currentVersion = 3;
+                }
+
+                if (currentVersion < 4)
+                {
+                    MaybeSimulateFailure(4);
+                    using var tx4 = conn.BeginTransaction();
+                    ApplyMigrationV4(conn, tx4);
+                    ExecuteNonQuery(conn, tx4, "PRAGMA user_version = 4;");
+                    tx4.Commit();
+                    currentVersion = 4;
+                }
+
+                if (currentVersion < 5)
+                {
+                    MaybeSimulateFailure(5);
+                    using var tx5 = conn.BeginTransaction();
+                    ApplyMigrationV5(conn, tx5);
+                    ExecuteNonQuery(conn, tx5, "PRAGMA user_version = 5;");
+                    tx5.Commit();
+                    currentVersion = 5;
                 }
 
                 if (!VerifyQuickCheck(conn))
@@ -306,26 +336,34 @@ public static class LocalDatabaseMigrator
                 CashierId TEXT NOT NULL,
                 HoldReference TEXT NOT NULL,
                 Status TEXT NOT NULL,
+                BusinessDate TEXT NULL,
                 PayloadJson TEXT NOT NULL,
                 CreatedAt TEXT NOT NULL,
-                ResumedAt TEXT NULL
+                ResumedAt TEXT NULL,
+                CancelledAt TEXT NULL,
+                CancellationReason TEXT NULL
             );");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "BranchId", "INTEGER NOT NULL DEFAULT 1");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "TerminalId", "INTEGER NOT NULL DEFAULT 1");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "CashierId", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "HoldReference", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "Status", "TEXT NOT NULL DEFAULT 'HELD'");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "BusinessDate", "TEXT NULL");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "PayloadJson", "TEXT NOT NULL DEFAULT '{}'");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "CreatedAt", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(conn, tx, "LocalHeldSales", "ResumedAt", "TEXT NULL");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "CancelledAt", "TEXT NULL");
+        AddColumnIfMissing(conn, tx, "LocalHeldSales", "CancellationReason", "TEXT NULL");
 
         ExecuteNonQuery(conn, tx, @"
             CREATE TABLE IF NOT EXISTS LocalCashiers (
                 UserId INTEGER PRIMARY KEY,
                 Username TEXT NOT NULL,
                 Role TEXT NOT NULL,
-                PinHash TEXT NOT NULL
+                PinHash TEXT NOT NULL,
+                SyncedAtUtc TEXT NULL
             );");
+        AddColumnIfMissing(conn, tx, "LocalCashiers", "SyncedAtUtc", "TEXT NULL");
 
         ExecuteNonQuery(conn, tx, @"
             CREATE TABLE IF NOT EXISTS LocalCashMovementCategories (
@@ -565,6 +603,100 @@ public static class LocalDatabaseMigrator
             VALUES
                 (1, 'Baseline POS offline schema & additive columns', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.1'),
                 (2, 'Versioned migration ledger & survivable backup support', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.1');");
+    }
+
+    private static void ApplyMigrationV3(DbConnection conn, DbTransaction tx)
+    {
+        if (TableExists(conn, tx, "LocalHeldSales"))
+        {
+            AddColumnIfMissing(conn, tx, "LocalHeldSales", "BusinessDate", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalHeldSales", "CancelledAt", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalHeldSales", "CancellationReason", "TEXT NULL");
+        }
+
+        ExecuteNonQuery(conn, tx, @"
+            INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
+            VALUES
+                (3, 'Held Sales BusinessDate, CancelledAt and CancellationReason audit fields', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.4');");
+    }
+
+    private static void ApplyMigrationV4(DbConnection conn, DbTransaction tx)
+    {
+        if (TableExists(conn, tx, "LocalCashiers"))
+        {
+            AddColumnIfMissing(conn, tx, "LocalCashiers", "SyncedAtUtc", "TEXT NULL");
+        }
+
+        ExecuteNonQuery(conn, tx, @"
+            CREATE TABLE IF NOT EXISTS LocalTransactionVoids (
+                ClientVoidId TEXT PRIMARY KEY,
+                IdempotencyKey TEXT NOT NULL,
+                LocalOrderId TEXT NULL,
+                ServerOrderId INTEGER NULL,
+                OriginalInvoiceNumber TEXT NULL,
+                OriginalOrderNumber TEXT NULL,
+                BranchId INTEGER NOT NULL DEFAULT 0,
+                OutletId INTEGER NOT NULL DEFAULT 0,
+                TerminalId INTEGER NOT NULL DEFAULT 0,
+                DeviceIdentifier TEXT NOT NULL DEFAULT '',
+                ShiftId INTEGER NULL,
+                ClientShiftId TEXT NULL,
+                VoidReason TEXT NOT NULL DEFAULT '',
+                RequestedBy TEXT NOT NULL DEFAULT '',
+                ApprovedBy TEXT NOT NULL DEFAULT '',
+                ApprovedByRole TEXT NOT NULL DEFAULT '',
+                SupervisorPinHash TEXT NOT NULL DEFAULT '',
+                AuthorizationProofHash TEXT NOT NULL DEFAULT '',
+                ReversalReference TEXT NOT NULL DEFAULT '',
+                TotalVoidedAmount TEXT NOT NULL DEFAULT '0.00',
+                CashRefundAmount TEXT NOT NULL DEFAULT '0.00',
+                NonCashPendingRefundAmount TEXT NOT NULL DEFAULT '0.00',
+                RefundBreakdownJson TEXT NULL,
+                Status TEXT NOT NULL DEFAULT 'APPROVED_OFFLINE',
+                SyncStatus TEXT NOT NULL DEFAULT 'PENDING',
+                SyncError TEXT NULL,
+                ServerVoidId INTEGER NULL,
+                VoidedAtLocal TEXT NOT NULL,
+                VoidedAtUtc TEXT NOT NULL
+            );");
+        ExecuteNonQuery(conn, tx, "CREATE UNIQUE INDEX IF NOT EXISTS UX_LocalTransactionVoids_IdempotencyKey ON LocalTransactionVoids (IdempotencyKey);");
+        ExecuteNonQuery(conn, tx, "CREATE INDEX IF NOT EXISTS IX_LocalTransactionVoids_Terminal_SyncStatus ON LocalTransactionVoids (TerminalId, SyncStatus);");
+
+        ExecuteNonQuery(conn, tx, @"
+            INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
+            VALUES
+                (4, 'Offline transaction void ledger and supervisor credential sync timestamp', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.5');");
+    }
+
+    private static void ApplyMigrationV5(DbConnection conn, DbTransaction tx)
+    {
+        ExecuteNonQuery(conn, tx, @"
+            CREATE TABLE IF NOT EXISTS LocalCashierClosingRestrictions (
+                ClientRestrictionId TEXT PRIMARY KEY,
+                ServerRestrictionId INTEGER NULL,
+                BranchId INTEGER NOT NULL DEFAULT 0,
+                TerminalId INTEGER NOT NULL DEFAULT 0,
+                CashierId TEXT NOT NULL DEFAULT '',
+                BusinessDate TEXT NOT NULL DEFAULT '',
+                ShiftId INTEGER NULL,
+                ClientShiftId TEXT NULL,
+                ClientCloseId TEXT NULL,
+                ClosedAtUtc TEXT NOT NULL,
+                UnlockAtUtc TEXT NOT NULL,
+                ClosedAtTickCount64 INTEGER NULL,
+                Status TEXT NOT NULL DEFAULT 'ACTIVE',
+                ReopenedBy TEXT NULL,
+                ReopenedAtUtc TEXT NULL,
+                ReopenReason TEXT NULL,
+                ClientOperationId TEXT NULL,
+                SyncStatus TEXT NOT NULL DEFAULT 'PENDING'
+            );");
+        ExecuteNonQuery(conn, tx, "CREATE INDEX IF NOT EXISTS IX_LocalCashierClosingRestrictions_Terminal_Date_Status ON LocalCashierClosingRestrictions (TerminalId, BusinessDate, Status);");
+
+        ExecuteNonQuery(conn, tx, @"
+            INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
+            VALUES
+                (5, 'Cashier-level closing restrictions separated from terminal Z-Reading lock', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.6');");
     }
 
     private static void MaybeSimulateFailure(int targetVersion)

@@ -184,8 +184,12 @@ public static class XReadingHtmlFormatter
         OptionalLine(html, string.IsNullOrWhiteSpace(report.PTUNumber) ? null : "PTU: " + report.PTUNumber);
         OptionalLine(html, string.IsNullOrWhiteSpace(report.MINNumber) ? null : "MIN: " + report.MINNumber);
         OptionalLine(html, string.IsNullOrWhiteSpace(report.SerialNumber) ? null : "S/N: " + report.SerialNumber);
-        html.Append("<p class=\"doc-title\">X-READING &amp; SHIFT RECONCILIATION</p>");
-        html.Append("<p class=\"sub-note\">(NON-RESETTING INQUIRY REPORT)</p>");
+        html.Append(report.IsAnytimeAudit
+            ? "<p class=\"doc-title\">X-READING (AUDIT SNAPSHOT)</p>"
+            : "<p class=\"doc-title\">X-READING &amp; SHIFT RECONCILIATION</p>");
+        html.Append(report.IsAnytimeAudit
+            ? "<p class=\"sub-note\">(READ-ONLY — NON-RESETTING — SHIFTS UNCHANGED)</p>"
+            : "<p class=\"sub-note\">(NON-RESETTING INQUIRY REPORT)</p>");
         html.Append("</div>");
 
         if (report.IsReprint)
@@ -195,12 +199,37 @@ public static class XReadingHtmlFormatter
 
         html.Append("<hr class=\"dash\">");
         html.Append("<div class=\"meta-info\">");
-        MetaRow(html, "Shift ID:", $"#{report.ShiftId}");
-        MetaRow(html, "Cashier:", report.CashierId);
-        MetaRow(html, "Shift Open:", Timestamp(report.OpenedAt));
-        MetaRow(html, "Shift Close:", report.ClosedAt.HasValue ? Timestamp(report.ClosedAt.Value) : "OPEN");
-        MetaRow(html, "Printed At:", Timestamp(report.GeneratedAt));
+        if (!string.IsNullOrWhiteSpace(report.BusinessDate))
+        {
+            MetaRow(html, "Business Date:", report.BusinessDate);
+        }
+        if (report.IsAnytimeAudit)
+        {
+            MetaRow(html, "Active Shifts:", report.ActiveShiftCount.ToString(CultureInfo.InvariantCulture));
+            MetaRow(html, "Closed Shifts:", report.ClosedShiftCount.ToString(CultureInfo.InvariantCulture));
+            MetaRow(html, "Cashier(s):", report.CashierId);
+            MetaRow(html, "Generated At:", Timestamp(report.GeneratedAt));
+        }
+        else
+        {
+            MetaRow(html, "Shift ID:", $"#{report.ShiftId}");
+            MetaRow(html, "Cashier:", report.CashierId);
+            MetaRow(html, "Shift Open:", Timestamp(report.OpenedAt));
+            MetaRow(html, "Shift Close:", report.ClosedAt.HasValue ? Timestamp(report.ClosedAt.Value) : "OPEN");
+            MetaRow(html, "Printed At:", Timestamp(report.GeneratedAt));
+        }
         html.Append("</div>");
+
+        if (report.IsAnytimeAudit && report.CashierSummaries is { Count: > 0 })
+        {
+            html.Append("<hr class=\"dash\">");
+            html.Append("<div class=\"section-title\">Cashier Summary (Business Day)</div>");
+            foreach (var cs in report.CashierSummaries)
+            {
+                string stateTag = cs.OpenShifts > 0 ? "OPEN" : "CLOSED";
+                Row(html, $"{cs.CashierId} [{stateTag}] ({cs.TransactionCount} tx)", Money(cs.NetSales));
+            }
+        }
 
         if (!report.ReportingPeriodMatchesShift)
         {

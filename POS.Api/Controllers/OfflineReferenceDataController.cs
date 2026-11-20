@@ -270,11 +270,22 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             .AsNoTracking()
             .SingleOrDefaultAsync(s => s.TerminalId == terminalId);
 
+        var serverNowUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
+        var currentBusinessDate = POS.Shared.Services.BusinessDayClock.GetBusinessDateString(serverNowUtc);
+        var activeRestrictions = await context.CashierClosingRestrictions
+            .AsNoTracking()
+            .Where(r => r.TerminalId == terminalId
+                && r.BusinessDate == currentBusinessDate
+                && r.Status == "ACTIVE"
+                && r.UnlockAtUtc > serverNowUtc)
+            .OrderByDescending(r => r.ClosedAtUtc)
+            .ToListAsync();
+
         var logoDataUri = POS.Api.Services.ReceiptLogoStorage.GetDataUri(outlet.Branch?.ReceiptLogoUrl);
         var response = new OfflineReferenceDataResponseDto
         {
             Version = DateTime.UtcNow.Ticks.ToString(),
-            ServerTimestamp = DateTime.UtcNow,
+            ServerTimestamp = serverNowUtc,
             Branch = outlet.Branch == null ? null : new OfflineBranchConfigDto
             {
                 BranchId = outlet.Branch.BranchId,
@@ -337,7 +348,10 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             Cashiers = cashiers,
             CashMovementCategories = cashMovementCategories,
             PaymentMethods = paymentMethods,
-            ActiveShift = activeShiftDto
+            ActiveShift = activeShiftDto,
+            ActiveCashierRestrictions = activeRestrictions
+                .Select(POS.Api.Services.TerminalClosingLockGuard.MapRestrictionToDto)
+                .ToList()
         };
 
         return Ok(response);

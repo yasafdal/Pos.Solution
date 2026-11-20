@@ -343,9 +343,12 @@ public class LocalHeldSale
     public string CashierId { get; set; } = string.Empty;
     public string HoldReference { get; set; } = string.Empty;
     public string Status { get; set; } = "HELD";
+    public string? BusinessDate { get; set; }
     public string PayloadJson { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ResumedAt { get; set; }
+    public DateTime? CancelledAt { get; set; }
+    public string? CancellationReason { get; set; }
 }
 
 public class LocalCashier
@@ -355,6 +358,7 @@ public class LocalCashier
     public string Username { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
     public string PinHash { get; set; } = string.Empty;
+    public DateTime? SyncedAtUtc { get; set; }
 }
 
 public class LocalCashMovementCategory
@@ -581,4 +585,97 @@ public class LocalReceiptPrintJob
     public DateTime? LastAttemptAtUtc { get; set; }
     public DateTime? PrintedAtUtc { get; set; }
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Durable offline transaction void audit record with cryptographic supervisor proof (never stores plaintext PIN).
+/// </summary>
+public class LocalTransactionVoid
+{
+    [Key]
+    [MaxLength(100)]
+    public string ClientVoidId { get; set; } = Guid.NewGuid().ToString("N");
+    [MaxLength(120)]
+    public string IdempotencyKey { get; set; } = string.Empty;
+    [MaxLength(100)]
+    public string? LocalOrderId { get; set; }
+    public long? ServerOrderId { get; set; }
+    [MaxLength(64)]
+    public string? OriginalInvoiceNumber { get; set; }
+    [MaxLength(64)]
+    public string? OriginalOrderNumber { get; set; }
+    public int BranchId { get; set; }
+    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
+    [MaxLength(100)]
+    public string DeviceIdentifier { get; set; } = string.Empty;
+    public long? ShiftId { get; set; }
+    [MaxLength(100)]
+    public string? ClientShiftId { get; set; }
+    [MaxLength(500)]
+    public string VoidReason { get; set; } = string.Empty;
+    [MaxLength(100)]
+    public string RequestedBy { get; set; } = string.Empty;
+    [MaxLength(100)]
+    public string ApprovedBy { get; set; } = string.Empty;
+    [MaxLength(50)]
+    public string ApprovedByRole { get; set; } = string.Empty;
+    [MaxLength(128)]
+    public string SupervisorPinHash { get; set; } = string.Empty;
+    [MaxLength(128)]
+    public string AuthorizationProofHash { get; set; } = string.Empty;
+    [MaxLength(100)]
+    public string ReversalReference { get; set; } = string.Empty;
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal TotalVoidedAmount { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal CashRefundAmount { get; set; }
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal NonCashPendingRefundAmount { get; set; }
+    public string? RefundBreakdownJson { get; set; }
+    [MaxLength(30)]
+    public string Status { get; set; } = "APPROVED_OFFLINE";
+    [MaxLength(30)]
+    public string SyncStatus { get; set; } = "PENDING"; // PENDING, SYNCED, CONFLICT, NEEDS_ATTENTION
+    public string? SyncError { get; set; }
+    public long? ServerVoidId { get; set; }
+    public DateTime VoidedAtLocal { get; set; } = DateTime.Now;
+    public DateTime VoidedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Local offline mirror of cashier-level Close Cashier restriction (CashierId + TerminalId + BusinessDate).
+/// Enforces restriction offline without locking the terminal for other cashiers or blocking the same cashier on another terminal.
+/// </summary>
+public class LocalCashierClosingRestriction
+{
+    [Key]
+    [MaxLength(100)]
+    public string ClientRestrictionId { get; set; } = Guid.NewGuid().ToString("N");
+    public long? ServerRestrictionId { get; set; }
+    public int BranchId { get; set; }
+    public int TerminalId { get; set; }
+    [MaxLength(450)]
+    public string CashierId { get; set; } = string.Empty;
+    [MaxLength(10)]
+    public string BusinessDate { get; set; } = string.Empty;
+    public long? ShiftId { get; set; }
+    [MaxLength(100)]
+    public string? ClientShiftId { get; set; }
+    [MaxLength(100)]
+    public string? ClientCloseId { get; set; }
+    public DateTime ClosedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime UnlockAtUtc { get; set; }
+    public long? ClosedAtTickCount64 { get; set; }
+    [MaxLength(20)]
+    public string Status { get; set; } = "ACTIVE"; // ACTIVE, REOPENED
+    [MaxLength(450)]
+    public string? ReopenedBy { get; set; }
+    public DateTime? ReopenedAtUtc { get; set; }
+    [MaxLength(500)]
+    public string? ReopenReason { get; set; }
+    [MaxLength(100)]
+    public string? ClientOperationId { get; set; }
+    [MaxLength(30)]
+    public string SyncStatus { get; set; } = "PENDING"; // PENDING, SYNCED
 }

@@ -137,3 +137,49 @@ public class OfflineCashMovementSyncResponse
     public DateTime AcknowledgedAt { get; set; }
 }
 
+public class OfflineVoidRefundBreakdownDto
+{
+    public string PaymentMethod { get; set; } = "CASH";
+    public decimal Amount { get; set; }
+    public string RefundStatus { get; set; } = "COMPLETED"; // COMPLETED for CASH, PENDING_MANUAL_REFUND for external providers
+    public string? OriginalReferenceNumber { get; set; }
+}
+
+public class OfflineVoidSyncRequest
+{
+    public string ClientVoidId { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+    public string? LocalTransactionId { get; set; }
+    public long? OriginalOrderId { get; set; }
+    public string? OriginalInvoiceNumber { get; set; }
+    public string? OriginalOrderNumber { get; set; }
+    public int BranchId { get; set; }
+    public int OutletId { get; set; }
+    public int TerminalId { get; set; }
+    public string DeviceIdentifier { get; set; } = string.Empty;
+    public long? ShiftId { get; set; }
+    public string? ClientShiftId { get; set; }
+    public string VoidReason { get; set; } = string.Empty;
+    public string RequestedBy { get; set; } = string.Empty;
+    public string ApprovedBy { get; set; } = string.Empty;
+    public string SupervisorPinHash { get; set; } = string.Empty;
+    public string AuthorizationProofHash { get; set; } = string.Empty;
+    public string ReversalReference { get; set; } = string.Empty;
+    public DateTime VoidedAtLocal { get; set; }
+    public DateTime VoidedAtUtc { get; set; }
+}
+
+public class OfflineVoidSyncResponse
+{
+    public bool Success { get; set; }
+    public bool IsConflict { get; set; }
+    public string? Message { get; set; }
+    public string ClientVoidId { get; set; } = string.Empty;
+    public long ServerVoidId { get; set; }
+    public long ServerOrderId { get; set; }
+    public string? ReversalReference { get; set; }
+    public string ServerStatus { get; set; } = "APPROVED";
+    public bool InventoryRestored { get; set; }
+    public DateTime AcknowledgedAt { get; set; }
+}
+

@@ -1179,10 +1179,13 @@ public static partial class Program
                 "SHIFT_CLOSE outbox must become SYNCED while shift stays CLOSED.");
         }
 
-        // Same business day after SHIFT_CLOSE SYNCED -> server + client accurately report locked; past next day 4:00 AM -> SYNCED SHIFT_CLOSE releases lock cleanly
+        // Same business day after SHIFT_CLOSE SYNCED -> closing cashier is restricted on Terminal 1 while Terminal 1 stays open for other cashiers; past next day 4:00 AM -> resets cleanly
         var lockToday = await ShiftSession.GetTerminalLockStatusAsync(inProcHttp, 1, "cashier1", offline: false);
-        Assert(lockToday.IsTerminalLocked && lockToday.CurrentBusinessDate == "2026-11-14",
-            $"After SHIFT_CLOSE SYNCED on same business day, GetTerminalLockStatusAsync must reflect active terminal closing lock (Locked={lockToday.IsTerminalLocked}).");
+        Assert(lockToday.IsCashierRestricted && !lockToday.IsTerminalLocked && lockToday.CurrentBusinessDate == "2026-11-14",
+            $"After SHIFT_CLOSE SYNCED on same business day, closing cashier must be restricted without locking terminal for others (Restricted={lockToday.IsCashierRestricted}, TerminalLocked={lockToday.IsTerminalLocked}).");
+        var lockCashier2Today = await ShiftSession.GetTerminalLockStatusAsync(inProcHttp, 1, "cashier2", offline: false);
+        Assert(!lockCashier2Today.IsCashierRestricted && !lockCashier2Today.IsTerminalLocked,
+            "Other cashiers must still be allowed on Terminal 1 after Cashier A closes their shift.");
 
         SetDeterministicManilaClock(new DateTime(2026, 11, 14, 20, 5, 0, DateTimeKind.Utc), tickCount64: 50_000L + (long)TimeSpan.FromHours(15).TotalMilliseconds);
         var lockNextDayOnline = await ShiftSession.GetTerminalLockStatusAsync(inProcHttp, 1, "cashier1", offline: false);

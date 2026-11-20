@@ -9,6 +9,7 @@
 @inject POS.Client.Services.IPosConnectivityService ConnectivityService
 @inject POS.Client.Workers.IOfflineBackgroundSyncService BackgroundSyncService
 @inject POS.Client.Services.IOfflineTransactionSyncService TransactionSyncService
+@inject POS.Client.Services.IOfflineVoidService OfflineVoidService
 @using POS.Shared.Constants
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
@@ -353,15 +354,22 @@ else
                     </div>
                     <div class="modal-body px-4 py-4">
                         <div class="alert alert-warning small mb-3">
-                            <strong>Warning:</strong> Voiding this transaction will mark the entire sale and invoice as voided and record offsetting refund entries. This action requires manager authorization.
+                            <strong>Warning:</strong> Voiding this transaction will mark the entire sale and invoice as voided and record offsetting refund entries. This action requires supervisor PIN authorization.
                         </div>
+                        @if (isOfflineMode || selectedOrder.OrderId <= 0)
+                        {
+                            <div class="alert alert-info small mb-3">
+                                <i class="bi bi-wifi-off me-1"></i>
+                                <strong>Offline Void Mode:</strong> Supervisor PIN will be verified locally against cached terminal credentials and synchronized automatically once connection is restored.
+                            </div>
+                        }
                         <div class="mb-3">
                             <label class="form-label fw-semibold text-dark small">Void Reason <span class="text-danger">*</span></label>
                             <textarea class="form-control rounded-3" rows="3" placeholder="Enter reason for voiding transaction..." @bind="voidReason"></textarea>
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold text-dark small">Supervisor / Manager PIN <span class="text-danger">*</span></label>
-                            <input type="password" class="form-control rounded-3" placeholder="Enter 4-digit PIN or username" @bind="voidApproverPin" />
+                            <input type="password" class="form-control rounded-3" placeholder="Enter supervisor PIN" @bind="voidApproverPin" />
                         </div>
                     </div>
                     <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
@@ -619,6 +627,7 @@ else
                 var onlineList = await TransactionService.GetTransactionsAsync(filter) ?? new();
                 var localList = await QueryLocalTransactionsAsync();
                 transactions = MergeOnlineAndLocalTransactions(onlineList, localList);
+                await TransactionService.ApplyLocalVoidOverlayAsync(transactions);
                 return;
             }
             catch (Exception ex)
@@ -873,11 +882,6 @@ else
     private async Task ConfirmVoid()
     {
         if (!Session.CanViewTransactionHistory) return;
-        if (isOfflineMode)
-        {
-            await Swal.FireAsync("Offline Mode", "Void operations require an active online connection to verify supervisor authorization.", SweetAlertIcon.Warning);
-            return;
-        }
 
         if (selectedOrder == null || string.IsNullOrWhiteSpace(voidReason) || string.IsNullOrWhiteSpace(voidApproverPin))
         {
@@ -885,24 +889,92 @@ else
             return;
         }
 
+        bool isOnline = false;
+        if (!isOfflineMode && selectedOrder.OrderId > 0)
+        {
+            try
+            {
+                var netState = await ConnectivityService.CheckConnectivityAsync();
+                isOnline = netState == POS.Client.Services.TerminalConnectivityState.OnlineAndHealthy;
+            }
+            catch
+            {
+                isOnline = false;
+            }
+        }
+
+        if (isOnline && selectedOrder.OrderId > 0)
+        {
+            try
+            {
+                await POS.Client.Services.DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+                var res = await TransactionService.VoidTransactionAsync(selectedOrder.OrderId, voidReason, voidApproverPin);
+                if (res != null)
+                {
+                    string extraNotice = res.NonCashPendingManualRefundAmount > 0m
+                        ? $" Non-cash payment(s) totaling ₱{res.NonCashPendingManualRefundAmount:N2} are marked PENDING_MANUAL_REFUND."
+                        : string.Empty;
+                    await Swal.FireAsync("Success", $"Transaction #{selectedOrder.OrderNumber} successfully voided.{extraNotice}", SweetAlertIcon.Success);
+                    isVoidModalOpen = false;
+                    selectedOrder = null;
+                    await LoadTransactions();
+                    return;
+                }
+
+                await Swal.FireAsync("Error", "Failed to void transaction. Verify supervisor authorization.", SweetAlertIcon.Error);
+                return;
+            }
+            catch (HttpRequestException)
+            {
+                // Network dropped during request: fall through to secure offline void path.
+                isOfflineMode = true;
+            }
+            catch (TaskCanceledException)
+            {
+                isOfflineMode = true;
+            }
+            catch (Exception ex)
+            {
+                await Swal.FireAsync("Error", "Void error: " + ex.Message, SweetAlertIcon.Error);
+                return;
+            }
+        }
+
         try
         {
-            var res = await TransactionService.VoidTransactionAsync(selectedOrder.OrderId, voidReason, voidApproverPin);
-            if (res != null)
+            var offlineReq = new POS.Client.Services.OfflineVoidRequest
             {
-                await Swal.FireAsync("Success", $"Transaction #{selectedOrder.OrderNumber} successfully voided.", SweetAlertIcon.Success);
-                isVoidModalOpen = false;
-                selectedOrder = null;
-                await LoadTransactions();
-            }
-            else
+                ServerOrderId = selectedOrder.OrderId > 0 ? selectedOrder.OrderId : null,
+                InvoiceNumber = selectedOrder.InvoiceNumber,
+                OrderNumber = selectedOrder.OrderNumber,
+                VoidReason = voidReason,
+                SupervisorPin = voidApproverPin,
+                OrderSnapshot = selectedOrder
+            };
+
+            var offlineResult = await OfflineVoidService.ProcessOfflineVoidAsync(offlineReq);
+            if (!offlineResult.Success || offlineResult.Response == null)
             {
-                await Swal.FireAsync("Error", "Failed to void transaction. Verify supervisor authorization.", SweetAlertIcon.Error);
+                await Swal.FireAsync("Offline Void Denied", offlineResult.ErrorMessage ?? "Offline void authorization failed.", SweetAlertIcon.Error);
+                return;
             }
+
+            string manualRefundNote = offlineResult.Response.NonCashPendingManualRefundAmount > 0m
+                ? $" Non-cash payment(s) of ₱{offlineResult.Response.NonCashPendingManualRefundAmount:N2} require manual provider refund (marked PENDING_MANUAL_REFUND)."
+                : string.Empty;
+
+            await Swal.FireAsync(
+                "Offline Void Saved",
+                $"Transaction #{selectedOrder.OrderNumber} was voided offline (Ref: {offlineResult.Response.ReversalReference}) and queued for synchronization.{manualRefundNote}",
+                SweetAlertIcon.Success);
+
+            isVoidModalOpen = false;
+            selectedOrder = null;
+            await LoadTransactions();
         }
         catch (Exception ex)
         {
-            await Swal.FireAsync("Error", "Void error: " + ex.Message, SweetAlertIcon.Error);
+            await Swal.FireAsync("Error", "Offline void error: " + ex.Message, SweetAlertIcon.Error);
         }
     }
 

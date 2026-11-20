@@ -30,6 +30,7 @@ public class OfflineReferenceDataResponseDto
     public List<OfflineCashierDto> Cashiers { get; set; } = new();
     public List<CashMovementCategoryDto> CashMovementCategories { get; set; } = new();
     public List<PaymentMethodDto> PaymentMethods { get; set; } = new();
+    public List<CashierClosingRestrictionDto> ActiveCashierRestrictions { get; set; } = new();
     public CashDrawerShiftDto? ActiveShift { get; set; }
 }
 

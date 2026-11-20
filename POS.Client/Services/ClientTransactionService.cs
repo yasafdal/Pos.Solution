@@ -15,6 +15,7 @@ namespace POS.Client.Services;
 public interface IClientTransactionHistoryService : ITransactionService
 {
     Task<List<OrderResponseDto>> GetLocalTransactionsAsync(TransactionFilterDto filter);
+    Task ApplyLocalVoidOverlayAsync(List<OrderResponseDto> transactions);
 }
 
 /// <summary>
@@ -182,5 +183,40 @@ public class ClientTransactionService(HttpClient http, PosSessionService session
         }
 
         return mappedList;
+    }
+
+    public async Task ApplyLocalVoidOverlayAsync(List<OrderResponseDto> transactions)
+    {
+        EnsureCanViewTransactionHistory();
+        if (_session.Terminal == null || transactions == null || transactions.Count == 0)
+            return;
+
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+
+        int terminalId = _session.Terminal.TerminalId;
+        var pendingVoids = await db.TransactionVoids.AsNoTracking()
+            .Where(v => v.TerminalId == terminalId && v.SyncStatus != "SYNCED")
+            .ToListAsync();
+
+        if (pendingVoids.Count == 0)
+            return;
+
+        var voidedServerIds = new HashSet<long>(
+            pendingVoids.Where(v => v.ServerOrderId.HasValue && v.ServerOrderId.Value > 0).Select(v => v.ServerOrderId!.Value));
+        var voidedInvoices = new HashSet<string>(
+            pendingVoids.Where(v => !string.IsNullOrWhiteSpace(v.OriginalInvoiceNumber)).Select(v => v.OriginalInvoiceNumber!.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tx in transactions)
+        {
+            bool matched = (tx.OrderId > 0 && voidedServerIds.Contains(tx.OrderId))
+                || (!string.IsNullOrWhiteSpace(tx.InvoiceNumber) && voidedInvoices.Contains(tx.InvoiceNumber.Trim()));
+            if (matched)
+            {
+                tx.OrderStatus = "VOIDED";
+                tx.PaymentStatus = "VOIDED";
+            }
+        }
     }
 }

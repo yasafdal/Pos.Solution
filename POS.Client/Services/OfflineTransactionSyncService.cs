@@ -40,9 +40,11 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
         {
             "SHIFT_OPEN" => 0,
             "ORDER" => 1,
-            "CASH_MOVEMENT" => 2,
-            "SHIFT_CLOSE" => 3,
-            _ => 4
+            "VOID" => 2,
+            "CASH_MOVEMENT" => 3,
+            "SHIFT_CLOSE" => 4,
+            "CASHIER_REOPEN" => 5,
+            _ => 6
         };
 
     public async Task<List<LocalSyncOutbox>> GetPendingOutboxItemsAsync()
@@ -77,6 +79,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             if (failedItems.Count > 0)
             {
                 var movementIds = new List<string>();
+                var voidIds = new List<string>();
                 foreach (var item in failedItems)
                 {
                     item.Status = "RETRY_PENDING";
@@ -85,6 +88,10 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     if (string.Equals(item.EntityType, "CASH_MOVEMENT", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.EntityId))
                     {
                         movementIds.Add(item.EntityId);
+                    }
+                    else if (string.Equals(item.EntityType, "VOID", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.EntityId))
+                    {
+                        voidIds.Add(item.EntityId);
                     }
                 }
 
@@ -96,6 +103,17 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     foreach (var m in movements)
                     {
                         m.SyncStatus = "PENDING";
+                    }
+                }
+
+                if (voidIds.Count > 0)
+                {
+                    var voids = await db.TransactionVoids
+                        .Where(v => voidIds.Contains(v.ClientVoidId) && (v.SyncStatus == "NEEDS_ATTENTION" || v.SyncStatus == "CONFLICT"))
+                        .ToListAsync();
+                    foreach (var v in voids)
+                    {
+                        v.SyncStatus = "PENDING";
                     }
                 }
 
@@ -225,6 +243,14 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
         if (string.Equals(outboxItem.EntityType, "SHIFT_CLOSE", StringComparison.OrdinalIgnoreCase))
         {
             return await UploadShiftCloseAsync(outboxItem, httpClient);
+        }
+        if (string.Equals(outboxItem.EntityType, "CASHIER_REOPEN", StringComparison.OrdinalIgnoreCase))
+        {
+            return await UploadCashierReopenAsync(outboxItem, httpClient);
+        }
+        if (string.Equals(outboxItem.EntityType, "VOID", StringComparison.OrdinalIgnoreCase))
+        {
+            return await UploadVoidAsync(outboxItem, httpClient);
         }
         if (string.Equals(outboxItem.EntityType, "CASH_MOVEMENT", StringComparison.OrdinalIgnoreCase))
         {
@@ -401,7 +427,12 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     TenderedAmount = p.TenderedAmount,
                     ChangeAmount = p.ChangeAmount,
                     PaymentMethod = p.PaymentMethod,
-                    PaymentStatus = p.PaymentStatus,
+                    // If the sale was subsequently voided offline prior to upload, replay the original PAID event first
+                    // so the queued VOID outbox record cleanly transitions it to VOIDED/REFUNDED on the server.
+                    PaymentStatus = string.Equals(localOrder.OrderStatus, "VOIDED", StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(p.PaymentStatus, "REFUNDED", StringComparison.OrdinalIgnoreCase)
+                        ? POS.Shared.Constants.PaymentStatuses.Paid
+                        : p.PaymentStatus,
                     ReferenceNumber = p.ReferenceNumber,
                     PaidAt = EnsureLocal(p.PaidAt)
                 }).ToList()
@@ -603,6 +634,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                 if (closedDto != null && closedDto.ShiftId > 0 && closedDto.Status == "CLOSED")
                 {
                     await ShiftSession.CacheAsync(closedDto);
+                    await MarkLocalCashierRestrictionSyncedAsync(closedDto.TerminalId, closedDto.CashierId, closing.ClientCloseId, closedDto.ShiftId);
                     await UpdateOutboxStatusAsync(
                         outboxItem.OutboxId,
                         "SYNCED",
@@ -629,6 +661,106 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                 outboxItem.OutboxId,
                 nextStatus,
                 $"Shift close upload failed ({response.StatusCode}): {await response.Content.ReadAsStringAsync()}",
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5;
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, nextStatus, ex.Message, incrementRetry: true, nextRetryAt: nextRetryTime);
+            return false;
+        }
+    }
+
+    private static async Task MarkLocalCashierRestrictionSyncedAsync(int terminalId, string cashierId, string? clientCloseId, long? serverShiftId)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var rows = await db.CashierClosingRestrictions
+                .Where(r => r.TerminalId == terminalId &&
+                    ((!string.IsNullOrWhiteSpace(clientCloseId) && r.ClientCloseId == clientCloseId) ||
+                     (r.CashierId.ToLower() == cashierId.Trim().ToLower() && r.SyncStatus == "PENDING" && r.Status == "ACTIVE")))
+                .ToListAsync();
+            foreach (var r in rows)
+            {
+                r.SyncStatus = "SYNCED";
+                if (serverShiftId.HasValue && serverShiftId.Value > 0)
+                    r.ShiftId = serverShiftId.Value;
+            }
+            if (rows.Count > 0)
+                await db.SaveChangesAsync();
+        }
+        finally { LocalPosDbContext.WriteLock.Release(); }
+    }
+
+    private async Task<bool> UploadCashierReopenAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
+    {
+        try
+        {
+            var req = System.Text.Json.JsonSerializer.Deserialize<ReopenCashierRestrictionRequestDto>(outboxItem.PayloadJson)
+                ?? throw new InvalidOperationException("Missing queued cashier reopen payload.");
+
+            // Wait for any pending SHIFT_CLOSE for this cashier/terminal to sync first so the server restriction exists
+            using (var depDb = new LocalPosDbContext())
+            {
+                depDb.InitializeDatabase();
+                bool pendingClose = await depDb.SyncOutboxes.AsNoTracking()
+                    .AnyAsync(o => o.EntityType == "SHIFT_CLOSE" && o.Status != "SYNCED");
+                if (pendingClose)
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "RETRY_PENDING",
+                        "Waiting for pending shift close to synchronize before syncing cashier reopen.",
+                        incrementRetry: false,
+                        nextRetryAt: DateTime.UtcNow.AddSeconds(30));
+                    return false;
+                }
+            }
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
+
+            var response = await httpClient.PostAsJsonAsync("api/cash-drawer/cashier-restrictions/reopen", req);
+            if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                await LocalPosDbContext.WriteLock.WaitAsync();
+                try
+                {
+                    using var db = new LocalPosDbContext();
+                    db.InitializeDatabase();
+                    var rows = await db.CashierClosingRestrictions
+                        .Where(r => r.TerminalId == req.TerminalId && r.ClientOperationId == req.ClientOperationId)
+                        .ToListAsync();
+                    foreach (var r in rows) r.SyncStatus = "SYNCED";
+                    if (rows.Count > 0) await db.SaveChangesAsync();
+                }
+                finally { LocalPosDbContext.WriteLock.Release(); }
+
+                await UpdateOutboxStatusAsync(
+                    outboxItem.OutboxId,
+                    "SYNCED",
+                    null,
+                    incrementRetry: false,
+                    nextRetryAt: null,
+                    auditMessage: $"Synchronized offline cashier reopen {req.ClientOperationId} for {req.CashierId} on Terminal #{req.TerminalId}");
+                return true;
+            }
+
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5 || OfflineRetryPolicy.IsPermanentFailureStatusCode((int)response.StatusCode);
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                $"Cashier reopen upload failed ({response.StatusCode}): {await response.Content.ReadAsStringAsync()}",
                 incrementRetry: true,
                 nextRetryAt: nextRetryTime);
             return false;
@@ -926,6 +1058,256 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     m.Status = serverStatus;
                 if (!string.IsNullOrWhiteSpace(serverReferenceNumber))
                     m.ReferenceNumber = serverReferenceNumber;
+                await db.SaveChangesAsync();
+            }
+        }
+        finally
+        {
+            LocalPosDbContext.WriteLock.Release();
+        }
+    }
+
+    private async Task<bool> UploadVoidAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
+    {
+        try
+        {
+            LocalTransactionVoid? localVoid;
+            bool orderPendingSync = false;
+            long? resolvedShiftId;
+
+            using (var readDb = new LocalPosDbContext())
+            {
+                readDb.InitializeDatabase();
+                localVoid = await readDb.TransactionVoids
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.ClientVoidId == outboxItem.EntityId);
+
+                if (localVoid == null)
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "NEEDS_ATTENTION",
+                        "Local void audit record not found for outbox entity.",
+                        incrementRetry: false,
+                        nextRetryAt: null);
+                    return false;
+                }
+
+                if (!string.IsNullOrWhiteSpace(localVoid.LocalOrderId))
+                {
+                    orderPendingSync = await readDb.SyncOutboxes.AsNoTracking()
+                        .AnyAsync(o =>
+                            o.EntityType == "Order" &&
+                            o.EntityId == localVoid.LocalOrderId &&
+                            o.Status != "SYNCED");
+                }
+
+                resolvedShiftId = localVoid.ShiftId is > 0 ? localVoid.ShiftId : null;
+                if (!resolvedShiftId.HasValue && !string.IsNullOrWhiteSpace(localVoid.ClientShiftId))
+                {
+                    var resolvedShift = await readDb.CashDrawerShifts.AsNoTracking()
+                        .Where(s => s.ClientShiftId == localVoid.ClientShiftId && s.ShiftId > 0)
+                        .OrderByDescending(s => s.ShiftId)
+                        .FirstOrDefaultAsync();
+                    if (resolvedShift != null)
+                        resolvedShiftId = resolvedShift.ShiftId;
+                }
+            }
+
+            if (orderPendingSync)
+            {
+                await UpdateOutboxStatusAsync(
+                    outboxItem.OutboxId,
+                    "RETRY_PENDING",
+                    "Waiting for original offline order to synchronize before uploading void.",
+                    incrementRetry: false,
+                    nextRetryAt: DateTime.UtcNow.AddSeconds(30),
+                    auditMessage: FormatDiagnosticLog("VOID", localVoid.ClientVoidId, "UPLOAD_VOID", outboxItem.RetryCount + 1, "api/offline-sync/voids", null, true, "Deferred until parent Order outbox item is SYNCED."));
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(localVoid.ClientShiftId))
+            {
+                var (openingReady, openingBlocked) = await EnsureShiftOpeningSyncedAsync(localVoid.ClientShiftId, httpClient);
+                if (!openingReady)
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "RETRY_PENDING",
+                        openingBlocked ? "Opening shift requires attention before syncing void." : "Waiting for opening shift acknowledgement before syncing void.",
+                        incrementRetry: false,
+                        nextRetryAt: DateTime.UtcNow.AddMinutes(openingBlocked ? 5 : 1),
+                        auditMessage: FormatDiagnosticLog("VOID", localVoid.ClientVoidId, "UPLOAD_VOID", outboxItem.RetryCount + 1, "api/offline-sync/voids", null, !openingBlocked, "Waiting for opening shift acknowledgement."));
+                    return false;
+                }
+            }
+
+            OfflineVoidSyncRequest? payloadReq = null;
+            if (!string.IsNullOrWhiteSpace(outboxItem.PayloadJson))
+            {
+                try { payloadReq = System.Text.Json.JsonSerializer.Deserialize<OfflineVoidSyncRequest>(outboxItem.PayloadJson); }
+                catch { payloadReq = null; }
+            }
+
+            var requestDto = new OfflineVoidSyncRequest
+            {
+                ClientVoidId = localVoid.ClientVoidId,
+                IdempotencyKey = string.IsNullOrWhiteSpace(localVoid.IdempotencyKey) ? $"VOID-{localVoid.ClientVoidId}" : localVoid.IdempotencyKey,
+                LocalTransactionId = localVoid.LocalOrderId,
+                OriginalOrderId = localVoid.ServerOrderId,
+                OriginalInvoiceNumber = localVoid.OriginalInvoiceNumber,
+                OriginalOrderNumber = localVoid.OriginalOrderNumber,
+                BranchId = localVoid.BranchId,
+                OutletId = localVoid.OutletId,
+                TerminalId = localVoid.TerminalId,
+                DeviceIdentifier = localVoid.DeviceIdentifier,
+                ShiftId = resolvedShiftId ?? localVoid.ShiftId,
+                ClientShiftId = localVoid.ClientShiftId,
+                VoidReason = localVoid.VoidReason,
+                RequestedBy = localVoid.RequestedBy,
+                ApprovedBy = localVoid.ApprovedBy,
+                SupervisorPinHash = !string.IsNullOrWhiteSpace(payloadReq?.SupervisorPinHash) ? payloadReq!.SupervisorPinHash : localVoid.SupervisorPinHash,
+                AuthorizationProofHash = !string.IsNullOrWhiteSpace(payloadReq?.AuthorizationProofHash) ? payloadReq!.AuthorizationProofHash : localVoid.AuthorizationProofHash,
+                ReversalReference = localVoid.ReversalReference,
+                VoidedAtLocal = EnsureLocal(localVoid.VoidedAtLocal),
+                VoidedAtUtc = EnsureUtc(localVoid.VoidedAtUtc)
+            };
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
+
+            var response = await httpClient.PostAsJsonAsync("api/offline-sync/voids", requestDto);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<OfflineVoidSyncResponse>();
+                if (result != null && result.Success)
+                {
+                    await UpdateTransactionVoidSyncStateAsync(
+                        localVoid.ClientVoidId,
+                        "SYNCED",
+                        result.ServerStatus,
+                        result.ServerVoidId,
+                        result.ServerOrderId,
+                        null);
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "SYNCED",
+                        null,
+                        incrementRetry: false,
+                        nextRetryAt: null,
+                        auditMessage: $"Synchronized offline void {localVoid.ClientVoidId} ({localVoid.OriginalInvoiceNumber ?? localVoid.OriginalOrderNumber}) as Server Void #{result.ServerVoidId}");
+                    return true;
+                }
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                string conflictMsg = await response.Content.ReadAsStringAsync();
+                // Preserve local audit trail and voided state; flag for supervisor review without silently un-voiding.
+                await UpdateTransactionVoidSyncStateAsync(localVoid.ClientVoidId, "CONFLICT", localVoid.Status, null, null, conflictMsg);
+                await UpdateOutboxStatusAsync(
+                    outboxItem.OutboxId,
+                    "NEEDS_ATTENTION",
+                    conflictMsg,
+                    incrementRetry: true,
+                    nextRetryAt: null,
+                    auditMessage: FormatDiagnosticLog("VOID", localVoid.ClientVoidId, "UPLOAD_VOID", outboxItem.RetryCount + 1, "api/offline-sync/voids", 409, false, conflictMsg));
+                return false;
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                string notFoundMsg = await response.Content.ReadAsStringAsync();
+                int retryCount = outboxItem.RetryCount + 1;
+                bool exhausted = retryCount >= 5;
+                string status = exhausted ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+                DateTime? retryAt = exhausted ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(retryCount));
+                if (exhausted)
+                {
+                    await UpdateTransactionVoidSyncStateAsync(localVoid.ClientVoidId, "NEEDS_ATTENTION", null, null, null, notFoundMsg);
+                }
+                await UpdateOutboxStatusAsync(
+                    outboxItem.OutboxId,
+                    status,
+                    string.IsNullOrWhiteSpace(notFoundMsg) ? "Original order not yet synced on server." : notFoundMsg,
+                    incrementRetry: true,
+                    nextRetryAt: retryAt,
+                    auditMessage: FormatDiagnosticLog("VOID", localVoid.ClientVoidId, "UPLOAD_VOID", retryCount, "api/offline-sync/voids", 404, !exhausted, notFoundMsg));
+                return false;
+            }
+
+            // Probe server idempotency status in case of timeout right after commit
+            try
+            {
+                var statusRes = await httpClient.GetAsync($"api/offline-sync/voids/{localVoid.ClientVoidId}/status");
+                if (statusRes.IsSuccessStatusCode)
+                {
+                    await UpdateTransactionVoidSyncStateAsync(localVoid.ClientVoidId, "SYNCED", "APPROVED", null, null, null);
+                    await UpdateOutboxStatusAsync(outboxItem.OutboxId, "SYNCED", null, incrementRetry: false, nextRetryAt: null);
+                    return true;
+                }
+            }
+            catch { }
+
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5 || OfflineRetryPolicy.IsPermanentFailureStatusCode((int)response.StatusCode);
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            string errDetail = await response.Content.ReadAsStringAsync();
+            if (isPermanent)
+            {
+                await UpdateTransactionVoidSyncStateAsync(localVoid.ClientVoidId, "NEEDS_ATTENTION", null, null, null, $"Upload failed with HTTP {(int)response.StatusCode}: {errDetail}");
+            }
+
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                $"Offline void HTTP upload failed: {response.StatusCode}",
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime,
+                auditMessage: FormatDiagnosticLog("VOID", localVoid.ClientVoidId, "UPLOAD_VOID", nextRetryCount, "api/offline-sync/voids", (int)response.StatusCode, !isPermanent, errDetail));
+            return false;
+        }
+        catch (Exception ex)
+        {
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5;
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                ex.Message,
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime,
+                auditMessage: FormatDiagnosticLog("VOID", outboxItem.EntityId, "UPLOAD_VOID", nextRetryCount, "api/offline-sync/voids", null, !isPermanent, ex.Message));
+            return false;
+        }
+    }
+
+    private static async Task UpdateTransactionVoidSyncStateAsync(
+        string clientVoidId,
+        string syncStatus,
+        string? serverStatus,
+        long? serverVoidId,
+        long? serverOrderId,
+        string? syncError)
+    {
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            var v = await db.TransactionVoids.FirstOrDefaultAsync(x => x.ClientVoidId == clientVoidId);
+            if (v != null)
+            {
+                v.SyncStatus = syncStatus;
+                v.SyncError = syncError;
+                if (!string.IsNullOrWhiteSpace(serverStatus))
+                    v.Status = serverStatus;
+                if (serverVoidId.HasValue && serverVoidId.Value > 0)
+                    v.ServerVoidId = serverVoidId.Value;
+                if (serverOrderId.HasValue && serverOrderId.Value > 0)
+                    v.ServerOrderId = serverOrderId.Value;
                 await db.SaveChangesAsync();
             }
         }

@@ -20,8 +20,12 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
         if (dto.Items == null || dto.Items.Count == 0)
             return BadRequest("Order must contain at least one item.");
 
-        if (dto.Items.Any(i => i.Quantity <= 0 || i.BasePrice < 0 || (i.Modifiers != null && i.Modifiers.Any(m => m.AdditionalPrice < 0))))
+        if (dto.Items.Any(i => i.Quantity <= 0 || i.BasePrice < 0 || (i.TargetAmount.HasValue && i.TargetAmount.Value < 0) || (i.Modifiers != null && i.Modifiers.Any(m => m.AdditionalPrice < 0))))
             return BadRequest("Item quantities must be positive and prices cannot be negative.");
+
+        if (dto.DiscountAmount < 0m || dto.ManualDiscountPercentage < 0m || dto.ManualDiscountPercentage > 100m
+            || dto.ManualDiscountAmount < 0m || dto.PromoDiscountAmount < 0m)
+            return BadRequest("Invalid discount value. Discount percentage must be between 0% and 100% and discount amounts cannot be negative.");
 
         var terminal = await context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
             .SingleOrDefaultAsync(t => t.TerminalId == dto.TerminalId);
@@ -35,6 +39,8 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             context, dto.TerminalId, dto.CashierId);
         if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
             return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
+        if (lockState.IsShiftOwnedByAnotherCashier)
+            return Conflict(lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
 
         var licCheck = await new POS.Api.Services.LicensingService(context).VerifyTerminalCanOperateAsync(dto.TerminalId);
         if (!licCheck.Allowed)
@@ -48,23 +54,64 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             var branch = await context.Branches.AsNoTracking().SingleOrDefaultAsync(b => b.BranchId == dto.BranchId);
             var branchTaxType = branch?.TaxType ?? "VAT-Registered";
 
+            string normalizedCode = (dto.DiscountCode ?? "NONE").Trim().ToUpperInvariant();
+            string? resolvedMethod = dto.DiscountMethod;
+            decimal? resolvedValue = dto.DiscountValue;
+            decimal resolvedPromoAmount = dto.PromoDiscountAmount;
+
+            if (!string.IsNullOrWhiteSpace(normalizedCode) && normalizedCode != "NONE" && normalizedCode != "MANUAL"
+                && !POS.Shared.Services.LocalDiscountCalculationService.IsStatutoryVatExemptCode(normalizedCode)
+                && string.IsNullOrWhiteSpace(resolvedMethod) && !resolvedValue.HasValue)
+            {
+                var configuredDiscount = await context.DiscountTypes.AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.IsActive && d.Code.ToUpper() == normalizedCode);
+                if (configuredDiscount != null)
+                {
+                    resolvedMethod = configuredDiscount.DiscountMethod;
+                    resolvedValue = configuredDiscount.DiscountValue;
+                }
+                else if (resolvedPromoAmount == 0m && dto.DiscountAmount > 0m
+                    && !POS.Shared.Services.LocalDiscountCalculationService.IsStatutoryCode(normalizedCode)
+                    && normalizedCode != "EMPLOYEE")
+                {
+                    // Legacy/ad-hoc promo code passed with an explicit DiscountAmount; still strictly validated <= eligible subtotal
+                    resolvedPromoAmount = dto.DiscountAmount;
+                }
+            }
+
             var calcReq = new OrderCalculationRequestDto
             {
                 BranchTaxType = branchTaxType,
-                DiscountCode = dto.DiscountCode ?? "NONE",
+                DiscountCode = string.IsNullOrWhiteSpace(normalizedCode) ? "NONE" : normalizedCode,
+                DiscountMethod = resolvedMethod,
+                DiscountValue = resolvedValue,
+                ManualDiscountPercentage = dto.ManualDiscountPercentage,
+                ManualDiscountAmount = dto.ManualDiscountAmount,
+                PromoDiscountAmount = resolvedPromoAmount,
                 Items = dto.Items.Select(i => new CartItemCalculationDto
                 {
                     ProductId = i.ProductId,
                     ProductName = i.ProductName ?? "Product",
                     Quantity = i.Quantity,
-                    UnitPrice = i.BasePrice,
-                    ModifierTotal = i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m,
+                    UnitPrice = i.IsComplimentary ? 0m : i.BasePrice,
+                    TargetAmount = i.IsComplimentary ? 0m : i.TargetAmount,
+                    ModifierTotal = i.IsComplimentary ? 0m : (i.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m),
+                    IsComplimentary = i.IsComplimentary,
                     TaxName = i.TaxName ?? "VATable",
                     IsEligibleForStatutoryDiscount = true
                 }).ToList()
             };
 
-            var calcRes = discountCalculator.CalculateOrder(calcReq);
+            OrderCalculationResultDto calcRes;
+            try
+            {
+                calcRes = discountCalculator.CalculateOrder(calcReq);
+            }
+            catch (ArgumentException ex)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(ex.Message);
+            }
 
             var serverReceivedAtUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
             var occurredAtLocal = dto.TransactionTimestamp.HasValue
@@ -119,8 +166,9 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
 
             decimal subtotal = 0m;
 
-            foreach (var itemDto in dto.Items)
+            for (int idx = 0; idx < dto.Items.Count; idx++)
             {
+                var itemDto = dto.Items[idx];
                 decimal modifierTotal = 0m;
                 var itemModifiers = new List<OrderItemModifier>();
 
@@ -145,7 +193,9 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                     : Math.Round(unitPrice * itemDto.Quantity, 2, MidpointRounding.AwayFromZero));
                 subtotal += lineTotal;
 
-                var calcItem = calcRes.CalculatedItems.FirstOrDefault(ci => ci.ProductId == itemDto.ProductId);
+                var calcItem = idx < calcRes.CalculatedItems.Count
+                    ? calcRes.CalculatedItems[idx]
+                    : calcRes.CalculatedItems.FirstOrDefault(ci => ci.ProductId == itemDto.ProductId);
 
                 var orderItem = new OrderItem
                 {
@@ -160,18 +210,19 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                     BasePrice = itemDto.IsComplimentary ? 0m : itemDto.BasePrice,
                     ModifierTotal = itemDto.IsComplimentary ? 0m : modifierTotal,
                     UnitPrice = unitPrice,
-                    LineTotal = lineTotal,
-                    DiscountAmount = calcItem?.DiscountAmount ?? 0m,
+                    LineTotal = Math.Max(0m, lineTotal),
+                    DiscountAmount = Math.Max(0m, calcItem?.DiscountAmount ?? 0m),
                     VatType = calcItem?.VatType ?? "VATABLE",
-                    VatAmount = calcItem?.VatAmount ?? 0m,
+                    VatAmount = Math.Max(0m, calcItem?.VatAmount ?? 0m),
                     OrderItemModifiers = itemModifiers
                 };
 
                 order.OrderItems.Add(orderItem);
             }
 
-            order.Subtotal = subtotal;
-            order.TotalAmount = calcRes.TotalAmount;
+            order.Subtotal = Math.Max(0m, subtotal);
+            order.DiscountAmount = Math.Min(order.Subtotal, Math.Max(0m, calcRes.DiscountAmount));
+            order.TotalAmount = Math.Max(0m, calcRes.TotalAmount);
 
             context.Orders.Add(order);
             await context.SaveChangesAsync();

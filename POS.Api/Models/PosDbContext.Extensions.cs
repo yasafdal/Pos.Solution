@@ -31,6 +31,7 @@ public partial class PosDbContext
     public virtual DbSet<CashDrawerShift> CashDrawerShifts { get; set; }
     public virtual DbSet<CashDrawerMovement> CashDrawerMovements { get; set; }
     public virtual DbSet<CashMovementCategory> CashMovementCategories { get; set; }
+    public virtual DbSet<CashierClosingRestriction> CashierClosingRestrictions { get; set; }
     public virtual DbSet<OfflineSyncIdempotencyRecord> OfflineSyncIdempotencyRecords { get; set; }
     public virtual DbSet<TerminalLicense> TerminalLicenses { get; set; }
     public virtual DbSet<LicenseRenewalHistory> LicenseRenewalHistories { get; set; }

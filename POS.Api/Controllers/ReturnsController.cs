@@ -27,6 +27,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
         {
             var order = await context.Orders
                 .Include(o => o.OrderItems)
+                    .ThenInclude(i => i.OrderItemModifiers)
                 .Include(o => o.Payments)
                 .SingleOrDefaultAsync(o => o.OrderId == dto.OriginalOrderId, cancellationToken);
 
@@ -79,14 +80,21 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             order.OrderStatus = "VOIDED";
             order.PaymentStatus = "VOIDED";
 
-            // If payments were successful, record offsetting refund records
+            // If payments were successful, record offsetting refund records.
+            // Cash refunds complete immediately and adjust the open drawer; non-cash external providers require manual reversal.
             decimal cashRefundTotal = 0m;
+            decimal nonCashPendingTotal = 0m;
             foreach (var payment in order.Payments.Where(p => p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid))
             {
                 payment.PaymentStatus = "REFUNDED";
-                if (string.Equals(payment.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
+                bool isCash = string.Equals(payment.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase);
+                if (isCash)
                 {
                     cashRefundTotal += payment.Amount;
+                }
+                else
+                {
+                    nonCashPendingTotal += payment.Amount;
                 }
                 context.Refunds.Add(new Refund
                 {
@@ -95,7 +103,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                     RefundMethod = payment.PaymentMethod,
                     RefundAmount = payment.Amount,
                     ReferenceNumber = voidRecord.ReversalReference,
-                    Status = "COMPLETED",
+                    Status = isCash ? "COMPLETED" : "PENDING_MANUAL_REFUND",
                     RequestedAt = DateTime.UtcNow,
                     CompletedAt = DateTime.UtcNow
                 });
@@ -115,6 +123,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                 }
             }
 
+            await RestoreInventoryForVoidedOrderAsync(context, order, voidRecord.ReversalReference!, approver.Username, voidRecord.VoidedAt, cancellationToken);
+
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
@@ -128,7 +138,9 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                 ApprovedBy = voidRecord.ApprovedBy,
                 VoidedAt = voidRecord.VoidedAt,
                 Status = voidRecord.Status,
-                ReversalReference = voidRecord.ReversalReference
+                ReversalReference = voidRecord.ReversalReference,
+                CashRefundAmount = cashRefundTotal,
+                NonCashPendingManualRefundAmount = nonCashPendingTotal
             });
         }
         catch (Exception ex)
@@ -136,6 +148,91 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             await transaction.RollbackAsync(cancellationToken);
             return StatusCode(500, "Void execution error: " + ex.Message);
         }
+    }
+
+    internal static async Task<bool> RestoreInventoryForVoidedOrderAsync(
+        PosDbContext db,
+        Order order,
+        string reversalReference,
+        string approvedBy,
+        DateTime voidedAt,
+        CancellationToken cancellationToken = default)
+    {
+        if (order.OrderItems == null || order.OrderItems.Count == 0)
+            return false;
+
+        // Idempotency guard: never restore inventory more than once for the same reversal reference
+        string refMarker = $"Ref={reversalReference}";
+        bool alreadyRestored = await db.StockAdjustments.AsNoTracking()
+            .AnyAsync(a => a.BranchId == order.BranchId && a.AdjustmentType == "VOID_RESTOCK" && a.Reason != null && a.Reason.Contains(refMarker), cancellationToken);
+        if (alreadyRestored)
+            return false;
+
+        bool anyRestored = false;
+        var itemProductIds = order.OrderItems.Select(i => i.ProductId).ToHashSet();
+
+        foreach (var item in order.OrderItems)
+        {
+            int restoreQty = (int)Math.Round(item.Quantity, MidpointRounding.AwayFromZero);
+            if (restoreQty == 0 && item.Quantity > 0m) restoreQty = 1;
+
+            if (restoreQty > 0)
+            {
+                var inv = await db.BranchInventories
+                    .FirstOrDefaultAsync(bi => bi.BranchId == order.BranchId && bi.ProductId == item.ProductId, cancellationToken);
+                if (inv != null)
+                {
+                    int prevQty = inv.StockQuantity;
+                    inv.StockQuantity = prevQty + restoreQty;
+                    inv.LastUpdated = DateTime.UtcNow;
+                    db.StockAdjustments.Add(new StockAdjustment
+                    {
+                        BranchId = order.BranchId,
+                        ProductId = item.ProductId,
+                        AdjustmentType = "VOID_RESTOCK",
+                        Quantity = restoreQty,
+                        PreviousQuantity = prevQty,
+                        NewQuantity = inv.StockQuantity,
+                        Reason = $"Void Restock [{order.InvoiceNumber ?? order.OrderNumber}] {refMarker} ApprovedBy={approvedBy}",
+                        CreatedAt = voidedAt
+                    });
+                    anyRestored = true;
+                }
+            }
+
+            if (item.OrderItemModifiers != null)
+            {
+                foreach (var mod in item.OrderItemModifiers)
+                {
+                    if (mod.ProductId.HasValue && mod.ProductId.Value > 0 && !itemProductIds.Contains(mod.ProductId.Value))
+                    {
+                        int modRestoreQty = (int)Math.Max(1, Math.Round(item.Quantity, MidpointRounding.AwayFromZero));
+                        var modInv = await db.BranchInventories
+                            .FirstOrDefaultAsync(bi => bi.BranchId == order.BranchId && bi.ProductId == mod.ProductId.Value, cancellationToken);
+                        if (modInv != null)
+                        {
+                            int prevModQty = modInv.StockQuantity;
+                            modInv.StockQuantity = prevModQty + modRestoreQty;
+                            modInv.LastUpdated = DateTime.UtcNow;
+                            db.StockAdjustments.Add(new StockAdjustment
+                            {
+                                BranchId = order.BranchId,
+                                ProductId = mod.ProductId.Value,
+                                AdjustmentType = "VOID_RESTOCK",
+                                Quantity = modRestoreQty,
+                                PreviousQuantity = prevModQty,
+                                NewQuantity = modInv.StockQuantity,
+                                Reason = $"Void Modifier Restock [{mod.ModifierName}] on [{order.InvoiceNumber ?? order.OrderNumber}] {refMarker} ApprovedBy={approvedBy}",
+                                CreatedAt = voidedAt
+                            });
+                            anyRestored = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return anyRestored;
     }
 
     [HttpGet("voids")]
@@ -384,6 +481,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
         {
             var order = await context.Orders
                 .Include(o => o.OrderItems)
+                    .ThenInclude(i => i.OrderItemModifiers)
                 .Include(o => o.Payments)
                 .SingleOrDefaultAsync(o => o.OrderId == dto.OriginalOrderId, cancellationToken);
 

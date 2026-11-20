@@ -120,6 +120,10 @@ else
                 ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceTimeZoneId"" VARCHAR(100) NULL;
                 ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceUtcOffsetMinutes"" INT NULL;
                 ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ClockSkewSeconds"" INT NULL;
+                ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""BusinessDate"" VARCHAR(10) NULL;
+                ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""CancelledAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+                ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""CancellationReason"" VARCHAR(255) NULL;
+                ALTER TABLE ""TransactionVoids"" ADD COLUMN IF NOT EXISTS ""ClientVoidId"" VARCHAR(100) NULL;
                 UPDATE ""Payments"" p
                 SET ""paid_at"" = p.""paid_at"" + (o.""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute')
                 FROM ""Orders"" o

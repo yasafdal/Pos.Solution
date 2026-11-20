@@ -39,8 +39,11 @@ public class HeldSaleDto
     public string? CustomerCardNumber { get; set; }
     public decimal TotalAmount { get; set; }
     public string Status { get; set; } = "HELD";
+    public string? BusinessDate { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ResumedAt { get; set; }
+    public DateTime? CancelledAt { get; set; }
+    public string? CancellationReason { get; set; }
     public List<HeldSaleItemDto> Items { get; set; } = new();
 }
 

@@ -306,6 +306,7 @@
                     {
                         await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
                         db.ChangeTracker.Clear();
+                        var syncedUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
                         foreach (var u in validUsers)
                         {
                             var pinHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(u.PinCode!.Trim())));
@@ -314,7 +315,8 @@
                                 UserId = u.UserId,
                                 Username = u.Username,
                                 Role = u.Role ?? "Cashier",
-                                PinHash = pinHash
+                                PinHash = pinHash,
+                                SyncedAtUtc = syncedUtc
                             });
                         }
                         await db.SaveChangesAsync();

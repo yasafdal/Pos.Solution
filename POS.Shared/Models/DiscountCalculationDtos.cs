@@ -18,13 +18,18 @@ public class CartItemCalculationDto
     public string TaxName { get; set; } = "VATable"; // VATable, VAT-Exempt, Zero-Rated
     public decimal TaxRate { get; set; } = 12.00m;
     public bool IsEligibleForStatutoryDiscount { get; set; } = true; // e.g. food/medicine eligible for SC/PWD
+    public decimal ItemDiscountPercentage { get; set; } = 0.00m;
+    public decimal ItemDiscountAmount { get; set; } = 0.00m;
 }
 
 public class OrderCalculationRequestDto
 {
     public string BranchTaxType { get; set; } = "VAT-Registered"; // VAT-Registered or Non-VAT
-    public string DiscountCode { get; set; } = "NONE"; // NONE, SC, PWD, BNPC, PROMO, EMPLOYEE, MANUAL
+    public string DiscountCode { get; set; } = "NONE"; // NONE, SC, PWD, NAAC, MOV, SP, BNPC, PROMO, EMPLOYEE, MANUAL, or configured code
+    public string? DiscountMethod { get; set; } // PERCENTAGE or FIXED (when resolved from DiscountType or manual fixed)
+    public decimal? DiscountValue { get; set; } // Configured percentage/fixed value from DiscountType
     public decimal ManualDiscountPercentage { get; set; } = 0.00m;
+    public decimal ManualDiscountAmount { get; set; } = 0.00m;
     public decimal PromoDiscountAmount { get; set; } = 0.00m;
     public List<CartItemCalculationDto> Items { get; set; } = new();
 }

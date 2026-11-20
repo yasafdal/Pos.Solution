@@ -28,6 +28,8 @@ public partial class TransactionVoid
     public string Status { get; set; } = "APPROVED";
     [MaxLength(50)]
     public string? ReversalReference { get; set; }
+    [MaxLength(100)]
+    public string? ClientVoidId { get; set; }
 
     public virtual Order? OriginalOrder { get; set; }
     public virtual ICollection<Refund> Refunds { get; set; } = new List<Refund>();

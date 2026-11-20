@@ -1,7 +1,9 @@
 @inject IDiscountService DiscountService
 @inject PosSessionService Session
+@using Microsoft.EntityFrameworkCore
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
+@using POS.Shared.Services
 @using Microsoft.AspNetCore.Components.Web
 
 @if (isDiscountModalOpen)
@@ -67,22 +69,55 @@
                         </div>
                     }
 
-                    <!-- Manual Discount Percentage (Only when Manual is selected) -->
+                    <!-- Manual Discount Input (Percentage % or Fixed Amount ₱ when Manual is selected) -->
                     @if (selectedDiscountType != null && selectedDiscountType.Code == "MANUAL")
                     {
                         <div class="discount-input-box mt-3">
-                            <label class="form-label fw-semibold small text-dark mb-1">
-                                Discount Percentage (%) <span class="text-danger">*</span>
-                            </label>
-                            <div class="input-group" style="max-width: 180px;">
-                                <input type="number"
-                                       min="0"
-                                       max="100"
-                                       step="0.5"
-                                       class="form-control fw-bold"
-                                       @bind="manualPercentage" />
-                                <span class="input-group-text bg-light">%</span>
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label fw-semibold small text-dark mb-0">
+                                    @(manualInputMode == "FIXED" ? "Discount Amount (₱)" : "Discount Percentage (%)") <span class="text-danger">*</span>
+                                </label>
+                                <div class="btn-group btn-group-sm" role="group" aria-label="Manual discount mode">
+                                    <button type="button"
+                                            class="btn @(manualInputMode == "PERCENTAGE" ? "btn-primary" : "btn-outline-secondary")"
+                                            @onclick='() => SetManualInputMode("PERCENTAGE")'>
+                                        % Percent
+                                    </button>
+                                    <button type="button"
+                                            class="btn @(manualInputMode == "FIXED" ? "btn-primary" : "btn-outline-secondary")"
+                                            @onclick='() => SetManualInputMode("FIXED")'>
+                                        ₱ Fixed
+                                    </button>
+                                </div>
                             </div>
+                            @if (manualInputMode == "FIXED")
+                            {
+                                <div class="input-group" style="max-width: 220px;">
+                                    <span class="input-group-text bg-light">₱</span>
+                                    <input type="number"
+                                           min="0"
+                                           max="@Cart.Subtotal"
+                                           step="0.01"
+                                           class="form-control fw-bold"
+                                           @bind="manualFixedAmount"
+                                           @bind:event="oninput" />
+                                </div>
+                                <small class="text-muted d-block mt-1">Eligible amount: ₱@Cart.Subtotal.ToString("N2")</small>
+                            }
+                            else
+                            {
+                                <div class="input-group" style="max-width: 180px;">
+                                    <input type="number"
+                                           min="0"
+                                           max="100"
+                                           step="0.5"
+                                           class="form-control fw-bold"
+                                           @bind="manualPercentage"
+                                           @bind:event="oninput" />
+                                    <span class="input-group-text bg-light">%</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Allowed range: 0% to 100%</small>
+                            }
                         </div>
                     }
                 </div>
@@ -120,8 +155,16 @@
     private DiscountTypeDto? selectedDiscountType;
     private string selectedDiscountCode = "NONE";
     private string? cardOrIdNumber;
+    private string manualInputMode = "PERCENTAGE";
     private decimal manualPercentage = 0m;
+    private decimal manualFixedAmount = 0m;
     private string? discountError;
+
+    private void SetManualInputMode(string mode)
+    {
+        manualInputMode = mode;
+        discountError = null;
+    }
 
     public async Task OpenAsync()
     {
@@ -131,20 +174,49 @@
         }
         catch
         {
-            availableDiscounts = new List<DiscountTypeDto>
+            try
             {
-                new() { Code = "NONE", Name = "No Discount", DiscountCategory = "NONE", DiscountMethod = "PERCENTAGE", DiscountValue = 0 },
-                new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
-                new() { Code = "PWD", Name = "PWD (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
-                new() { Code = "BNPC", Name = "Basic Commodities (5%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 5, IsStatutory = true },
-                new() { Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10, RequiresIdentification = true },
-                new() { Code = "MANUAL", Name = "Manual Custom Discount", DiscountCategory = "CUSTOM", DiscountMethod = "PERCENTAGE", DiscountValue = 0 }
-            };
+                using var db = new POS.Client.Data.LocalPosDbContext();
+                db.InitializeDatabase();
+                var cached = await db.Discounts.AsNoTracking().ToListAsync();
+                if (cached.Count > 0)
+                {
+                    availableDiscounts = cached.Select(d => new DiscountTypeDto
+                    {
+                        DiscountTypeId = d.DiscountId,
+                        Code = d.Code,
+                        Name = d.Name,
+                        DiscountCategory = d.DiscountCategory,
+                        DiscountMethod = d.DiscountMethod,
+                        DiscountValue = d.DiscountValue,
+                        IsStatutory = d.IsStatutory,
+                        RequiresIdentification = d.RequiresIdentification,
+                        IsActive = true
+                    }).ToList();
+                }
+            }
+            catch { }
+
+            if (availableDiscounts == null || availableDiscounts.Count == 0)
+            {
+                availableDiscounts = new List<DiscountTypeDto>
+                {
+                    new() { Code = "NONE", Name = "No Discount", DiscountCategory = "NONE", DiscountMethod = "PERCENTAGE", DiscountValue = 0 },
+                    new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
+                    new() { Code = "PWD", Name = "PWD (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
+                    new() { Code = "BNPC", Name = "Basic Commodities (5%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 5, IsStatutory = true },
+                    new() { Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10, RequiresIdentification = true },
+                    new() { Code = "MANUAL", Name = "Manual Custom Discount", DiscountCategory = "CUSTOM", DiscountMethod = "PERCENTAGE", DiscountValue = 0 }
+                };
+            }
         }
 
         selectedDiscountCode = Cart.ActiveDiscountCode;
         selectedDiscountType = availableDiscounts.FirstOrDefault(d => d.Code == selectedDiscountCode) ?? availableDiscounts.First();
         cardOrIdNumber = Cart.CustomerCardNumber;
+        manualPercentage = Cart.ManualDiscountPercentage;
+        manualFixedAmount = Cart.ManualDiscountAmount;
+        manualInputMode = Cart.ManualDiscountAmount > 0m ? "FIXED" : "PERCENTAGE";
         discountError = null;
         isDiscountModalOpen = true;
     }
@@ -188,7 +260,11 @@
     private string GetBadgeText(DiscountTypeDto dt)
     {
         if (dt.Code == "NONE") return "0%";
-        if (dt.Code == "MANUAL") return manualPercentage > 0 ? $"{manualPercentage:0.##}%" : "Custom";
+        if (dt.Code == "MANUAL")
+        {
+            if (manualInputMode == "FIXED" && manualFixedAmount > 0m) return $"₱{manualFixedAmount:N2}";
+            return manualPercentage > 0m ? $"{manualPercentage:0.##}%" : "Custom";
+        }
         if (dt.DiscountMethod == "PERCENTAGE")
         {
             return dt.DiscountValue > 0 ? $"{dt.DiscountValue:0.##}%" : "0%";
@@ -236,6 +312,13 @@
     private async Task ConfirmDiscount()
     {
         if (selectedDiscountType == null) return;
+        discountError = null;
+
+        if (!Cart.Items.Any())
+        {
+            discountError = "Add items to the cart before applying a discount.";
+            return;
+        }
 
         if (selectedDiscountType.RequiresIdentification && string.IsNullOrWhiteSpace(cardOrIdNumber))
         {
@@ -243,20 +326,96 @@
             return;
         }
 
+        decimal appliedManualPct = 0m;
+        decimal appliedManualAmt = 0m;
+        string? appliedMethod = null;
+        decimal? appliedValue = null;
+
+        string normalizedCode = (selectedDiscountCode ?? "NONE").Trim().ToUpperInvariant();
+        if (normalizedCode == "NONE")
+        {
+            await ClearDiscount();
+            return;
+        }
+
+        if (normalizedCode == "MANUAL")
+        {
+            if (manualInputMode == "FIXED")
+            {
+                if (manualFixedAmount < 0m)
+                {
+                    discountError = "Invalid discount value. Discount amount cannot be negative.";
+                    return;
+                }
+                if (manualFixedAmount > Cart.Subtotal)
+                {
+                    discountError = $"Discount amount cannot exceed the eligible amount (₱{Cart.Subtotal:N2}).";
+                    return;
+                }
+                appliedManualAmt = manualFixedAmount;
+                appliedMethod = "FIXED";
+                appliedValue = manualFixedAmount;
+            }
+            else
+            {
+                if (manualPercentage < 0m)
+                {
+                    discountError = "Invalid discount value. Discount percentage cannot be negative.";
+                    return;
+                }
+                if (manualPercentage > LocalDiscountCalculationService.MaxPercentageLimit)
+                {
+                    discountError = "Discount percentage cannot exceed the allowed limit (0% to 100%).";
+                    return;
+                }
+                appliedManualPct = manualPercentage;
+                appliedMethod = "PERCENTAGE";
+                appliedValue = manualPercentage;
+            }
+        }
+        else
+        {
+            var defErr = LocalDiscountCalculationService.ValidateDiscountTypeDefinition(
+                selectedDiscountType.Code,
+                selectedDiscountType.DiscountMethod,
+                selectedDiscountType.DiscountValue);
+            if (defErr != null)
+            {
+                discountError = defErr;
+                return;
+            }
+
+            if (string.Equals(selectedDiscountType.DiscountMethod, "FIXED", StringComparison.OrdinalIgnoreCase)
+                && selectedDiscountType.DiscountValue > Cart.Subtotal)
+            {
+                discountError = $"Discount amount cannot exceed the eligible amount (₱{Cart.Subtotal:N2}).";
+                return;
+            }
+
+            appliedMethod = selectedDiscountType.DiscountMethod;
+            appliedValue = selectedDiscountType.DiscountValue;
+        }
+
         try
         {
+            string branchTaxType = Session.Terminal?.BranchTaxType ?? "VAT-Registered";
             var req = new OrderCalculationRequestDto
             {
-                BranchTaxType = Session.Terminal?.BranchTaxType ?? "VAT-Registered",
-                DiscountCode = selectedDiscountCode,
-                ManualDiscountPercentage = manualPercentage,
+                BranchTaxType = branchTaxType,
+                DiscountCode = normalizedCode,
+                DiscountMethod = appliedMethod,
+                DiscountValue = appliedValue,
+                ManualDiscountPercentage = appliedManualPct,
+                ManualDiscountAmount = appliedManualAmt,
                 Items = Cart.Items.Select(ci => new CartItemCalculationDto
                 {
                     ProductId = ci.ProductId,
                     ProductName = ci.ProductName,
                     Quantity = ci.Quantity,
-                    UnitPrice = ci.BasePrice,
-                    ModifierTotal = ci.SelectedModifiers.Sum(m => m.Price),
+                    UnitPrice = ci.IsComplimentary ? 0m : ci.BasePrice,
+                    TargetAmount = ci.IsComplimentary ? 0m : ci.TargetAmount,
+                    ModifierTotal = ci.IsComplimentary ? 0m : ci.SelectedModifiers.Sum(m => m.Price),
+                    IsComplimentary = ci.IsComplimentary,
                     TaxName = ci.TaxName ?? "VATable",
                     IsEligibleForStatutoryDiscount = true
                 }).ToList()
@@ -267,18 +426,38 @@
             {
                 res = await DiscountService.CalculateOrderAsync(req);
             }
-            catch
+            catch (HttpRequestException)
             {
-                var localCalculator = new POS.Shared.Services.LocalDiscountCalculationService();
-                res = localCalculator.CalculateOrder(req);
+                res = new LocalDiscountCalculationService().CalculateOrder(req);
             }
-            Cart.ApplyDiscount(selectedDiscountCode, res.DiscountAmount, cardOrIdNumber);
+            catch (TaskCanceledException)
+            {
+                res = new LocalDiscountCalculationService().CalculateOrder(req);
+            }
+
+            if (res.TotalAmount < 0m || res.DiscountAmount < 0m || res.DiscountAmount > res.Subtotal + 0.01m)
+            {
+                discountError = "The applied discounts exceed the eligible transaction amount.";
+                return;
+            }
+
+            Cart.ApplyDiscount(
+                normalizedCode,
+                res.DiscountAmount,
+                cardOrIdNumber,
+                appliedMethod,
+                appliedValue,
+                appliedManualPct,
+                appliedManualAmt,
+                0m,
+                branchTaxType,
+                res.TotalAmount);
             isDiscountModalOpen = false;
             await OnDiscountChanged.InvokeAsync();
         }
         catch (Exception ex)
         {
-            discountError = $"Failed to calculate discount: {ex.Message}";
+            discountError = ex.Message;
         }
     }
 

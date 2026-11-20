@@ -174,6 +174,27 @@ public class MigrationRunner
             ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ClosingLockedByCashier"" VARCHAR(450) NULL;
             ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ClosingLockedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
             ALTER TABLE ""Terminals"" ADD COLUMN IF NOT EXISTS ""ClosingUnlockAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
+
+            CREATE TABLE IF NOT EXISTS ""CashierClosingRestrictions"" (
+                ""RestrictionId"" BIGSERIAL PRIMARY KEY,
+                ""BranchId"" INTEGER NOT NULL,
+                ""TerminalId"" INTEGER NOT NULL,
+                ""CashierId"" VARCHAR(450) NOT NULL,
+                ""BusinessDate"" VARCHAR(20) NOT NULL,
+                ""ShiftId"" BIGINT NULL,
+                ""ClientShiftId"" VARCHAR(100) NULL,
+                ""ClientCloseId"" VARCHAR(100) NULL,
+                ""ClosedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                ""UnlockAtUtc"" TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                ""Status"" VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+                ""ReopenedBy"" VARCHAR(100) NULL,
+                ""ReopenedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""ReopenReason"" VARCHAR(500) NULL,
+                ""ClientOperationId"" VARCHAR(100) NULL,
+                ""CreatedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ""IX_CashierClosingRestrictions_Terminal_Date_Status""
+                ON ""CashierClosingRestrictions"" (""TerminalId"", ""BusinessDate"", ""Status"");
         ";
 
         using (var terminalCmd = new NpgsqlCommand(terminalLocalFirstSql, conn))

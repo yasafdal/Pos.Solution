@@ -16,19 +16,23 @@ public static partial class Program
 {
     private static async Task Test41_DenominationCountingAndCentavoArithmetic()
     {
-        // 1. Validate catalog defaults: 8 coins (0.01..20) and 6 bills (20..1000)
+        // 1. Validate catalog defaults: 5 bills descending (1000..50, NO ₱20 bill) and 8 coins descending (20..0.01, ₱20 coin preserved)
         var defaults = CashDenominationCatalog.CreateDefaultLines();
-        Assert(defaults.Count == 14, $"Expected 14 denomination lines, got {defaults.Count}");
-        Assert(defaults.Count(d => d.Type == "COIN") == 8, "Expected 8 coin denominations");
-        Assert(defaults.Count(d => d.Type == "BILL") == 6, "Expected 6 bill denominations");
-        Assert(defaults.Any(d => d.Type == "COIN" && d.Denomination == 20m), "Expected ₱20 coin");
-        Assert(defaults.Any(d => d.Type == "BILL" && d.Denomination == 20m), "Expected ₱20 bill");
+        Assert(defaults.Count == 13, $"Expected 13 active denomination lines, got {defaults.Count}");
+        var defaultBills = defaults.Where(d => d.Type == "BILL").Select(d => d.Denomination).ToArray();
+        var defaultCoins = defaults.Where(d => d.Type == "COIN").Select(d => d.Denomination).ToArray();
+        Assert(defaultBills.SequenceEqual(new[] { 1000m, 500m, 200m, 100m, 50m }),
+            $"Expected Bills in descending order [1000, 500, 200, 100, 50] without ₱20 bill, got [{string.Join(", ", defaultBills)}]");
+        Assert(defaultCoins.SequenceEqual(new[] { 20m, 10m, 5m, 1m, 0.25m, 0.10m, 0.05m, 0.01m }),
+            $"Expected Coins in descending order [20, 10, 5, 1, 0.25, 0.10, 0.05, 0.01], got [{string.Join(", ", defaultCoins)}]");
+        Assert(defaults.Any(d => d.Type == "COIN" && d.Denomination == 20m), "Expected ₱20 coin to remain available");
+        Assert(!defaults.Any(d => d.Type == "BILL" && d.Denomination == 20m), "₱20 bill must NOT be offered in default lines");
 
         // 2. Zero counts validate cleanly to 0.00
         Assert(CashDenominationCatalog.TryValidateAndCalculate(defaults, out _, out decimal zeroTotal, out _), "Default zero lines must validate");
         Assert(zeroTotal == 0m, $"Expected 0.00 total for zero quantities, got {zeroTotal}");
 
-        // 3. Centavo & mixed coin/bill arithmetic (including separate ₱20 coin and ₱20 bill)
+        // 3. Centavo & mixed coin/bill arithmetic (preserving ₱20 coin + backward-compatible validation of legacy historical ₱20 bill)
         var custom = new List<CashDenominationLineDto>
         {
             new() { Type = "COIN", Denomination = 0.01m, Quantity = 3 },  // 0.03
@@ -39,18 +43,28 @@ public static partial class Program
             new() { Type = "COIN", Denomination = 5.00m, Quantity = 2 },  // 10.00
             new() { Type = "COIN", Denomination = 10.00m, Quantity = 3 }, // 30.00
             new() { Type = "COIN", Denomination = 20.00m, Quantity = 4 }, // 80.00 -> coins = 126.28
-            new() { Type = "BILL", Denomination = 20.00m, Quantity = 5 }, // 100.00
+            new() { Type = "BILL", Denomination = 20.00m, Quantity = 5 }, // 100.00 (legacy historical record preserved)
             new() { Type = "BILL", Denomination = 50.00m, Quantity = 2 }, // 100.00
             new() { Type = "BILL", Denomination = 100.00m, Quantity = 3 },// 300.00
             new() { Type = "BILL", Denomination = 200.00m, Quantity = 1 },// 200.00
             new() { Type = "BILL", Denomination = 500.00m, Quantity = 2 },// 1000.00
             new() { Type = "BILL", Denomination = 1000.00m, Quantity = 1, Subtotal = 999999m } // tampered client subtotal ignored
         };
-        Assert(CashDenominationCatalog.TryValidateAndCalculate(custom, out var norm, out decimal counted, out _), "Valid centavo/bill breakdown must succeed");
+        Assert(CashDenominationCatalog.TryValidateAndCalculate(custom, out var norm, out decimal counted, out _), "Valid centavo/bill breakdown (including historical ₱20 bill) must succeed");
         Assert(counted == 2826.28m, $"Expected 2826.28 total counted cash, got {counted}");
         Assert(norm.Single(d => d.Type == "COIN" && d.Denomination == 20m).Subtotal == 80.00m, "₱20 coin subtotal must be 80.00");
-        Assert(norm.Single(d => d.Type == "BILL" && d.Denomination == 20m).Subtotal == 100.00m, "₱20 bill subtotal must be 100.00");
+        Assert(norm.Single(d => d.Type == "BILL" && d.Denomination == 20m).Subtotal == 100.00m, "Legacy historical ₱20 bill subtotal must still be preserved when non-zero");
         Assert(norm.Single(d => d.Type == "BILL" && d.Denomination == 1000m).Subtotal == 1000.00m, "Server must recalculate tampered subtotal");
+
+        // Active new count without ₱20 bill calculates accurately
+        var activeOnly = CashDenominationCatalog.CreateDefaultLines();
+        activeOnly.Single(d => d.Type == "BILL" && d.Denomination == 1000m).Quantity = 2; // 2000
+        activeOnly.Single(d => d.Type == "BILL" && d.Denomination == 500m).Quantity = 1;  // 500
+        activeOnly.Single(d => d.Type == "COIN" && d.Denomination == 20m).Quantity = 3;   // 60
+        activeOnly.Single(d => d.Type == "COIN" && d.Denomination == 0.25m).Quantity = 2; // 0.50
+        Assert(CashDenominationCatalog.TryValidateAndCalculate(activeOnly, out var activeNorm, out decimal activeTotal, out _), "Active catalog count must validate");
+        Assert(activeTotal == 2560.50m && !activeNorm.Any(d => d.Type == "BILL" && d.Denomination == 20m),
+            $"Active count must total 2560.50 and exclude ₱20 bill; got {activeTotal}.");
 
         // 4. Reject negative quantity, invalid denomination, and duplicates
         Assert(!CashDenominationCatalog.TryValidateAndCalculate([new() { Type = "COIN", Denomination = 1m, Quantity = -1 }], out _, out _, out _),

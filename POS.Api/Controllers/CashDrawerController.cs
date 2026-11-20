@@ -373,6 +373,8 @@ public class CashDrawerController : ControllerBase
                 return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage);
             if (lockState.IsTerminalLocked)
                 return Conflict(lockState.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
+            if (lockState.IsShiftOwnedByAnotherCashier)
+                return Conflict(lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
         }
 
         var outlet = await _context.Terminals.AsNoTracking()
@@ -1462,6 +1464,482 @@ public class CashDrawerController : ControllerBase
         }
     }
 
+    private async Task<User?> VerifySupervisorPinOrHashAsync(
+        string? rawPin,
+        string? pinHash,
+        string? expectedUsername = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!string.IsNullOrWhiteSpace(rawPin))
+            return await VerifySupervisorPinAsync(rawPin, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(pinHash))
+            return null;
+
+        var usersWithPins = await _context.Users
+            .AsNoTracking()
+            .Where(u => u.PinCode != null && u.PinCode != "")
+            .ToListAsync(cancellationToken);
+
+        return usersWithPins.FirstOrDefault(u =>
+            IsSupervisorRole(u.Role) &&
+            (string.IsNullOrWhiteSpace(expectedUsername) || string.Equals(u.Username, expectedUsername.Trim(), StringComparison.OrdinalIgnoreCase)) &&
+            POS.Shared.Helpers.VoidAuthorizationHelper.FixedTimeEqualsHex(
+                POS.Shared.Helpers.VoidAuthorizationHelper.ComputePinHash(u.PinCode!),
+                pinHash.Trim()));
+    }
+
+    /// <summary>
+    /// Anytime strictly read-only terminal X-Reading audit snapshot for the current (or specified) Business Date.
+    /// Can be generated repeatedly even while cashier shifts are actively OPEN, spanning multiple shifts/cashiers.
+    /// NEVER closes shifts, locks cashiers/terminals, resets counters, or mutates any database state.
+    /// </summary>
+    [HttpGet("x-reading")]
+    public async Task<ActionResult<XReadingReportDto>> GetAnytimeXReading(
+        [FromQuery] int terminalId,
+        [FromQuery] string? businessDate = null,
+        [FromQuery] string? supervisorPin = null,
+        [FromQuery] bool reprint = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (terminalId <= 0)
+            return BadRequest("Valid terminalId is required.");
+
+        bool authorized = IsSupervisorRole(GetAuthenticatedRole());
+        if (!authorized && !string.IsNullOrWhiteSpace(supervisorPin))
+        {
+            var sup = await VerifySupervisorPinAsync(supervisorPin, cancellationToken);
+            authorized = sup != null;
+        }
+        if (!authorized)
+            return Forbid();
+
+        var terminal = await _context.Terminals
+            .AsNoTracking()
+            .Include(t => t.Outlet)
+            .Include(t => t.Branch)
+            .FirstOrDefaultAsync(t => t.TerminalId == terminalId, cancellationToken);
+        if (terminal == null)
+            return NotFound("Terminal not found.");
+
+        if (!User.IsInRole("Admin") &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) &&
+            terminal.BranchId != claimBranchId)
+        {
+            return Forbid();
+        }
+
+        var nowUtc = BusinessDayClock.UtcNow();
+        DateOnly targetDate;
+        if (!string.IsNullOrWhiteSpace(businessDate))
+        {
+            if (!DateOnly.TryParseExact(businessDate.Trim(), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out targetDate))
+                return BadRequest("Invalid businessDate format. Expected yyyy-MM-dd.");
+        }
+        else
+        {
+            targetDate = BusinessDayClock.GetBusinessDate(nowUtc);
+        }
+
+        var (periodStartUtc, periodEndUtc) = BusinessDayClock.GetPeriodUtc(targetDate);
+        var effectiveEndUtc = nowUtc < periodEndUtc ? nowUtc : periodEndUtc;
+        var periodStart = DateTime.SpecifyKind(periodStartUtc, DateTimeKind.Unspecified);
+        var periodEnd = DateTime.SpecifyKind(effectiveEndUtc, DateTimeKind.Unspecified);
+        var fullPeriodEnd = DateTime.SpecifyKind(periodEndUtc, DateTimeKind.Unspecified);
+
+        var dayShifts = await _context.CashDrawerShifts
+            .AsNoTracking()
+            .Include(s => s.Movements)
+            .Where(s => s.TerminalId == terminalId &&
+                ((s.OpenedAt >= periodStart && s.OpenedAt < fullPeriodEnd) ||
+                 (s.ClosedAt.HasValue && s.ClosedAt.Value >= periodStart && s.ClosedAt.Value < fullPeriodEnd) ||
+                 (s.Status == "OPEN" && s.OpenedAt < fullPeriodEnd)))
+            .OrderBy(s => s.OpenedAt)
+            .ToListAsync(cancellationToken);
+
+        var dayShiftIds = dayShifts.Select(s => s.ShiftId).ToHashSet();
+
+        var periodOrders = await _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Payments)
+            .Where(o => o.TerminalId == terminalId && o.CreatedAt >= periodStart && o.CreatedAt <= periodEnd)
+            .OrderBy(o => o.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        if (dayShiftIds.Count > 0)
+        {
+            var shiftOrdersExtra = await _context.Orders
+                .AsNoTracking()
+                .Include(o => o.Payments)
+                .Where(o => o.ShiftId.HasValue && dayShiftIds.Contains(o.ShiftId.Value))
+                .OrderBy(o => o.CreatedAt)
+                .ToListAsync(cancellationToken);
+            var existingOrderIds = periodOrders.Select(o => o.OrderId).ToHashSet();
+            foreach (var so in shiftOrdersExtra)
+            {
+                if (existingOrderIds.Add(so.OrderId))
+                    periodOrders.Add(so);
+            }
+        }
+
+        var periodOrderIds = periodOrders.Select(o => o.OrderId).ToList();
+        var returnRefunds = periodOrderIds.Count > 0
+            ? await _context.Refunds
+                .AsNoTracking()
+                .Include(r => r.OriginalPayment)
+                .Where(r => r.VoidId == null && r.Status == "COMPLETED" && r.OriginalPayment != null && periodOrderIds.Contains(r.OriginalPayment.OrderId))
+                .ToListAsync(cancellationToken)
+            : new List<Refund>();
+
+        int returnCount = periodOrderIds.Count > 0
+            ? await _context.SalesReturns
+                .AsNoTracking()
+                .CountAsync(sr => periodOrderIds.Contains(sr.OriginalOrderId) && sr.Status == "COMPLETED", cancellationToken)
+            : 0;
+
+        var paidOrders = periodOrders.Where(o => o.PaymentStatus == "PAID" && o.OrderStatus != "VOIDED").ToList();
+        var voidOrders = periodOrders.Where(o => o.PaymentStatus == "VOIDED" || o.OrderStatus == "VOIDED").ToList();
+
+        decimal grossSales = Math.Round(paidOrders.Sum(o => o.Subtotal) + voidOrders.Sum(o => o.Subtotal), 2, MidpointRounding.AwayFromZero);
+        decimal totalDiscounts = Math.Round(paidOrders.Sum(o => o.DiscountAmount), 2, MidpointRounding.AwayFromZero);
+        decimal voidTotal = Math.Round(voidOrders.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
+        decimal totalReturnRefunds = Math.Round(returnRefunds.Sum(r => r.RefundAmount), 2, MidpointRounding.AwayFromZero);
+        decimal totalRefundsAndVoids = Math.Round(voidTotal + totalReturnRefunds, 2, MidpointRounding.AwayFromZero);
+        decimal netSales = Math.Round(paidOrders.Sum(o => o.TotalAmount) - totalReturnRefunds, 2, MidpointRounding.AwayFromZero);
+
+        var invoices = periodOrders
+            .Where(o => !string.IsNullOrWhiteSpace(o.InvoiceNumber))
+            .OrderBy(o => o.InvoiceIssuedAt ?? o.CreatedAt)
+            .ThenBy(o => o.OrderId)
+            .Select(o => o.InvoiceNumber!)
+            .ToList();
+
+        decimal totalOpeningFloat = Math.Round(dayShifts.Sum(s => s.OpeningFloat), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashSales = Math.Round(dayShifts.Sum(s => s.TotalCashSales), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashRefunds = Math.Round(dayShifts.Sum(s => s.TotalCashRefunds), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashIn = Math.Round(dayShifts.Sum(s => s.TotalCashIn), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashOut = Math.Round(dayShifts.Sum(s => s.TotalCashOut), 2, MidpointRounding.AwayFromZero);
+        decimal totalCashDrops = Math.Round(dayShifts.Sum(s => s.TotalCashDrops), 2, MidpointRounding.AwayFromZero);
+        decimal expectedCashInDrawer = Math.Round(dayShifts.Sum(s => s.ExpectedBalance), 2, MidpointRounding.AwayFromZero);
+        decimal countedCashInDrawer = Math.Round(dayShifts.Where(s => s.ActualCountedBalance.HasValue).Sum(s => s.ActualCountedBalance!.Value), 2, MidpointRounding.AwayFromZero);
+
+        // If orders exist without shifts or shifts haven't tallied yet, compute cash sales/refunds from payments
+        if (dayShifts.Count == 0 && periodOrders.Count > 0)
+        {
+            totalCashSales = Math.Round(periodOrders.SelectMany(o => o.Payments)
+                .Where(p => string.Equals(p.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase)
+                    && (p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded))
+                .Sum(p => p.Amount), 2, MidpointRounding.AwayFromZero);
+            decimal cashVoidRef = periodOrders.SelectMany(o => o.Payments)
+                .Where(p => string.Equals(p.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase)
+                    && p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded)
+                .Sum(p => p.Amount);
+            decimal cashRetRef = returnRefunds
+                .Where(r => string.Equals(r.RefundMethod, "CASH", StringComparison.OrdinalIgnoreCase))
+                .Sum(r => r.RefundAmount);
+            totalCashRefunds = Math.Round(cashVoidRef + cashRetRef, 2, MidpointRounding.AwayFromZero);
+            expectedCashInDrawer = Math.Round(totalCashSales - totalCashRefunds, 2, MidpointRounding.AwayFromZero);
+        }
+
+        // Build tender breakdown across the entire Business Date
+        var configuredMethods = await _context.PaymentMethods
+            .AsNoTracking()
+            .OrderBy(pm => pm.DisplayOrder)
+            .ThenBy(pm => pm.Name)
+            .ToListAsync(cancellationToken);
+
+        var reconciliations = new List<PaymentMethodReconciliationDto>();
+        decimal cashNet = Math.Round(totalCashSales - totalCashRefunds, 2, MidpointRounding.AwayFromZero);
+        decimal closedExpectedCash = Math.Round(dayShifts.Where(s => s.Status == "CLOSED").Sum(s => s.ExpectedBalance), 2, MidpointRounding.AwayFromZero);
+        int activeShiftCount = dayShifts.Count(s => s.Status == "OPEN");
+        int closedShiftCount = dayShifts.Count(s => s.Status == "CLOSED");
+        decimal cashVariance = activeShiftCount == 0 && closedShiftCount > 0
+            ? Math.Round(countedCashInDrawer - closedExpectedCash, 2, MidpointRounding.AwayFromZero)
+            : 0m;
+
+        reconciliations.Add(new PaymentMethodReconciliationDto
+        {
+            PaymentMethodCode = "CASH",
+            PaymentMethodName = "Cash (Drawer)",
+            IsCash = true,
+            IsActive = true,
+            DisplayOrder = 0,
+            GrossSalesAmount = totalCashSales,
+            RefundAmount = totalCashRefunds,
+            NetSalesAmount = cashNet,
+            ExpectedAmount = expectedCashInDrawer,
+            DeclaredAmount = countedCashInDrawer,
+            Variance = cashVariance,
+            Status = activeShiftCount > 0 ? "IN_PROGRESS" : PaymentMethodReconciliationDto.ComputeStatus(cashVariance)
+        });
+
+        var nonCashCodes = new List<string>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "CASH" };
+        foreach (var pm in configuredMethods.Where(m => m.IsActive))
+            if (seenCodes.Add(pm.Code)) nonCashCodes.Add(pm.Code);
+        foreach (var p in periodOrders.SelectMany(o => o.Payments))
+        {
+            if (!string.IsNullOrWhiteSpace(p.PaymentMethod)
+                && (p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded)
+                && seenCodes.Add(p.PaymentMethod.Trim()))
+            {
+                nonCashCodes.Add(p.PaymentMethod.Trim().ToUpperInvariant());
+            }
+        }
+        foreach (var r in returnRefunds)
+        {
+            if (!string.IsNullOrWhiteSpace(r.RefundMethod) && seenCodes.Add(r.RefundMethod.Trim()))
+                nonCashCodes.Add(r.RefundMethod.Trim().ToUpperInvariant());
+        }
+
+        foreach (var code in nonCashCodes)
+        {
+            var cfg = configuredMethods.FirstOrDefault(m => string.Equals(m.Code, code, StringComparison.OrdinalIgnoreCase));
+            decimal mGross = Math.Round(periodOrders.SelectMany(o => o.Payments)
+                .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
+                    && (p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Paid || p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded))
+                .Sum(p => p.Amount), 2, MidpointRounding.AwayFromZero);
+            decimal mVoidRef = periodOrders.SelectMany(o => o.Payments)
+                .Where(p => string.Equals(p.PaymentMethod, code, StringComparison.OrdinalIgnoreCase)
+                    && p.PaymentStatus == POS.Shared.Constants.PaymentStatuses.Refunded)
+                .Sum(p => p.Amount);
+            decimal mRetRef = returnRefunds
+                .Where(r => string.Equals(r.RefundMethod, code, StringComparison.OrdinalIgnoreCase))
+                .Sum(r => r.RefundAmount);
+            decimal mRefund = Math.Round(mVoidRef + mRetRef, 2, MidpointRounding.AwayFromZero);
+            decimal mNet = Math.Round(mGross - mRefund, 2, MidpointRounding.AwayFromZero);
+
+            reconciliations.Add(new PaymentMethodReconciliationDto
+            {
+                PaymentMethodCode = cfg?.Code ?? code.ToUpperInvariant(),
+                PaymentMethodName = cfg?.Name ?? code.ToUpperInvariant(),
+                IsCash = false,
+                IsActive = cfg?.IsActive ?? false,
+                DisplayOrder = cfg?.DisplayOrder ?? 999,
+                GrossSalesAmount = mGross,
+                RefundAmount = mRefund,
+                NetSalesAmount = mNet,
+                ExpectedAmount = mNet,
+                DeclaredAmount = 0m,
+                Variance = 0m,
+                Status = activeShiftCount > 0 ? "IN_PROGRESS" : "READ_ONLY"
+            });
+        }
+
+        // Per-cashier breakdown across shifts and orders in this Business Date
+        var refundsByOrderId = returnRefunds
+            .Where(r => r.OriginalPayment != null)
+            .GroupBy(r => r.OriginalPayment!.OrderId)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.RefundAmount));
+        var shiftCashierLookup = dayShifts.ToDictionary(s => s.ShiftId, s => s.CashierId);
+
+        var cashierNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in dayShifts) if (!string.IsNullOrWhiteSpace(s.CashierId)) cashierNames.Add(s.CashierId.Trim());
+        foreach (var o in periodOrders)
+        {
+            string? c = !string.IsNullOrWhiteSpace(o.CashierId) ? o.CashierId
+                : (o.ShiftId.HasValue && shiftCashierLookup.TryGetValue(o.ShiftId.Value, out var sc) ? sc : null);
+            if (!string.IsNullOrWhiteSpace(c)) cashierNames.Add(c.Trim());
+        }
+
+        var cashierSummaries = new List<XReadingCashierSummaryDto>();
+        foreach (var cashier in cashierNames.OrderBy(c => c, StringComparer.OrdinalIgnoreCase))
+        {
+            var cShifts = dayShifts.Where(s => string.Equals(s.CashierId, cashier, StringComparison.OrdinalIgnoreCase)).ToList();
+            var cShiftIds = cShifts.Select(s => s.ShiftId).ToHashSet();
+            var cOrders = periodOrders.Where(o =>
+                string.Equals(o.CashierId, cashier, StringComparison.OrdinalIgnoreCase) ||
+                (string.IsNullOrWhiteSpace(o.CashierId) && o.ShiftId.HasValue && cShiftIds.Contains(o.ShiftId.Value))).ToList();
+            var cPaid = cOrders.Where(o => o.PaymentStatus == "PAID" && o.OrderStatus != "VOIDED").ToList();
+            var cVoid = cOrders.Where(o => o.PaymentStatus == "VOIDED" || o.OrderStatus == "VOIDED").ToList();
+            decimal cReturns = cOrders.Sum(o => refundsByOrderId.TryGetValue(o.OrderId, out var rAmt) ? rAmt : 0m);
+
+            cashierSummaries.Add(new XReadingCashierSummaryDto
+            {
+                CashierId = cashier,
+                ShiftCount = cShifts.Count,
+                OpenShifts = cShifts.Count(s => s.Status == "OPEN"),
+                ClosedShifts = cShifts.Count(s => s.Status == "CLOSED"),
+                TransactionCount = cPaid.Count,
+                GrossSales = Math.Round(cPaid.Sum(o => o.Subtotal) + cVoid.Sum(o => o.Subtotal), 2, MidpointRounding.AwayFromZero),
+                NetSales = Math.Round(cPaid.Sum(o => o.TotalAmount) - cReturns, 2, MidpointRounding.AwayFromZero)
+            });
+        }
+
+        var openShift = dayShifts.LastOrDefault(s => s.Status == "OPEN");
+        var report = new XReadingReportDto
+        {
+            ShiftId = openShift?.ShiftId ?? dayShifts.LastOrDefault()?.ShiftId ?? 0,
+            ClientShiftId = openShift?.ClientShiftId ?? dayShifts.LastOrDefault()?.ClientShiftId,
+            BranchId = terminal.BranchId,
+            BranchName = terminal.Branch?.Name ?? $"Branch #{terminal.BranchId}",
+            BranchCode = terminal.Branch?.Code,
+            BranchAddress = terminal.Branch?.Address,
+            BranchPhone = terminal.Branch?.Phone,
+            OutletId = terminal.OutletId,
+            OutletName = terminal.Outlet?.Name ?? $"Outlet #{terminal.OutletId}",
+            TerminalId = terminal.TerminalId,
+            TerminalCode = terminal.TerminalCode,
+            TerminalName = terminal.Name,
+            PTUNumber = terminal.Ptunumber,
+            MINNumber = terminal.Minnumber,
+            SerialNumber = terminal.SerialNumber,
+            CashierId = activeShiftCount > 0
+                ? (openShift?.CashierId ?? "ACTIVE SHIFT")
+                : (cashierSummaries.Count == 1 ? cashierSummaries[0].CashierId : "ALL CASHIERS"),
+            OpenedAt = dayShifts.FirstOrDefault()?.OpenedAt ?? periodStart,
+            ClosedAt = activeShiftCount == 0 ? dayShifts.LastOrDefault()?.ClosedAt : null,
+            GeneratedAt = nowUtc,
+            BusinessDate = targetDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            IsAnytimeAudit = true,
+            ActiveShiftCount = activeShiftCount,
+            ClosedShiftCount = closedShiftCount,
+            CashierSummaries = cashierSummaries,
+            IsReprint = reprint,
+            ReportingPeriodStart = periodStart,
+            ReportingPeriodEnd = periodEnd,
+            ReportingPeriodMatchesShift = dayShifts.Count == 1,
+            BeginningInvoiceNumber = invoices.FirstOrDefault(),
+            EndingInvoiceNumber = invoices.LastOrDefault(),
+            CompletedTransactionsCount = paidOrders.Count,
+            VoidedTransactionsCount = voidOrders.Count,
+            ReturnTransactionsCount = returnCount,
+            GrossSales = grossSales,
+            TotalDiscounts = totalDiscounts,
+            TotalRefundsAndVoids = totalRefundsAndVoids,
+            NetSales = netSales,
+            VatableSales = Math.Round(paidOrders.Sum(o => o.VatableSales), 2, MidpointRounding.AwayFromZero),
+            VatExemptSales = Math.Round(paidOrders.Sum(o => o.VatExemptSales), 2, MidpointRounding.AwayFromZero),
+            ZeroRatedSales = Math.Round(paidOrders.Sum(o => o.ZeroRatedSales), 2, MidpointRounding.AwayFromZero),
+            VatAmount = Math.Round(paidOrders.Sum(o => o.VatAmount), 2, MidpointRounding.AwayFromZero),
+            ShiftTransactionsCount = paidOrders.Count,
+            ShiftGrossSales = grossSales,
+            ShiftDiscounts = totalDiscounts,
+            ShiftRefundsAndVoids = totalRefundsAndVoids,
+            ShiftNetSales = netSales,
+            ShiftCashNetSales = cashNet,
+            ShiftNonCashNetSales = Math.Round(reconciliations.Where(r => !r.IsCash).Sum(r => r.NetSalesAmount), 2, MidpointRounding.AwayFromZero),
+            OpeningFloat = totalOpeningFloat,
+            CashSalesCollected = totalCashSales,
+            CashRefunds = totalCashRefunds,
+            NetCashSales = cashNet,
+            TotalCashIn = totalCashIn,
+            TotalCashOut = totalCashOut,
+            TotalCashDrops = totalCashDrops,
+            ExpectedCashInDrawer = expectedCashInDrawer,
+            CountedCashInDrawer = countedCashInDrawer,
+            CashVariance = cashVariance,
+            CashReconciliationStatus = activeShiftCount > 0 ? "IN_PROGRESS" : PaymentMethodReconciliationDto.ComputeStatus(cashVariance),
+            HasRecordedDenominations = false,
+            PaymentReconciliations = reconciliations,
+            IsOverallBalanced = activeShiftCount == 0 && cashVariance == 0m,
+            OverallStatus = activeShiftCount > 0
+                ? $"IN PROGRESS ({activeShiftCount} OPEN SHIFT)"
+                : (closedShiftCount == 0 ? "NO SHIFTS" : PaymentMethodReconciliationDto.ComputeStatus(cashVariance))
+        };
+
+        return Ok(report);
+    }
+
+    [HttpGet("cashier-restrictions")]
+    public async Task<ActionResult<List<CashierClosingRestrictionDto>>> GetCashierRestrictions(
+        [FromQuery] int terminalId,
+        [FromQuery] string? businessDate = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (terminalId <= 0)
+            return BadRequest("Valid terminalId is required.");
+
+        if (!IsSupervisorRole(GetAuthenticatedRole()) &&
+            User.FindFirst("terminal_id")?.Value != terminalId.ToString())
+            return Forbid();
+
+        var terminal = await _context.Terminals.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == terminalId, cancellationToken);
+        if (terminal == null) return NotFound("Terminal not found.");
+
+        if (!User.IsInRole("Admin") &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) &&
+            terminal.BranchId != claimBranchId)
+            return Forbid();
+
+        string targetDate = !string.IsNullOrWhiteSpace(businessDate)
+            ? businessDate.Trim()
+            : BusinessDayClock.GetBusinessDateString(BusinessDayClock.UtcNow());
+
+        var rows = await _context.CashierClosingRestrictions
+            .AsNoTracking()
+            .Where(r => r.TerminalId == terminalId && r.BusinessDate == targetDate)
+            .OrderByDescending(r => r.ClosedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return Ok(rows.Select(POS.Api.Services.TerminalClosingLockGuard.MapRestrictionToDto).ToList());
+    }
+
+    /// <summary>
+    /// Authorized supervisor correction/reopen workflow allowing a closed cashier to log back into the same terminal
+    /// for the same Business Date. Preserves all closed CashDrawerShift accountability records immutably.
+    /// </summary>
+    [HttpPost("cashier-restrictions/reopen")]
+    public async Task<ActionResult<CashierClosingRestrictionDto>> ReopenCashierRestriction(
+        [FromBody] ReopenCashierRestrictionRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request == null || request.TerminalId <= 0)
+            return BadRequest("Valid terminalId is required.");
+        if (string.IsNullOrWhiteSpace(request.CashierId))
+            return BadRequest("CashierId is required.");
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest("A reason is required to reopen cashier access.");
+
+        string? approverUsername = null;
+        if (!string.IsNullOrWhiteSpace(request.SupervisorPin) || !string.IsNullOrWhiteSpace(request.SupervisorPinHash))
+        {
+            var sup = await VerifySupervisorPinOrHashAsync(request.SupervisorPin, request.SupervisorPinHash, request.ApprovedBy, cancellationToken);
+            if (sup == null)
+                return Forbid();
+            approverUsername = sup.Username;
+        }
+        else if (IsSupervisorRole(GetAuthenticatedRole()))
+        {
+            approverUsername = GetAuthenticatedUsername();
+        }
+        else
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(approverUsername))
+            return Unauthorized();
+
+        var terminal = await _context.Terminals.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == request.TerminalId, cancellationToken);
+        if (terminal == null)
+            return NotFound("Terminal not found.");
+
+        if (!User.IsInRole("Admin") &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) &&
+            terminal.BranchId != claimBranchId)
+            return Forbid();
+
+        string targetDate = !string.IsNullOrWhiteSpace(request.BusinessDate)
+            ? request.BusinessDate.Trim()
+            : BusinessDayClock.GetBusinessDateString(BusinessDayClock.UtcNow());
+
+        var reopened = await POS.Api.Services.TerminalClosingLockGuard.ReopenCashierRestrictionAsync(
+            _context,
+            request.TerminalId,
+            request.CashierId,
+            targetDate,
+            approverUsername,
+            request.Reason,
+            request.ClientOperationId,
+            cancellationToken);
+
+        if (reopened == null)
+            return NotFound("No active cashier closing restriction found for this cashier, terminal, and business date.");
+
+        return Ok(reopened);
+    }
+
     [HttpGet("last-closed/{terminalId:int}")]
     public async Task<ActionResult<CashDrawerShiftDto?>> GetLastClosedShift(
         int terminalId,
@@ -1639,10 +2117,14 @@ public class CashDrawerController : ControllerBase
                 shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(initialDeclaration);
             }
 
-            await POS.Api.Services.TerminalClosingLockGuard.LockTerminalOnCloseAsync(
+            await POS.Api.Services.TerminalClosingLockGuard.RestrictCashierOnCloseAsync(
                 _context,
+                shift.BranchId,
                 shift.TerminalId,
                 shift.CashierId,
+                shift.ShiftId,
+                shift.ClientShiftId,
+                shift.ClientCloseId,
                 shift.ClosedAt ?? BusinessDayClock.UtcNow(),
                 cancellationToken);
 

@@ -26,11 +26,11 @@ namespace POS.Shared.Services
             });
             if (!response.IsSuccessStatusCode)
             {
-                if ((int)response.StatusCode == 403 || (int)response.StatusCode == 423)
+                if ((int)response.StatusCode == 403 || (int)response.StatusCode == 409 || (int)response.StatusCode == 423)
                 {
                     var errText = await response.Content.ReadAsStringAsync();
                     throw new InvalidOperationException(string.IsNullOrWhiteSpace(errText)
-                        ? "This POS Terminal or cashier account is locked for the remainder of the current business day."
+                        ? "This POS Terminal or cashier account is restricted or currently assigned to another cashier."
                         : errText.Trim('"'));
                 }
                 return null;

@@ -105,6 +105,48 @@ public class CashDrawerShift
     public virtual ICollection<CashDrawerMovement> Movements { get; set; } = new List<CashDrawerMovement>();
 }
 
+[Table("CashierClosingRestrictions")]
+public class CashierClosingRestriction
+{
+    [Key]
+    public long RestrictionId { get; set; }
+
+    public int BranchId { get; set; }
+    public int TerminalId { get; set; }
+
+    [Required, MaxLength(450)]
+    public string CashierId { get; set; } = null!;
+
+    [Required, MaxLength(20)]
+    public string BusinessDate { get; set; } = null!;
+
+    public long? ShiftId { get; set; }
+
+    [MaxLength(100)]
+    public string? ClientShiftId { get; set; }
+
+    [MaxLength(100)]
+    public string? ClientCloseId { get; set; }
+
+    public DateTime ClosedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime UnlockAtUtc { get; set; }
+
+    [Required, MaxLength(20)]
+    public string Status { get; set; } = "ACTIVE"; // ACTIVE, REOPENED
+
+    [MaxLength(100)]
+    public string? ReopenedBy { get; set; }
+    public DateTime? ReopenedAtUtc { get; set; }
+
+    [MaxLength(500)]
+    public string? ReopenReason { get; set; }
+
+    [MaxLength(100)]
+    public string? ClientOperationId { get; set; }
+
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
 [Table("CashDrawerMovements")]
 public class CashDrawerMovement
 {

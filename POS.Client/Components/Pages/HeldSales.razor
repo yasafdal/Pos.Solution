@@ -4,8 +4,10 @@
 @inject IHeldSaleService HeldSaleService
 @inject CartService Cart
 @inject SweetAlertService Swal
+@using POS.Shared.Constants
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
+@using POS.Shared.Services
 @using CurrieTechnologies.Razor.SweetAlert2
 
 @if (!Session.IsAuthenticated)
@@ -18,7 +20,9 @@ else
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
                 <h3 class="fw-bold text-dark mb-1">Held Sales (Suspended Transactions)</h3>
-                <p class="text-secondary small mb-0">Parked customer tickets for Terminal #@(Session.Terminal?.TerminalId ?? 1)</p>
+                <p class="text-secondary small mb-0">
+                    Parked customer tickets for Business Date <strong>@BusinessDayClock.GetCurrentBusinessDate().ToString("MMM dd, yyyy")</strong> • Terminal #@(Session.Terminal?.TerminalId ?? 1)
+                </p>
             </div>
             <div>
                 <button class="btn btn-outline-primary btn-sm px-3 fw-medium rounded-3" @onclick="LoadHeldSales">
@@ -149,6 +153,16 @@ else
                 await Swal.FireAsync("Resumed!", $"Held sale {resumed.HoldReference} loaded into active cart.", SweetAlertIcon.Success);
                 Navigation.NavigateTo("/new-sale");
             }
+            else
+            {
+                await LoadHeldSales();
+                await Swal.FireAsync("Unavailable", "This held sale is no longer active.", SweetAlertIcon.Warning);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            await LoadHeldSales();
+            await Swal.FireAsync("Held Sale Expired", ex.Message, SweetAlertIcon.Warning);
         }
         catch (Exception ex)
         {

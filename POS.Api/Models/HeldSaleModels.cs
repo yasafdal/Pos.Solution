@@ -44,9 +44,17 @@ public partial class HeldSale
     [MaxLength(20)]
     public string Status { get; set; } = "HELD"; // HELD, RESUMED, CANCELLED, COMPLETED
 
+    [MaxLength(10)]
+    public string? BusinessDate { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? ResumedAt { get; set; }
+
+    public DateTime? CancelledAt { get; set; }
+
+    [MaxLength(255)]
+    public string? CancellationReason { get; set; }
 
     public virtual ICollection<HeldSaleItem> HeldSaleItems { get; set; } = new List<HeldSaleItem>();
 }

@@ -6,19 +6,61 @@ namespace POS.Shared.Models;
 
 public class TerminalClosingLockDto
 {
+    public const string ActiveShiftOwnedByAnotherCashierMessage =
+        "Terminal currently has an open cashier shift assigned to another cashier. The previous cashier must log back in and complete Close Cashier before another cashier can use this terminal.";
+
     public int TerminalId { get; set; }
     public bool IsTerminalLocked { get; set; }
     public bool IsCashierRestricted { get; set; }
+    public bool IsShiftOwnedByAnotherCashier { get; set; }
+    public string? ActiveShiftOwnerCashierId { get; set; }
+    public long? ActiveShiftId { get; set; }
+    public string? ActiveShiftOwnershipMessage { get; set; }
     public bool ClockTamperDetected { get; set; }
     public string? ClosedBusinessDate { get; set; }
     public string CurrentBusinessDate { get; set; } = string.Empty;
     public string? LockedByCashier { get; set; }
     public List<string> RestrictedCashiers { get; set; } = new();
+    public List<CashierClosingRestrictionDto> ActiveCashierRestrictions { get; set; } = new();
     public DateTime? LockedAtUtc { get; set; }
     public DateTime? UnlockAtUtc { get; set; }
     public DateTime? ServerUtcNow { get; set; }
     public string? LockMessage { get; set; }
     public string? CashierRestrictionMessage { get; set; }
+}
+
+public class CashierClosingRestrictionDto
+{
+    public long RestrictionId { get; set; }
+    public string? ClientRestrictionId { get; set; }
+    public int BranchId { get; set; }
+    public int TerminalId { get; set; }
+    public string CashierId { get; set; } = string.Empty;
+    public string BusinessDate { get; set; } = string.Empty;
+    public long? ShiftId { get; set; }
+    public string? ClientShiftId { get; set; }
+    public string? ClientCloseId { get; set; }
+    public DateTime ClosedAtUtc { get; set; }
+    public DateTime UnlockAtUtc { get; set; }
+    public string Status { get; set; } = "ACTIVE"; // ACTIVE, REOPENED
+    public string? ReopenedBy { get; set; }
+    public DateTime? ReopenedAtUtc { get; set; }
+    public string? ReopenReason { get; set; }
+}
+
+public class ReopenCashierRestrictionRequestDto
+{
+    public string? ClientOperationId { get; set; }
+    public int TerminalId { get; set; }
+    [Required, MaxLength(450)]
+    public string CashierId { get; set; } = string.Empty;
+    public string? BusinessDate { get; set; }
+    [Required, MaxLength(500)]
+    public string Reason { get; set; } = string.Empty;
+    [MaxLength(64)]
+    public string? SupervisorPin { get; set; }
+    public string? SupervisorPinHash { get; set; }
+    public string? ApprovedBy { get; set; }
 }
 
 public class TerminalCashFundConfigDto
@@ -145,25 +187,32 @@ public class CashDenominationLineDto
 
 public static class CashDenominationCatalog
 {
-    public static readonly decimal[] CoinDenominations = [0.01m, 0.05m, 0.10m, 0.25m, 1.00m, 5.00m, 10.00m, 20.00m];
-    public static readonly decimal[] BillDenominations = [20.00m, 50.00m, 100.00m, 200.00m, 500.00m, 1000.00m];
+    public static readonly decimal[] BillDenominations = [1000.00m, 500.00m, 200.00m, 100.00m, 50.00m];
+    public static readonly decimal[] CoinDenominations = [20.00m, 10.00m, 5.00m, 1.00m, 0.25m, 0.10m, 0.05m, 0.01m];
+
+    /// <summary>
+    /// Retired banknotes accepted only when validating historical records or in-flight pre-upgrade sync payloads.
+    /// Never offered in CreateDefaultLines() for new cash counts.
+    /// </summary>
+    public static readonly decimal[] LegacyBillDenominations = [20.00m];
 
     public static List<CashDenominationLineDto> CreateDefaultLines()
     {
-        var list = new List<CashDenominationLineDto>(CoinDenominations.Length + BillDenominations.Length);
-        foreach (var d in CoinDenominations)
-            list.Add(new CashDenominationLineDto { Type = "COIN", Denomination = d, Quantity = 0, Subtotal = 0m });
+        var list = new List<CashDenominationLineDto>(BillDenominations.Length + CoinDenominations.Length);
         foreach (var d in BillDenominations)
             list.Add(new CashDenominationLineDto { Type = "BILL", Denomination = d, Quantity = 0, Subtotal = 0m });
+        foreach (var d in CoinDenominations)
+            list.Add(new CashDenominationLineDto { Type = "COIN", Denomination = d, Quantity = 0, Subtotal = 0m });
         return list;
     }
 
-    public static bool IsValidDenomination(string? type, decimal denomination)
+    public static bool IsValidDenomination(string? type, decimal denomination, bool allowLegacy = true)
     {
         if (string.Equals(type, "COIN", StringComparison.OrdinalIgnoreCase))
             return Array.IndexOf(CoinDenominations, denomination) >= 0;
         if (string.Equals(type, "BILL", StringComparison.OrdinalIgnoreCase))
-            return Array.IndexOf(BillDenominations, denomination) >= 0;
+            return Array.IndexOf(BillDenominations, denomination) >= 0
+                || (allowLegacy && Array.IndexOf(LegacyBillDenominations, denomination) >= 0);
         return false;
     }
 
@@ -185,7 +234,7 @@ public static class CashDenominationCatalog
         {
             if (row == null) continue;
             string normType = (row.Type ?? string.Empty).Trim().ToUpperInvariant();
-            if (!IsValidDenomination(normType, row.Denomination))
+            if (!IsValidDenomination(normType, row.Denomination, allowLegacy: true))
             {
                 errorMessage = $"Invalid cash denomination: {row.Type} ₱{row.Denomination:0.00}.";
                 return false;
@@ -207,6 +256,17 @@ public static class CashDenominationCatalog
             {
                 target.Quantity = row.Quantity;
                 target.Subtotal = Math.Round(target.Denomination * target.Quantity, 2, MidpointRounding.AwayFromZero);
+            }
+            else if (row.Quantity > 0)
+            {
+                // Preserve non-zero legacy retired banknote quantities (e.g. historical ₱20 bill) without offering them in new defaults
+                normalized.Add(new CashDenominationLineDto
+                {
+                    Type = normType,
+                    Denomination = row.Denomination,
+                    Quantity = row.Quantity,
+                    Subtotal = Math.Round(row.Denomination * row.Quantity, 2, MidpointRounding.AwayFromZero)
+                });
             }
         }
 
@@ -330,6 +390,11 @@ public class XReadingReportDto
     public DateTime OpenedAt { get; set; }
     public DateTime? ClosedAt { get; set; }
     public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
+    public string? BusinessDate { get; set; }
+    public bool IsAnytimeAudit { get; set; }
+    public int ActiveShiftCount { get; set; }
+    public int ClosedShiftCount { get; set; }
+    public List<XReadingCashierSummaryDto> CashierSummaries { get; set; } = new();
     public bool IsReprint { get; set; }
 
     // Non-resetting X-Reading counters (Business Day 4:00 AM scope & Shift scope)
@@ -387,6 +452,17 @@ public class XReadingReportDto
     public bool IsOverallBalanced { get; set; } = true;
     public string OverallStatus { get; set; } = "BALANCED";
     public string? Notes { get; set; }
+}
+
+public class XReadingCashierSummaryDto
+{
+    public string CashierId { get; set; } = string.Empty;
+    public int ShiftCount { get; set; }
+    public int OpenShifts { get; set; }
+    public int ClosedShifts { get; set; }
+    public int TransactionCount { get; set; }
+    public decimal GrossSales { get; set; }
+    public decimal NetSales { get; set; }
 }
 
 public class CloseShiftDto

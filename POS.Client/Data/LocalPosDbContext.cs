@@ -32,6 +32,8 @@ public class LocalPosDbContext : DbContext
     public DbSet<LocalPrinterHardwareConfig> PrinterHardwareConfigs => Set<LocalPrinterHardwareConfig>();
     public DbSet<LocalCashDrawerHardwareEvent> CashDrawerHardwareEvents => Set<LocalCashDrawerHardwareEvent>();
     public DbSet<LocalReceiptPrintJob> ReceiptPrintJobs => Set<LocalReceiptPrintJob>();
+    public DbSet<LocalTransactionVoid> TransactionVoids => Set<LocalTransactionVoid>();
+    public DbSet<LocalCashierClosingRestriction> CashierClosingRestrictions => Set<LocalCashierClosingRestriction>();
 
     private readonly string _dbPath;
     private static readonly System.Collections.Generic.HashSet<string> InitializedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -130,6 +132,19 @@ public class LocalPosDbContext : DbContext
         {
             entity.ToTable("LocalReceiptPrintJobs");
             entity.HasIndex(e => e.TransactionId).IsUnique();
+        });
+        modelBuilder.Entity<LocalTransactionVoid>(entity =>
+        {
+            entity.ToTable("LocalTransactionVoids");
+            entity.HasKey(e => e.ClientVoidId);
+            entity.Property(e => e.ClientVoidId).ValueGeneratedNever();
+            entity.HasIndex(e => e.IdempotencyKey).IsUnique();
+        });
+        modelBuilder.Entity<LocalCashierClosingRestriction>(entity =>
+        {
+            entity.ToTable("LocalCashierClosingRestrictions");
+            entity.HasKey(e => e.ClientRestrictionId);
+            entity.Property(e => e.ClientRestrictionId).ValueGeneratedNever();
         });
     }
 

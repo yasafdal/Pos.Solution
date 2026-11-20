@@ -14,8 +14,13 @@ public static class ZReadingLocalReadiness
         if (pending > 0) blockers.Add($"{pending} local outbox record(s) remain unsynchronized or unresolved.");
         if (await db.CashDrawerShifts.AsNoTracking().AnyAsync(s => s.TerminalId == terminalId && s.Status == "OPEN"))
             blockers.Add("Close and synchronize the local cashier shift before finalization.");
+        if (await db.CashDrawerShifts.AsNoTracking().AnyAsync(s => s.TerminalId == terminalId && s.Status == "CLOSED" &&
+            (!s.ActualCountedBalance.HasValue || (string.IsNullOrEmpty(s.ClosingDenominationsJson) && string.IsNullOrEmpty(s.ClosingOriginalDeclarationJson)))))
+            blockers.Add("One or more closed local shifts are missing required cash accountability (denomination count/declaration).");
         if (await db.CashDrawerMovements.AsNoTracking().AnyAsync(m => m.TerminalId == terminalId && m.SyncStatus != "SYNCED"))
             blockers.Add("Local cash movements remain unsynchronized.");
+        if (await db.TransactionVoids.AsNoTracking().AnyAsync(v => v.TerminalId == terminalId && v.SyncStatus != "SYNCED"))
+            blockers.Add("Local offline transaction voids remain unsynchronized.");
         var acknowledgedIds = db.SyncOutboxes.Where(o => o.EntityType == "Order" && o.Status == "SYNCED").Select(o => o.EntityId);
         if (await db.Orders.AsNoTracking().AnyAsync(o => o.TerminalId == terminalId && !acknowledgedIds.Contains(o.OrderId)))
             blockers.Add("Local sales do not all have synchronized outbox acknowledgements. Resolve them without deleting payloads.");

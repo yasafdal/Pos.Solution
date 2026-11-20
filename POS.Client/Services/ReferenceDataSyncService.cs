@@ -268,28 +268,88 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     termConfigEntity.OpeningFundSource = data.Terminal.OpeningFundSource ?? (data.Terminal.OpeningFundOverride.HasValue
                         ? "TERMINAL_OVERRIDE"
                         : (data.Terminal.DefaultOpeningFund.HasValue ? "OUTLET_DEFAULT" : "UNCONFIGURED"));
-                    termConfigEntity.ClosedBusinessDate = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
-                        ? data.Terminal.ClosedBusinessDate
-                        : (priorConfig != null && !string.IsNullOrWhiteSpace(priorConfig.ClosedBusinessDate) &&
-                           string.CompareOrdinal(priorConfig.ClosedBusinessDate, POS.Shared.Services.BusinessDayClock.GetBusinessDateString(data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow)) >= 0
-                            ? priorConfig.ClosedBusinessDate : null);
+                    termConfigEntity.ClosedBusinessDate = data.Terminal.ClosedBusinessDate;
                     termConfigEntity.ClosingLockedByCashier = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
                         ? data.Terminal.ClosingLockedByCashier
-                        : priorConfig?.ClosingLockedByCashier;
+                        : null;
                     termConfigEntity.ClosingLockedAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
                         ? data.Terminal.ClosingLockedAtUtc
-                        : priorConfig?.ClosingLockedAtUtc;
+                        : null;
                     termConfigEntity.ClosingUnlockAtUtc = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
                         ? data.Terminal.ClosingUnlockAtUtc
-                        : priorConfig?.ClosingUnlockAtUtc;
-                    termConfigEntity.ClosingLockedTickCount64 = priorConfig?.ClosingLockedTickCount64 ?? (!string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate) ? POS.Shared.Services.BusinessDayClock.TickCount64() : null);
+                        : null;
+                    termConfigEntity.ClosingLockedTickCount64 = !string.IsNullOrWhiteSpace(data.Terminal.ClosedBusinessDate)
+                        ? (priorConfig?.ClosingLockedTickCount64 ?? POS.Shared.Services.BusinessDayClock.TickCount64())
+                        : null;
                     termConfigEntity.LastKnownServerUtc = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow;
                     termConfigEntity.LastKnownServerTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64();
                     termConfigEntity.LastSyncVersion = data.Version;
                     termConfigEntity.LastSyncAt = data.ServerTimestamp != default ? data.ServerTimestamp : DateTime.UtcNow;
 
+                    // Sync active cashier-level closing restrictions while preserving unsynced local restrictions/reopens
+                    var refBizDate = POS.Shared.Services.BusinessDayClock.GetBusinessDateString(
+                        data.ServerTimestamp != default ? data.ServerTimestamp : POS.Shared.Services.BusinessDayClock.UtcNow());
+                    var existingLocalRestrictions = await db.CashierClosingRestrictions
+                        .Where(r => r.TerminalId == data.Terminal.TerminalId && r.BusinessDate == refBizDate)
+                        .ToListAsync();
+                    var serverRestrictions = data.ActiveCashierRestrictions ?? new List<CashierClosingRestrictionDto>();
+
+                    foreach (var localR in existingLocalRestrictions)
+                    {
+                        if (localR.SyncStatus == "SYNCED" &&
+                            !serverRestrictions.Any(sr =>
+                                string.Equals(sr.CashierId, localR.CashierId, StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(sr.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            localR.Status = "REOPENED";
+                        }
+                    }
+
+                    foreach (var sr in serverRestrictions)
+                    {
+                        var existing = existingLocalRestrictions.FirstOrDefault(l =>
+                            (sr.RestrictionId > 0 && l.ServerRestrictionId == sr.RestrictionId) ||
+                            (!string.IsNullOrWhiteSpace(sr.ClientCloseId) && l.ClientCloseId == sr.ClientCloseId) ||
+                            string.Equals(l.CashierId, sr.CashierId, StringComparison.OrdinalIgnoreCase));
+                        if (existing == null)
+                        {
+                            db.CashierClosingRestrictions.Add(new LocalCashierClosingRestriction
+                            {
+                                ClientRestrictionId = !string.IsNullOrWhiteSpace(sr.ClientRestrictionId) ? sr.ClientRestrictionId : Guid.NewGuid().ToString("N"),
+                                ServerRestrictionId = sr.RestrictionId > 0 ? sr.RestrictionId : null,
+                                BranchId = sr.BranchId,
+                                TerminalId = sr.TerminalId,
+                                CashierId = sr.CashierId,
+                                BusinessDate = sr.BusinessDate,
+                                ShiftId = sr.ShiftId,
+                                ClientShiftId = sr.ClientShiftId,
+                                ClientCloseId = sr.ClientCloseId,
+                                ClosedAtUtc = POS.Shared.Services.BusinessDayClock.NormalizeUtc(sr.ClosedAtUtc),
+                                UnlockAtUtc = POS.Shared.Services.BusinessDayClock.NormalizeUtc(sr.UnlockAtUtc),
+                                ClosedAtTickCount64 = POS.Shared.Services.BusinessDayClock.TickCount64(),
+                                Status = sr.Status,
+                                ReopenedBy = sr.ReopenedBy,
+                                ReopenedAtUtc = sr.ReopenedAtUtc,
+                                ReopenReason = sr.ReopenReason,
+                                SyncStatus = "SYNCED"
+                            });
+                        }
+                        else if (existing.SyncStatus == "SYNCED")
+                        {
+                            existing.ServerRestrictionId = sr.RestrictionId > 0 ? sr.RestrictionId : existing.ServerRestrictionId;
+                            existing.Status = sr.Status;
+                            existing.UnlockAtUtc = POS.Shared.Services.BusinessDayClock.NormalizeUtc(sr.UnlockAtUtc);
+                            existing.ReopenedBy = sr.ReopenedBy;
+                            existing.ReopenedAtUtc = sr.ReopenedAtUtc;
+                            existing.ReopenReason = sr.ReopenReason;
+                        }
+                    }
+
                     if (data.Cashiers != null)
                     {
+                        var syncedUtc = data.ServerTimestamp != default
+                            ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(data.ServerTimestamp)
+                            : POS.Shared.Services.BusinessDayClock.UtcNow();
                         foreach (var cashier in data.Cashiers)
                         {
                             db.Cashiers.Add(new LocalCashier
@@ -297,7 +357,8 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                                 UserId = cashier.UserId,
                                 Username = cashier.Username,
                                 Role = cashier.Role,
-                                PinHash = cashier.PinHash
+                                PinHash = cashier.PinHash,
+                                SyncedAtUtc = syncedUtc
                             });
                         }
                     }

@@ -34,6 +34,10 @@ public class VoidResponseDto
     public DateTime VoidedAt { get; set; }
     public string Status { get; set; } = null!;
     public string? ReversalReference { get; set; }
+    public string? ClientVoidId { get; set; }
+    public bool IsOfflinePendingSync { get; set; }
+    public decimal CashRefundAmount { get; set; }
+    public decimal NonCashPendingManualRefundAmount { get; set; }
 }
 
 public class ReturnRequestDto

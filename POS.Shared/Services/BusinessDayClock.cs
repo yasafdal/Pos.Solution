@@ -352,15 +352,39 @@ public static class BusinessDayClock
             parsedClosedDate = GetBusinessDate(lockedAtUtc.Value);
         }
 
+        var restrictedCashiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (additionalClosedCashiersToday != null)
+        {
+            foreach (var c in additionalClosedCashiersToday)
+            {
+                if (!string.IsNullOrWhiteSpace(c))
+                    restrictedCashiers.Add(c.Trim());
+            }
+        }
+
         if (!parsedClosedDate.HasValue)
         {
+            DateTime effectiveNowNoTermLock = authoritativeServerUtc.HasValue
+                ? DateTime.SpecifyKind(authoritativeServerUtc.Value, DateTimeKind.Utc)
+                : currentDeviceUtc;
+            string activeBizDate = GetBusinessDateString(effectiveNowNoTermLock);
+            DateTime activeUnlockUtc = GetNextBusinessDayStartUtc(effectiveNowNoTermLock);
+            bool cashierBlockedOnly = !string.IsNullOrWhiteSpace(candidateCashierUsername)
+                && restrictedCashiers.Contains(candidateCashierUsername.Trim());
+            string unlockFmtOnly = ToManilaTime(activeUnlockUtc).ToString("yyyy-MM-dd hh:mm tt", CultureInfo.InvariantCulture) + " (Asia/Manila)";
+
             return new TerminalClosingLockDto
             {
                 TerminalId = terminalId,
                 IsTerminalLocked = false,
-                IsCashierRestricted = false,
-                CurrentBusinessDate = GetBusinessDateString(authoritativeServerUtc ?? currentDeviceUtc),
-                ServerUtcNow = authoritativeServerUtc
+                IsCashierRestricted = cashierBlockedOnly,
+                CurrentBusinessDate = activeBizDate,
+                RestrictedCashiers = restrictedCashiers.ToList(),
+                UnlockAtUtc = restrictedCashiers.Count > 0 ? activeUnlockUtc : null,
+                ServerUtcNow = authoritativeServerUtc,
+                CashierRestrictionMessage = cashierBlockedOnly
+                    ? $"Cashier '{candidateCashierUsername!.Trim()}' has already completed Close Cashier on this terminal for business date {activeBizDate} and cannot log in or open another session on this terminal until {unlockFmtOnly}."
+                    : null
             };
         }
 
@@ -371,18 +395,6 @@ public static class BusinessDayClock
         DateTime? normalizedLockedAtUtc = lockedAtUtc.HasValue
             ? DateTime.SpecifyKind(lockedAtUtc.Value, DateTimeKind.Utc)
             : null;
-
-        var restrictedCashiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(lockedByCashier))
-            restrictedCashiers.Add(lockedByCashier.Trim());
-        if (additionalClosedCashiersToday != null)
-        {
-            foreach (var c in additionalClosedCashiersToday)
-            {
-                if (!string.IsNullOrWhiteSpace(c))
-                    restrictedCashiers.Add(c.Trim());
-            }
-        }
 
         bool isLocked = false;
         bool clockTamperDetected = false;
@@ -445,8 +457,8 @@ public static class BusinessDayClock
         }
 
         string closedDateCanonical = parsedClosedDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        bool isCandidateRestricted = isLocked
-            && !string.IsNullOrWhiteSpace(candidateCashierUsername)
+        string effectiveBusinessDate = GetBusinessDateString(effectiveNowUtc);
+        bool isCandidateRestricted = !string.IsNullOrWhiteSpace(candidateCashierUsername)
             && restrictedCashiers.Contains(candidateCashierUsername.Trim());
 
         string unlockManilaFormatted = ToManilaTime(effectiveUnlockUtc).ToString("yyyy-MM-dd hh:mm tt", CultureInfo.InvariantCulture) + " (Asia/Manila)";
@@ -456,13 +468,16 @@ public static class BusinessDayClock
         if (isLocked)
         {
             lockMessage = clockTamperDetected
-                ? $"POS Terminal is closed and locked for business day {closedDateCanonical}. Unverified device clock adjustment detected; terminal remains locked until verified 4:00 AM ({unlockManilaFormatted})."
-                : $"This POS Terminal is closed and locked for business day {closedDateCanonical}. No cashier login or transactions are permitted until {unlockManilaFormatted}.";
+                ? $"POS Terminal is finalized (Z-Reading) and locked for business day {closedDateCanonical}. Unverified device clock adjustment detected; terminal remains locked until verified 4:00 AM ({unlockManilaFormatted})."
+                : $"Z-Reading has been finalized for this POS Terminal for business day {closedDateCanonical}. No cashier login, new sessions, or sales are permitted until {unlockManilaFormatted}.";
+        }
 
-            if (isCandidateRestricted)
-            {
-                cashierMessage = $"Cashier '{candidateCashierUsername}' completed Cashier Closing on this Terminal for business day {closedDateCanonical} and is restricted from logging in or starting another session until {unlockManilaFormatted}.";
-            }
+        if (isCandidateRestricted)
+        {
+            string cDate = isLocked ? closedDateCanonical : effectiveBusinessDate;
+            DateTime cUnlock = isLocked ? effectiveUnlockUtc : GetNextBusinessDayStartUtc(effectiveNowUtc);
+            string cUnlockFmt = ToManilaTime(cUnlock).ToString("yyyy-MM-dd hh:mm tt", CultureInfo.InvariantCulture) + " (Asia/Manila)";
+            cashierMessage = $"Cashier '{candidateCashierUsername!.Trim()}' has already completed Close Cashier on this terminal for business date {cDate} and cannot log in or open another session on this terminal until {cUnlockFmt}.";
         }
 
         return new TerminalClosingLockDto
@@ -472,11 +487,11 @@ public static class BusinessDayClock
             IsCashierRestricted = isCandidateRestricted,
             ClockTamperDetected = clockTamperDetected,
             ClosedBusinessDate = isLocked ? closedDateCanonical : null,
-            CurrentBusinessDate = GetBusinessDateString(effectiveNowUtc),
+            CurrentBusinessDate = effectiveBusinessDate,
             LockedByCashier = isLocked ? lockedByCashier : null,
-            RestrictedCashiers = isLocked ? restrictedCashiers.ToList() : new List<string>(),
+            RestrictedCashiers = restrictedCashiers.ToList(),
             LockedAtUtc = isLocked ? normalizedLockedAtUtc : null,
-            UnlockAtUtc = isLocked ? effectiveUnlockUtc : null,
+            UnlockAtUtc = isLocked ? effectiveUnlockUtc : (restrictedCashiers.Count > 0 ? GetNextBusinessDayStartUtc(effectiveNowUtc) : null),
             ServerUtcNow = authoritativeServerUtc,
             LockMessage = lockMessage,
             CashierRestrictionMessage = cashierMessage

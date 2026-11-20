@@ -29,15 +29,19 @@ try {
     dotnet publish POS.Client\POS.Client.csproj -f net10.0-android -c Release -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false -p:DebugType=none -p:DebugSymbols=false
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
-    $alignedApk = Join-Path $RepoRoot "POS.Client\bin\Release\net10.0-android\$appId-aligned.apk"
-    if (-not (Test-Path $alignedApk)) {
-        throw "Aligned APK not found at $alignedApk"
+    $unsignedApk = Join-Path $RepoRoot "POS.Client\bin\Release\net10.0-android\$appId.apk"
+    if (-not (Test-Path $unsignedApk)) {
+        throw "Unsigned APK not found at $unsignedApk"
     }
 
+    $alignedApk = Join-Path $RepoRoot "POS.Client\bin\Release\net10.0-android\$appId-aligned.apk"
     $sdkBuildTools = "C:\Program Files (x86)\Android\android-sdk\build-tools\36.0.0"
     $zipalign = Join-Path $sdkBuildTools "zipalign.exe"
     $apksigner = Join-Path $sdkBuildTools "apksigner.bat"
     $env:JAVA_HOME = "C:\Program Files\Android\openjdk\jdk-21.0.8"
+
+    & $zipalign -f -p 4 $unsignedApk $alignedApk
+    if ($LASTEXITCODE -ne 0) { throw "zipalign failed on $unsignedApk" }
 
     & $zipalign -c 4 $alignedApk
     if ($LASTEXITCODE -ne 0) { throw "zipalign verification failed on $alignedApk" }

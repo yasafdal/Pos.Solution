@@ -11,11 +11,12 @@ namespace POS.Shared.Constants;
 public static class PosPermissions
 {
     public const string ViewTransactionHistory = "transactions.history.view";
+    public const string ApproveVoidTransaction = "transactions.void.approve";
     public const string TransactionHistoryPolicy = "CanViewTransactionHistory";
     public const string AuthorizedTransactionHistoryRoles = "Admin,Manager,Senior Cashier,SeniorCashier";
     public const string CashierRoleClaimType = "cashier_role";
 
-    private static readonly IReadOnlyList<string> SupervisorPermissions = new[] { ViewTransactionHistory };
+    private static readonly IReadOnlyList<string> SupervisorPermissions = new[] { ViewTransactionHistory, ApproveVoidTransaction };
     private static readonly IReadOnlyList<string> NoPermissions = Array.Empty<string>();
 
     public static bool IsSupervisorRole(string? role)
@@ -33,6 +34,14 @@ public static class PosPermissions
         role.Trim().Equals("Admin", StringComparison.OrdinalIgnoreCase);
 
     public static bool CanViewTransactionHistory(string? role) => IsSupervisorRole(role);
+
+    public static bool CanApproveVoid(string? role) => IsSupervisorRole(role);
+
+    public static bool CanApproveVoid(ClaimsPrincipal? user)
+    {
+        if (user?.Identity?.IsAuthenticated != true) return false;
+        return CanApproveVoid(ResolveEffectiveRole(user));
+    }
 
     public static string? ResolveEffectiveRole(ClaimsPrincipal? user)
     {
@@ -74,6 +83,8 @@ public static class PosPermissions
     {
         if (string.Equals(permission, ViewTransactionHistory, StringComparison.OrdinalIgnoreCase))
             return CanViewTransactionHistory(role);
+        if (string.Equals(permission, ApproveVoidTransaction, StringComparison.OrdinalIgnoreCase))
+            return CanApproveVoid(role);
         return false;
     }
 
@@ -81,6 +92,8 @@ public static class PosPermissions
     {
         if (string.Equals(permission, ViewTransactionHistory, StringComparison.OrdinalIgnoreCase))
             return CanViewTransactionHistory(user);
+        if (string.Equals(permission, ApproveVoidTransaction, StringComparison.OrdinalIgnoreCase))
+            return CanApproveVoid(user);
         return false;
     }
 
