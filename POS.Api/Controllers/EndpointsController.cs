@@ -1,17 +1,21 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using POS.Shared.Constants;
 using System.Reflection;
 
 namespace POS.Api.Controllers;
 
 [Route("api/endpoints")]
 [ApiController]
-[Authorize(Roles = "Admin")]
+[Authorize(Policy = PosPermissions.AgresSystemAdminPolicy)]
 public class EndpointsController : ControllerBase
 {
     [HttpGet]
     public IActionResult GetEndpoints()
     {
+        if (!PosPermissions.IsAgresSystemAdmin(User))
+            return Forbid();
+
         var assembly = Assembly.GetExecutingAssembly();
         var controllers = assembly.GetTypes()
             .Where(type => typeof(ControllerBase).IsAssignableFrom(type) && !type.IsAbstract)

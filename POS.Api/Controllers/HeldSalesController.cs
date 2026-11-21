@@ -15,7 +15,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/held-sales")]
 [ApiController]
-[Authorize]
+[Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
 public class HeldSalesController(PosDbContext context) : ControllerBase
 {
     private async Task<int> ExpireStaleHeldSalesAsync(

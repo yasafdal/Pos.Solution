@@ -1,6 +1,6 @@
 @page "/licensing"
 @page "/manage-licenses"
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = POS.Shared.Constants.PosPermissions.AgresSystemAdminPolicy)]
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
 @using POS.Shared.Services

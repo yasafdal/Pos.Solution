@@ -21,4 +21,5 @@ public interface ILicensingApiService
     Task<List<LicenseRenewalHistoryDto>> GetRenewalHistoryAsync(int? terminalId = null);
     Task<List<LicenseDeviceHistoryDto>> GetDeviceHistoryAsync(int? terminalId = null);
     Task<List<LicenseAuditLogDto>> GetAuditLogsAsync(int? terminalId = null, int limit = 100);
+    Task<List<ClientLicenseSummaryDto>> GetClientLicenseSummaryAsync();
 }

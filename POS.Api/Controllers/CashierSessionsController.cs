@@ -9,7 +9,7 @@ namespace POS.Api.Controllers
 {
     [Route("api/cashier-sessions")]
     [ApiController]
-    [Authorize]
+    [Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
     public class CashierSessionsController : ControllerBase
     {
         private readonly PosDbContext _context;

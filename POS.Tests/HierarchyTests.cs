@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -5,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using POS.Api.Controllers;
 using POS.Api.Models;
 using POS.Shared.Models;
+using System.Security.Claims;
 
 namespace POS.Tests;
 
@@ -436,6 +438,19 @@ public static partial class Program
         }).Build();
 
         var terminalApi = new TerminalsController(db, config);
+        terminalApi.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                [
+                    new Claim(ClaimTypes.Name, "agres_sysadmin"),
+                    new Claim(ClaimTypes.NameIdentifier, "agres:1"),
+                    new Claim(ClaimTypes.Role, POS.Shared.Constants.PosPermissions.AgresSystemAdminRole),
+                    new Claim(POS.Shared.Constants.PosPermissions.IdentityScopeClaimType, POS.Shared.Constants.PosPermissions.PlatformScope)
+                ], "TestAuth"))
+            }
+        };
 
         // 1. Create terminal with BIR details (server generates ONLY 6-digit ActivationCode; Uuid is initially null)
         var createResult = await terminalApi.CreateTerminal(new TerminalDto

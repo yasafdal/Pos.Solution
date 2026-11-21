@@ -8,7 +8,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/offline")]
 [ApiController]
-[Authorize]
+[Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
 public class OfflineReferenceDataController(PosDbContext context) : ControllerBase
 {
     [HttpPost("reference-data")]
@@ -16,6 +16,7 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         [FromQuery] int terminalId,
         [FromBody] OfflineReferenceDataRequestDto? request = null)
     {
+        if (!POS.Shared.Constants.PosPermissions.IsClientUser(User)) return Forbid();
         if (terminalId <= 0 && request?.TerminalId > 0) terminalId = request.TerminalId;
         await POS.Api.Services.ReceiptLogoStorage.EnsureBranchColumnsAsync(context);
         var outlet = await context.Terminals
@@ -204,17 +205,19 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
         }
         await allocation.CommitAsync();
 
+        int terminalOrgId = outlet.Branch?.OrganizationId ?? 1;
         var usersWithPins = await context.Users
             .AsNoTracking()
-            .Where(u => u.PinCode != null && u.PinCode != "")
+            .Where(u => u.OrganizationId == terminalOrgId && u.IsActive && u.PinCode != null && u.PinCode != "")
             .ToListAsync();
 
         var cashiers = usersWithPins
+            .Where(u => POS.Shared.Constants.PosPermissions.IsApprovedClientRole(u.Role))
             .Select(u => new OfflineCashierDto
             {
                 UserId = u.UserId,
                 Username = u.Username,
-                Role = u.Role,
+                Role = POS.Shared.Constants.PosPermissions.NormalizeClientRole(u.Role) ?? u.Role,
                 PinHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(u.PinCode!.Trim())))
             })
             .ToList();

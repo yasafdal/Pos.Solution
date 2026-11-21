@@ -53,6 +53,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization(options =>
 {
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.AgresSystemAdminPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(ctx.User)));
+
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.ClientAdminPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsClientAdmin(ctx.User)));
+
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.ClientUserManagementPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsClientUserManager(ctx.User)));
+
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.ClientOperationsPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsClientUser(ctx.User)));
+
     options.AddPolicy(POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy, policy =>
         policy.RequireAuthenticatedUser()
               .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(ctx.User)));
@@ -142,6 +158,7 @@ else
             ", conn);
             cmd.ExecuteNonQuery();
             POS.Api.MigrationRunner.ApplyLicensingSchema(conn);
+            POS.Api.MigrationRunner.ApplyAgresIdentitySchema(conn);
         }
     }
     catch { /* Non-fatal if DB is unreachable at startup */ }

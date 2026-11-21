@@ -1,0 +1,134 @@
+.commercial-grid ::deep table.quickgrid tbody tr:not([aria-rowindex]) {
+    display: none !important;
+}
+
+.commercial-grid ::deep table.quickgrid {
+    width: 100% !important;
+    min-width: 720px !important;
+    border-collapse: collapse !important;
+    margin-bottom: 0 !important;
+    table-layout: fixed !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th {
+    background-color: #f8fafc !important;
+    color: #475569 !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    padding: 0.85rem 0.5rem !important;
+    border-top: none !important;
+    border-bottom: 2px solid #e2e8f0 !important;
+    white-space: nowrap !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th button {
+    color: inherit !important;
+    font-weight: inherit !important;
+    font-size: inherit !important;
+    text-transform: inherit !important;
+    letter-spacing: inherit !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    cursor: pointer !important;
+    display: inline-flex !important;
+    align-items: center !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td {
+    padding: 0.85rem 0.5rem !important;
+    vertical-align: middle !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    color: #1e293b !important;
+    font-size: 0.9rem !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(1),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(1) {
+    width: 90px !important;
+    text-align: left !important;
+    padding-left: 0.85rem !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(2),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(2) {
+    width: auto !important;
+    text-align: left !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(2) {
+    font-weight: 600 !important;
+    color: #0f172a !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(3),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(3) {
+    width: 155px !important;
+    text-align: left !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(4),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(4) {
+    width: 115px !important;
+    text-align: center !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(5),
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(5) {
+    width: 110px !important;
+    text-align: center !important;
+}
+
+.commercial-grid ::deep table.quickgrid thead th:nth-child(6),
+.commercial-grid ::deep table.quickgrid thead th:last-child,
+.commercial-grid ::deep table.quickgrid tbody td:nth-child(6),
+.commercial-grid ::deep table.quickgrid tbody td:last-child {
+    width: 110px !important;
+    text-align: right !important;
+    padding-right: 1rem !important;
+}
+
+::deep .actions-header-wrap,
+::deep .actions-cell-wrap {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+::deep .actions-header-text {
+    display: inline-flex !important;
+    justify-content: center !important;
+    width: 72px !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    color: #475569 !important;
+}
+
+.commercial-grid ::deep table.quickgrid tbody tr:hover {
+    background-color: #f8fafc !important;
+}
+
+::deep .actions-cell-wrap .btn,
+.commercial-grid ::deep .btn-sm {
+    width: 32px;
+    height: 32px;
+    padding: 0 !important;
+    border-radius: 5px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 0.9rem !important;
+}
+
+.modal {
+    background-color: rgba(15, 23, 42, 0.5) !important;
+    backdrop-filter: blur(3px) !important;
+}

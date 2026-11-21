@@ -1,179 +1,428 @@
 ﻿@page "/users"
-@inject IUserService UserService
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize(Roles = "Admin, Manager")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using CurrieTechnologies.Razor.SweetAlert2
+@using POS.Shared.Constants
+@using POS.Shared.Interfaces
+@using POS.Shared.Models
+@inject IUserService UserService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject SweetAlertService Swal
+@attribute [Authorize(Policy = PosPermissions.ClientUserManagementPolicy)]
 
-<div class="container-fluid py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+<PageTitle>Users - POS</PageTitle>
+
+<div class="w-100 py-2">
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
         <div>
-            <h3 class="fw-bold mb-0">User Management</h3>
-            <p class="text-muted small">Manage cashier and admin accounts for your POS system</p>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Client Users</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Manage cashier, manager, and client admin accounts for your organization</span>
         </div>
-        <button class="btn btn-primary rounded-pill px-4" @onclick="OpenModal">
-            + Add New User
-        </button>
+        <div>
+            <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" disabled="@busy" @onclick="OpenAddModal">
+                Add User
+            </button>
+        </div>
     </div>
 
-    <!-- Users Table -->
-    <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th class="ps-4">User ID</th>
-                            <th>Username</th>
-                            <th>Role</th>
-                            <th>PIN Code</th>
-                            <th class="text-end pe-4">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @if (users.Any())
+    @if (loadError != null)
+    {
+        <div class="alert alert-danger d-flex align-items-center justify-content-between rounded-3 py-2 px-3 mb-3" role="alert">
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <span>@loadError</span>
+            </div>
+            <button class="btn btn-sm btn-outline-danger fw-semibold" @onclick="LoadUsers">
+                <i class="bi bi-arrow-clockwise me-1"></i> Retry
+            </button>
+        </div>
+    }
+
+    <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+        <span class="badge bg-light text-secondary border px-3 py-2 fw-semibold">
+            @FilteredUsers.Count() organization user(s)
+        </span>
+        <div class="position-relative" style="width: 280px;">
+            <i class="bi bi-search position-absolute text-muted" style="left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; font-size: 0.85rem;"></i>
+            <input type="search" class="form-control form-control-sm rounded ps-4 bg-white shadow-none border"
+                   placeholder="Search username or role..."
+                   aria-label="Search client users"
+                   @bind="search"
+                   @bind:event="oninput"
+                   @bind:after="ResetPage" />
+        </div>
+    </div>
+
+    <div class="w-100">
+        @if (isLoading)
+        {
+            <div class="text-center py-5 text-muted">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                Loading organization users...
+            </div>
+        }
+        else if (!FilteredUsers.Any())
+        {
+            <div class="card border rounded-3 p-5 text-center bg-white shadow-sm">
+                <div class="text-muted mb-3">
+                    <i class="bi bi-people fs-1 text-secondary"></i>
+                </div>
+                <h5 class="fw-bold text-dark mb-1">No Users Found</h5>
+                <p class="text-secondary small mb-3">
+                    @(string.IsNullOrWhiteSpace(search) ? "No organization users have been created yet." : $"No users match \"{search}\".")
+                </p>
+                <div>
+                    @if (!string.IsNullOrWhiteSpace(search))
+                    {
+                        <button class="btn btn-outline-secondary btn-sm rounded px-3 me-2" @onclick="ClearSearch">Clear Search</button>
+                    }
+                    <button class="btn btn-primary btn-sm rounded px-3" disabled="@busy" @onclick="OpenAddModal">Add User</button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="commercial-grid table-responsive w-100">
+                <QuickGrid Items="@FilteredUsers" Pagination="@pagination" Theme="commercial">
+                    <PropertyColumn Property="@(u => u.UserId)" Title="ID" Sortable="true" Align="Align.Left" />
+                    <PropertyColumn Property="@(u => u.Username)" Title="Username" Sortable="true" Align="Align.Left" />
+
+                    <TemplateColumn Title="Role" Context="user" Align="Align.Left">
+                        <span class="badge @(user.Role == "Admin" ? "bg-danger-subtle text-danger" : user.Role == "Manager" ? "bg-warning-subtle text-dark" : "bg-primary-subtle text-primary") border px-2 py-1">
+                            @user.Role
+                        </span>
+                    </TemplateColumn>
+
+                    <TemplateColumn Title="Quick PIN" Context="user" Align="Align.Center">
+                        @if (!string.IsNullOrEmpty(user.PinCode))
                         {
-                            @foreach (var user in users)
-                            {
-                                <tr>
-                                    <td class="ps-4 fw-semibold">#@user.UserId</td>
-                                    <td>@user.Username</td>
-                                    <td>
-                                        <span class="badge @(user.Role == "Admin" ? "bg-danger-subtle text-danger" : "bg-primary-subtle text-primary") border px-3 py-1">
-                                            @user.Role
-                                        </span>
-                                    </td>
-                                    <td><code>@(user.PinCode ?? "N/A")</code></td>
-                                    <td class="text-end pe-4">
-                                        <button class="btn btn-sm btn-danger square-rectangle p-2" @onclick="() => DeleteUser(user.UserId)">
-                                           <i class="bi bi-trash"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                            }
+                            <span class="badge bg-light text-dark border font-monospace">Configured</span>
                         }
                         else
                         {
-                            <tr>
-                                <td colspan="5" class="text-center py-4 text-muted">No users found.</td>
-                            </tr>
+                            <span class="text-muted small">None</span>
                         }
-                    </tbody>
-                </table>
+                    </TemplateColumn>
+
+                    <TemplateColumn Title="Status" Context="user" Align="Align.Center">
+                        <span class="badge @(user.IsActive ? "bg-success" : "bg-secondary")">
+                            @(user.IsActive ? "Active" : "Inactive")
+                        </span>
+                    </TemplateColumn>
+
+                    <TemplateColumn Title="Actions" Context="user" Align="Align.Right">
+                        <HeaderTemplate>
+                            <div class="actions-header-wrap"><span class="actions-header-text">Actions</span></div>
+                        </HeaderTemplate>
+                        <ChildContent>
+                            <div class="actions-cell-wrap d-flex justify-content-end gap-2">
+                                @if (CanManageUser(user))
+                                {
+                                    <button type="button" class="btn btn-sm btn-warning text-dark" disabled="@busy" title="Edit User" aria-label="Edit User" @onclick="() => OpenEditModal(user)">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-danger text-white" disabled="@busy" title="Delete User" aria-label="Delete User" @onclick="() => DeleteUser(user)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                }
+                            </div>
+                        </ChildContent>
+                    </TemplateColumn>
+                </QuickGrid>
             </div>
-        </div>
+
+            <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center pt-3 mt-1 border-top gap-3">
+                <div class="text-secondary small fw-medium">@GetShowingRangeText()</div>
+                <nav aria-label="Users pagination">
+                    <ul class="pagination mb-0">
+                        <li class="page-item @(pagination.CurrentPageIndex == 0 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex - 1)" disabled="@(pagination.CurrentPageIndex == 0)">Previous</button>
+                        </li>
+                        @for (int i = 0; i < TotalPages; i++)
+                        {
+                            var idx = i;
+                            <li class="page-item @(pagination.CurrentPageIndex == idx ? "active" : "")">
+                                <button type="button" class="page-link" @onclick="() => GoToPage(idx)">@(idx + 1)</button>
+                            </li>
+                        }
+                        <li class="page-item @(pagination.CurrentPageIndex >= TotalPages - 1 ? "disabled" : "")">
+                            <button type="button" class="page-link" @onclick="() => GoToPage(pagination.CurrentPageIndex + 1)" disabled="@(pagination.CurrentPageIndex >= TotalPages - 1)">Next</button>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        }
     </div>
 </div>
 
-<!-- Modal -->
+<!-- Create / Edit User Modal -->
 @if (isModalOpen)
 {
-    <div class="modal fade show d-block" style="background-color: rgba(15, 23, 42, 0.5);" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 rounded-4 shadow-lg">
-                <div class="modal-header border-bottom px-4">
-                    <h5 class="fw-bold mb-0">Create New User</h5>
-                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+    <div class="modal fade show d-block" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="clientUserModalTitle">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <EditForm Model="@formModel" OnValidSubmit="HandleSubmit" class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <DataAnnotationsValidator />
+
+                <div class="modal-header border-bottom px-4 py-3 d-flex justify-content-between align-items-center bg-white">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="d-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-3" style="width: 42px; height: 42px;">
+                            <i class="bi bi-people fs-4"></i>
+                        </div>
+                        <div>
+                            <h5 id="clientUserModalTitle" class="fw-bold text-dark mb-0">@(editingUserId.HasValue ? "Edit Client User" : "Add Client User")</h5>
+                            <small class="text-secondary" style="font-size: 0.85rem;">
+                                @(editingUserId.HasValue ? $"Update role, PIN, or status for {formModel.Username}" : "Create a new organization user account")
+                            </small>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" disabled="@busy" @onclick="CloseModal" aria-label="Close"></button>
                 </div>
-                <EditForm Model="@newUser" OnValidSubmit="HandleSubmit">
-                    <DataAnnotationsValidator />
-                    <div class="modal-body px-4 py-3">
-                        @if (!string.IsNullOrEmpty(errorMessage))
-                        {
-                            <div class="alert alert-danger py-2 mb-3">@errorMessage</div>
-                        }
 
-                        <div class="mb-3">
-                            <label class="form-label small fw-semibold">Username <span class="text-danger">*</span></label>
-                            <InputText @bind-Value="newUser.Username" class="form-control rounded-3" placeholder="e.g. john_cashier" />
-                            <ValidationMessage For="@(() => newUser.Username)" class="text-danger small" />
+                <div class="modal-body px-4 py-3">
+                    @if (!string.IsNullOrEmpty(modalError))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">@modalError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label for="userUsername" class="form-label text-dark fw-semibold small mb-1">Username <span class="text-danger">*</span></label>
+                        <InputText id="userUsername" @bind-Value="formModel.Username" class="form-control rounded bg-white shadow-none border" placeholder="e.g. john_cashier" />
+                        <ValidationMessage For="@(() => formModel.Username)" class="text-danger small" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="userPassword" class="form-label text-dark fw-semibold small mb-1">
+                            Password @if (!editingUserId.HasValue) { <span class="text-danger">*</span> }
+                        </label>
+                        <InputText id="userPassword" @bind-Value="formModel.Password" type="password" class="form-control rounded bg-white shadow-none border" placeholder="@(editingUserId.HasValue ? "Leave blank to keep current password" : "At least 6 characters")" />
+                        <ValidationMessage For="@(() => formModel.Password)" class="text-danger small" />
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-6">
+                            <label for="userRole" class="form-label text-dark fw-semibold small mb-1">Client Role <span class="text-danger">*</span></label>
+                            <InputSelect id="userRole" @bind-Value="formModel.Role" class="form-select rounded bg-white shadow-none border">
+                                <option value="Cashier">Cashier</option>
+                                <option value="Senior Cashier">Senior Cashier</option>
+                                <option value="Manager">Manager</option>
+                                @if (isCallerClientAdmin)
+                                {
+                                    <option value="Admin">Client Admin</option>
+                                }
+                            </InputSelect>
                         </div>
-
-                        <div class="mb-3">
-                            <label class="form-label small fw-semibold">Password <span class="text-danger">*</span></label>
-                            <InputText @bind-Value="newUser.Password" type="password" class="form-control rounded-3" placeholder="At least 6 characters" />
-                            <ValidationMessage For="@(() => newUser.Password)" class="text-danger small" />
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Role</label>
-                                <InputSelect @bind-Value="newUser.Role" class="form-select rounded-3">
-                                    <option value="Cashier">Cashier</option>
-                                    <option value="Senior Cashier">Senior_Cashier</option>
-                                    <option value="Manager">Manager</option>
-                                    <option value="Admin">Admin</option>
-                                </InputSelect>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Quick PIN (Optional)</label>
-                                <InputText @bind-Value="newUser.PinCode" class="form-control rounded-3" placeholder="e.g. 1234" maxlength="10" />
-                            </div>
+                        <div class="col-6">
+                            <label for="userPin" class="form-label text-dark fw-semibold small mb-1">Quick PIN (Optional)</label>
+                            <InputText id="userPin" @bind-Value="formModel.PinCode" type="password" class="form-control rounded bg-white shadow-none border" placeholder="@(editingUserId.HasValue ? "Enter new PIN to change" : "e.g. 1234")" maxlength="10" />
                         </div>
                     </div>
-                    <div class="modal-footer border-top px-4">
-                        <button type="button" class="btn btn-light rounded-pill px-4" @onclick="CloseModal">Cancel</button>
-                        <button type="submit" class="btn btn-primary rounded-pill px-4" disabled="@isSaving">
-                            @(isSaving ? "Saving..." : "Create Account")
-                        </button>
-                    </div>
-                </EditForm>
-            </div>
+
+                    @if (editingUserId.HasValue)
+                    {
+                        <div class="p-3 bg-light rounded-3 border d-flex align-items-center justify-content-between">
+                            <label for="userActive" class="form-check-label fw-semibold text-dark small mb-0">Account Active</label>
+                            <div class="form-check form-switch mb-0">
+                                <InputCheckbox id="userActive" @bind-Value="formModel.IsActive" class="form-check-input" />
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="modal-footer border-top bg-light px-4 py-3 d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-outline-secondary rounded px-4 fw-medium" disabled="@busy" @onclick="CloseModal">Cancel</button>
+                    <button type="submit" class="btn btn-primary rounded px-4 fw-bold shadow-sm" disabled="@busy">
+                        @(busy ? "Saving..." : "Save")
+                    </button>
+                </div>
+            </EditForm>
         </div>
     </div>
 }
 
 @code {
     private List<UserDto> users = new();
-    private CreateUserDto newUser = new();
-    private bool isModalOpen = false;
-    private bool isSaving = false;
-    private string? errorMessage;
+    private readonly PaginationState pagination = new() { ItemsPerPage = 10 };
+    private string search = string.Empty;
+    private string? loadError;
+    private bool isLoading = true;
+    private bool busy;
+    private bool isCallerClientAdmin;
+
+    private bool isModalOpen;
+    private int? editingUserId;
+    private UpdateUserDto formModel = new();
+    private string? modalError;
+
+    private IQueryable<UserDto> FilteredUsers => users
+        .Where(u => PosPermissions.IsApprovedClientRole(u.Role))
+        .Where(u => string.IsNullOrWhiteSpace(search) ||
+                    u.Username.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                    u.Role.Contains(search, StringComparison.OrdinalIgnoreCase))
+        .AsQueryable();
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)FilteredUsers.Count() / pagination.ItemsPerPage));
 
     protected override async Task OnInitializedAsync()
     {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        isCallerClientAdmin = PosPermissions.IsClientAdmin(auth.User);
         await LoadUsers();
+    }
+
+    private bool CanManageUser(UserDto user) =>
+        isCallerClientAdmin || !string.Equals(user.Role, "Admin", StringComparison.OrdinalIgnoreCase);
+
+    private Task ResetPage() => pagination.SetCurrentPageIndexAsync(0);
+
+    private async Task ClearSearch()
+    {
+        search = string.Empty;
+        await ResetPage();
+    }
+
+    private string GetShowingRangeText()
+    {
+        var total = FilteredUsers.Count();
+        if (total == 0) return "Showing 0 items";
+        int start = (pagination.CurrentPageIndex * pagination.ItemsPerPage) + 1;
+        int end = Math.Min(start + pagination.ItemsPerPage - 1, total);
+        return $"Showing {start}–{end} of {total} users";
+    }
+
+    private async Task GoToPage(int pageIndex)
+    {
+        if (pageIndex >= 0 && pageIndex < TotalPages)
+            await pagination.SetCurrentPageIndexAsync(pageIndex);
     }
 
     private async Task LoadUsers()
     {
-        users = await UserService.GetUsersAsync();
+        try
+        {
+            isLoading = true;
+            users = await UserService.GetUsersAsync();
+            loadError = null;
+            await ResetPage();
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Could not load organization users ({ex.Message}).";
+        }
+        finally
+        {
+            isLoading = false;
+        }
     }
 
-    private void OpenModal()
+    private void OpenAddModal()
     {
-        newUser = new CreateUserDto();
-        errorMessage = null;
+        editingUserId = null;
+        formModel = new UpdateUserDto { Role = "Cashier", IsActive = true };
+        modalError = null;
         isModalOpen = true;
     }
 
-    private void CloseModal()
+    private void OpenEditModal(UserDto user)
     {
-        isModalOpen = false;
+        editingUserId = user.UserId;
+        formModel = new UpdateUserDto
+        {
+            Username = user.Username,
+            Role = PosPermissions.NormalizeClientRole(user.Role) ?? "Cashier",
+            PinCode = null,
+            IsActive = user.IsActive
+        };
+        modalError = null;
+        isModalOpen = true;
     }
+
+    private void CloseModal() => isModalOpen = false;
 
     private async Task HandleSubmit()
     {
-        isSaving = true;
-        errorMessage = null;
+        if (busy) return;
+        modalError = null;
 
-        var (success, error) = await UserService.CreateUserAsync(newUser);
-        isSaving = false;
-
-        if (success)
+        if (!editingUserId.HasValue && string.IsNullOrWhiteSpace(formModel.Password))
         {
-            CloseModal();
-            await LoadUsers();
+            modalError = "Password is required for a new user.";
+            return;
         }
-        else
+
+        busy = true;
+        try
         {
-            errorMessage = error;
+            (bool success, string? error) result;
+            if (editingUserId.HasValue)
+            {
+                result = await UserService.UpdateUserAsync(editingUserId.Value, formModel);
+            }
+            else
+            {
+                result = await UserService.CreateUserAsync(new CreateUserDto
+                {
+                    Username = formModel.Username,
+                    Password = formModel.Password ?? string.Empty,
+                    Role = formModel.Role,
+                    PinCode = formModel.PinCode
+                });
+            }
+
+            if (result.success)
+            {
+                CloseModal();
+                await LoadUsers();
+                await Swal.FireAsync(new SweetAlertOptions
+                {
+                    Title = "Saved",
+                    Text = editingUserId.HasValue ? "Client user updated successfully." : "Client user created successfully.",
+                    Icon = SweetAlertIcon.Success,
+                    ConfirmButtonColor = "#2563eb"
+                });
+            }
+            else
+            {
+                modalError = result.error ?? "Failed to save user.";
+            }
+        }
+        finally
+        {
+            busy = false;
         }
     }
 
-    private async Task DeleteUser(int userId)
+    private async Task DeleteUser(UserDto user)
     {
-        if (await UserService.DeleteUserAsync(userId))
+        if (busy) return;
+        var confirm = await Swal.FireAsync(new SweetAlertOptions
         {
-            await LoadUsers();
+            Title = $"Delete {user.Username}?",
+            Text = "This cannot be undone.",
+            Icon = SweetAlertIcon.Warning,
+            ShowCancelButton = true,
+            ConfirmButtonColor = "#dc2626",
+            CancelButtonColor = "#64748b",
+            ConfirmButtonText = "Delete"
+        });
+        if (!confirm.IsConfirmed) return;
+
+        busy = true;
+        try
+        {
+            if (await UserService.DeleteUserAsync(user.UserId))
+            {
+                await LoadUsers();
+                await Swal.FireAsync("Deleted", "Client user removed.", SweetAlertIcon.Success);
+            }
+            else
+            {
+                await Swal.FireAsync("Delete Failed", "You are not authorized to delete this account or it no longer exists.", SweetAlertIcon.Error);
+            }
+        }
+        finally
+        {
+            busy = false;
         }
     }
 }

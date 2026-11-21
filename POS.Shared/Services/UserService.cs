@@ -62,6 +62,18 @@ namespace POS.Shared.Services
             return (false, string.IsNullOrWhiteSpace(error) ? "Failed to create user." : error);
         }
 
+        public async Task<(bool Success, string? ErrorMessage)> UpdateUserAsync(int userId, UpdateUserDto userDto)
+        {
+            var response = await _http.PutAsJsonAsync($"api/Users/{userId}", userDto);
+            if (response.IsSuccessStatusCode)
+            {
+                return (true, null);
+            }
+
+            var error = await response.Content.ReadAsStringAsync();
+            return (false, string.IsNullOrWhiteSpace(error) ? "Failed to update user." : error.Trim('"'));
+        }
+
         public async Task<bool> DeleteUserAsync(int userId)
         {
             var response = await _http.DeleteAsync($"api/Users/{userId}");

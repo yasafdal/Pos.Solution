@@ -62,7 +62,7 @@ public static partial class Program
         {
             var attributes = typeof(TerminalsController).GetMethod(methodName)!.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true)
                 .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>();
-            Assert(attributes.Any(a => a.Roles == "Admin,Manager"), $"{methodName} must remain supervisor-only in MVC.");
+            Assert(attributes.Any(a => a.Roles == "Admin,Manager,AgresSystemAdmin"), $"{methodName} must remain supervisor/platform-admin-only in MVC.");
         }
         Assert(typeof(TerminalsController).GetMethod("ResolveTerminal")!.IsDefined(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true), "Resolution must remain authenticated.");
         Assert(typeof(OfflineReferenceDataController).IsDefined(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), true), "Offline reference must remain authenticated.");

@@ -29,6 +29,7 @@ public static partial class Program
         using var db = new TestPosDbContext(options);
         await db.Database.EnsureCreatedAsync();
 
+        db.Organizations.Add(new Organization { OrganizationId = 1, Code = "DEFAULT", Name = "Default Org", IsActive = true, CreatedAtUtc = DateTime.UtcNow });
         var bt = new BusinessType { Id = 1, Type = "FNB", Description = "Food" };
         var branch = new Branch { BranchId = 1, Name = "Main Branch", Code = "BR01", BusinessTypeId = 1, TaxType = "VAT-Registered", IsActive = true };
         var outlet = new Outlet { OutletId = 1, BranchId = 1, Name = "Main Outlet", OutletCode = "OUT01", IsActive = true };
@@ -114,6 +115,7 @@ public static partial class Program
         using var db = new TestPosDbContext(options);
         await db.Database.EnsureCreatedAsync();
 
+        db.Organizations.Add(new Organization { OrganizationId = 1, Code = "DEFAULT", Name = "Default Org", IsActive = true, CreatedAtUtc = DateTime.UtcNow });
         var bt = new BusinessType { Id = 1, Type = "FNB", Description = "Food" };
         var branch = new Branch { BranchId = 1, Name = "Main Branch", Code = "BR01", BusinessTypeId = 1, TaxType = "VAT-Registered", IsActive = true };
         var outlet = new Outlet { OutletId = 1, BranchId = 1, Name = "Main Outlet", OutletCode = "OUT01", IsActive = true };

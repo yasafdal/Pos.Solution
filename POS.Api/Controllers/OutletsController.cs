@@ -8,19 +8,26 @@ namespace POS.Api.Controllers;
 
 [Route("api/outlets")]
 [ApiController]
-[Authorize(Roles = "Admin,Manager")]
+[Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
 public class OutletsController(PosDbContext context) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<OutletDto>>> GetOutlets([FromQuery] int? branchId)
     {
-        if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+        bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
+        if (!isAgresAdmin && User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
         {
             if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
             branchId = supBranchId;
         }
 
-        var query = context.Outlets.AsNoTracking().Include(o => o.Terminals).AsQueryable();
+        var query = context.Outlets.AsNoTracking().Include(o => o.Branch).Include(o => o.Terminals).AsQueryable();
+        if (!isAgresAdmin)
+        {
+            var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+            if (callerOrgId.HasValue)
+                query = query.Where(o => o.Branch != null && o.Branch.OrganizationId == callerOrgId.Value);
+        }
         if (branchId.HasValue) query = query.Where(o => o.BranchId == branchId);
         return Ok((await query.OrderBy(o => o.OutletCode).ToListAsync()).Select(HierarchyMapping.ToDto).ToList());
     }
@@ -28,14 +35,22 @@ public class OutletsController(PosDbContext context) : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<ActionResult<OutletDto>> GetOutlet(int id)
     {
-        var outlet = await context.Outlets.AsNoTracking().Include(o => o.Terminals).SingleOrDefaultAsync(o => o.OutletId == id);
+        bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
+        var outlet = await context.Outlets.AsNoTracking().Include(o => o.Branch).Include(o => o.Terminals).SingleOrDefaultAsync(o => o.OutletId == id);
         if (outlet == null) return NotFound();
-        if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && outlet.BranchId != supBranchId)
-            return Forbid();
+        if (!isAgresAdmin)
+        {
+            var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+            if (callerOrgId.HasValue && outlet.Branch != null && outlet.Branch.OrganizationId != callerOrgId.Value)
+                return Forbid();
+            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && outlet.BranchId != supBranchId)
+                return Forbid();
+        }
         return Ok(HierarchyMapping.ToDto(outlet));
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<OutletDto>> CreateOutlet(OutletDto dto)
     {
         if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && dto.BranchId != supBranchId)
@@ -51,6 +66,7 @@ public class OutletsController(PosDbContext context) : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> UpdateOutlet(int id, OutletDto dto)
     {
         var outlet = await context.Outlets.FindAsync(id);
@@ -69,6 +85,7 @@ public class OutletsController(PosDbContext context) : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteOutlet(int id)
     {
         var outlet = await context.Outlets.FindAsync(id);

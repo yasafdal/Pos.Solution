@@ -1,33 +1,33 @@
 ﻿@page "/login"
 @layout Layout.AuthLayout
+@using POS.Shared.Constants
 @using POS.Shared.Models
 @using POS.Web.Auth
 @inject HttpClient Http
-@inject AuthenticationStateProvider AuthStateProvider
 @inject NavigationManager NavManager
-@attribute [AllowAnonymous]
 @inject POS.Web.Auth.CustomAuthStateProvider AuthStateProvider
+@attribute [AllowAnonymous]
 
 <div class="d-flex justify-content-center align-items-center vh-100 bg-light">
-    <div class="card shadow p-4" style="width: 25rem; border-radius: 1rem;">
-        <h3 class="text-center fw-bold mb-4">POS Login</h3>
+    <div class="card shadow border-0 p-4" style="width: 25rem; border-radius: 1rem;">
+        <h3 class="text-center fw-bold mb-4 text-dark">POS Login</h3>
 
         @if (!string.IsNullOrEmpty(errorMessage))
         {
-            <div class="alert alert-danger small py-2">@errorMessage</div>
+            <div class="alert alert-danger small py-2" role="alert">@errorMessage</div>
         }
 
         <EditForm Model="loginModel" OnValidSubmit="HandleLogin">
             <DataAnnotationsValidator />
-            
+
             <div class="mb-3">
                 <label class="form-label small fw-semibold">Username</label>
-                <InputText @bind-Value="loginModel.Username" class="form-control" />
+                <InputText @bind-Value="loginModel.Username" class="form-control" autocomplete="username" />
             </div>
 
             <div class="mb-4">
                 <label class="form-label small fw-semibold">Password</label>
-                <InputText @bind-Value="loginModel.Password" type="password" class="form-control" />
+                <InputText @bind-Value="loginModel.Password" type="password" class="form-control" autocomplete="current-password" />
             </div>
 
             <button type="submit" class="btn btn-primary w-100 fw-bold" disabled="@isLoading">
@@ -49,33 +49,38 @@
 
         try
         {
-            // Call your API login endpoint
-            var response = await Http.PostAsJsonAsync("api/auth/login", loginModel);
-
-            if (response.IsSuccessStatusCode)
+            // Authenticate against Client Portal first; if not a client user, try AGRES Platform Admin endpoint.
+            // Server-side identity stores, JWT scopes, and authorization policies remain strictly separated.
+            var clientResponse = await Http.PostAsJsonAsync("api/auth/login", loginModel);
+            if (clientResponse.IsSuccessStatusCode)
             {
-                var result = await response.Content.ReadFromJsonAsync<TokenResponse>();
+                var result = await clientResponse.Content.ReadFromJsonAsync<TokenResponse>();
                 if (result != null && !string.IsNullOrEmpty(result.Token))
                 {
-                    // Trigger the Custom Auth State
-                    var customAuthStateProvider = (CustomAuthStateProvider)AuthStateProvider;
-                    await customAuthStateProvider.LogInAsync(result.Token);
-
-                    // Attach token to future HTTP requests
-                    Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", result.Token);
-
-                    NavManager.NavigateTo("/");
+                    await CompleteLoginAsync(result.Token, isPlatformAdmin: false);
+                    return;
                 }
             }
-            else
+
+            if (clientResponse.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                errorMessage = "Invalid username or password.";
+                var agresResponse = await Http.PostAsJsonAsync("api/agres/auth/login", loginModel);
+                if (agresResponse.IsSuccessStatusCode)
+                {
+                    var result = await agresResponse.Content.ReadFromJsonAsync<TokenResponse>();
+                    if (result != null && !string.IsNullOrEmpty(result.Token))
+                    {
+                        await CompleteLoginAsync(result.Token, isPlatformAdmin: true);
+                        return;
+                    }
+                }
             }
+
+            errorMessage = "Invalid username or password.";
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
-            //errorMessage = "Server error. Ensure the API is running.";
-            errorMessage = $"Error: {ex.Message} (Inner: {ex.InnerException?.Message})";
+            errorMessage = $"Error: {ex.Message}";
         }
         finally
         {
@@ -83,6 +88,12 @@
         }
     }
 
-    // Small helper class for the API response
+    private async Task CompleteLoginAsync(string token, bool isPlatformAdmin)
+    {
+        await AuthStateProvider.LogInAsync(token);
+        Http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        NavManager.NavigateTo(isPlatformAdmin ? "/licensing" : "/");
+    }
+
     private class TokenResponse { public string Token { get; set; } = ""; }
 }

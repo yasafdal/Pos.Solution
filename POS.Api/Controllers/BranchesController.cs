@@ -19,17 +19,25 @@ namespace POS.Api.Controllers
         }
 
         [HttpGet]
-        [Authorize(Roles = "Admin,Manager")]
+        [Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
         public async Task<ActionResult<IEnumerable<BranchDto>>> GetBranches()
         {
             await POS.Api.Services.ReceiptLogoStorage.EnsureBranchColumnsAsync(_context);
+            bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
             var query = _context.Branches.AsNoTracking()
                 .Include(b => b.BusinessType).Include(b => b.ServiceMode)
                 .Include(b => b.Outlets).ThenInclude(o => o.Terminals).AsQueryable();
 
-            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+            if (!isAgresAdmin)
             {
-                query = query.Where(b => b.BranchId == supBranchId);
+                var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+                if (callerOrgId.HasValue)
+                    query = query.Where(b => b.OrganizationId == callerOrgId.Value);
+
+                if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+                {
+                    query = query.Where(b => b.BranchId == supBranchId);
+                }
             }
 
             var entities = await query.ToListAsync();
@@ -44,16 +52,22 @@ namespace POS.Api.Controllers
                 ReceiptLogoUpdatedAt = b.ReceiptLogoUpdatedAt,
                 OutletCount = b.Outlets.Count, TerminalCount = b.Outlets.Sum(o => o.Terminals.Count),
                 Outlets = b.Outlets.OrderBy(o => o.OutletCode).Select(HierarchyMapping.ToDto).ToList(),
-                Terminals = b.Outlets.SelectMany(o => o.Terminals).Select(HierarchyMapping.ToDto).ToList()
+                Terminals = b.Outlets.SelectMany(o => o.Terminals).Select(t =>
+                {
+                    var dto = HierarchyMapping.ToDto(t);
+                    if (!isAgresAdmin) dto.ActivationCode = null;
+                    return dto;
+                }).ToList()
             }).ToList();
             return Ok(branches);
         }
 
         [HttpGet("{id:int}")]
-        [Authorize(Roles = "Admin,Manager")]
+        [Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
         public async Task<ActionResult<BranchDto>> GetBranch(int id)
         {
-            if (!User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && id != supBranchId)
+            if (!POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User) &&
+                !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && id != supBranchId)
                 return Forbid();
 
             var response = await GetBranches();

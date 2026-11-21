@@ -11,7 +11,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-[Authorize]
+[Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
 public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISequenceService sequenceService) : ControllerBase
 {
     [HttpPost]

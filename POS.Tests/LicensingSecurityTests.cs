@@ -25,8 +25,17 @@ namespace POS.Tests;
 
 public static partial class Program
 {
-    private static LicensingController CreateLicensingController(PosDbContext db, string username = "admin1", string role = "Admin")
+    private static LicensingController CreateLicensingController(PosDbContext db, string username = "agres_admin", string role = "AgresSystemAdmin", string? identityScope = null)
     {
+        // Map legacy "Admin" test defaults in existing licensing tests to platform AGRES System Admin
+        // unless caller explicitly supplies ClientScope to test Client Admin rejection.
+        string effectiveRole = role == "Admin" && identityScope == null
+            ? POS.Shared.Constants.PosPermissions.AgresSystemAdminRole
+            : role;
+        string effectiveScope = identityScope ?? (effectiveRole == POS.Shared.Constants.PosPermissions.AgresSystemAdminRole
+            ? POS.Shared.Constants.PosPermissions.PlatformScope
+            : POS.Shared.Constants.PosPermissions.ClientScope);
+
         return new LicensingController(db)
         {
             ControllerContext = new ControllerContext
@@ -37,7 +46,9 @@ public static partial class Program
                     [
                         new Claim(ClaimTypes.Name, username),
                         new Claim(ClaimTypes.NameIdentifier, username),
-                        new Claim(ClaimTypes.Role, role)
+                        new Claim(ClaimTypes.Role, effectiveRole),
+                        new Claim(POS.Shared.Constants.PosPermissions.IdentityScopeClaimType, effectiveScope),
+                        new Claim(POS.Shared.Constants.PosPermissions.OrganizationIdClaimType, "1")
                     ], "TestAuth"))
                 }
             }

@@ -1,0 +1,151 @@
+@page "/agres/organizations"
+@using Microsoft.AspNetCore.Authorization
+@using CurrieTechnologies.Razor.SweetAlert2
+@using POS.Shared.Constants
+@using POS.Shared.Interfaces
+@using POS.Shared.Models
+@inject IAgresPlatformService AgresService
+@inject SweetAlertService Swal
+@attribute [Authorize(Policy = PosPermissions.AgresSystemAdminPolicy)]
+
+<PageTitle>Organizations - AGRES Platform</PageTitle>
+
+<div class="w-100 py-2">
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Client Organizations</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Manage client tenants isolated on the AGRES POS platform</span>
+        </div>
+        <button class="btn btn-primary rounded px-4 py-2 fw-bold shadow-sm text-nowrap" disabled="@busy" @onclick="OpenAdd">
+            Add Organization
+        </button>
+    </div>
+
+    @if (loadError != null)
+    {
+        <div class="alert alert-danger py-2 px-3 mb-3">@loadError</div>
+    }
+
+    <div class="card border rounded-3 shadow-sm bg-white overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Code</th>
+                        <th>Organization Name</th>
+                        <th class="text-center">Branches</th>
+                        <th class="text-center">Client Users</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-end pe-3">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (isLoading)
+                    {
+                        <tr><td colspan="6" class="text-center py-4 text-muted">Loading organizations...</td></tr>
+                    }
+                    else if (!orgs.Any())
+                    {
+                        <tr><td colspan="6" class="text-center py-4 text-muted">No organizations found.</td></tr>
+                    }
+                    else
+                    {
+                        @foreach (var org in orgs)
+                        {
+                            <tr>
+                                <td class="ps-3 fw-semibold font-monospace">@org.Code</td>
+                                <td class="fw-semibold text-dark">@org.Name</td>
+                                <td class="text-center">@org.BranchCount</td>
+                                <td class="text-center">@org.UserCount</td>
+                                <td class="text-center">
+                                    <span class="badge @(org.IsActive ? "bg-success" : "bg-secondary")">@(org.IsActive ? "Active" : "Inactive")</span>
+                                </td>
+                                <td class="text-end pe-3">
+                                    <button type="button" class="btn btn-sm btn-warning text-dark" disabled="@busy" @onclick="() => OpenEdit(org)">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@if (isModalOpen)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(15, 23, 42, 0.5); backdrop-filter: blur(3px);" tabindex="-1" role="dialog" aria-modal="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <EditForm Model="model" OnValidSubmit="Save" class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <DataAnnotationsValidator />
+                <div class="modal-header border-bottom px-4 py-3 bg-white">
+                    <h5 class="fw-bold mb-0">@(editingId.HasValue ? "Edit Organization" : "Add Organization")</h5>
+                    <button type="button" class="btn-close shadow-none" disabled="@busy" @onclick="() => isModalOpen = false"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    @if (modalError != null) { <div class="alert alert-danger py-2 small">@modalError</div> }
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small">Code <span class="text-danger">*</span></label>
+                        <InputText @bind-Value="model.Code" class="form-control rounded bg-white border" placeholder="e.g. ACME" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small">Organization Name <span class="text-danger">*</span></label>
+                        <InputText @bind-Value="model.Name" class="form-control rounded bg-white border" placeholder="e.g. Acme Food Corp." />
+                    </div>
+                    <div class="p-3 bg-light rounded-3 border d-flex justify-content-between align-items-center">
+                        <span class="fw-semibold small">Active</span>
+                        <div class="form-check form-switch mb-0">
+                            <InputCheckbox @bind-Value="model.IsActive" class="form-check-input" />
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-top bg-light px-4 py-3">
+                    <button type="button" class="btn btn-outline-secondary rounded px-4" disabled="@busy" @onclick="() => isModalOpen = false">Cancel</button>
+                    <button type="submit" class="btn btn-primary rounded px-4 fw-bold" disabled="@busy">@(busy ? "Saving..." : "Save")</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@code {
+    private List<OrganizationDto> orgs = new();
+    private bool isLoading = true;
+    private bool busy;
+    private string? loadError;
+    private bool isModalOpen;
+    private int? editingId;
+    private CreateOrganizationDto model = new();
+    private string? modalError;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    private async Task Load()
+    {
+        try { isLoading = true; orgs = await AgresService.GetOrganizationsAsync(); loadError = null; }
+        catch (Exception ex) { loadError = ex.Message; }
+        finally { isLoading = false; }
+    }
+
+    private void OpenAdd() { editingId = null; model = new() { IsActive = true }; modalError = null; isModalOpen = true; }
+    private void OpenEdit(OrganizationDto o) { editingId = o.OrganizationId; model = new() { Code = o.Code, Name = o.Name, IsActive = o.IsActive }; modalError = null; isModalOpen = true; }
+
+    private async Task Save()
+    {
+        if (busy) return;
+        busy = true; modalError = null;
+        try
+        {
+            var res = editingId.HasValue
+                ? await AgresService.UpdateOrganizationAsync(editingId.Value, model)
+                : await AgresService.CreateOrganizationAsync(model);
+            if (!res.Success) { modalError = res.ErrorMessage; return; }
+            isModalOpen = false;
+            await Load();
+            await Swal.FireAsync("Saved", "Organization saved successfully.", SweetAlertIcon.Success);
+        }
+        finally { busy = false; }
+    }
+}

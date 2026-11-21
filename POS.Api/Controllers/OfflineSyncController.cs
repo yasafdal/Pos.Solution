@@ -11,7 +11,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/offline-sync")]
 [ApiController]
-[Authorize]
+[Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
 public class OfflineSyncController(PosDbContext context) : ControllerBase
 {
     private static DateTime NormalizeUtc(DateTime value) =>

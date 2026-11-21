@@ -32,6 +32,7 @@ public interface ILicensingService
     Task<List<LicenseRenewalHistoryDto>> GetRenewalHistoryAsync(int? terminalId = null, CancellationToken ct = default);
     Task<List<LicenseDeviceHistoryDto>> GetDeviceHistoryAsync(int? terminalId = null, CancellationToken ct = default);
     Task<List<LicenseAuditLogDto>> GetAuditLogsAsync(int? terminalId = null, int limit = 100, CancellationToken ct = default);
+    Task<List<ClientLicenseSummaryDto>> GetClientLicenseSummaryAsync(int organizationId, CancellationToken ct = default);
 }
 
 public class LicensingService : ILicensingService
@@ -1646,6 +1647,43 @@ public class LicensingService : ILicensingService
             ServerClockUtc = LicenseCryptoService.NormalizeUtcSecond(r.ServerClockUtc),
             ClockSkewSeconds = r.ClockSkewSeconds,
             OccurredAtUtc = LicenseCryptoService.NormalizeUtcSecond(r.OccurredAt)
+        }).ToList();
+    }
+
+    public async Task<List<ClientLicenseSummaryDto>> GetClientLicenseSummaryAsync(int organizationId, CancellationToken ct = default)
+    {
+        var terminals = await _context.Terminals
+            .AsNoTracking()
+            .Include(t => t.Branch)
+            .Include(t => t.Outlet)
+            .Where(t => t.Branch != null && t.Branch.OrganizationId == organizationId)
+            .OrderBy(t => t.TerminalCode)
+            .ToListAsync(ct);
+
+        var terminalIds = terminals.Select(t => t.TerminalId).ToList();
+        var licenses = await _context.TerminalLicenses
+            .AsNoTracking()
+            .Where(l => terminalIds.Contains(l.TerminalId))
+            .ToDictionaryAsync(l => l.TerminalId, ct);
+
+        var nowUtc = DateTime.UtcNow;
+        return terminals.Select(t =>
+        {
+            licenses.TryGetValue(t.TerminalId, out var lic);
+            var validUntil = lic != null ? LicenseCryptoService.NormalizeUtcSecond(lic.ExpiresAt) : (DateTime?)null;
+            int daysRemaining = validUntil.HasValue ? Math.Max(0, (int)Math.Ceiling((validUntil.Value - nowUtc).TotalDays)) : 0;
+            return new ClientLicenseSummaryDto
+            {
+                TerminalId = t.TerminalId,
+                TerminalCode = t.TerminalCode,
+                TerminalName = t.Name,
+                BranchName = t.Branch?.Name ?? string.Empty,
+                OutletName = t.Outlet?.Name ?? string.Empty,
+                Status = lic?.LicenseStatus ?? "UNLICENSED",
+                ValidFromUtc = lic != null ? LicenseCryptoService.NormalizeUtcSecond(lic.IssuedAt) : null,
+                ValidUntilUtc = validUntil,
+                DaysRemaining = daysRemaining
+            };
         }).ToList();
     }
 }

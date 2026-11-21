@@ -720,7 +720,7 @@
             var localCashier = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
                 Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Cashiers),
                 c => c.PinHash == pinHash);
-            if (localCashier == null) return false;
+            if (localCashier == null || !POS.Shared.Constants.PosPermissions.IsApprovedClientRole(localCashier.Role)) return false;
 
             var localOutlet = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
                 Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.TerminalConfigs));

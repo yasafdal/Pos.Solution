@@ -237,6 +237,8 @@ public static partial class Program
         await RunTestAsync("WF-04. Offline Close Cashier, Offline X-Reading, Supervisor Reopen Audit & Idempotent Reconnect Sync", TestWorkflow04_OfflineCloseCashierAnytimeXReadingSupervisorReopenAndIdempotentSync);
         await RunTestAsync("OWN-01. Logout vs Close Cashier & Single Shift Ownership (Online): Logout preserves shift, blocks Cashier B across all endpoints, Cashier A resumes without duplicates, Close releases ownership", TestShiftOwnership01_OnlineLogoutResumeCloseReleaseMultiTerminalAndReadings);
         await RunTestAsync("OWN-02. Logout & Shift Ownership (Offline E2E): Offline blocked login, restart persistence, network-fail safety, offline X-Reading, Close release & idempotent reconnect sync", TestShiftOwnership02_OfflineLogoutBlockedLoginRestartPersistenceAndReconnectSync);
+        await RunTestAsync("AGRES-01. Identity Separation: AGRES System Admin isolated from Client Users, cross-org BOLA blocked, privilege escalation & role spoofing rejected", TestAgres01_IdentityIsolationUsersTableCrossTenantAndPrivilegeEscalation);
+        await RunTestAsync("AGRES-02. JWT Scope & Policy Enforcement: Client JWT blocked on Licensing/Activation/Platform APIs, AGRES JWT blocked on Cashier Ops, Offline SQLite excludes AGRES accounts", TestAgres02_JwtScopePoliciesLicensingActivationOfflineSyncAndMigrationIntegrity);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;
@@ -292,7 +294,8 @@ public static partial class Program
         var db = new TestPosDbContext(options);
         await db.Database.EnsureCreatedAsync();
 
-        var branch = new Branch { BranchId = 1, Name = "Main Branch", TaxType = "VAT-Registered", IsActive = true };
+        db.Organizations.Add(new Organization { OrganizationId = 1, Code = "DEFAULT", Name = "Default Organization", IsActive = true, CreatedAtUtc = DateTime.UtcNow });
+        var branch = new Branch { BranchId = 1, OrganizationId = 1, Name = "Main Branch", TaxType = "VAT-Registered", IsActive = true };
         var outlet = new Terminal { TerminalId = 1, BranchId = 1, OutletId = 1, TerminalCode = "POS-1", Name = "Counter 1", IsActive = true };
         db.Outlets.Add(new Outlet { OutletId = 1, BranchId = 1, OutletCode = "MAIN", Name = "Main", IsActive = true });
         var cashier = new User { UserId = 1, Username = "cashier1", Role = "Cashier", PinCode = "1111", PasswordHash = "x" };

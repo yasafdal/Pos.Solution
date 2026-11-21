@@ -350,13 +350,13 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         var syncedUtc = data.ServerTimestamp != default
                             ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(data.ServerTimestamp)
                             : POS.Shared.Services.BusinessDayClock.UtcNow();
-                        foreach (var cashier in data.Cashiers)
+                        foreach (var cashier in data.Cashiers.Where(c => POS.Shared.Constants.PosPermissions.IsApprovedClientRole(c.Role)))
                         {
                             db.Cashiers.Add(new LocalCashier
                             {
                                 UserId = cashier.UserId,
                                 Username = cashier.Username,
-                                Role = cashier.Role,
+                                Role = POS.Shared.Constants.PosPermissions.NormalizeClientRole(cashier.Role) ?? "Cashier",
                                 PinHash = cashier.PinHash,
                                 SyncedAtUtc = syncedUtc
                             });

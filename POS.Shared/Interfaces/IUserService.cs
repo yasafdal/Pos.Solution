@@ -1,7 +1,6 @@
 ﻿using POS.Shared.Models;
-using System;
 using System.Collections.Generic;
-using System.Text;
+using System.Threading.Tasks;
 
 namespace POS.Shared.Interfaces
 {
@@ -10,6 +9,7 @@ namespace POS.Shared.Interfaces
         Task<List<UserDto>> GetUsersAsync();
         Task<(string Token, string Username, string Role)?> PinLoginAsync(string pinCode, int? terminalId = null, int? branchId = null);
         Task<(bool Success, string? ErrorMessage)> CreateUserAsync(CreateUserDto userDto);
+        Task<(bool Success, string? ErrorMessage)> UpdateUserAsync(int userId, UpdateUserDto userDto);
         Task<bool> DeleteUserAsync(int userId);
     }
 }

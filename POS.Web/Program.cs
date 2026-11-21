@@ -19,6 +19,22 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddAuthorizationCore(options =>
 {
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.AgresSystemAdminPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(ctx.User)));
+
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.ClientAdminPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsClientAdmin(ctx.User)));
+
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.ClientUserManagementPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsClientUserManager(ctx.User)));
+
+    options.AddPolicy(POS.Shared.Constants.PosPermissions.ClientOperationsPolicy, policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.IsClientUser(ctx.User)));
+
     options.AddPolicy(POS.Shared.Constants.PosPermissions.TransactionHistoryPolicy, policy =>
         policy.RequireAuthenticatedUser()
               .RequireAssertion(ctx => POS.Shared.Constants.PosPermissions.CanViewTransactionHistory(ctx.User)));
@@ -82,6 +98,7 @@ builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IOutletService, OutletService>();
 builder.Services.AddScoped<ITerminalService, TerminalService>();
 builder.Services.AddScoped<ILicensingApiService, LicensingApiService>();
+builder.Services.AddScoped<IAgresPlatformService, AgresPlatformService>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddScoped<IUomService, UomService>();
 builder.Services.AddScoped<IServiceModeService, ServiceModeService>();

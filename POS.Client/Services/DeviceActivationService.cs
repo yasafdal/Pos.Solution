@@ -238,13 +238,13 @@ public class DeviceActivationService : IDeviceActivationService
             {
                 var syncedUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
                 await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCashiers;");
-                foreach (var cashier in response.Cashiers)
+                foreach (var cashier in response.Cashiers.Where(c => POS.Shared.Constants.PosPermissions.IsApprovedClientRole(c.Role)))
                 {
                     db.Cashiers.Add(new LocalCashier
                     {
                         UserId = cashier.UserId,
                         Username = cashier.Username,
-                        Role = cashier.Role,
+                        Role = POS.Shared.Constants.PosPermissions.NormalizeClientRole(cashier.Role) ?? "Cashier",
                         PinHash = cashier.PinHash,
                         SyncedAtUtc = syncedUtc
                     });

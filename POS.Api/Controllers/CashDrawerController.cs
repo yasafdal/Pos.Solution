@@ -17,7 +17,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/cash-drawer")]
 [ApiController]
-[Authorize]
+[Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
 public class CashDrawerController : ControllerBase
 {
     private readonly PosDbContext _context;

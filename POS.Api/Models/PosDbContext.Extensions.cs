@@ -37,6 +37,9 @@ public partial class PosDbContext
     public virtual DbSet<LicenseRenewalHistory> LicenseRenewalHistories { get; set; }
     public virtual DbSet<LicenseDeviceHistory> LicenseDeviceHistories { get; set; }
     public virtual DbSet<LicenseAuditLog> LicenseAuditLogs { get; set; }
+    public virtual DbSet<Organization> Organizations { get; set; }
+    public virtual DbSet<AgresSystemAdmin> AgresSystemAdmins { get; set; }
+    public virtual DbSet<PlatformAuditLog> PlatformAuditLogs { get; set; }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
@@ -770,6 +773,68 @@ public partial class PosDbContext
             entity.Property(e => e.OccurredAt).HasColumnType("timestamp without time zone");
 
             entity.HasIndex(e => new { e.TerminalId, e.OccurredAt }).HasDatabaseName("IX_LicenseAuditLogs_Terminal_OccurredAt");
+        });
+
+        modelBuilder.Entity<Organization>(entity =>
+        {
+            entity.ToTable("Organizations");
+            entity.HasKey(e => e.OrganizationId);
+            entity.Property(e => e.Code).HasMaxLength(30).IsRequired();
+            entity.Property(e => e.Name).HasMaxLength(120).IsRequired();
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.CreatedAtUtc).HasColumnType("timestamp without time zone").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(e => e.Code).IsUnique().HasDatabaseName("UX_Organizations_Code");
+        });
+
+        modelBuilder.Entity<AgresSystemAdmin>(entity =>
+        {
+            entity.ToTable("AgresSystemAdmins");
+            entity.HasKey(e => e.SystemAdminId);
+            entity.Property(e => e.Username).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.DisplayName).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.PasswordHash).HasMaxLength(255).IsRequired();
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.CreatedAtUtc).HasColumnType("timestamp without time zone").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.LastLoginAtUtc).HasColumnType("timestamp without time zone");
+            entity.Property(e => e.CreatedBy).HasMaxLength(100);
+            entity.HasIndex(e => e.Username).IsUnique().HasDatabaseName("UX_AgresSystemAdmins_Username");
+        });
+
+        modelBuilder.Entity<PlatformAuditLog>(entity =>
+        {
+            entity.ToTable("PlatformAuditLogs");
+            entity.HasKey(e => e.AuditLogId);
+            entity.Property(e => e.ActorUsername).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Action).HasMaxLength(80).IsRequired();
+            entity.Property(e => e.TargetType).HasMaxLength(80).IsRequired();
+            entity.Property(e => e.TargetId).HasMaxLength(100);
+            entity.Property(e => e.Details).HasMaxLength(1000);
+            entity.Property(e => e.IpAddress).HasMaxLength(64);
+            entity.Property(e => e.CreatedAtUtc).HasColumnType("timestamp without time zone").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(e => e.CreatedAtUtc).HasDatabaseName("IX_PlatformAuditLogs_CreatedAtUtc");
+        });
+
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.Property(e => e.OrganizationId).HasDefaultValue(1);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.HasOne(e => e.Organization)
+                .WithMany(o => o.Users)
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_Users_Organizations");
+            entity.HasIndex(e => e.OrganizationId).HasDatabaseName("IX_Users_OrganizationId");
+        });
+
+        modelBuilder.Entity<Branch>(entity =>
+        {
+            entity.Property(e => e.OrganizationId).HasDefaultValue(1);
+            entity.HasOne(e => e.Organization)
+                .WithMany(o => o.Branches)
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("FK_Branches_Organizations");
+            entity.HasIndex(e => e.OrganizationId).HasDatabaseName("IX_Branches_OrganizationId");
         });
 
         var dateTimeConverter = new Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<DateTime, DateTime>(

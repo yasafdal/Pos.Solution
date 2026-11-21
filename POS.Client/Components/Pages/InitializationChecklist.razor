@@ -298,7 +298,7 @@
                 {
                     // Non-fatal: Step 4 SyncReferenceDataAsync downloads staff PIN hashes via terminal token
                 }
-                var validUsers = users?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****").ToList();
+                var validUsers = users?.Where(u => !string.IsNullOrWhiteSpace(u.PinCode) && u.PinCode != "****" && POS.Shared.Constants.PosPermissions.IsApprovedClientRole(u.Role)).ToList();
                 if (validUsers != null && validUsers.Count > 0)
                 {
                     await LocalPosDbContext.WriteLock.WaitAsync();

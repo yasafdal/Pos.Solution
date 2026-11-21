@@ -427,4 +427,109 @@ public class MigrationRunner
         using var licCmd = new NpgsqlCommand(licensingSchemaSql, conn);
         licCmd.ExecuteNonQuery();
     }
+
+    public static void ApplyAgresIdentitySchema(NpgsqlConnection conn)
+    {
+        const string sql = @"
+            CREATE TABLE IF NOT EXISTS ""Organizations"" (
+                ""OrganizationId"" SERIAL PRIMARY KEY,
+                ""Code"" VARCHAR(30) NOT NULL,
+                ""Name"" VARCHAR(120) NOT NULL,
+                ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE,
+                ""CreatedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC')
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""UX_Organizations_Code"" ON ""Organizations"" (""Code"");
+
+            INSERT INTO ""Organizations"" (""OrganizationId"", ""Code"", ""Name"", ""IsActive"", ""CreatedAtUtc"")
+            SELECT 1, 'DEFAULT', COALESCE((SELECT ""Name"" FROM ""Branches"" ORDER BY ""BranchId"" LIMIT 1), 'Default Organization'), TRUE, NOW() AT TIME ZONE 'UTC'
+            WHERE NOT EXISTS (SELECT 1 FROM ""Organizations"" WHERE ""OrganizationId"" = 1);
+
+            SELECT setval(
+                pg_get_serial_sequence('""Organizations""', 'OrganizationId'),
+                GREATEST((SELECT COALESCE(MAX(""OrganizationId""), 1) FROM ""Organizations""), 1)
+            );
+
+            CREATE TABLE IF NOT EXISTS ""AgresSystemAdmins"" (
+                ""SystemAdminId"" SERIAL PRIMARY KEY,
+                ""Username"" VARCHAR(50) NOT NULL,
+                ""DisplayName"" VARCHAR(100) NOT NULL,
+                ""PasswordHash"" VARCHAR(255) NOT NULL,
+                ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE,
+                ""CreatedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                ""LastLoginAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL,
+                ""CreatedBy"" VARCHAR(100) NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""UX_AgresSystemAdmins_Username"" ON ""AgresSystemAdmins"" (""Username"");
+
+            CREATE TABLE IF NOT EXISTS ""PlatformAuditLogs"" (
+                ""AuditLogId"" BIGSERIAL PRIMARY KEY,
+                ""ActorUsername"" VARCHAR(100) NOT NULL,
+                ""ActorSystemAdminId"" INTEGER NULL,
+                ""Action"" VARCHAR(80) NOT NULL,
+                ""TargetType"" VARCHAR(80) NOT NULL,
+                ""TargetId"" VARCHAR(100) NULL,
+                ""Details"" VARCHAR(1000) NULL,
+                ""IpAddress"" VARCHAR(64) NULL,
+                ""CreatedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC')
+            );
+            CREATE INDEX IF NOT EXISTS ""IX_PlatformAuditLogs_CreatedAtUtc"" ON ""PlatformAuditLogs"" (""CreatedAtUtc"");
+
+            ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""OrganizationId"" INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE;
+            ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""OrganizationId"" INTEGER NOT NULL DEFAULT 1;
+            CREATE INDEX IF NOT EXISTS ""IX_Users_OrganizationId"" ON ""Users"" (""OrganizationId"");
+            CREATE INDEX IF NOT EXISTS ""IX_Branches_OrganizationId"" ON ""Branches"" (""OrganizationId"");
+
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_Users_Organizations') THEN
+                    ALTER TABLE ""Users""
+                        ADD CONSTRAINT ""FK_Users_Organizations""
+                        FOREIGN KEY (""OrganizationId"") REFERENCES ""Organizations"" (""OrganizationId"")
+                        ON DELETE RESTRICT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_Branches_Organizations') THEN
+                    ALTER TABLE ""Branches""
+                        ADD CONSTRAINT ""FK_Branches_Organizations""
+                        FOREIGN KEY (""OrganizationId"") REFERENCES ""Organizations"" (""OrganizationId"")
+                        ON DELETE RESTRICT;
+                END IF;
+            END $$;
+
+            DO $$
+            DECLARE
+                legacy_admin RECORD;
+                new_admin_id INTEGER;
+            BEGIN
+                SELECT ""UserId"", ""Username"", ""PasswordHash""
+                INTO legacy_admin
+                FROM ""Users""
+                WHERE LOWER(""Username"") = 'admin'
+                LIMIT 1;
+
+                IF FOUND THEN
+                    IF NOT EXISTS (SELECT 1 FROM ""AgresSystemAdmins"" WHERE LOWER(""Username"") = LOWER(legacy_admin.""Username"")) THEN
+                        INSERT INTO ""AgresSystemAdmins"" (""Username"", ""DisplayName"", ""PasswordHash"", ""IsActive"", ""CreatedAtUtc"", ""CreatedBy"")
+                        VALUES (legacy_admin.""Username"", 'AGRES System Administrator', legacy_admin.""PasswordHash"", TRUE, NOW() AT TIME ZONE 'UTC', 'MIGRATION')
+                        RETURNING ""SystemAdminId"" INTO new_admin_id;
+
+                        INSERT INTO ""PlatformAuditLogs"" (""ActorUsername"", ""ActorSystemAdminId"", ""Action"", ""TargetType"", ""TargetId"", ""Details"", ""CreatedAtUtc"")
+                        VALUES (
+                            'SYSTEM_MIGRATION',
+                            new_admin_id,
+                            'MIGRATED_SYSTEM_ADMIN',
+                            'AgresSystemAdmin',
+                            new_admin_id::text,
+                            format('Migrated legacy UserId=%s (%s) from Users to AgresSystemAdmins and removed from client Users table.', legacy_admin.""UserId"", legacy_admin.""Username""),
+                            NOW() AT TIME ZONE 'UTC'
+                        );
+                    END IF;
+
+                    DELETE FROM ""Users"" WHERE ""UserId"" = legacy_admin.""UserId"";
+                END IF;
+            END $$;
+        ";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.ExecuteNonQuery();
+    }
 }

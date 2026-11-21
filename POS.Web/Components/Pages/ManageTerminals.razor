@@ -193,9 +193,13 @@
                         </HeaderTemplate>
                         <ChildContent>
                             <div class="actions-cell-wrap d-flex justify-content-end gap-2">
-                                <button type="button" class="btn btn-sm btn-outline-info text-dark" @onclick="() => ShowActivationCodeModal(t)" title="Device Pairing & Activation Code" aria-label="Activation Code">
-                                    <i class="bi bi-key-fill"></i>
-                                </button>
+                                <Microsoft.AspNetCore.Components.Authorization.AuthorizeView Policy="@POS.Shared.Constants.PosPermissions.AgresSystemAdminPolicy" Context="agresCtx">
+                                    <Authorized>
+                                        <button type="button" class="btn btn-sm btn-outline-info text-dark" @onclick="() => ShowActivationCodeModal(t)" title="Device Pairing & Activation Code" aria-label="Activation Code">
+                                            <i class="bi bi-key-fill"></i>
+                                        </button>
+                                    </Authorized>
+                                </Microsoft.AspNetCore.Components.Authorization.AuthorizeView>
                                 <button type="button" class="btn btn-sm btn-primary text-white" @onclick="() => OpenInvoiceSequencesModal(t)" title="Invoice Sequences" aria-label="Invoice Sequences">
                                     <i class="bi bi-receipt"></i>
                                 </button>

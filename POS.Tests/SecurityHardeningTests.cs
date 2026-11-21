@@ -55,9 +55,10 @@ public static partial class Program
             Assert(hasAuth, $"Controller '{type.Name}' must have [Authorize] attribute for deny-by-default security.");
         }
 
-        // Verify EndpointsController is strictly Admin-only
+        // Verify EndpointsController is strictly restricted to AGRES System Admin policy
         var endpointsAuth = typeof(EndpointsController).GetCustomAttribute<AuthorizeAttribute>();
-        Assert(endpointsAuth != null && endpointsAuth.Roles == "Admin", "EndpointsController must be strictly restricted to Admin role.");
+        Assert(endpointsAuth != null && endpointsAuth.Policy == POS.Shared.Constants.PosPermissions.AgresSystemAdminPolicy,
+            "EndpointsController must be strictly restricted to AgresSystemAdminOnly policy.");
 
         return Task.CompletedTask;
     }

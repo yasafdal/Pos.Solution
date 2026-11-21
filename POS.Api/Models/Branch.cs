@@ -7,6 +7,9 @@ public partial class Branch
 {
     public int BranchId { get; set; }
 
+    public int OrganizationId { get; set; } = 1;
+    public virtual Organization? Organization { get; set; }
+
     public int? BusinessTypeId { get; set; }
     public virtual BusinessType? BusinessType { get; set; }
 

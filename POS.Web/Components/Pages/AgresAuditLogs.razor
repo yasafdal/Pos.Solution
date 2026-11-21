@@ -1,0 +1,79 @@
+@page "/agres/audit-logs"
+@using Microsoft.AspNetCore.Authorization
+@using POS.Shared.Constants
+@using POS.Shared.Interfaces
+@using POS.Shared.Models
+@inject IAgresPlatformService AgresService
+@attribute [Authorize(Policy = PosPermissions.AgresSystemAdminPolicy)]
+
+<PageTitle>Platform Audit Logs - AGRES</PageTitle>
+
+<div class="w-100 py-2">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2 class="fw-bolder mb-1 text-dark" style="letter-spacing: -0.5px;">Platform Audit Logs</h2>
+            <span class="text-secondary" style="font-size: 0.95rem;">Immutable audit trail of AGRES platform logins, licensing, and system administration</span>
+        </div>
+        <button class="btn btn-outline-primary btn-sm rounded px-3 fw-semibold" @onclick="Load">
+            <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+        </button>
+    </div>
+
+    @if (loadError != null) { <div class="alert alert-danger py-2 px-3 mb-3">@loadError</div> }
+
+    <div class="card border rounded-3 shadow-sm bg-white overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Timestamp (UTC)</th>
+                        <th>Actor</th>
+                        <th>Action</th>
+                        <th>Target</th>
+                        <th>Details</th>
+                        <th class="pe-3">IP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (isLoading)
+                    {
+                        <tr><td colspan="6" class="text-center py-4 text-muted">Loading audit logs...</td></tr>
+                    }
+                    else if (!logs.Any())
+                    {
+                        <tr><td colspan="6" class="text-center py-4 text-muted">No platform audit logs recorded yet.</td></tr>
+                    }
+                    else
+                    {
+                        @foreach (var log in logs)
+                        {
+                            <tr>
+                                <td class="ps-3 text-nowrap text-secondary">@log.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td class="fw-semibold">@log.ActorUsername</td>
+                                <td><span class="badge bg-light text-dark border font-monospace">@log.Action</span></td>
+                                <td class="text-secondary">@log.TargetType @(!string.IsNullOrEmpty(log.TargetId) ? $"#{log.TargetId}" : "")</td>
+                                <td>@log.Details</td>
+                                <td class="pe-3 text-secondary font-monospace">@(log.IpAddress ?? "—")</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<PlatformAuditLogDto> logs = new();
+    private bool isLoading = true;
+    private string? loadError;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    private async Task Load()
+    {
+        try { isLoading = true; logs = await AgresService.GetAuditLogsAsync(200); loadError = null; }
+        catch (Exception ex) { loadError = ex.Message; }
+        finally { isLoading = false; }
+    }
+}

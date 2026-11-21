@@ -167,6 +167,7 @@ public static class ShiftCacheRegressionTests
         await connection.OpenAsync();
         await using var db = new SnapshotTestDb(new DbContextOptionsBuilder<POS.Api.Models.PosDbContext>().UseSqlite(connection).Options);
         await db.Database.EnsureCreatedAsync();
+        db.Organizations.Add(new POS.Api.Models.Organization { OrganizationId = 1, Code = "DEFAULT", Name = "Default", IsActive = true, CreatedAtUtc = DateTime.UtcNow });
         db.Branches.Add(new POS.Api.Models.Branch { BranchId = 1, Name = "test", TaxType = "VAT-Registered" });
         db.Outlets.Add(new POS.Api.Models.Outlet { OutletId = 1, BranchId = 1, OutletCode = "test", Name = "test" });
         db.Terminals.Add(new POS.Api.Models.Terminal { TerminalId = 1, BranchId = 1, OutletId = 1, TerminalCode = "test", Name = "test" });

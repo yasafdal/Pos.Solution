@@ -151,43 +151,78 @@ namespace POS.Api.Controllers
             });
         }
 
-        [Authorize(Roles = "Admin,Manager")]
+        private static TerminalDto RedactActivationCodeIfClient(TerminalDto dto, bool isAgresAdmin)
+        {
+            if (!isAgresAdmin) dto.ActivationCode = null;
+            return dto;
+        }
+
+        [Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
         [HttpGet]
         public async Task<ActionResult<List<TerminalDto>>> GetTerminals([FromQuery] int? outletId, [FromQuery] int? branchId)
         {
-            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
+            bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
+            if (!isAgresAdmin && User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId))
             {
                 if (branchId.HasValue && branchId.Value != supBranchId) return Forbid();
                 branchId = supBranchId;
             }
 
             var query = _context.Terminals.AsNoTracking().Include(t => t.Outlet).Include(t => t.Branch).AsQueryable();
+            if (!isAgresAdmin)
+            {
+                var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+                if (callerOrgId.HasValue)
+                    query = query.Where(t => t.Branch != null && t.Branch.OrganizationId == callerOrgId.Value);
+            }
             if (outletId.HasValue) query = query.Where(t => t.OutletId == outletId);
             if (branchId.HasValue) query = query.Where(t => t.BranchId == branchId);
-            return Ok((await query.OrderBy(t => t.TerminalCode).ToListAsync()).Select(HierarchyMapping.ToDto).ToList());
+            return Ok((await query.OrderBy(t => t.TerminalCode).ToListAsync())
+                .Select(t => RedactActivationCodeIfClient(HierarchyMapping.ToDto(t), isAgresAdmin))
+                .ToList());
         }
 
-        [Authorize(Roles = "Admin,Manager")]
+        [Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
         [HttpGet("{id:int}")]
         public async Task<ActionResult<TerminalDto>> GetTerminal(int id)
         {
+            bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
             var terminal = await _context.Terminals.AsNoTracking().Include(t => t.Outlet).Include(t => t.Branch).SingleOrDefaultAsync(t => t.TerminalId == id);
             if (terminal == null) return NotFound();
-            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
-                return Forbid();
-            return Ok(HierarchyMapping.ToDto(terminal));
+            if (!isAgresAdmin)
+            {
+                var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+                if (callerOrgId.HasValue && terminal.Branch != null && terminal.Branch.OrganizationId != callerOrgId.Value)
+                    return Forbid();
+                if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
+                    return Forbid();
+            }
+            return Ok(RedactActivationCodeIfClient(HierarchyMapping.ToDto(terminal), isAgresAdmin));
         }
 
-        [Authorize(Roles = "Admin,Manager")]
+        [Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
         [HttpPost]
         public async Task<ActionResult<TerminalDto>> CreateTerminal(TerminalDto dto)
         {
-            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && dto.BranchId != supBranchId)
-                return Forbid();
+            bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
+            if (!isAgresAdmin)
+            {
+                if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && dto.BranchId != supBranchId)
+                    return Forbid();
+                var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+                if (callerOrgId.HasValue)
+                {
+                    var branchOrgId = await _context.Branches.AsNoTracking().Where(b => b.BranchId == dto.BranchId).Select(b => (int?)b.OrganizationId).FirstOrDefaultAsync();
+                    if (branchOrgId.HasValue && branchOrgId.Value != callerOrgId.Value) return Forbid();
+                }
+            }
             var error = await ValidateTerminal(dto, 0);
             if (error != null) return BadRequest(error);
 
-            string generatedActivationCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+            // Activation code issuance is exclusively controlled by AGRES System Admin
+            string? generatedActivationCode = isAgresAdmin
+                ? RandomNumberGenerator.GetInt32(100000, 1000000).ToString()
+                : null;
 
             var terminal = new Terminal
             {
@@ -206,17 +241,24 @@ namespace POS.Api.Controllers
             _context.Terminals.Add(terminal);
             try { await _context.SaveChangesAsync(); }
             catch (DbUpdateException) { return Conflict("Terminal code, device identifier or IP address is already registered. Refresh before retrying."); }
-            return CreatedAtAction(nameof(GetTerminal), new { id = terminal.TerminalId }, HierarchyMapping.ToDto(terminal));
+            return CreatedAtAction(nameof(GetTerminal), new { id = terminal.TerminalId }, RedactActivationCodeIfClient(HierarchyMapping.ToDto(terminal), isAgresAdmin));
         }
 
-        [Authorize(Roles = "Admin,Manager")]
+        [Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
         [HttpPut("{id:int}")]
         public async Task<IActionResult> UpdateTerminal(int id, TerminalDto dto)
         {
-            var terminal = await _context.Terminals.FindAsync(id);
+            bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
+            var terminal = await _context.Terminals.Include(t => t.Branch).FirstOrDefaultAsync(t => t.TerminalId == id);
             if (terminal == null) return NotFound();
-            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && (terminal.BranchId != supBranchId || dto.BranchId != supBranchId))
-                return Forbid();
+            if (!isAgresAdmin)
+            {
+                var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+                if (callerOrgId.HasValue && terminal.Branch != null && terminal.Branch.OrganizationId != callerOrgId.Value)
+                    return Forbid();
+                if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && (terminal.BranchId != supBranchId || dto.BranchId != supBranchId))
+                    return Forbid();
+            }
             var error = await ValidateTerminal(dto, id);
             if (error != null) return BadRequest(error);
             if ((terminal.OutletId != dto.OutletId || terminal.BranchId != dto.BranchId) && await HasHistory(id))
@@ -227,14 +269,21 @@ namespace POS.Api.Controllers
             return NoContent();
         }
 
-        [Authorize(Roles = "Admin,Manager")]
+        [Authorize(Roles = "Admin,Manager,AgresSystemAdmin")]
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> DeleteTerminal(int id)
         {
-            var terminal = await _context.Terminals.FindAsync(id);
+            bool isAgresAdmin = POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User);
+            var terminal = await _context.Terminals.Include(t => t.Branch).FirstOrDefaultAsync(t => t.TerminalId == id);
             if (terminal == null) return NotFound();
-            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
-                return Forbid();
+            if (!isAgresAdmin)
+            {
+                var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+                if (callerOrgId.HasValue && terminal.Branch != null && terminal.Branch.OrganizationId != callerOrgId.Value)
+                    return Forbid();
+                if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
+                    return Forbid();
+            }
             if (await HasHistory(id)) return Conflict("Terminal has historical records or invoice series. Deactivate it instead.");
             _context.Terminals.Remove(terminal);
             try { await _context.SaveChangesAsync(); }
@@ -308,6 +357,8 @@ namespace POS.Api.Controllers
                     new Claim(ClaimTypes.NameIdentifier, terminal.TerminalId.ToString()),
                     new Claim(ClaimTypes.Name, terminal.TerminalCode),
                     new Claim(ClaimTypes.Role, "Terminal"),
+                    new Claim(POS.Shared.Constants.PosPermissions.IdentityScopeClaimType, POS.Shared.Constants.PosPermissions.ClientScope),
+                    new Claim(POS.Shared.Constants.PosPermissions.OrganizationIdClaimType, (terminal.Branch?.OrganizationId ?? 1).ToString()),
                     new Claim("branch_id", terminal.BranchId.ToString()),
                     new Claim("terminal_id", terminal.TerminalId.ToString()),
                     new Claim("outlet_id", terminal.OutletId.ToString()),
@@ -365,17 +416,19 @@ namespace POS.Api.Controllers
                     : (terminal.Outlet?.DefaultOpeningFund.HasValue == true ? "OUTLET_DEFAULT" : "UNCONFIGURED")
             };
 
+            int terminalOrgId = terminal.Branch?.OrganizationId ?? 1;
             var usersWithPins = await _context.Users
                 .AsNoTracking()
-                .Where(u => u.PinCode != null && u.PinCode != "")
+                .Where(u => u.OrganizationId == terminalOrgId && u.IsActive && u.PinCode != null && u.PinCode != "")
                 .ToListAsync();
 
             var cashiers = usersWithPins
+                .Where(u => POS.Shared.Constants.PosPermissions.IsApprovedClientRole(u.Role))
                 .Select(u => new OfflineCashierDto
                 {
                     UserId = u.UserId,
                     Username = u.Username,
-                    Role = u.Role,
+                    Role = POS.Shared.Constants.PosPermissions.NormalizeClientRole(u.Role) ?? u.Role,
                     PinHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(u.PinCode!.Trim())))
                 })
                 .ToList();
@@ -431,8 +484,11 @@ namespace POS.Api.Controllers
             if (!string.IsNullOrWhiteSpace(request.CashierUsername))
             {
                 string trimmedCashier = request.CashierUsername.Trim();
+                int terminalOrgId = terminal.Branch?.OrganizationId ?? 1;
                 cashierUser = await _context.Users.AsNoTracking()
-                    .FirstOrDefaultAsync(u => u.Username == trimmedCashier);
+                    .FirstOrDefaultAsync(u => u.Username == trimmedCashier && u.OrganizationId == terminalOrgId && u.IsActive);
+                if (cashierUser != null && !POS.Shared.Constants.PosPermissions.IsApprovedClientRole(cashierUser.Role))
+                    cashierUser = null;
 
                 var lockStatus = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
                     _context, terminal.TerminalId, trimmedCashier);
@@ -475,6 +531,8 @@ namespace POS.Api.Controllers
                 new Claim(ClaimTypes.NameIdentifier, cashierUser != null ? cashierUser.UserId.ToString() : terminal.TerminalId.ToString()),
                 new Claim(ClaimTypes.Name, effectiveName),
                 new Claim(ClaimTypes.Role, "Terminal"),
+                new Claim(POS.Shared.Constants.PosPermissions.IdentityScopeClaimType, POS.Shared.Constants.PosPermissions.ClientScope),
+                new Claim(POS.Shared.Constants.PosPermissions.OrganizationIdClaimType, (terminal.Branch?.OrganizationId ?? 1).ToString()),
                 new Claim("terminal_code", terminal.TerminalCode),
                 new Claim("branch_id", terminal.BranchId.ToString()),
                 new Claim("terminal_id", terminal.TerminalId.ToString()),
@@ -505,18 +563,29 @@ namespace POS.Api.Controllers
             return Ok(new TerminalSessionTokenResponseDto { Success = true, Token = token });
         }
 
-        [Authorize(Roles = "Admin,Manager")]
+        [Authorize(Policy = POS.Shared.Constants.PosPermissions.AgresSystemAdminPolicy)]
         [HttpPost("{id:int}/regenerate-activation-code")]
         public async Task<ActionResult<TerminalDto>> RegenerateActivationCode(int id)
         {
+            if (!POS.Shared.Constants.PosPermissions.IsAgresSystemAdmin(User))
+                return Forbid();
+
             var terminal = await _context.Terminals.Include(t => t.Outlet).Include(t => t.Branch).FirstOrDefaultAsync(t => t.TerminalId == id);
             if (terminal == null) return NotFound();
-            if (User != null && !User.IsInRole("Admin") && int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) && terminal.BranchId != supBranchId)
-                return Forbid();
 
             terminal.ActivationCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
             terminal.IsActivationCodeUsed = false;
             terminal.UpdatedAt = DateTime.UtcNow;
+            _context.PlatformAuditLogs.Add(new PlatformAuditLog
+            {
+                ActorUsername = User?.Identity?.Name ?? POS.Shared.Constants.PosPermissions.AgresSystemAdminRole,
+                Action = "TERMINAL_ACTIVATION_CODE_GENERATED",
+                TargetType = "Terminal",
+                TargetId = terminal.TerminalId.ToString(),
+                Details = $"Generated new one-time activation code for terminal {terminal.TerminalCode}.",
+                IpAddress = HttpContext?.Connection?.RemoteIpAddress?.ToString(),
+                CreatedAtUtc = DateTime.UtcNow
+            });
             await _context.SaveChangesAsync();
 
             return Ok(HierarchyMapping.ToDto(terminal));

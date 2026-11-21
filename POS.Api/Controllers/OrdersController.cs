@@ -11,7 +11,7 @@ namespace POS.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-[Authorize]
+[Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
 public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISequenceService sequenceService, POS.Api.Services.IDiscountCalculationService discountCalculator) : ControllerBase
 {
     [HttpPost]

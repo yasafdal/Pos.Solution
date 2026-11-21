@@ -81,6 +81,9 @@ public class LicensingApiService(HttpClient http) : ILicensingApiService
         return await http.GetFromJsonAsync<List<LicenseAuditLogDto>>($"api/licensing/audit-logs?{string.Join("&", query)}") ?? new();
     }
 
+    public async Task<List<ClientLicenseSummaryDto>> GetClientLicenseSummaryAsync() =>
+        await http.GetFromJsonAsync<List<ClientLicenseSummaryDto>>("api/licensing/client-summary") ?? new();
+
     private async Task<LicenseOperationResponseDto> PostOperationAsync<TReq>(string url, TReq payload)
     {
         try
