@@ -752,6 +752,8 @@
             {
                 TerminalId = localOutlet.TerminalId,
                 OutletId = localOutlet.OutletId, OutletName = localOutlet.OutletName, TerminalCode = localOutlet.TerminalCode,
+                DeviceIdentifier = !string.IsNullOrWhiteSpace(localOutlet.TerminalIdentifier) ? localOutlet.TerminalIdentifier : localOutlet.DeviceUuid,
+                Uuid = localOutlet.DeviceUuid,
                 IpAddress = localOutlet.IpAddress, PTUNumber = localOutlet.PTUNumber, MINNumber = localOutlet.MINNumber, SerialNumber = localOutlet.SerialNumber,
                 BranchId = localOutlet.BranchId,
                 BusinessTypeId = localBranch?.BusinessTypeId ?? localOutlet.BusinessTypeId ?? 1,

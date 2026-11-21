@@ -391,6 +391,11 @@ else
             throw new InvalidOperationException($"Server rejected the request ({(int)response.StatusCode}): {await response.Content.ReadAsStringAsync()}");
     }
 
+    private string ResolvedDeviceIdentifier =>
+        !string.IsNullOrWhiteSpace(Session.Terminal?.DeviceIdentifier)
+            ? Session.Terminal!.DeviceIdentifier!.Trim()
+            : (Session.Terminal?.Uuid?.Trim() ?? string.Empty);
+
     private async Task RefreshCoreAsync()
     {
         await RequireOnlineAsync();
@@ -406,7 +411,7 @@ else
         await CheckResponseAsync(response);
         readiness = await response.Content.ReadFromJsonAsync<ZReadingReadinessDto>() ?? throw new InvalidOperationException("Readiness response is empty.");
         blockers = readiness.Blockers.ToList();
-        if (string.IsNullOrWhiteSpace(Session.Terminal?.DeviceIdentifier)) blockers.Add("Device identity is missing. Reconnect and resolve terminal registration before finalizing.");
+        if (string.IsNullOrWhiteSpace(ResolvedDeviceIdentifier)) blockers.Add("Device identity is missing. Reconnect and resolve terminal registration before finalizing.");
         using var db = new LocalPosDbContext(); db.InitializeDatabase();
         blockers.AddRange(await ZReadingLocalReadiness.GetBlockersAsync(db, Session.Terminal!.TerminalId));
     }
@@ -445,7 +450,7 @@ else
                 {
                     TerminalId = Session.Terminal.TerminalId, BusinessDate = businessDate, ClientOperationId = operationId,
                     AllLocalOutboxesDrained = true, NoUnresolvedLocalTransactions = true, SoleDeviceCompletenessConfirmed = true,
-                    DeviceIdentifier = Session.Terminal.DeviceIdentifier ?? string.Empty
+                    DeviceIdentifier = ResolvedDeviceIdentifier
                 });
                 await CheckResponseAsync(response);
                 report = await response.Content.ReadFromJsonAsync<ZReadingReportDto>() ?? throw new InvalidOperationException("Empty response. Load the saved report before retrying; the operation ID has been retained.");
