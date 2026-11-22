@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- Internal LAN production host (.home.arpa uses a private CA, never public CAs).
+         To eliminate manual user-CA install on tablets, drop the public Root CA cert at
+         Platforms/Android/Resources/raw/agres_root_ca.crt and uncomment @raw/agres_root_ca below. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">agres.home.arpa</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+            <!-- <certificates src="@raw/agres_root_ca" /> -->
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

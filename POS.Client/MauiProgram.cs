@@ -5,11 +5,26 @@ using POS.Shared.Interfaces;
 using POS.Shared.Services;
 using POS.Client.Services;
 using POS.Client.Workers;
+using System.Linq;
+using System.Reflection;
 
 namespace POS.Client
 {
     public static class MauiProgram
     {
+        public const string DefaultProductionApiBaseUrl = "https://agres.home.arpa/";
+
+        public static string ResolveReleaseApiBaseUrl()
+        {
+            var configured = typeof(MauiProgram).Assembly
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => string.Equals(a.Key, "PosApiBaseUrl", StringComparison.OrdinalIgnoreCase))
+                ?.Value;
+
+            var url = string.IsNullOrWhiteSpace(configured) ? DefaultProductionApiBaseUrl : configured.Trim();
+            return url.EndsWith("/") ? url : url + "/";
+        }
+
         public static MauiApp CreateMauiApp()
         {
             var builder = MauiApp.CreateBuilder();
@@ -26,7 +41,7 @@ namespace POS.Client
     		builder.Logging.AddDebug();
 #endif
 
-            // Configure the HttpClient to point to API (configurable via Preferences in DEBUG, fixed to UAT in RELEASE)
+            // Configure the HttpClient to point to API (configurable via Preferences in DEBUG, centralized via PosApiBaseUrl in RELEASE)
             builder.Services.AddSingleton<PosSessionService>();
             builder.Services.AddScoped(sp =>
             {
@@ -34,7 +49,7 @@ namespace POS.Client
                 var defaultUrl = "http://localhost:5032/";
                 var configuredUrl = Microsoft.Maui.Storage.Preferences.Default.Get("UAT_ApiBaseUrl", defaultUrl);
 #else
-                var defaultUrl = "https://dev-uat.agressolutions.com/";
+                var defaultUrl = ResolveReleaseApiBaseUrl();
                 var configuredUrl = defaultUrl;
 #endif
                 if (string.IsNullOrWhiteSpace(configuredUrl)) configuredUrl = defaultUrl;
@@ -44,7 +59,8 @@ namespace POS.Client
                     BaseAddress = new Uri(configuredUrl),
                     Timeout = TimeSpan.FromSeconds(30)
                 };
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("POS.Client/1.0");
+                var version = typeof(MauiProgram).Assembly.GetName().Version?.ToString(3) ?? "1.0.6";
+                client.DefaultRequestHeaders.UserAgent.ParseAdd($"POS.Client/{version}");
                 return client;
             });
 

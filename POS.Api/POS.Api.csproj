@@ -25,6 +25,12 @@
   <ItemGroup>
     <EmbeddedResource Include="Migrations/BranchOutletTerminal.sql" />
     <None Include="efpt.config.json.user" />
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+    <None Update="POS.Api.http" CopyToPublishDirectory="Never" />
+    <Content Remove="Database\ClearAllTransactions.sql" />
+    <Content Remove="Sql\reset-*.sql" />
+    <None Update="Database\ClearAllTransactions.sql" CopyToPublishDirectory="Never" />
+    <None Update="Sql\reset-*.sql" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>

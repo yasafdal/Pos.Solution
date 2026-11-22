@@ -1,5 +1,7 @@
 using CurrieTechnologies.Razor.SweetAlert2;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using POS.Shared.Models;
@@ -8,10 +10,36 @@ using POS.Shared.Services;
 using POS.Web.Components;
 using POS.Web.Components.Account;
 using POS.Web.Data;
-using Microsoft.AspNetCore.Components.Authorization;
 using POS.Web.Auth;
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    var configuredProxies = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>();
+    if (configuredProxies != null)
+    {
+        foreach (var proxy in configuredProxies)
+        {
+            if (IPAddress.TryParse(proxy?.Trim(), out var ip) && !options.KnownProxies.Contains(ip))
+            {
+                options.KnownProxies.Add(ip);
+            }
+        }
+    }
+});
+
+var dataProtectionKeyDir = builder.Configuration["DataProtection:KeyDirectory"];
+if (!string.IsNullOrWhiteSpace(dataProtectionKeyDir))
+{
+    Directory.CreateDirectory(dataProtectionKeyDir);
+    builder.Services.AddDataProtection()
+        .SetApplicationName("POS.Web")
+        .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyDir));
+}
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -54,33 +82,43 @@ builder.Services.AddAuthentication(options =>
     })
     .AddIdentityCookies();
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(connectionString));
-builder.Services.AddDatabaseDeveloperPageExceptionFilter();
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+bool hasIdentityDb = !string.IsNullOrWhiteSpace(connectionString);
+if (hasIdentityDb)
+{
+    builder.Services.AddDbContext<ApplicationDbContext>(options =>
+        options.UseSqlServer(connectionString));
+    builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
-builder.Services.AddIdentityCore<ApplicationUser>(options =>
-    {
-        options.SignIn.RequireConfirmedAccount = true;
-        options.Stores.SchemaVersion = IdentitySchemaVersions.Version3;
-    })
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddSignInManager()
-    .AddDefaultTokenProviders();
+    builder.Services.AddIdentityCore<ApplicationUser>(options =>
+        {
+            options.SignIn.RequireConfirmedAccount = true;
+            options.Stores.SchemaVersion = IdentitySchemaVersions.Version3;
+        })
+        .AddEntityFrameworkStores<ApplicationDbContext>()
+        .AddSignInManager()
+        .AddDefaultTokenProviders();
+}
 
 builder.Services.AddScoped(_ =>
 {
     var handler = new HttpClientHandler();
 
-    // Ignore SSL certificate errors in development
-    handler.ServerCertificateCustomValidationCallback =
-        (message, cert, chain, errors) => true;
+    if (builder.Environment.IsDevelopment())
+    {
+        // Ignore self-signed SSL certificate errors in Development only.
+        handler.ServerCertificateCustomValidationCallback =
+            HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+    }
+
+    var apiBaseUrl = builder.Configuration["ApiBaseUrl"]
+        ?? builder.Configuration["ApiSettings:BaseUrl"]
+        ?? throw new InvalidOperationException("ApiBaseUrl is missing.");
+    if (!apiBaseUrl.EndsWith('/')) apiBaseUrl += "/";
 
     return new HttpClient(handler)
     {
-        BaseAddress = new Uri(
-            builder.Configuration["ApiBaseUrl"]
-            ?? throw new InvalidOperationException("ApiBaseUrl is missing."))
+        BaseAddress = new Uri(apiBaseUrl)
     };
 });
 
@@ -90,7 +128,10 @@ builder.Services.AddSweetAlert2();
 
 
 //Models
-builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+if (hasIdentityDb)
+{
+    builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+}
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
@@ -115,10 +156,15 @@ builder.Services.AddSingleton<POS.Web.Services.ProductImageUrlResolver>();
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.UseMigrationsEndPoint();
+    if (hasIdentityDb)
+    {
+        app.UseMigrationsEndPoint();
+    }
 }
 else
 {
@@ -138,7 +184,10 @@ app.MapRazorComponents<App>()
     // protected session storage; AuthorizeRouteView enforces page authorization.
     .AllowAnonymous();
 
-// Add additional endpoints required by the Identity /Account Razor components.
-app.MapAdditionalIdentityEndpoints();
+// Add additional endpoints required by the Identity /Account Razor components only when Identity DB is configured.
+if (hasIdentityDb)
+{
+    app.MapAdditionalIdentityEndpoints();
+}
 
 app.Run();

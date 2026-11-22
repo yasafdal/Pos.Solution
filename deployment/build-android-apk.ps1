@@ -1,10 +1,12 @@
 param(
-    [int]$MinVersionCode = 3,
+    [string]$ApiUrl = "https://agres.home.arpa/",
+    [int]$MinVersionCode = 7,
     [string]$ExpectedPackageId = "com.agres.pos.client",
     [string]$ExpectedCertSha256 = "9A:74:09:2B:9A:F0:A0:B9:1C:1A:96:2C:63:B3:3D:E4:01:2C:60:68:FF:1E:19:B9:64:8A:C0:AA:F2:C7:E7:57"
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $ApiUrl.EndsWith("/")) { $ApiUrl = "$ApiUrl/" }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $CsprojPath = Join-Path $RepoRoot "POS.Client\POS.Client.csproj"
 
@@ -22,14 +24,14 @@ if ($versionCode -lt $MinVersionCode) {
     throw "CRITICAL: ApplicationVersion (versionCode) is $versionCode, which is less than minimum required $MinVersionCode. Android blocks APK updates unless versionCode >= installed versionCode."
 }
 
-Write-Host "=== Building Universal Android APK ($appId v$displayVersion, versionCode=$versionCode) ===" -ForegroundColor Cyan
+Write-Host "=== Building Universal Android APK ($appId v$displayVersion, versionCode=$versionCode, API=$ApiUrl) ===" -ForegroundColor Cyan
 
 Push-Location $RepoRoot
 try {
-    dotnet restore POS.Client\POS.Client.csproj -p:Configuration=Release
+    dotnet restore POS.Client\POS.Client.csproj -p:Configuration=Release -p:PosApiBaseUrl=$ApiUrl
     if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE" }
 
-    dotnet publish POS.Client\POS.Client.csproj -f net10.0-android -c Release --no-restore -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false -p:DebugType=none -p:DebugSymbols=false
+    dotnet publish POS.Client\POS.Client.csproj -f net10.0-android -c Release --no-restore -p:PosApiBaseUrl=$ApiUrl -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false -p:DebugType=none -p:DebugSymbols=false
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
     $unsignedApk = Join-Path $RepoRoot "POS.Client\bin\Release\net10.0-android\$appId.apk"
@@ -38,10 +40,12 @@ try {
     }
 
     $alignedApk = Join-Path $RepoRoot "POS.Client\bin\Release\net10.0-android\$appId-aligned.apk"
-    $sdkBuildTools = "C:\Program Files (x86)\Android\android-sdk\build-tools\36.0.0"
+    $sdkBuildTools = if ($env:ANDROID_BUILD_TOOLS) { $env:ANDROID_BUILD_TOOLS } else { "C:\Program Files (x86)\Android\android-sdk\build-tools\36.0.0" }
     $zipalign = Join-Path $sdkBuildTools "zipalign.exe"
     $apksigner = Join-Path $sdkBuildTools "apksigner.bat"
-    $env:JAVA_HOME = "C:\Program Files\Android\openjdk\jdk-21.0.8"
+    if (-not $env:JAVA_HOME) {
+        $env:JAVA_HOME = "C:\Program Files\Android\openjdk\jdk-21.0.8"
+    }
 
     & $zipalign -f -p 4 $unsignedApk $alignedApk
     if ($LASTEXITCODE -ne 0) { throw "zipalign failed on $unsignedApk" }
@@ -85,9 +89,17 @@ try {
 
     $sha256 = (Get-FileHash -Path $signedApk -Algorithm SHA256).Hash
     $sizeBytes = (Get-Item $signedApk).Length
+    $apkFileName = Split-Path -Leaf $signedApk
     Write-Host "SUCCESS: Signed Universal APK ready at $signedApk" -ForegroundColor Green
     Write-Host "Size   : $sizeBytes bytes"
     Write-Host "SHA256 : $sha256"
+    Write-Host "API    : $ApiUrl"
+    Write-Host "Manifest Env Vars:" -ForegroundColor Cyan
+    Write-Host "  AppReleases__Android__VersionCode=$versionCode"
+    Write-Host "  AppReleases__Android__VersionName=$displayVersion"
+    Write-Host "  AppReleases__Android__Sha256=$sha256"
+    Write-Host "  AppReleases__Android__DownloadUrl=${ApiUrl}releases/android/$apkFileName"
+    Write-Host "  AppReleases__Android__SigningCertSha256=$cleanExpectedCert"
 }
 finally {
     Remove-Item Env:\POS_KS_PASS -ErrorAction SilentlyContinue

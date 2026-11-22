@@ -23,6 +23,8 @@ public class CashDrawerController : ControllerBase
     private readonly PosDbContext _context;
     private static volatile bool _overnightRecoverySchemaEnsured;
 
+    internal static void DisableRuntimeSchemaChecks() => _overnightRecoverySchemaEnsured = true;
+
     public CashDrawerController(PosDbContext context)
     {
         _context = context;

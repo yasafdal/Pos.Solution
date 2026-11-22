@@ -1,13 +1,38 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using POS.Api.Controllers;
 using POS.Api.Models;
+using POS.Api.Services;
 using Scalar.AspNetCore;
+using System.Net;
 using System.Text;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+ProductionConfigValidator.ValidateProductionConfiguration(
+    builder.Configuration,
+    builder.Environment.IsDevelopment());
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardLimit = 1;
+    var configuredProxies = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>();
+    if (configuredProxies != null)
+    {
+        foreach (var proxy in configuredProxies)
+        {
+            if (IPAddress.TryParse(proxy?.Trim(), out var ip) && !options.KnownProxies.Contains(ip))
+            {
+                options.KnownProxies.Add(ip);
+            }
+        }
+    }
+});
 
 // Add services to the container.
 
@@ -104,21 +129,34 @@ builder.Services.AddScoped<POS.Api.Services.ILicensingService, POS.Api.Services.
 // Fix for Npgsql DateTime handling if using local DateTime values
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
-// Add CORS so your MAUI app can communicate with this API
+// Add CORS (strict allowlist in Production; permissive only in Development)
+var corsAllowedOrigins = ProductionConfigValidator.ResolveCorsAllowedOrigins(builder.Configuration);
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
-        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+    options.AddPolicy("PosCors", policy =>
+    {
+        if (builder.Environment.IsDevelopment())
+        {
+            policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+        }
+        else if (corsAllowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(corsAllowedOrigins).AllowAnyMethod().AllowAnyHeader();
+        }
+    });
 });
 
 var app = builder.Build();
 
-// Legacy schema changes must be explicitly requested; never migrate production on startup.
+// Legacy schema changes and startup DDL must be explicitly opted in; never mutate production on startup.
+bool runStartupSchemaChecks = builder.Configuration.GetValue<bool?>("Database:RunStartupSchemaChecks")
+    ?? builder.Environment.IsDevelopment();
+
 if (builder.Configuration.GetValue<bool>("Database:RunLegacyMigrations"))
 {
     POS.Api.MigrationRunner.Run(builder.Configuration.GetConnectionString("DefaultConnection"));
 }
-else
+else if (runStartupSchemaChecks)
 {
     try
     {
@@ -171,6 +209,28 @@ else
     }
     catch { /* Non-fatal if DB is unreachable at startup */ }
 }
+else
+{
+    CashDrawerController.DisableRuntimeSchemaChecks();
+}
+
+app.UseForwardedHeaders();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsJsonAsync(new
+            {
+                Error = "An unexpected server error occurred."
+            });
+        });
+    });
+}
 
 // Security headers middleware
 app.Use(async (context, next) =>
@@ -201,7 +261,7 @@ catch { /* Non-fatal if folder already managed by host */ }
 
 // app.UseRouting();
 app.UseStaticFiles();
-app.UseCors("AllowAll"); // Enable CORS
+app.UseCors("PosCors"); // Enable CORS
 app.UseRateLimiter();
 
 app.UseAuthentication();

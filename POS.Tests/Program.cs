@@ -244,6 +244,7 @@ public static partial class Program
         await RunTestAsync("OVN-03. Overnight Recovery Offline E2E: Offline 4AM detection, restart persistence, offline PinHash recovery, stale snapshot guard, fresh Nov 21 shift & causal idempotent sync", TestOvernightRecovery03_OfflineDetectionRestartRecoveryStaleSnapshotProtectionAndIdempotentSync);
         await RunTestAsync("AGRES-01. Identity Separation: AGRES System Admin isolated from Client Users, cross-org BOLA blocked, privilege escalation & role spoofing rejected", TestAgres01_IdentityIsolationUsersTableCrossTenantAndPrivilegeEscalation);
         await RunTestAsync("AGRES-02. JWT Scope & Policy Enforcement: Client JWT blocked on Licensing/Activation/Platform APIs, AGRES JWT blocked on Cashier Ops, Offline SQLite excludes AGRES accounts", TestAgres02_JwtScopePoliciesLicensingActivationOfflineSyncAndMigrationIntegrity);
+        await RunTestAsync("PROD-01. Production Hardening: Config validator blocks UAT secrets/short JWT/test bypass, CORS normalization, sanitized 503 health & Production AppReleases manifest", TestProd01_ProductionConfigValidationHealthSanitizationAndReleaseManifest);
 
         Console.WriteLine($"\n=== Summary: {_passed} passed, {_failed} failed ===");
         return _failed == 0 ? 0 : 1;

@@ -12,7 +12,10 @@ namespace POS.Api.Controllers;
 [Route("api/offline-sync")]
 [ApiController]
 [Authorize(Policy = POS.Shared.Constants.PosPermissions.ClientOperationsPolicy)]
-public class OfflineSyncController(PosDbContext context) : ControllerBase
+public class OfflineSyncController(
+    PosDbContext context,
+    Microsoft.Extensions.Hosting.IHostEnvironment? hostEnvironment = null,
+    Microsoft.Extensions.Logging.ILogger<OfflineSyncController>? logger = null) : ControllerBase
 {
     private static DateTime NormalizeUtc(DateTime value) =>
         value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : DateTime.SpecifyKind(value, DateTimeKind.Utc);
@@ -41,11 +44,15 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
         }
         catch (Exception ex)
         {
+            logger?.LogError(ex, "Offline sync database health check failed.");
+            bool exposeDetails = hostEnvironment?.IsDevelopment() == true;
             return StatusCode(503, new
             {
                 Status = "DB_UNAVAILABLE",
                 Timestamp = DateTime.UtcNow,
-                Message = $"Database health check failed: {ex.Message}"
+                Message = exposeDetails
+                    ? $"Database health check failed: {ex.Message}"
+                    : "Database health check failed."
             });
         }
     }

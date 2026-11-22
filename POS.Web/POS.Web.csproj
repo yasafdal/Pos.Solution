@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
     <Folder Include="Asset\" />
     <Folder Include="Bootstrap\" />
     <Folder Include="AdminLte\" />

@@ -583,7 +583,7 @@ public class MigrationRunner
               AND s.""OutletId"" IS NULL;
 
             UPDATE ""CashDrawerShifts""
-            SET ""BusinessDate"" = TO_CHAR((((""OpenedAt"" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours')::date, 'YYYY-MM-DD')
+            SET ""BusinessDate"" = TO_CHAR((""OpenedAt"" - INTERVAL '4 hours')::date, 'YYYY-MM-DD')
             WHERE ""BusinessDate"" IS NULL;
 
             CREATE UNIQUE INDEX IF NOT EXISTS ""UX_CashDrawerShifts_RecoveryOperationId""
@@ -612,8 +612,8 @@ public class MigrationRunner
                         NULL,
                         COALESCE(
                             LEAST(
-                                (SELECT MIN((((""OpenedAt"" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours')::date) FROM public.""CashDrawerShifts"" s WHERE s.""TerminalId"" = t.""TerminalId""),
-                                (SELECT MIN((((""CreatedAt"" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours')::date) FROM public.""Orders"" o WHERE o.""TerminalId"" = t.""TerminalId"")
+                                (SELECT MIN((""OpenedAt"" - INTERVAL '4 hours')::date) FROM public.""CashDrawerShifts"" s WHERE s.""TerminalId"" = t.""TerminalId""),
+                                (SELECT MIN((""CreatedAt"" - INTERVAL '4 hours')::date) FROM public.""Orders"" o WHERE o.""TerminalId"" = t.""TerminalId"")
                             ),
                             (((NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours')::date
                         ),

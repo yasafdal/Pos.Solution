@@ -1,7 +1,12 @@
 ; Inno Setup Script para sa POS.Client Single-File Installer
 #define MyAppName "Quick Service POS"
-#define MyAppVersion "1.0.4"
-#define MyAppPublisher "Your Company"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.6"
+#endif
+#ifndef MyOutputDir
+  #define MyOutputDir "..\publish\installer"
+#endif
+#define MyAppPublisher "AGRES Business Solution"
 #define MyAppExeName "POS.Client.exe"
 
 [Setup]
@@ -11,8 +16,8 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-OutputDir=..\publish\installer
-OutputBaseFilename=POS_Client_Setup
+OutputDir={#MyOutputDir}
+OutputBaseFilename=POS_Client_Setup_v{#MyAppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
