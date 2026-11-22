@@ -34,7 +34,7 @@ public static partial class Program
         saved.OpeningConfirmed = false; await db.SaveChangesAsync();
         var payments = new POS.Api.Controllers.PaymentsController(db, new POS.Api.Services.SequenceService(db)); Authenticate(payments);
         Assert((await payments.ProcessPayment(new PaymentProcessDto { OrderId = (await db.Orders.SingleAsync()).OrderId })).Result is ConflictObjectResult, "Even API payment requires confirmed float.");
-        saved.OpeningConfirmed = true; saved.Status = "CLOSED"; saved.ClosedAt = DateTime.UtcNow; await db.SaveChangesAsync();
+        saved.OpeningConfirmed = true; saved.Status = "CLOSED"; saved.OpenedAt = saved.OpenedAt.AddSeconds(-2); saved.ClosedAt = POS.Shared.Services.BusinessDayClock.ManilaNow().AddMilliseconds(-100); await db.SaveChangesAsync();
         db.InvoiceSequences.Add(new POS.Api.Models.InvoiceSequence { TerminalId = 1, SeriesCode = "HISTORY", Prefix = "H-", StartingNumber = 1, EndingNumber = 100, LastIssuedNumber = 0 }); await db.SaveChangesAsync();
         var sync = new POS.Api.Controllers.OfflineSyncController(db); Authenticate(sync);
         var replay = new OfflineTransactionSyncRequest { LocalTransactionId = "historical-39", InvoiceNumber = "H-0000001", TerminalId = 1, BranchId = 1, CashierId = "cashier1", ClientShiftId = saved.ClientShiftId, TransactionDate = saved.OpenedAt.AddTicks(1), PayloadHash = "history" };
@@ -51,7 +51,7 @@ public static partial class Program
         Assert((await sync.SyncTransaction(replay)).Result is ConflictObjectResult, "Historical shift ownership is required.");
         var current = await db.CashDrawerShifts.SingleAsync(s => s.Status == "OPEN");
         Assert(await CreateController(db, "cashier2").CloseShift(new CloseShiftDto { ShiftId = current.ShiftId }) is ForbidResult, "Other cashier cannot close drawer.");
-        current.Status = "CLOSED"; current.ClosedAt = DateTime.UtcNow; await db.SaveChangesAsync();
+        current.Status = "CLOSED"; current.ClosedAt = POS.Shared.Services.BusinessDayClock.ManilaNow(); await db.SaveChangesAsync();
         Assert((await payments.ProcessPayment(new PaymentProcessDto { OrderId = (await db.Orders.FirstAsync(o => o.OrderNumber == "GATE")).OrderId })).Result is ConflictObjectResult, "Payment after close remains blocked.");
     }
 }

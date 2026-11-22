@@ -25,7 +25,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
         CancellationToken cancellationToken)
     {
         var currentBusinessDate = BusinessDayClock.GetCurrentBusinessDate();
-        var nowUtc = BusinessDayClock.UtcNow();
+        var nowManila = BusinessDayClock.ManilaNow();
 
         var query = context.HeldSales
             .Where(h => h.Status == "HELD")
@@ -56,7 +56,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             var resolvedBizDate = HeldSalePolicies.ResolveBusinessDate(h.BusinessDate, h.CreatedAt);
             h.BusinessDate ??= HeldSalePolicies.FormatBusinessDate(resolvedBizDate);
             h.Status = "CANCELLED";
-            h.CancelledAt = nowUtc;
+            h.CancelledAt = nowManila;
             h.CancellationReason = HeldSalePolicies.PreviousBusinessDayCancellationReason;
 
             context.HeldSaleAuditLogs.Add(new HeldSaleAuditLog
@@ -68,7 +68,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
                 TerminalId = h.TerminalId,
                 Action = "CANCELLED",
                 Details = HeldSalePolicies.PreviousBusinessDayCancellationReason,
-                CreatedAt = nowUtc
+                CreatedAt = nowManila
             });
         }
 
@@ -155,10 +155,10 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
 
         if (heldSale.Status == "HELD" && HeldSalePolicies.IsPreviousBusinessDate(heldSale.BusinessDate, heldSale.CreatedAt))
         {
-            var nowUtc = BusinessDayClock.UtcNow();
+            var nowManila = BusinessDayClock.ManilaNow();
             heldSale.BusinessDate ??= HeldSalePolicies.FormatBusinessDate(HeldSalePolicies.ResolveBusinessDate(heldSale.BusinessDate, heldSale.CreatedAt));
             heldSale.Status = "CANCELLED";
-            heldSale.CancelledAt = nowUtc;
+            heldSale.CancelledAt = nowManila;
             heldSale.CancellationReason = HeldSalePolicies.PreviousBusinessDayCancellationReason;
             context.HeldSaleAuditLogs.Add(new HeldSaleAuditLog
             {
@@ -169,7 +169,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
                 TerminalId = heldSale.TerminalId,
                 Action = "CANCELLED",
                 Details = HeldSalePolicies.PreviousBusinessDayCancellationReason,
-                CreatedAt = nowUtc
+                CreatedAt = nowManila
             });
             await context.SaveChangesAsync(cancellationToken);
         }
@@ -208,8 +208,8 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
         if (terminal == null || terminal.BranchId != dto.BranchId || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive)
             return BadRequest("Invalid or inactive terminal ownership.");
         if (User.FindFirst("terminal_id")?.Value != dto.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
-        var nowUtc = BusinessDayClock.UtcNow();
-        string holdRef = "HOLD-" + nowUtc.ToString("yyMMddHHmmss") + "-" + Random.Shared.Next(100, 999);
+        var nowManila = BusinessDayClock.ManilaNow();
+        string holdRef = "HOLD-" + nowManila.ToString("yyMMddHHmmss") + "-" + Random.Shared.Next(100, 999);
 
         var heldSale = new HeldSale
         {
@@ -225,8 +225,8 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             CustomerCardNumber = dto.CustomerCardNumber,
             TotalAmount = dto.TotalAmount,
             Status = "HELD",
-            BusinessDate = HeldSalePolicies.FormatBusinessDate(BusinessDayClock.GetBusinessDate(nowUtc)),
-            CreatedAt = nowUtc
+            BusinessDate = HeldSalePolicies.FormatBusinessDate(BusinessDayClock.GetBusinessDate(nowManila)),
+            CreatedAt = nowManila
         };
 
         foreach (var itemDto in dto.Items)
@@ -270,7 +270,8 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             BranchId = heldSale.BranchId,
             TerminalId = heldSale.TerminalId,
             Action = "HELD",
-            Details = "Transaction parked successfully."
+            Details = "Transaction parked successfully.",
+            CreatedAt = nowManila
         });
         await context.SaveChangesAsync(cancellationToken);
 
@@ -308,10 +309,10 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             // Auto-cancel and block resumption if this Held Sale belongs to a previous Business Date
             if (heldSale.Status == "HELD" && isPreviousBusinessDay)
             {
-                var nowUtc = BusinessDayClock.UtcNow();
+                var nowManila = BusinessDayClock.ManilaNow();
                 heldSale.BusinessDate ??= HeldSalePolicies.FormatBusinessDate(HeldSalePolicies.ResolveBusinessDate(heldSale.BusinessDate, heldSale.CreatedAt));
                 heldSale.Status = "CANCELLED";
-                heldSale.CancelledAt = nowUtc;
+                heldSale.CancelledAt = nowManila;
                 heldSale.CancellationReason = HeldSalePolicies.PreviousBusinessDayCancellationReason;
 
                 context.HeldSaleAuditLogs.Add(new HeldSaleAuditLog
@@ -323,7 +324,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
                     TerminalId = heldSale.TerminalId,
                     Action = "CANCELLED",
                     Details = HeldSalePolicies.PreviousBusinessDayCancellationReason,
-                    CreatedAt = nowUtc
+                    CreatedAt = nowManila
                 });
 
                 await context.SaveChangesAsync(cancellationToken);
@@ -341,9 +342,9 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             if (heldSale.Status != "HELD")
                 return Conflict("This held sale has already been resumed, cancelled, or processed by another terminal.");
 
-            var resumeUtc = BusinessDayClock.UtcNow();
+            var resumeManila = BusinessDayClock.ManilaNow();
             heldSale.Status = "RESUMED";
-            heldSale.ResumedAt = resumeUtc;
+            heldSale.ResumedAt = resumeManila;
             await context.SaveChangesAsync(cancellationToken);
 
             context.HeldSaleAuditLogs.Add(new HeldSaleAuditLog
@@ -355,7 +356,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
                 TerminalId = heldSale.TerminalId,
                 Action = "RESUMED",
                 Details = "Transaction resumed to active cart.",
-                CreatedAt = resumeUtc
+                CreatedAt = resumeManila
             });
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -378,10 +379,10 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             return Forbid();
         if (heldSale.Status != "HELD") return BadRequest("Only active held sales can be cancelled.");
 
-        var cancelUtc = BusinessDayClock.UtcNow();
+        var cancelManila = BusinessDayClock.ManilaNow();
         heldSale.BusinessDate ??= HeldSalePolicies.FormatBusinessDate(HeldSalePolicies.ResolveBusinessDate(heldSale.BusinessDate, heldSale.CreatedAt));
         heldSale.Status = "CANCELLED";
-        heldSale.CancelledAt = cancelUtc;
+        heldSale.CancelledAt = cancelManila;
         heldSale.CancellationReason = HeldSalePolicies.ManualCancellationReason;
         await context.SaveChangesAsync(cancellationToken);
 
@@ -394,7 +395,7 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
             TerminalId = heldSale.TerminalId,
             Action = "CANCELLED",
             Details = HeldSalePolicies.ManualCancellationReason,
-            CreatedAt = cancelUtc
+            CreatedAt = cancelManila
         });
         await context.SaveChangesAsync(cancellationToken);
 

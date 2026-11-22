@@ -109,6 +109,7 @@ public static partial class Program
         await RunTestAsync("Z07. Unreconciled paid/incomplete orders block", TestZReadingUnreconciledServerEvents);
 
         await RunTestAsync("Z08. Thermal report detail, HTML escaping and truthful reprint labels", TestZReadingFormatter);
+        await RunTestAsync("Z09. Late-night Asia/Manila sales (20:00–03:59 PHT) reconcile with Z-Reading Product Sales, invoices, payments & Manila shift timestamps", TestZReadingEveningManilaEndToEnd);
 
         await RunTestAsync("SEC01. Controller authorization and deny-by-default endpoints", TestSecurity_ControllerAuthorizationAttributes);
         await RunTestAsync("SEC02. Privilege escalation prevention (Manager cannot create/delete Admin)", TestSecurity_PrivilegeEscalationPrevented);

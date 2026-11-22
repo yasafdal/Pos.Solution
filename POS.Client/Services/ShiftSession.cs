@@ -1719,10 +1719,10 @@ public static class ShiftSession
             decimal openingDiscrepancy = Math.Round(openingFloat - expectedOpening, 2, MidpointRounding.AwayFromZero);
             request.ExpectedOpeningFund = expectedOpening;
             request.OpeningDiscrepancy = openingDiscrepancy;
-            var openedAtUtc = request.OpenedAt.HasValue
-                ? (request.OpenedAt.Value.Kind == DateTimeKind.Local ? request.OpenedAt.Value.ToUniversalTime() : DateTime.SpecifyKind(request.OpenedAt.Value, DateTimeKind.Utc))
-                : POS.Shared.Services.BusinessDayClock.UtcNow();
-            request.OpenedAt = openedAtUtc;
+            var openedAtManila = request.OpenedAt.HasValue
+                ? BusinessDayClock.NormalizeLocal(request.OpenedAt.Value)
+                : BusinessDayClock.ManilaNow();
+            request.OpenedAt = openedAtManila;
             request.CashierId = cashier;
             var localTermForShift = await db.TerminalConfigs.AsNoTracking()
                 .FirstOrDefaultAsync(t => t.TerminalId == request.TerminalId);
@@ -1733,7 +1733,7 @@ public static class ShiftSession
                 OutletId = localTermForShift?.OutletId,
                 TerminalId = request.TerminalId,
                 CashierId = cashier,
-                BusinessDate = BusinessDayClock.GetBusinessDateString(openedAtUtc),
+                BusinessDate = BusinessDayClock.GetBusinessDateString(openedAtManila),
                 ClosingType = TerminalClosingLockDto.ClosingTypeNormal,
                 OpeningConfirmed = true,
                 ClientShiftId = request.ClientShiftId,
@@ -1742,7 +1742,7 @@ public static class ShiftSession
                 OpeningDiscrepancy = openingDiscrepancy,
                 OpeningDenominationsJson = request.OpeningDenominations != null ? JsonSerializer.Serialize(request.OpeningDenominations) : null,
                 ExpectedBalance = openingFloat,
-                OpenedAt = openedAtUtc,
+                OpenedAt = openedAtManila,
                 Notes = request.Notes
             };
             db.CashDrawerShifts.Add(shift);
@@ -1805,7 +1805,9 @@ public static class ShiftSession
         request.ClientCloseId = string.IsNullOrWhiteSpace(request.ClientCloseId)
             ? Guid.NewGuid().ToString("N")
             : request.ClientCloseId.Trim();
-        request.ClosedAt ??= POS.Shared.Services.BusinessDayClock.UtcNow();
+        request.ClosedAt = request.ClosedAt.HasValue
+            ? BusinessDayClock.NormalizeLocal(request.ClosedAt.Value)
+            : BusinessDayClock.ManilaNow();
 
         if (!offline)
         {
@@ -1826,7 +1828,7 @@ public static class ShiftSession
                         serverDto.ShiftId,
                         serverDto.ClientShiftId,
                         serverDto.ClientCloseId ?? request.ClientCloseId,
-                        serverDto.ClosedAt ?? request.ClosedAt ?? BusinessDayClock.UtcNow(),
+                        BusinessDayClock.ManilaToUtc(serverDto.ClosedAt ?? request.ClosedAt ?? BusinessDayClock.ManilaNow()),
                         syncStatus: "SYNCED");
                     await lockDb.SaveChangesAsync();
                 }
@@ -1876,16 +1878,17 @@ public static class ShiftSession
 
             var reconciliations = await BuildLocalPaymentReconciliationsAsync(db, shift, request.PaymentDeclarations, countedCash);
 
-            var closedAtUtc = request.ClosedAt.Value >= shift.OpenedAt ? request.ClosedAt.Value : POS.Shared.Services.BusinessDayClock.UtcNow();
+            var shiftOpenedLocal = BusinessDayClock.NormalizeLocal(shift.OpenedAt);
+            var closedAtLocal = request.ClosedAt.Value >= shiftOpenedLocal ? request.ClosedAt.Value : BusinessDayClock.ManilaNow();
             string origShiftBizDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
-            if (BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtUtc, shift.BusinessDate))
+            if (BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtLocal, shift.BusinessDate))
             {
                 await tx.RollbackAsync();
                 throw new InvalidOperationException(TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
                     origShiftBizDate, shift.CashierId, shift.RecoveryStatus, shift.UnverifiedCashReason));
             }
             shift.Status = "CLOSED";
-            shift.ClosedAt = closedAtUtc;
+            shift.ClosedAt = closedAtLocal;
             shift.BusinessDate ??= origShiftBizDate;
             var trimmedNotes = request.Notes?.Trim();
             shift.Notes = string.IsNullOrWhiteSpace(trimmedNotes)
@@ -1917,7 +1920,7 @@ public static class ShiftSession
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = closedAtUtc,
+                    SubmittedAt = closedAtLocal,
                     TotalCountedCash = countedCash,
                     TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
                     Denominations = validatedDenominations ?? CashDenominationCatalog.CreateDefaultLines(),
@@ -1942,7 +1945,7 @@ public static class ShiftSession
                     EntityId = shift.ClientCloseId!,
                     PayloadJson = JsonSerializer.Serialize(request),
                     Status = "PENDING",
-                    CreatedAt = closedAtUtc
+                    CreatedAt = closedAtLocal
                 });
             }
 
@@ -1954,7 +1957,7 @@ public static class ShiftSession
                 shift.ShiftId,
                 shift.ClientShiftId,
                 shift.ClientCloseId,
-                closedAtUtc,
+                BusinessDayClock.ManilaToUtc(closedAtLocal),
                 syncStatus: "PENDING",
                 overrideBusinessDate: origShiftBizDate);
 
@@ -2077,7 +2080,7 @@ public static class ShiftSession
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+                    SubmittedAt = shift.ClosedAt ?? BusinessDayClock.ManilaNow(),
                     TotalCountedCash = prevCountedCash,
                     TotalNonCashDeclared = prevDeclarations.Sum(d => d.DeclaredAmount),
                     Denominations = prevDenoms,
@@ -2113,7 +2116,7 @@ public static class ShiftSession
                 RecountNumber = history.Count + 1,
                 ShiftId = shift.ShiftId,
                 CorrectedBy = supervisorUsername!,
-                CorrectedAt = DateTime.UtcNow,
+                CorrectedAt = BusinessDayClock.ManilaNow(),
                 Reason = request.Reason.Trim(),
                 OriginalCountedCash = prevCountedCash,
                 RevisedCountedCash = countedCash,
@@ -2214,8 +2217,9 @@ public static class ShiftSession
         var termCfg = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == terminalId)
                       ?? await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync();
 
-        var (periodStartUtc, periodEndUtc) = BusinessDayClock.GetPeriodUtc(targetDate);
-        var effectiveEndUtc = nowUtc < periodEndUtc ? nowUtc : periodEndUtc;
+        var nowManila = BusinessDayClock.ManilaNow();
+        var (periodStartLocal, periodEndLocal) = BusinessDayClock.GetPeriodLocal(targetDate);
+        var effectiveEndLocal = nowManila < periodEndLocal ? nowManila : periodEndLocal;
 
         var allTerminalShifts = await db.CashDrawerShifts.AsNoTracking()
             .Where(s => s.TerminalId == terminalId)
@@ -2224,11 +2228,11 @@ public static class ShiftSession
 
         var dayShifts = allTerminalShifts.Where(s =>
         {
-            var openedUtc = BusinessDayClock.NormalizeUtc(s.OpenedAt);
-            var closedUtc = s.ClosedAt.HasValue ? BusinessDayClock.NormalizeUtc(s.ClosedAt.Value) : (DateTime?)null;
-            return (openedUtc >= periodStartUtc && openedUtc < periodEndUtc)
-                || (closedUtc.HasValue && closedUtc.Value >= periodStartUtc && closedUtc.Value < periodEndUtc)
-                || (string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase) && openedUtc < periodEndUtc);
+            var openedLocal = BusinessDayClock.NormalizeLocal(s.OpenedAt);
+            var closedLocal = s.ClosedAt.HasValue ? BusinessDayClock.NormalizeLocal(s.ClosedAt.Value) : (DateTime?)null;
+            return (openedLocal >= periodStartLocal && openedLocal < periodEndLocal)
+                || (closedLocal.HasValue && closedLocal.Value >= periodStartLocal && closedLocal.Value < periodEndLocal)
+                || (string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase) && openedLocal < periodEndLocal);
         }).ToList();
 
         var dayShiftIds = dayShifts.Select(s => s.ShiftId).ToHashSet();
@@ -2241,8 +2245,8 @@ public static class ShiftSession
 
         var periodOrders = allOrders.Where(o =>
         {
-            var createdUtc = BusinessDayClock.NormalizeUtc(o.CreatedAt);
-            bool inWindow = createdUtc >= periodStartUtc && createdUtc <= effectiveEndUtc;
+            var createdLocal = BusinessDayClock.NormalizeLocal(o.CreatedAt);
+            bool inWindow = createdLocal >= periodStartLocal && createdLocal <= effectiveEndLocal;
             bool inDayShift = (o.ShiftId.HasValue && dayShiftIds.Contains(o.ShiftId.Value))
                 || (!string.IsNullOrWhiteSpace(o.ClientShiftId) && dayClientShiftIds.Contains(o.ClientShiftId));
             return inWindow || inDayShift;
@@ -2387,17 +2391,17 @@ public static class ShiftSession
             CashierId = activeShiftCount > 0
                 ? (openShift?.CashierId ?? "ACTIVE SHIFT")
                 : (cashierSummaries.Count == 1 ? cashierSummaries[0].CashierId : "ALL CASHIERS"),
-            OpenedAt = dayShifts.FirstOrDefault()?.OpenedAt ?? periodStartUtc,
+            OpenedAt = dayShifts.FirstOrDefault()?.OpenedAt ?? periodStartLocal,
             ClosedAt = activeShiftCount == 0 ? dayShifts.LastOrDefault()?.ClosedAt : null,
-            GeneratedAt = nowUtc,
+            GeneratedAt = nowManila,
             BusinessDate = dateStr,
             IsAnytimeAudit = true,
             ActiveShiftCount = activeShiftCount,
             ClosedShiftCount = closedShiftCount,
             CashierSummaries = cashierSummaries,
             IsReprint = reprint,
-            ReportingPeriodStart = periodStartUtc,
-            ReportingPeriodEnd = effectiveEndUtc,
+            ReportingPeriodStart = periodStartLocal,
+            ReportingPeriodEnd = effectiveEndLocal,
             ReportingPeriodMatchesShift = dayShifts.Count == 1,
             BeginningInvoiceNumber = invoices.FirstOrDefault(),
             EndingInvoiceNumber = invoices.LastOrDefault(),
@@ -2864,11 +2868,16 @@ public static class ShiftSession
             if (shift == null || !string.Equals(shift.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("No open unresolved shift found locally for supervisor overnight recovery.");
 
-            var closedAtUtc = request.ClosedAtUtc.Value >= BusinessDayClock.NormalizeUtc(shift.OpenedAt)
-                ? request.ClosedAtUtc.Value
-                : BusinessDayClock.UtcNow();
+            var shiftOpenedLocal = BusinessDayClock.NormalizeLocal(shift.OpenedAt);
+            var reqClosedLocal = request.ClosedAtUtc.HasValue
+                ? BusinessDayClock.ToManilaTime(BusinessDayClock.NormalizeUtc(request.ClosedAtUtc.Value))
+                : BusinessDayClock.ManilaNow();
+            var closedAtLocal = reqClosedLocal >= shiftOpenedLocal
+                ? reqClosedLocal
+                : BusinessDayClock.ManilaNow();
+            var closedAtUtc = BusinessDayClock.ManilaToUtc(closedAtLocal);
             string originalBusinessDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
-            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtUtc, shift.BusinessDate))
+            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtLocal, shift.BusinessDate))
                 throw new InvalidOperationException("Supervisor overnight recovery only applies to open shifts from a previous Business Date.");
 
             int pendingMovements = await db.CashDrawerMovements.CountAsync(m => m.ShiftId == shift.ShiftId && m.Status == "PENDING_APPROVAL");
@@ -2885,7 +2894,7 @@ public static class ShiftSession
             var reconciliations = await BuildLocalPaymentReconciliationsAsync(db, shift, request.PaymentDeclarations, countedCash);
 
             shift.Status = "CLOSED";
-            shift.ClosedAt = closedAtUtc;
+            shift.ClosedAt = closedAtLocal;
             shift.ClosingType = TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery;
             shift.ClosedBySupervisorId = approverUsername;
             shift.RecoveryReason = request.Reason.Length > 500 ? request.Reason[..500] : request.Reason;
@@ -2923,7 +2932,7 @@ public static class ShiftSession
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = closedAtUtc,
+                    SubmittedAt = closedAtLocal,
                     TotalCountedCash = countedCash,
                     TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
                     Denominations = validatedDenominations,
@@ -3669,7 +3678,7 @@ public static class ShiftSession
             CashierId = shift.CashierId,
             OpenedAt = shift.OpenedAt,
             ClosedAt = shift.ClosedAt,
-            SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+            SubmittedAt = shift.ClosedAt ?? BusinessDayClock.ManilaNow(),
             IsReprint = isReprint,
             TotalCountedCash = countedCash,
             TotalNonCashDeclared = dto.TotalNonCashDeclared,
@@ -3716,10 +3725,10 @@ public static class ShiftSession
             CashierId = shift.CashierId,
             OpenedAt = shift.OpenedAt,
             ClosedAt = shift.ClosedAt,
-            GeneratedAt = DateTime.UtcNow,
+            GeneratedAt = BusinessDayClock.ManilaNow(),
             IsReprint = isReprint,
             ReportingPeriodStart = shift.OpenedAt,
-            ReportingPeriodEnd = shift.ClosedAt ?? DateTime.UtcNow,
+            ReportingPeriodEnd = shift.ClosedAt ?? BusinessDayClock.ManilaNow(),
             ReportingPeriodMatchesShift = true,
             BeginningInvoiceNumber = invoices.FirstOrDefault(),
             EndingInvoiceNumber = invoices.LastOrDefault(),

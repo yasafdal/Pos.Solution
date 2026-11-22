@@ -33,7 +33,7 @@ public partial class ZReadingService
         }
         if (await db.ZReadingPrintAttempts.AnyAsync(x => x.ZReadingId == reportId, ct) && string.IsNullOrWhiteSpace(request.Reason))
             throw new ZReadingException(400, "A reprint reason is required after any previous print attempt, including unresolved STARTED attempts.");
-        var attempt = new ZReadingPrintAttempt { Id = Guid.NewGuid(), ZReadingId = reportId, ClientOperationId = request.ClientOperationId, RequestedBy = user, StartedAt = DateTime.UtcNow, PrinterName = request.PrinterName, Reason = request.Reason };
+        var attempt = new ZReadingPrintAttempt { Id = Guid.NewGuid(), ZReadingId = reportId, ClientOperationId = request.ClientOperationId, RequestedBy = user, StartedAt = POS.Shared.Services.BusinessDayClock.ManilaNow(), PrinterName = request.PrinterName, Reason = request.Reason };
         db.ZReadingPrintAttempts.Add(attempt);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -56,7 +56,7 @@ public partial class ZReadingService
             if (result.Status != request.Status || result.ErrorMessage != request.ErrorMessage || result.CompletedBy != user) throw new ZReadingException(409, "Completed print audit is immutable.");
             return await PrintDto(attempt, report, ct);
         }
-        db.ZReadingPrintResults.Add(new ZReadingPrintResult { AttemptId = attemptId, Status = request.Status, ErrorMessage = request.ErrorMessage, CompletedBy = user, CompletedAt = DateTime.UtcNow });
+        db.ZReadingPrintResults.Add(new ZReadingPrintResult { AttemptId = attemptId, Status = request.Status, ErrorMessage = request.ErrorMessage, CompletedBy = user, CompletedAt = POS.Shared.Services.BusinessDayClock.ManilaNow() });
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return await PrintDto(attempt, report, ct);

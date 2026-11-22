@@ -183,11 +183,12 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     return alignedTxDate >= minOpenedVal && (closedVal == null || alignedTxDate <= closedVal.Value);
                 })
                 .ToList();
+            var serverReceivedManila = POS.Shared.Services.BusinessDayClock.ToManilaTime(serverReceivedAtUtc);
             var serverReceivedComparison = DateTime.SpecifyKind(serverReceivedAtUtc, DateTimeKind.Unspecified);
-            var alignedTxForFutureCheck = AlignToShiftDomain(request.TransactionDate, serverReceivedComparison, reqOffsetMinutes);
+            var alignedTxForFutureCheck = AlignToShiftDomain(request.TransactionDate, serverReceivedManila, reqOffsetMinutes);
             var maxAllowedFuture = (hasExplicitShiftIdentity && historical.Count == 1 && historical[0].Status == "OPEN" && !historical[0].ClosedAt.HasValue)
-                ? serverReceivedComparison.AddHours(24)
-                : serverReceivedComparison.AddMinutes(5);
+                ? serverReceivedManila.AddHours(24)
+                : serverReceivedManila.AddMinutes(5);
             if (historical.Count != 1 || alignedTxForFutureCheck > maxAllowedFuture) return Conflict("Sale has no matching confirmed shift lifecycle.");
             var saleShift = historical[0];
             if (saleShift.Status != "OPEN" && saleShift.Status != "CLOSED") return Conflict("Invalid shift lifecycle.");
@@ -293,6 +294,16 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             activeSeq.LastIssuedNumber = Math.Max(activeSeq.LastIssuedNumber, issuedNum);
             activeSeq.UpdatedAt = DateTime.UtcNow;
 
+            string? resolvedDiscountName = null;
+            if (!string.IsNullOrWhiteSpace(request.DiscountCode) &&
+                !string.Equals(request.DiscountCode.Trim(), "NONE", StringComparison.OrdinalIgnoreCase))
+            {
+                var normCode = request.DiscountCode.Trim().ToUpperInvariant();
+                var dt = await context.DiscountTypes.AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.Code.ToUpper() == normCode);
+                resolvedDiscountName = dt?.Name ?? (normCode == "MANUAL" ? "Manual Custom Discount" : normCode);
+            }
+
             var order = new Order
             {
                 OrderNumber = orderNumber,
@@ -312,6 +323,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 Subtotal = request.Subtotal,
                 DiscountAmount = request.DiscountAmount,
                 DiscountCode = request.DiscountCode,
+                DiscountName = resolvedDiscountName,
                 CustomerCardNumber = request.CustomerCardNumber,
                 CustomerName = request.CustomerName,
                 CustomerAddress = request.CustomerAddress,
@@ -332,6 +344,11 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             context.Orders.Add(order);
             await context.SaveChangesAsync();
 
+            bool isNonVatOrAllExempt = string.Equals(outlet.Branch?.TaxType, "Non-VAT", StringComparison.OrdinalIgnoreCase)
+                || (request.VatableSales == 0m && request.VatExemptSales > 0m);
+            bool isAllZeroRated = request.VatableSales == 0m && request.VatExemptSales == 0m && request.ZeroRatedSales > 0m;
+            string defaultItemVatType = isNonVatOrAllExempt ? "VAT_EXEMPT" : (isAllZeroRated ? "ZERO_RATED" : "VATABLE");
+
             foreach (var itemDto in request.Items)
             {
                 decimal modTotal = itemDto.IsComplimentary ? 0m : (itemDto.Modifiers?.Sum(m => m.AdditionalPrice) ?? 0m);
@@ -350,7 +367,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     BasePrice = basePrice,
                     ModifierTotal = modTotal,
                     LineTotal = itemDto.IsComplimentary ? 0m : itemDto.LineTotal,
-                    VatType = "VATABLE",
+                    VatType = defaultItemVatType,
                     VatAmount = 0m
                 };
 
@@ -555,9 +572,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
         }
 
         if (User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString() && !User.IsInRole("Admin") && !User.IsInRole("Manager")) return Forbid();
-        if (request.CreatedAt != default) request.CreatedAt = NormalizeUtc(request.CreatedAt);
-        if (request.ApprovedAt.HasValue) request.ApprovedAt = NormalizeUtc(request.ApprovedAt.Value);
-        if (request.PostedAt.HasValue) request.PostedAt = NormalizeUtc(request.PostedAt.Value);
+        if (request.CreatedAt != default) request.CreatedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(request.CreatedAt);
+        if (request.ApprovedAt.HasValue) request.ApprovedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(request.ApprovedAt.Value);
+        if (request.PostedAt.HasValue) request.PostedAt = POS.Shared.Services.BusinessDayClock.NormalizeLocal(request.PostedAt.Value);
         string clientId = request.ClientMovementId.Trim();
 
         // 1. Server-side idempotency check
@@ -768,9 +785,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 CreatedBy = string.IsNullOrWhiteSpace(request.CreatedBy) ? shift.CashierId : request.CreatedBy.Trim(),
                 AuthorizedBy = verifiedApprover ?? (string.IsNullOrWhiteSpace(request.CreatedBy) ? shift.CashierId : request.CreatedBy.Trim()),
                 ApprovedBy = verifiedApprover,
-                CreatedAt = request.CreatedAt == default ? DateTime.UtcNow : request.CreatedAt,
-                ApprovedAt = verifiedApprover != null ? (request.ApprovedAt ?? DateTime.UtcNow) : null,
-                PostedAt = resolvedStatus == "POSTED" ? (request.PostedAt ?? DateTime.UtcNow) : null
+                CreatedAt = request.CreatedAt == default ? POS.Shared.Services.BusinessDayClock.ManilaNow() : request.CreatedAt,
+                ApprovedAt = verifiedApprover != null ? (request.ApprovedAt ?? POS.Shared.Services.BusinessDayClock.ManilaNow()) : null,
+                PostedAt = resolvedStatus == "POSTED" ? (request.PostedAt ?? POS.Shared.Services.BusinessDayClock.ManilaNow()) : null
             };
 
             context.CashDrawerMovements.Add(movement);
@@ -1049,7 +1066,10 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 });
             }
 
-            var voidedUtc = request.VoidedAtUtc == default ? DateTime.UtcNow : NormalizeUtc(request.VoidedAtUtc);
+            var voidedUtc = request.VoidedAtUtc == default ? POS.Shared.Services.BusinessDayClock.UtcNow() : NormalizeUtc(request.VoidedAtUtc);
+            var voidedAtManila = request.VoidedAtLocal != default
+                ? POS.Shared.Services.BusinessDayClock.NormalizeLocal(request.VoidedAtLocal)
+                : POS.Shared.Services.BusinessDayClock.NormalizeLocal(voidedUtc);
             string reversalRef = !string.IsNullOrWhiteSpace(request.ReversalReference)
                 ? request.ReversalReference.Trim()
                 : "VOID-" + clientVoidId[..Math.Min(8, clientVoidId.Length)].ToUpperInvariant();
@@ -1061,9 +1081,9 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                 VoidReason = request.VoidReason.Trim(),
                 RequestedBy = string.IsNullOrWhiteSpace(request.RequestedBy) ? (User.Identity?.Name ?? "system") : request.RequestedBy.Trim(),
                 ApprovedBy = matchedSupervisor.Username,
-                RequestedAt = voidedUtc,
-                ApprovedAt = voidedUtc,
-                VoidedAt = voidedUtc,
+                RequestedAt = voidedAtManila,
+                ApprovedAt = voidedAtManila,
+                VoidedAt = voidedAtManila,
                 Status = "APPROVED",
                 ReversalReference = reversalRef,
                 ClientVoidId = clientVoidId
@@ -1090,8 +1110,8 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
                     RefundAmount = payment.Amount,
                     ReferenceNumber = reversalRef,
                     Status = isCash ? "COMPLETED" : "PENDING_MANUAL_REFUND",
-                    RequestedAt = voidedUtc,
-                    CompletedAt = voidedUtc
+                    RequestedAt = voidedAtManila,
+                    CompletedAt = voidedAtManila
                 });
             }
 
@@ -1122,7 +1142,7 @@ public class OfflineSyncController(PosDbContext context) : ControllerBase
             }
 
             bool restored = await ReturnsController.RestoreInventoryForVoidedOrderAsync(
-                context, order, reversalRef, matchedSupervisor.Username, voidedUtc, cancellationToken);
+                context, order, reversalRef, matchedSupervisor.Username, voidedAtManila, cancellationToken);
 
             await context.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);

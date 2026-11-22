@@ -60,6 +60,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             }
 
             var cashierId = User.Identity?.Name ?? "system";
+            var voidedAt = POS.Shared.Services.BusinessDayClock.ManilaNow();
             var voidRecord = new TransactionVoid
             {
                 OriginalOrderId = order.OrderId,
@@ -67,9 +68,9 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                 VoidReason = dto.VoidReason.Trim(),
                 RequestedBy = cashierId,
                 ApprovedBy = approver.Username,
-                RequestedAt = DateTime.UtcNow,
-                ApprovedAt = DateTime.UtcNow,
-                VoidedAt = DateTime.UtcNow,
+                RequestedAt = voidedAt,
+                ApprovedAt = voidedAt,
+                VoidedAt = voidedAt,
                 Status = "APPROVED",
                 ReversalReference = "VOID-" + Guid.NewGuid().ToString().Substring(0, 8).ToUpper()
             };
@@ -104,8 +105,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                     RefundAmount = payment.Amount,
                     ReferenceNumber = voidRecord.ReversalReference,
                     Status = isCash ? "COMPLETED" : "PENDING_MANUAL_REFUND",
-                    RequestedAt = DateTime.UtcNow,
-                    CompletedAt = DateTime.UtcNow
+                    RequestedAt = voidedAt,
+                    CompletedAt = voidedAt
                 });
             }
 
@@ -514,6 +515,7 @@ public class ReturnsController(PosDbContext context) : ControllerBase
             }
 
             decimal totalRefund = 0m;
+            var returnAt = POS.Shared.Services.BusinessDayClock.ManilaNow();
             var returnRecord = new SalesReturn
             {
                 OriginalOrderId = order.OrderId,
@@ -524,8 +526,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                 Status = "COMPLETED",
                 RequestedBy = User.Identity?.Name ?? "system",
                 ApprovedBy = approver.Username,
-                CreatedAt = DateTime.UtcNow,
-                CompletedAt = DateTime.UtcNow
+                CreatedAt = returnAt,
+                CompletedAt = returnAt
             };
 
             context.SalesReturns.Add(returnRecord);
@@ -615,8 +617,8 @@ public class ReturnsController(PosDbContext context) : ControllerBase
                     RefundAmount = totalRefund,
                     ReferenceNumber = dto.RefundReferenceNumber,
                     Status = "COMPLETED",
-                    RequestedAt = DateTime.UtcNow,
-                    CompletedAt = DateTime.UtcNow
+                    RequestedAt = returnAt,
+                    CompletedAt = returnAt
                 });
             }
 

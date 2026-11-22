@@ -258,7 +258,7 @@ public class ClientHeldSaleService(
                 localId = -Random.Shared.Next(100_000, 999_999_999);
             }
 
-            var now = BusinessDayClock.UtcNow();
+            var now = BusinessDayClock.ManilaNow();
             string businessDateStr = HeldSalePolicies.FormatBusinessDate(BusinessDayClock.GetBusinessDate(now));
             string holdRef = $"HOLD-OFF-{now:yyMMddHHmmss}-{Random.Shared.Next(100, 999)}";
 
@@ -455,7 +455,7 @@ public class ClientHeldSaleService(
             using var db = new LocalPosDbContext();
             db.InitializeDatabase();
             var existing = await db.HeldSales.FirstOrDefaultAsync(h => h.HeldSaleId == dto.HeldSaleId);
-            var resolvedCreatedAt = dto.CreatedAt != default ? dto.CreatedAt : BusinessDayClock.UtcNow();
+            var resolvedCreatedAt = dto.CreatedAt != default ? BusinessDayClock.NormalizeLocal(dto.CreatedAt) : BusinessDayClock.ManilaNow();
             var resolvedBizDate = dto.BusinessDate ?? HeldSalePolicies.FormatBusinessDate(
                 HeldSalePolicies.ResolveBusinessDate(dto.BusinessDate, resolvedCreatedAt));
             dto.BusinessDate = resolvedBizDate;
@@ -561,10 +561,10 @@ public class ClientHeldSaleService(
 
             if (stale.Count == 0) return 0;
 
-            var nowUtc = BusinessDayClock.UtcNow();
+            var nowManila = BusinessDayClock.ManilaNow();
             foreach (var h in stale)
             {
-                ApplyExpirationToLocalEntity(h, nowUtc);
+                ApplyExpirationToLocalEntity(h, nowManila);
             }
 
             await db.SaveChangesAsync();
@@ -595,7 +595,7 @@ public class ClientHeldSaleService(
 
             if (local.Status == "HELD" && isPreviousDay)
             {
-                ApplyExpirationToLocalEntity(local, BusinessDayClock.UtcNow());
+                ApplyExpirationToLocalEntity(local, BusinessDayClock.ManilaNow());
                 await db.SaveChangesAsync();
                 return true;
             }
@@ -627,7 +627,7 @@ public class ClientHeldSaleService(
             db.InitializeDatabase();
             var local = await db.HeldSales.FirstOrDefaultAsync(h => h.HeldSaleId == id);
             if (local == null || local.Status != "HELD") return;
-            ApplyExpirationToLocalEntity(local, BusinessDayClock.UtcNow());
+            ApplyExpirationToLocalEntity(local, BusinessDayClock.ManilaNow());
             await db.SaveChangesAsync();
         }
         catch
@@ -655,7 +655,7 @@ public class ClientHeldSaleService(
 
             if (local.Status == "HELD" && isPreviousDay)
             {
-                ApplyExpirationToLocalEntity(local, BusinessDayClock.UtcNow());
+                ApplyExpirationToLocalEntity(local, BusinessDayClock.ManilaNow());
                 await db.SaveChangesAsync();
                 throw new InvalidOperationException(HeldSalePolicies.ExpiredHeldSaleResumeMessage);
             }
@@ -668,9 +668,9 @@ public class ClientHeldSaleService(
 
             if (local.Status != "HELD") return null;
 
-            var resumeUtc = BusinessDayClock.UtcNow();
+            var resumeManila = BusinessDayClock.ManilaNow();
             local.Status = "RESUMED";
-            local.ResumedAt = resumeUtc;
+            local.ResumedAt = resumeManila;
             var dto = POS.Shared.Services.LegacyTerminalPayload.Deserialize<HeldSaleDto>(local.PayloadJson);
             if (dto != null)
             {
@@ -700,18 +700,18 @@ public class ClientHeldSaleService(
             var local = await db.HeldSales.FirstOrDefaultAsync(h => h.HeldSaleId == id && h.Status == "HELD");
             if (local == null) return false;
 
-            var cancelUtc = BusinessDayClock.UtcNow();
+            var cancelManila = BusinessDayClock.ManilaNow();
             local.BusinessDate ??= HeldSalePolicies.FormatBusinessDate(
                 HeldSalePolicies.ResolveBusinessDate(local.BusinessDate, local.CreatedAt));
             local.Status = "CANCELLED";
-            local.CancelledAt = cancelUtc;
+            local.CancelledAt = cancelManila;
             local.CancellationReason = HeldSalePolicies.ManualCancellationReason;
             var dto = POS.Shared.Services.LegacyTerminalPayload.Deserialize<HeldSaleDto>(local.PayloadJson);
             if (dto != null)
             {
                 dto.Status = "CANCELLED";
                 dto.BusinessDate = local.BusinessDate;
-                dto.CancelledAt = cancelUtc;
+                dto.CancelledAt = cancelManila;
                 dto.CancellationReason = local.CancellationReason;
                 local.PayloadJson = JsonSerializer.Serialize(dto);
             }

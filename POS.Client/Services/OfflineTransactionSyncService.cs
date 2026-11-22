@@ -218,8 +218,8 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     }
                     opening.CashierId = owner;
                     opening.OpenedAt = opening.OpenedAt.HasValue
-                        ? EnsureUtc(opening.OpenedAt.Value)
-                        : (owners[0].OpenedAt != default ? EnsureUtc(owners[0].OpenedAt) : DateTime.UtcNow);
+                        ? EnsureLocal(opening.OpenedAt.Value)
+                        : (owners[0].OpenedAt != default ? EnsureLocal(owners[0].OpenedAt) : POS.Shared.Services.BusinessDayClock.ManilaNow());
                 }
                 var response = await httpClient.PostAsJsonAsync("api/cash-drawer/open-shift", opening);
                 if (!response.IsSuccessStatusCode)
@@ -728,7 +728,7 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     req.BranchId = localShift.BranchId;
                     req.TerminalId = localShift.TerminalId;
                     if (!req.ClosedAtUtc.HasValue && localShift.ClosedAt.HasValue)
-                        req.ClosedAtUtc = EnsureUtc(localShift.ClosedAt.Value);
+                        req.ClosedAtUtc = POS.Shared.Services.BusinessDayClock.ManilaToUtc(localShift.ClosedAt.Value);
                 }
             }
             if (req.ClosedAtUtc.HasValue)
@@ -913,13 +913,13 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                     closing.TerminalId = localShift.TerminalId;
                     if (!closing.ClosedAt.HasValue && localShift.ClosedAt.HasValue)
                     {
-                        closing.ClosedAt = EnsureUtc(localShift.ClosedAt.Value);
+                        closing.ClosedAt = EnsureLocal(localShift.ClosedAt.Value);
                     }
                 }
             }
             if (closing.ClosedAt.HasValue)
             {
-                closing.ClosedAt = EnsureUtc(closing.ClosedAt.Value);
+                closing.ClosedAt = EnsureLocal(closing.ClosedAt.Value);
             }
 
             await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
@@ -1257,9 +1257,9 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
                 CreatedBy = localMovement.CreatedBy,
                 ApprovedBy = localMovement.ApprovedBy,
                 SupervisorPinHash = localMovement.SupervisorPinHash,
-                CreatedAt = EnsureUtc(localMovement.CreatedAt),
-                ApprovedAt = localMovement.ApprovedAt.HasValue ? EnsureUtc(localMovement.ApprovedAt.Value) : null,
-                PostedAt = localMovement.PostedAt.HasValue ? EnsureUtc(localMovement.PostedAt.Value) : null
+                CreatedAt = EnsureLocal(localMovement.CreatedAt),
+                ApprovedAt = localMovement.ApprovedAt.HasValue ? EnsureLocal(localMovement.ApprovedAt.Value) : null,
+                PostedAt = localMovement.PostedAt.HasValue ? EnsureLocal(localMovement.PostedAt.Value) : null
             };
 
             await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));

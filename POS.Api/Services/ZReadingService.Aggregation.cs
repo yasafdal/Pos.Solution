@@ -16,7 +16,7 @@ public partial class ZReadingService
         report.MachineIdentificationNumber = terminal.Minnumber;
         report.PermitToUseNumber = terminal.Ptunumber;
         report.SerialNumber = terminal.SerialNumber;
-        var start = report.PeriodStartUtc; var end = report.PeriodEndUtc;
+        var (start, end) = PeriodLocal(report.BusinessDate);
         // Invoice issuance is immutable sale attribution; current VOIDED/REFUNDED flags do not erase collections.
         var sales = await db.Orders.AsNoTracking().Include(x => x.OrderItems).Include(x => x.Payments)
             .Where(x => x.TerminalId == report.TerminalId && x.InvoiceIssuedAt >= start && x.InvoiceIssuedAt < end).ToListAsync(ct);

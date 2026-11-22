@@ -351,7 +351,7 @@ public class CashDrawerController : ControllerBase
             ? request.CashierId.Trim()
             : caller;
         if (request.OpenedAt.HasValue)
-            request.OpenedAt = NormalizeUtc(request.OpenedAt.Value);
+            request.OpenedAt = BusinessDayClock.NormalizeLocal(request.OpenedAt.Value);
 
         List<CashDenominationLineDto>? validatedOpeningDenoms = null;
         if (request.OpeningDenominations is { Count: > 0 })
@@ -367,8 +367,13 @@ public class CashDrawerController : ControllerBase
         if (request.ExpectedOpeningFund.HasValue && request.ExpectedOpeningFund.Value < 0m)
             return BadRequest("Expected opening fund cannot be negative.");
         if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
-        var maxAllowedOpenedAtUtc = (BusinessDayClock.UtcNow() > DateTime.UtcNow ? BusinessDayClock.UtcNow() : DateTime.UtcNow).AddMinutes(5);
-        if (request.ClientShiftId?.Length > 100 || request.OpenedAt > maxAllowedOpenedAtUtc)
+        var normalizedOpenedAt = request.OpenedAt.HasValue
+            ? BusinessDayClock.NormalizeLocal(request.OpenedAt.Value)
+            : (DateTime?)null;
+        var currentManila = BusinessDayClock.ManilaNow();
+        var wallManila = BusinessDayClock.ToManilaTime(DateTime.UtcNow);
+        var maxAllowedOpenedAtManila = (currentManila > wallManila ? currentManila : wallManila).AddMinutes(5);
+        if (request.ClientShiftId?.Length > 100 || (normalizedOpenedAt.HasValue && normalizedOpenedAt.Value > maxAllowedOpenedAtManila))
             return BadRequest("Invalid opening identity or timestamp.");
 
         var licCheck = await new POS.Api.Services.LicensingService(_context).VerifyTerminalCanOperateAsync(request.TerminalId, null, cancellationToken);
@@ -385,7 +390,7 @@ public class CashDrawerController : ControllerBase
             {
                 if (previous.TerminalId != request.TerminalId || (request.BranchId > 0 && previous.BranchId != request.BranchId)
                     || previous.CashierId != cashierId || previous.OpeningFloat != Math.Round(request.OpeningFloat.Value, 2)
-                    || (request.OpenedAt.HasValue && NormalizeUtc(previous.OpenedAt).Ticks / 10 != request.OpenedAt.Value.Ticks / 10))
+                    || (normalizedOpenedAt.HasValue && BusinessDayClock.NormalizeLocal(previous.OpenedAt).Ticks / 10 != normalizedOpenedAt.Value.Ticks / 10))
                     return Conflict("Opening retry does not match the original shift.");
                 var prevSnap = await ReadSnapshotAsync(_context, previous.ShiftId, cancellationToken);
                 return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? prevSnap : RedactForCashier(prevSnap));
@@ -396,9 +401,9 @@ public class CashDrawerController : ControllerBase
 
         var lockState = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
             _context, request.TerminalId, cashierId, cancellationToken);
-        bool isHistoricalOfflineOpen = request.OpenedAt.HasValue &&
+        bool isHistoricalOfflineOpen = normalizedOpenedAt.HasValue &&
             lockState.LockedAtUtc.HasValue &&
-            request.OpenedAt.Value < NormalizeUtc(lockState.LockedAtUtc.Value);
+            normalizedOpenedAt.Value < BusinessDayClock.ToManilaTime(NormalizeUtc(lockState.LockedAtUtc.Value));
         if (!isHistoricalOfflineOpen)
         {
             if (lockState.IsCashierRestricted)
@@ -443,7 +448,7 @@ public class CashDrawerController : ControllerBase
                 : "Reconcile and close the legacy shift in My Shift before confirming a new opening float. Historical opening cash cannot be changed.");
         }
 
-        var openingTime = request.OpenedAt ?? BusinessDayClock.UtcNow();
+        var openingTime = normalizedOpenedAt ?? BusinessDayClock.ManilaNow();
         if (await _context.CashDrawerShifts.AnyAsync(s => s.TerminalId == request.TerminalId && (s.ClosedAt == null || s.ClosedAt >= openingTime), cancellationToken))
             return Conflict("Opening overlaps an existing drawer lifecycle.");
         decimal openingFloat = Math.Round(request.OpeningFloat.Value, 2, MidpointRounding.AwayFromZero);
@@ -749,13 +754,13 @@ public class CashDrawerController : ControllerBase
                         return BadRequest("Invalid supervisor PIN or user does not have supervisor approval privileges.");
                     }
                     approvedBy = supervisor.Username;
-                    approvedAt = DateTime.UtcNow;
+                    approvedAt = BusinessDayClock.ManilaNow();
                     status = "POSTED";
                 }
                 else if (IsSupervisorRole(callerRole))
                 {
                     approvedBy = cashierId;
-                    approvedAt = DateTime.UtcNow;
+                    approvedAt = BusinessDayClock.ManilaNow();
                     status = "POSTED";
                 }
                 else
@@ -766,7 +771,7 @@ public class CashDrawerController : ControllerBase
             else
             {
                 approvedBy = cashierId;
-                approvedAt = DateTime.UtcNow;
+                approvedAt = BusinessDayClock.ManilaNow();
                 status = "POSTED";
             }
 
@@ -780,7 +785,7 @@ public class CashDrawerController : ControllerBase
                     : "Insufficient cash in drawer for the requested paid-out amount.");
             }
 
-            var now = DateTime.UtcNow;
+            var now = BusinessDayClock.ManilaNow();
             var movement = new CashDrawerMovement
             {
                 ShiftId = shift.ShiftId,
@@ -976,7 +981,7 @@ public class CashDrawerController : ControllerBase
                 return BadRequest($"Insufficient cash in drawer to post movement. Available expected cash is ₱{shift.ExpectedBalance:N2}, movement amount is ₱{movement.Amount:N2}.");
             }
 
-            var now = DateTime.UtcNow;
+            var now = BusinessDayClock.ManilaNow();
             movement.Status = "POSTED";
             movement.ApprovedBy = approverUsername;
             movement.AuthorizedBy = approverUsername;
@@ -1043,7 +1048,7 @@ public class CashDrawerController : ControllerBase
 
             movement.Status = "REJECTED";
             movement.ApprovedBy = approverUsername;
-            movement.ApprovedAt = DateTime.UtcNow;
+            movement.ApprovedAt = BusinessDayClock.ManilaNow();
             movement.RejectionReason = string.IsNullOrWhiteSpace(dto?.Reason) ? "Rejected by supervisor" : dto!.Reason!.Trim();
 
             await _context.SaveChangesAsync(cancellationToken);
@@ -1119,7 +1124,7 @@ public class CashDrawerController : ControllerBase
                 return BadRequest($"Cannot reverse Paid-In of ₱{movement.Amount:N2} because current expected drawer balance is only ₱{shift.ExpectedBalance:N2}.");
             }
 
-            var now = DateTime.UtcNow;
+            var now = BusinessDayClock.ManilaNow();
             movement.Status = "REVERSED";
             movement.ReversedBy = supervisorUsername;
             movement.ReversedAt = now;
@@ -1443,7 +1448,7 @@ public class CashDrawerController : ControllerBase
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+                    SubmittedAt = shift.ClosedAt ?? BusinessDayClock.ManilaNow(),
                     TotalCountedCash = prevCountedCash,
                     TotalNonCashDeclared = prevDeclarations.Sum(d => d.DeclaredAmount),
                     Denominations = prevDenoms,
@@ -1481,7 +1486,7 @@ public class CashDrawerController : ControllerBase
                 RecountNumber = history.Count + 1,
                 ShiftId = shift.ShiftId,
                 CorrectedBy = supervisorUsername!,
-                CorrectedAt = DateTime.UtcNow,
+                CorrectedAt = BusinessDayClock.ManilaNow(),
                 Reason = request.Reason.Trim(),
                 OriginalCountedCash = prevCountedCash,
                 RevisedCountedCash = countedCash,
@@ -1580,7 +1585,7 @@ public class CashDrawerController : ControllerBase
             return Forbid();
         }
 
-        var nowUtc = BusinessDayClock.UtcNow();
+        var nowManila = BusinessDayClock.ManilaNow();
         DateOnly targetDate;
         if (!string.IsNullOrWhiteSpace(businessDate))
         {
@@ -1589,14 +1594,11 @@ public class CashDrawerController : ControllerBase
         }
         else
         {
-            targetDate = BusinessDayClock.GetBusinessDate(nowUtc);
+            targetDate = BusinessDayClock.GetBusinessDate(nowManila);
         }
 
-        var (periodStartUtc, periodEndUtc) = BusinessDayClock.GetPeriodUtc(targetDate);
-        var effectiveEndUtc = nowUtc < periodEndUtc ? nowUtc : periodEndUtc;
-        var periodStart = DateTime.SpecifyKind(periodStartUtc, DateTimeKind.Unspecified);
-        var periodEnd = DateTime.SpecifyKind(effectiveEndUtc, DateTimeKind.Unspecified);
-        var fullPeriodEnd = DateTime.SpecifyKind(periodEndUtc, DateTimeKind.Unspecified);
+        var (periodStart, fullPeriodEnd) = BusinessDayClock.GetPeriodLocal(targetDate);
+        var periodEnd = nowManila < fullPeriodEnd ? nowManila : fullPeriodEnd;
 
         var dayShifts = await _context.CashDrawerShifts
             .AsNoTracking()
@@ -1841,7 +1843,7 @@ public class CashDrawerController : ControllerBase
                 : (cashierSummaries.Count == 1 ? cashierSummaries[0].CashierId : "ALL CASHIERS"),
             OpenedAt = dayShifts.FirstOrDefault()?.OpenedAt ?? periodStart,
             ClosedAt = activeShiftCount == 0 ? dayShifts.LastOrDefault()?.ClosedAt : null,
-            GeneratedAt = nowUtc,
+            GeneratedAt = nowManila,
             BusinessDate = targetDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
             IsAnytimeAudit = true,
             ActiveShiftCount = activeShiftCount,
@@ -2187,12 +2189,16 @@ public class CashDrawerController : ControllerBase
                 return Conflict("This cashier shift has already been closed.");
             }
 
-            var closedAtUtc = request.ClosedAtUtc.HasValue && NormalizeUtc(request.ClosedAtUtc.Value) >= NormalizeUtc(shift.OpenedAt)
-                ? NormalizeUtc(request.ClosedAtUtc.Value)
-                : BusinessDayClock.UtcNow();
+            var reqClosedLocal = request.ClosedAtUtc.HasValue
+                ? BusinessDayClock.ToManilaTime(NormalizeUtc(request.ClosedAtUtc.Value))
+                : (DateTime?)null;
+            var shiftOpenedLocal = BusinessDayClock.NormalizeLocal(shift.OpenedAt);
+            var closedAtLocal = reqClosedLocal.HasValue && reqClosedLocal.Value >= shiftOpenedLocal
+                ? reqClosedLocal.Value
+                : BusinessDayClock.ManilaNow();
 
             string originalBusinessDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
-            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtUtc, shift.BusinessDate))
+            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtLocal, shift.BusinessDate))
             {
                 await tx.RollbackAsync(cancellationToken);
                 return BadRequest("Supervisor overnight recovery only applies to open shifts from a previous Business Date.");
@@ -2214,7 +2220,7 @@ public class CashDrawerController : ControllerBase
             var reconciliations = await BuildPaymentReconciliationsAsync(_context, shift, request.PaymentDeclarations, cancellationToken);
 
             shift.Status = "CLOSED";
-            shift.ClosedAt = closedAtUtc;
+            shift.ClosedAt = closedAtLocal;
             shift.ClosingType = TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery;
             shift.ClosedBySupervisorId = supervisorUsername;
             shift.RecoveryReason = cleanReason;
@@ -2252,7 +2258,7 @@ public class CashDrawerController : ControllerBase
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = closedAtUtc,
+                    SubmittedAt = closedAtLocal,
                     TotalCountedCash = countedCash,
                     TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
                     HasRecordedDenominations = validatedDenominations.Count > 0,
@@ -2272,7 +2278,7 @@ public class CashDrawerController : ControllerBase
                 shift.ShiftId,
                 shift.ClientShiftId,
                 shift.ClientCloseId,
-                closedAtUtc,
+                BusinessDayClock.ManilaToUtc(closedAtLocal),
                 cancellationToken,
                 overrideBusinessDate: originalBusinessDate);
 
@@ -2554,11 +2560,15 @@ public class CashDrawerController : ControllerBase
                 return BadRequest($"Cannot close shift while {pendingCount} cash movement(s) are still pending supervisor approval. Please approve or reject them first.");
             }
 
-            var effectiveCloseUtc = request.ClosedAt.HasValue && request.ClosedAt.Value >= shift.OpenedAt
-                ? NormalizeUtc(request.ClosedAt.Value)
-                : BusinessDayClock.UtcNow();
+            var reqCloseLocal = request.ClosedAt.HasValue
+                ? BusinessDayClock.NormalizeLocal(request.ClosedAt.Value)
+                : (DateTime?)null;
+            var shiftOpenedLocal = BusinessDayClock.NormalizeLocal(shift.OpenedAt);
+            var effectiveCloseLocal = reqCloseLocal.HasValue && reqCloseLocal.Value >= shiftOpenedLocal
+                ? reqCloseLocal.Value
+                : BusinessDayClock.ManilaNow();
             string origShiftBizDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
-            if (BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, effectiveCloseUtc, shift.BusinessDate))
+            if (BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, effectiveCloseLocal, shift.BusinessDate))
             {
                 await tx.RollbackAsync(cancellationToken);
                 return Conflict(TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
@@ -2572,7 +2582,7 @@ public class CashDrawerController : ControllerBase
             var reconciliations = await BuildPaymentReconciliationsAsync(_context, shift, request.PaymentDeclarations, cancellationToken);
 
             shift.Status = "CLOSED";
-            shift.ClosedAt = effectiveCloseUtc;
+            shift.ClosedAt = effectiveCloseLocal;
             shift.BusinessDate ??= origShiftBizDate;
             var trimmedNotes = request.Notes?.Trim();
             shift.Notes = string.IsNullOrWhiteSpace(trimmedNotes)
@@ -2605,7 +2615,7 @@ public class CashDrawerController : ControllerBase
                     CashierId = shift.CashierId,
                     OpenedAt = shift.OpenedAt,
                     ClosedAt = shift.ClosedAt,
-                    SubmittedAt = shift.ClosedAt ?? BusinessDayClock.UtcNow(),
+                    SubmittedAt = shift.ClosedAt ?? BusinessDayClock.ManilaNow(),
                     TotalCountedCash = countedCash,
                     TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
                     HasRecordedDenominations = validatedDenominations != null && validatedDenominations.Count > 0,
@@ -2624,7 +2634,7 @@ public class CashDrawerController : ControllerBase
                 shift.ShiftId,
                 shift.ClientShiftId,
                 shift.ClientCloseId,
-                shift.ClosedAt ?? BusinessDayClock.UtcNow(),
+                BusinessDayClock.ManilaToUtc(effectiveCloseLocal),
                 cancellationToken);
 
             await _context.SaveChangesAsync(cancellationToken);
@@ -2940,7 +2950,7 @@ public class CashDrawerController : ControllerBase
             CashierId = shift.CashierId,
             OpenedAt = shift.OpenedAt,
             ClosedAt = shift.ClosedAt,
-            SubmittedAt = shift.ClosedAt ?? DateTime.UtcNow,
+            SubmittedAt = shift.ClosedAt ?? BusinessDayClock.ManilaNow(),
             IsReprint = isReprint,
             TotalCountedCash = countedCash,
             TotalNonCashDeclared = dto.TotalNonCashDeclared,
@@ -2963,19 +2973,16 @@ public class CashDrawerController : ControllerBase
                 .SumAsync(r => (decimal?)r.RefundAmount, cancellationToken) ?? 0m
             : 0m;
 
-        var periodEndUtc = BusinessDayClock.NormalizeUtc(shift.ClosedAt ?? BusinessDayClock.UtcNow());
-        var shiftOpenedUtc = BusinessDayClock.NormalizeUtc(shift.OpenedAt);
+        var periodEnd = BusinessDayClock.NormalizeLocal(shift.ClosedAt ?? BusinessDayClock.ManilaNow());
+        var shiftOpenedLocal = BusinessDayClock.NormalizeLocal(shift.OpenedAt);
         bool isOvernightRecovery = string.Equals(shift.ClosingType, TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery, StringComparison.OrdinalIgnoreCase);
         var businessDate = isOvernightRecovery
             ? BusinessDayClock.GetShiftBusinessDate(shift.OpenedAt, shift.BusinessDate)
-            : BusinessDayClock.GetBusinessDate(periodEndUtc);
-        var (businessDayStartUtc, businessDayEndUtc) = BusinessDayClock.GetPeriodUtc(businessDate);
-        if (isOvernightRecovery && periodEndUtc > businessDayEndUtc)
-            periodEndUtc = businessDayEndUtc;
-        var periodEnd = DateTime.SpecifyKind(periodEndUtc, DateTimeKind.Unspecified);
-        var businessDayStart = DateTime.SpecifyKind(businessDayStartUtc, DateTimeKind.Unspecified);
-        var shiftOpenedUnspecified = DateTime.SpecifyKind(shiftOpenedUtc, DateTimeKind.Unspecified);
-        var reportStart = shiftOpenedUnspecified < businessDayStart ? shiftOpenedUnspecified : businessDayStart;
+            : BusinessDayClock.GetBusinessDate(periodEnd);
+        var (businessDayStart, businessDayEnd) = BusinessDayClock.GetPeriodLocal(businessDate);
+        if (isOvernightRecovery && periodEnd > businessDayEnd)
+            periodEnd = businessDayEnd;
+        var reportStart = shiftOpenedLocal < businessDayStart ? shiftOpenedLocal : businessDayStart;
 
         var periodOrders = await context.Orders.AsNoTracking()
             .Where(o => o.TerminalId == shift.TerminalId && o.CreatedAt >= reportStart && o.CreatedAt <= periodEnd)
@@ -3055,7 +3062,7 @@ public class CashDrawerController : ControllerBase
             CashierId = shift.CashierId,
             OpenedAt = shift.OpenedAt,
             ClosedAt = shift.ClosedAt,
-            GeneratedAt = DateTime.UtcNow,
+            GeneratedAt = BusinessDayClock.ManilaNow(),
             IsReprint = isReprint,
             ReportingPeriodStart = reportStart,
             ReportingPeriodEnd = periodEnd,

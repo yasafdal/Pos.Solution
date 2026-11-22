@@ -172,6 +172,8 @@
     private void SetManualInputMode(string mode)
     {
         manualInputMode = mode;
+        if (manualPercentage == 0m) manualPercentage = 0m;
+        if (manualFixedAmount == 0m) manualFixedAmount = 0m;
         discountError = null;
     }
 
@@ -271,8 +273,8 @@
             ?? availableDiscounts.FirstOrDefault(d => d.IsActive);
         selectedDiscountCode = selectedDiscountType?.Code ?? "NONE";
         cardOrIdNumber = Cart.CustomerCardNumber;
-        manualPercentage = Cart.ManualDiscountPercentage;
-        manualFixedAmount = Cart.ManualDiscountAmount;
+        manualPercentage = Cart.ManualDiscountPercentage == 0m ? 0m : Cart.ManualDiscountPercentage;
+        manualFixedAmount = Cart.ManualDiscountAmount == 0m ? 0m : Cart.ManualDiscountAmount;
         manualInputMode = Cart.ManualDiscountAmount > 0m ? "FIXED" : "PERCENTAGE";
         discountError = null;
         isDiscountModalOpen = true;

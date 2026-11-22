@@ -28,9 +28,9 @@ namespace POS.Client.Services
         private decimal activeDiscountAmount = 0.00m;
         private string? activeDiscountMethod;
         private decimal? activeDiscountValue;
-        private decimal manualDiscountPercentage = 0.00m;
-        private decimal manualDiscountAmount = 0.00m;
-        private decimal promoDiscountAmount = 0.00m;
+        private decimal manualDiscountPercentage = 0m;
+        private decimal manualDiscountAmount = 0m;
+        private decimal promoDiscountAmount = 0m;
         private string activeBranchTaxType = "VAT-Registered";
         private decimal? activeCalculatedTotal;
         private string? customerCardNumber;
@@ -88,9 +88,9 @@ namespace POS.Client.Services
             activeDiscountAmount = System.Math.Min(subtotal, System.Math.Round(amount, 2));
             activeDiscountMethod = string.IsNullOrWhiteSpace(discountMethod) ? null : discountMethod.Trim().ToUpperInvariant();
             activeDiscountValue = discountValue;
-            manualDiscountPercentage = manualPercentage;
-            manualDiscountAmount = manualAmount;
-            promoDiscountAmount = promoAmount;
+            manualDiscountPercentage = manualPercentage == 0m ? 0m : manualPercentage;
+            manualDiscountAmount = manualAmount == 0m ? 0m : manualAmount;
+            promoDiscountAmount = promoAmount == 0m ? 0m : promoAmount;
             if (!string.IsNullOrWhiteSpace(branchTaxType))
                 activeBranchTaxType = branchTaxType.Trim();
             activeCalculatedTotal = calculatedTotal.HasValue
@@ -150,9 +150,9 @@ namespace POS.Client.Services
             activeDiscountAmount = 0.00m;
             activeDiscountMethod = null;
             activeDiscountValue = null;
-            manualDiscountPercentage = 0.00m;
-            manualDiscountAmount = 0.00m;
-            promoDiscountAmount = 0.00m;
+            manualDiscountPercentage = 0m;
+            manualDiscountAmount = 0m;
+            promoDiscountAmount = 0m;
             activeCalculatedTotal = null;
             customerCardNumber = null;
         }

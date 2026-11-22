@@ -50,8 +50,7 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
             .Select(s => (DateTime?)s.OpenedAt)
             .MinAsync(ct);
         if (minShiftOpenedAt.HasValue)
-            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(
-                POS.Shared.Services.BusinessDayClock.NormalizeUtc(minShiftOpenedAt.Value)));
+            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(minShiftOpenedAt.Value));
 
         var minOrderCreatedAt = await db.Orders
             .AsNoTracking()
@@ -59,12 +58,10 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
             .Select(o => (DateTime?)o.CreatedAt)
             .MinAsync(ct);
         if (minOrderCreatedAt.HasValue)
-            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(
-                POS.Shared.Services.BusinessDayClock.NormalizeUtc(minOrderCreatedAt.Value)));
+            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(minOrderCreatedAt.Value));
 
         if (candidateTimestampUtc.HasValue)
-            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(
-                POS.Shared.Services.BusinessDayClock.NormalizeUtc(candidateTimestampUtc.Value)));
+            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(candidateTimestampUtc.Value));
 
         var currentBizDate = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDate();
         DateOnly firstBusinessDate;
@@ -97,7 +94,7 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
             ResetCounter = null,
             LastBusinessDate = null,
             ConfiguredBy = actor,
-            ConfiguredAt = POS.Shared.Services.BusinessDayClock.UtcNow()
+            ConfiguredAt = POS.Shared.Services.BusinessDayClock.ManilaNow()
         };
 
         db.ZReadingTerminalStates.Add(state);
@@ -117,8 +114,9 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
 
     public async Task<ZReadingReadinessDto> ReadinessAsync(int terminalId, DateOnly date, CancellationToken ct = default)
     {
-        var (start, end) = Period(date);
-        var result = new ZReadingReadinessDto { TerminalId = terminalId, BusinessDate = date, PeriodStartUtc = start, PeriodEndUtc = end, Enabled = Enabled };
+        var (startUtc, endUtc) = Period(date);
+        var (start, end) = PeriodLocal(date);
+        var result = new ZReadingReadinessDto { TerminalId = terminalId, BusinessDate = date, PeriodStartUtc = startUtc, PeriodEndUtc = endUtc, Enabled = Enabled };
         if (!Enabled) { result.Blockers.Add("Z-Reading is disabled."); return result; }
         if (db.Database.IsNpgsql())
         {
@@ -338,7 +336,7 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
             Id = Guid.NewGuid(), TerminalId = terminal.TerminalId, BranchId = terminal.BranchId, OutletId = terminal.OutletId,
             TerminalCode = terminal.TerminalCode, TerminalName = terminal.Name,
             BusinessDate = request.BusinessDate, PeriodStartUtc = ready.PeriodStartUtc, PeriodEndUtc = ready.PeriodEndUtc,
-            GeneratedAt = POS.Shared.Services.BusinessDayClock.UtcNow(), GeneratedBy = generatedBy, ClientOperationId = request.ClientOperationId,
+            GeneratedAt = POS.Shared.Services.BusinessDayClock.ManilaNow(), GeneratedBy = generatedBy, ClientOperationId = request.ClientOperationId,
             ZNumber = checked(state.LastZNumber + 1), ResetCounter = state.ResetCounter, PreviousAccumulatedSales = state.AccumulatedGrossSales
         };
         await AggregateAsync(report, ct);
@@ -358,7 +356,7 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
 
         // Lock this terminal atomically inside the same transaction so failed Z-Readings never partially lock the terminal
         await TerminalClosingLockGuard.LockTerminalOnZReadingAsync(
-            db, request.TerminalId, request.BusinessDate, generatedBy, report.GeneratedAt, ct);
+            db, request.TerminalId, request.BusinessDate, generatedBy, POS.Shared.Services.BusinessDayClock.ManilaToUtc(report.GeneratedAt), ct);
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -366,6 +364,7 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
     }
 
     // Manila is UTC+08 via TimeZoneInfo throughout supported fiscal dates; never use host Local timezone.
-    public static DateOnly BusinessDate(DateTime utc) => POS.Shared.Services.BusinessDayClock.GetBusinessDate(utc);
+    public static DateOnly BusinessDate(DateTime value) => POS.Shared.Services.BusinessDayClock.GetBusinessDate(value);
     public static (DateTime StartUtc, DateTime EndUtc) Period(DateOnly date) => POS.Shared.Services.BusinessDayClock.GetPeriodUtc(date);
+    public static (DateTime StartLocal, DateTime EndLocal) PeriodLocal(DateOnly date) => POS.Shared.Services.BusinessDayClock.GetPeriodLocal(date);
 }

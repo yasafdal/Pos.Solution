@@ -105,6 +105,25 @@ public static class BusinessDayClock
 
     public static DateTime UtcNow() => DateTime.SpecifyKind(_utcNowProvider(), DateTimeKind.Utc);
 
+    /// <summary>
+    /// Returns the authoritative Asia/Manila (UTC+08) wall-clock date and time as DateTimeKind.Unspecified.
+    /// Derived from UtcNow() so tests using UtcNowProvider remain fully deterministic.
+    /// </summary>
+    public static DateTime ManilaNow() =>
+        DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeFromUtc(UtcNow(), ManilaTimeZone), DateTimeKind.Unspecified);
+
+    /// <summary>
+    /// Converts a Manila wall-clock timestamp (DateTimeKind.Unspecified) to canonical UTC (DateTimeKind.Utc).
+    /// Explicit DateTimeKind.Utc values are returned unchanged.
+    /// </summary>
+    public static DateTime ManilaToUtc(DateTime value) =>
+        value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(value, DateTimeKind.Unspecified), ManilaTimeZone), DateTimeKind.Utc)
+        };
+
     public static long TickCount64() => _tickCount64Provider();
 
     public static TimeZoneInfo GetDeviceTimeZone() =>
@@ -221,23 +240,23 @@ public static class BusinessDayClock
     public static string GetBusinessDateString(DateTime value) =>
         GetBusinessDate(value).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    public static DateOnly GetShiftBusinessDate(DateTime shiftOpenedAtUtc, string? recordedBusinessDate = null)
+    public static DateOnly GetShiftBusinessDate(DateTime shiftOpenedAt, string? recordedBusinessDate = null)
     {
         if (!string.IsNullOrWhiteSpace(recordedBusinessDate) &&
             DateOnly.TryParseExact(recordedBusinessDate.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
         {
             return parsed;
         }
-        return GetBusinessDate(NormalizeUtc(shiftOpenedAtUtc));
+        return GetBusinessDate(shiftOpenedAt);
     }
 
-    public static string GetShiftBusinessDateString(DateTime shiftOpenedAtUtc, string? recordedBusinessDate = null) =>
-        GetShiftBusinessDate(shiftOpenedAtUtc, recordedBusinessDate).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    public static string GetShiftBusinessDateString(DateTime shiftOpenedAt, string? recordedBusinessDate = null) =>
+        GetShiftBusinessDate(shiftOpenedAt, recordedBusinessDate).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    public static bool IsPreviousBusinessDateShift(DateTime shiftOpenedAtUtc, DateTime referenceUtc, string? recordedBusinessDate = null)
+    public static bool IsPreviousBusinessDateShift(DateTime shiftOpenedAt, DateTime referenceTime, string? recordedBusinessDate = null)
     {
-        var shiftDate = GetShiftBusinessDate(shiftOpenedAtUtc, recordedBusinessDate);
-        var currentDate = GetBusinessDate(NormalizeUtc(referenceUtc));
+        var shiftDate = GetShiftBusinessDate(shiftOpenedAt, recordedBusinessDate);
+        var currentDate = GetBusinessDate(referenceTime);
         return shiftDate < currentDate;
     }
 

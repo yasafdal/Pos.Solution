@@ -3763,7 +3763,7 @@
             }
 
             string status = (CurrentSelectionRequiresApproval && verifiedApprover == null) ? "PENDING_APPROVAL" : "POSTED";
-            var now = DateTime.UtcNow;
+            var now = POS.Shared.Services.BusinessDayClock.ManilaNow();
 
             string prefix = movementType switch
             {

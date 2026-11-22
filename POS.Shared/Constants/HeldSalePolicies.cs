@@ -30,9 +30,9 @@ public static class HeldSalePolicies
             return parsed;
         }
 
-        // HeldSale.CreatedAt and LocalHeldSale.CreatedAt are persisted in UTC; normalize Unspecified values as UTC
-        // before applying the authoritative 4:00 AM Asia/Manila business-day cutoff.
-        return BusinessDayClock.GetBusinessDate(BusinessDayClock.NormalizeUtc(createdAt));
+        // HeldSale.CreatedAt and LocalHeldSale.CreatedAt are persisted in Asia/Manila time (DateTimeKind.Unspecified);
+        // GetBusinessDate treats Unspecified as Manila time directly and converts explicit DateTimeKind.Utc if passed.
+        return BusinessDayClock.GetBusinessDate(createdAt);
     }
 
     public static bool IsPreviousBusinessDate(string? storedBusinessDate, DateTime createdAt, DateOnly? currentBusinessDate = null)

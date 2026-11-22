@@ -109,7 +109,7 @@ public static partial class Program
                 DeviceIdentifier = "DEV-T2",
                 IsActive = true
             });
-            shift1.OpenedAt = nowUtc.AddHours(-2);
+            shift1.OpenedAt = BusinessDayClock.ManilaNow().AddHours(-2);
             shift1.OpeningFloat = 1000m;
             shift1.TotalCashSales = 500m;
             shift1.ExpectedBalance = 1500m;
@@ -131,7 +131,7 @@ public static partial class Program
                 Status = "PENDING_APPROVAL",
                 CreatedBy = "cashier1",
                 AuthorizedBy = "cashier1",
-                CreatedAt = nowUtc.AddMinutes(-10)
+                CreatedAt = BusinessDayClock.ManilaNow().AddMinutes(-10)
             });
             await db.SaveChangesAsync();
 
@@ -238,8 +238,8 @@ public static partial class Program
             var (conn, db, shiftA) = await CreateTestEnvAsync();
             await using var _ = conn;
 
-            var (dayStartUtc, _) = BusinessDayClock.GetPeriodUtc(new DateOnly(2026, 11, 20));
-            shiftA.OpenedAt = DateTime.SpecifyKind(dayStartUtc.AddHours(2), DateTimeKind.Unspecified);
+            var (dayStartLocal, _) = BusinessDayClock.GetPeriodLocal(new DateOnly(2026, 11, 20));
+            shiftA.OpenedAt = dayStartLocal.AddHours(2);
             shiftA.OpeningFloat = 1000m;
             shiftA.TotalCashSales = 500m;
             shiftA.ExpectedBalance = 1500m;
@@ -257,8 +257,8 @@ public static partial class Program
                 OrderType = "DINE_IN",
                 OrderStatus = "COMPLETED",
                 PaymentStatus = "PAID",
-                CreatedAt = DateTime.SpecifyKind(dayStartUtc.AddHours(3), DateTimeKind.Unspecified),
-                InvoiceIssuedAt = DateTime.SpecifyKind(dayStartUtc.AddHours(3), DateTimeKind.Unspecified),
+                CreatedAt = dayStartLocal.AddHours(3),
+                InvoiceIssuedAt = dayStartLocal.AddHours(3),
                 InvoiceNumber = "INV-X-001",
                 Subtotal = 500m,
                 TotalAmount = 500m,
@@ -309,8 +309,8 @@ public static partial class Program
                 OrderType = "DINE_IN",
                 OrderStatus = "COMPLETED",
                 PaymentStatus = "PAID",
-                CreatedAt = DateTime.SpecifyKind(nowUtc.AddMinutes(-10), DateTimeKind.Unspecified),
-                InvoiceIssuedAt = DateTime.SpecifyKind(nowUtc.AddMinutes(-10), DateTimeKind.Unspecified),
+                CreatedAt = BusinessDayClock.ManilaNow().AddMinutes(-10),
+                InvoiceIssuedAt = BusinessDayClock.ManilaNow().AddMinutes(-10),
                 InvoiceNumber = "INV-X-002",
                 Subtotal = 300m,
                 DiscountAmount = 20m,
@@ -396,7 +396,8 @@ public static partial class Program
         try
         {
             var bizDate = new DateOnly(2026, 11, 20);
-            var (dayStartUtc, dayEndUtc) = BusinessDayClock.GetPeriodUtc(bizDate);
+            var (dayStartLocal, _) = BusinessDayClock.GetPeriodLocal(bizDate);
+            var (_, dayEndUtc) = BusinessDayClock.GetPeriodUtc(bizDate);
             // 10:00 PM Asia/Manila (14:00 UTC)
             var nowUtc = new DateTime(2026, 11, 20, 14, 0, 0, DateTimeKind.Utc);
             BusinessDayClock.UtcNowProvider = () => nowUtc;
@@ -416,7 +417,7 @@ public static partial class Program
                 IsActive = true
             });
             db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = bizDate, ConfiguredBy = "verified" });
-            shift1.OpenedAt = DateTime.SpecifyKind(dayStartUtc.AddHours(2), DateTimeKind.Unspecified);
+            shift1.OpenedAt = dayStartLocal.AddHours(2);
             shift1.OpeningFloat = 1000m;
             shift1.ExpectedBalance = 1000m;
             await db.SaveChangesAsync();
@@ -456,7 +457,7 @@ public static partial class Program
 
             // Scenario 8 & 14c: Closed shift missing cash accountability (ActualCountedBalance / denominations) blocks Z-Reading AND never locks terminal
             shift1.Status = "CLOSED";
-            shift1.ClosedAt = DateTime.SpecifyKind(nowUtc.AddHours(-1), DateTimeKind.Unspecified);
+            shift1.ClosedAt = BusinessDayClock.ManilaNow().AddHours(-1);
             shift1.ActualCountedBalance = null;
             shift1.ClosingDenominationsJson = null;
             shift1.ClosingOriginalDeclarationJson = null;

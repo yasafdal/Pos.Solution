@@ -28,7 +28,7 @@ BEGIN
     CASE p_table
     WHEN 'Orders' THEN
         tid := (r->>'TerminalId')::integer;
-        times := ARRAY[(r->>'CreatedAt')::timestamp, (r->>'InvoiceIssuedAt')::timestamp];
+        times := ARRAY[(r->>'CreatedAt')::timestamp, (r->>'invoice_issued_at')::timestamp];
     WHEN 'OrderItems' THEN
         SELECT to_jsonb(o) INTO p FROM public."Orders" o WHERE o."OrderId" = (r->>'OrderId')::bigint FOR SHARE;
         RETURN QUERY SELECT * FROM public.pos_z_row_context('Orders', p); RETURN;
@@ -124,7 +124,8 @@ BEGIN
                WHERE (x->>'terminal_id') IS NOT NULL ORDER BY 1 LOOP
         PERFORM public.pos_z_lock_terminal(tid);
         IF EXISTS (SELECT 1 FROM public."ZReadingTerminalStates" WHERE "TerminalId" = tid) THEN
-            SELECT max("PeriodEndUtc") INTO cutoff FROM public."ZReadings" WHERE "TerminalId" = tid;
+            -- Operational tables store Asia/Manila wall-clock time; PeriodEndUtc is UTC (Manila - 8h).
+            SELECT max("PeriodEndUtc") + interval '8 hours' INTO cutoff FROM public."ZReadings" WHERE "TerminalId" = tid;
             -- Periods are [start,end): an event AT the cutoff belongs to next day.
             -- After first finalization freeze ALL earlier time, even pre-baseline.
             IF cutoff IS NOT NULL AND EXISTS (

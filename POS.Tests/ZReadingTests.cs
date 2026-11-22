@@ -13,7 +13,7 @@ public static partial class Program
     {
         var (conn, db, shift) = await CreateTestEnvAsync();
         await using var connection = conn;
-        var date = new DateOnly(2026, 10, 29); var (start, _) = ZReadingService.Period(date);
+        var date = new DateOnly(2026, 10, 29); var (start, _) = ZReadingService.PeriodLocal(date);
         shift.Status = "CLOSED"; shift.OpenedAt = start.AddHours(1); shift.ClosedAt = start.AddHours(8);
         shift.ActualCountedBalance = shift.OpeningFloat; shift.ClosingOriginalDeclarationJson = "{}";
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, ConfiguredBy = "verified" });
@@ -40,7 +40,7 @@ public static partial class Program
         var service = new ZReadingService(db, enabled);
         var ready = await service.ReadinessAsync(1, date);
         Assert(!ready.IsReady && ready.Blockers.Any(x => x.Contains("provisioned")), "No fabricated historical opening baseline.");
-        var (start, _) = ZReadingService.Period(date);
+        var (start, _) = ZReadingService.PeriodLocal(date);
         shift.OpenedAt = start.AddHours(1);
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, ConfiguredBy = "verified" });
         await db.SaveChangesAsync();
@@ -70,7 +70,7 @@ public static partial class Program
     {
         var (conn, db, shift) = await CreateTestEnvAsync();
         await using var connection = conn;
-        var date = new DateOnly(2026, 10, 29); var (start, _) = ZReadingService.Period(date);
+        var date = new DateOnly(2026, 10, 29); var (start, _) = ZReadingService.PeriodLocal(date);
         shift.Status = "CLOSED"; shift.OpenedAt = start.AddHours(1); shift.ClosedAt = start.AddHours(8);
         shift.ActualCountedBalance = shift.OpeningFloat; shift.ClosingOriginalDeclarationJson = "{}";
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, ConfiguredBy = "verified" });
@@ -122,7 +122,7 @@ public static partial class Program
         var (conn, db, shift) = await CreateTestEnvAsync();
         await using var connection = conn;
         var date = new DateOnly(2026, 10, 29);
-        var (start, end) = ZReadingService.Period(date);
+        var (start, end) = ZReadingService.PeriodLocal(date);
         shift.Status = "CLOSED"; shift.OpenedAt = start.AddHours(1); shift.ClosedAt = start.AddHours(8);
         shift.ActualCountedBalance = shift.OpeningFloat; shift.ClosingOriginalDeclarationJson = "{}";
         db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = date, OpeningAccumulatedSales = 10m, AccumulatedGrossSales = 10m, ConfiguredBy = "verified" });
@@ -161,7 +161,7 @@ public static partial class Program
         await using var connection = conn;
         shift.Status = "CLOSED";
         var date = new DateOnly(2026, 10, 29);
-        shift.OpenedAt = new DateTime(2026, 10, 28, 21, 0, 0);
+        shift.OpenedAt = new DateTime(2026, 10, 29, 5, 0, 0);
         shift.ClosedAt = shift.OpenedAt.AddHours(4);
         shift.ActualCountedBalance = shift.OpeningFloat;
         shift.ClosingOriginalDeclarationJson = "{}";
@@ -200,6 +200,185 @@ public static partial class Program
         Assert(method != null, "Public fixed Manila business-date helper is missing.");
         Assert((DateOnly)method!.Invoke(null, [new DateTime(2026, 10, 30, 19, 59, 59, DateTimeKind.Utc)])! == new DateOnly(2026, 10, 30), "03:59 Manila belongs to previous business date.");
         Assert((DateOnly)method.Invoke(null, [new DateTime(2026, 10, 30, 20, 0, 0, DateTimeKind.Utc)])! == new DateOnly(2026, 10, 31), "04:00 Manila starts new business date.");
+        Assert((DateOnly)method.Invoke(null, [new DateTime(2026, 11, 23, 0, 26, 50, DateTimeKind.Unspecified)])! == new DateOnly(2026, 11, 22), "00:26 Asia/Manila belongs to 2026-11-22 business date.");
         return Task.CompletedTask;
+    }
+
+    private static async Task TestZReadingEveningManilaEndToEnd()
+    {
+        try
+        {
+            // Reproduce exact POS3 late-night scenario: Business Date 2026-11-22 at 00:26..00:49 Asia/Manila (16:26..16:49 UTC)
+            var currentUtc = new DateTime(2026, 11, 22, 16, 26, 0, DateTimeKind.Utc);
+            POS.Shared.Services.BusinessDayClock.UtcNowProvider = () => currentUtc;
+
+            var (conn, db, initialShift) = await CreateTestEnvAsync();
+            await using var connection = conn;
+            db.CashDrawerShifts.Remove(initialShift);
+            var branch = await db.Branches.FirstAsync(b => b.BranchId == 1);
+            branch.TaxType = "Non-VAT";
+            db.InvoiceSequences.Add(new InvoiceSequence
+            {
+                TerminalId = 1,
+                SeriesCode = "TXN3-2026",
+                Prefix = "TXN3",
+                StartingNumber = 1,
+                EndingNumber = 1000,
+                LastIssuedNumber = 0,
+                PaddingLength = 7,
+                IsActive = true
+            });
+            await db.SaveChangesAsync();
+
+            var cdController = CreateController(db, "cashier1", "Cashier");
+            var openRes = await cdController.OpenShift(new OpenShiftDto
+            {
+                BranchId = 1,
+                TerminalId = 1,
+                OpeningFloat = 1000m,
+                ClientShiftId = "z09-manila-shift"
+            }) as Microsoft.AspNetCore.Mvc.OkObjectResult;
+            Assert(openRes != null, "OpenShift must succeed at 00:26 Asia/Manila.");
+
+            var savedShift = await db.CashDrawerShifts.AsNoTracking().SingleAsync();
+            Assert(savedShift.OpenedAt == new DateTime(2026, 11, 23, 0, 26, 0, DateTimeKind.Unspecified) &&
+                   savedShift.BusinessDate == "2026-11-22",
+                $"Shift OpenedAt must be stored in Asia/Manila (2026-11-23 00:26), got {savedShift.OpenedAt:yyyy-MM-dd HH:mm} BizDate={savedShift.BusinessDate}.");
+
+            var syncController = new POS.Api.Controllers.OfflineSyncController(db)
+            {
+                ControllerContext = cdController.ControllerContext
+            };
+
+            currentUtc = new DateTime(2026, 11, 22, 16, 27, 0, DateTimeKind.Utc);
+            var tx1 = await syncController.SyncTransaction(new OfflineTransactionSyncRequest
+            {
+                LocalTransactionId = "z09-tx-1",
+                OrderNumber = "POS03-000001",
+                InvoiceNumber = "TXN30000001",
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                ShiftId = savedShift.ShiftId,
+                ClientShiftId = savedShift.ClientShiftId,
+                OrderType = "DINING",
+                TransactionDate = new DateTime(2026, 11, 23, 0, 27, 0, DateTimeKind.Unspecified),
+                DeviceTimeZoneId = "Asia/Manila",
+                DeviceUtcOffsetMinutes = 480,
+                Subtotal = 200m,
+                DiscountAmount = 0.10m,
+                DiscountCode = "MANUAL",
+                TotalAmount = 199.90m,
+                VatableSales = 0m,
+                VatExemptSales = 200m,
+                ZeroRatedSales = 0m,
+                VatAmount = 0m,
+                PayloadHash = "hash-z09-1",
+                Items = new List<OfflineTransactionItemDto>
+                {
+                    new() { ProductId = 1, ProductName = "Lechon with Rice", Quantity = 2m, UnitPrice = 100m, LineTotal = 199.90m }
+                },
+                Payments = new List<OfflinePaymentDto>
+                {
+                    new() { PaymentMethod = "CASH", Amount = 199.90m, TenderedAmount = 199.90m, ChangeAmount = 0m, PaymentStatus = "PAID", PaidAt = new DateTime(2026, 11, 23, 0, 27, 0, DateTimeKind.Unspecified) }
+                }
+            });
+            Assert(tx1.Result is Microsoft.AspNetCore.Mvc.OkObjectResult, "Late-night sale #1 must sync cleanly.");
+
+            currentUtc = new DateTime(2026, 11, 22, 16, 32, 0, DateTimeKind.Utc);
+            var tx2 = await syncController.SyncTransaction(new OfflineTransactionSyncRequest
+            {
+                LocalTransactionId = "z09-tx-2",
+                OrderNumber = "POS03-000002",
+                InvoiceNumber = "TXN30000002",
+                BranchId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                ShiftId = savedShift.ShiftId,
+                ClientShiftId = savedShift.ClientShiftId,
+                OrderType = "DINING",
+                TransactionDate = new DateTime(2026, 11, 23, 0, 32, 0, DateTimeKind.Unspecified),
+                DeviceTimeZoneId = "Asia/Manila",
+                DeviceUtcOffsetMinutes = 480,
+                Subtotal = 1900m,
+                DiscountAmount = 0m,
+                TotalAmount = 1900m,
+                VatableSales = 0m,
+                VatExemptSales = 1900m,
+                ZeroRatedSales = 0m,
+                VatAmount = 0m,
+                PayloadHash = "hash-z09-2",
+                Items = new List<OfflineTransactionItemDto>
+                {
+                    new() { ProductId = 5, ProductName = "Lechon", Quantity = 2m, UnitPrice = 950m, LineTotal = 1900m }
+                },
+                Payments = new List<OfflinePaymentDto>
+                {
+                    new() { PaymentMethod = "CASH", Amount = 1900m, TenderedAmount = 1900m, ChangeAmount = 0m, PaymentStatus = "PAID", PaidAt = new DateTime(2026, 11, 23, 0, 32, 0, DateTimeKind.Unspecified) }
+                }
+            });
+            Assert(tx2.Result is Microsoft.AspNetCore.Mvc.OkObjectResult, "Late-night sale #2 must sync cleanly.");
+
+            currentUtc = new DateTime(2026, 11, 22, 16, 48, 0, DateTimeKind.Utc);
+            var closeRes = await cdController.CloseShift(new CloseShiftDto
+            {
+                ShiftId = savedShift.ShiftId,
+                ClientCloseId = "z09-close-1",
+                IsDeclarationConfirmed = true,
+                Denominations = new List<CashDenominationLineDto>
+                {
+                    new() { Type = "BILL", Denomination = 1000m, Quantity = 3 },
+                    new() { Type = "BILL", Denomination = 100m, Quantity = 1 }
+                }
+            });
+            Assert(closeRes is Microsoft.AspNetCore.Mvc.OkObjectResult, "Shift close at 00:48 Asia/Manila must succeed.");
+
+            var closedShift = await db.CashDrawerShifts.AsNoTracking().SingleAsync();
+            Assert(closedShift.ClosedAt == new DateTime(2026, 11, 23, 0, 48, 0, DateTimeKind.Unspecified) &&
+                   closedShift.TotalCashSales == 2099.90m,
+                $"ClosedAt must be 2026-11-23 00:48 Manila and CashSales 2099.90, got {closedShift.ClosedAt:yyyy-MM-dd HH:mm}, CashSales={closedShift.TotalCashSales}.");
+
+            currentUtc = new DateTime(2026, 11, 22, 16, 49, 0, DateTimeKind.Utc);
+            var zService = new ZReadingService(db, new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ZReading:Enabled"] = "true" }).Build());
+            var report = await zService.GenerateAsync(new GenerateZReadingRequest
+            {
+                TerminalId = 1,
+                BusinessDate = new DateOnly(2026, 11, 22),
+                ClientOperationId = "z09-gen-2026-11-22",
+                DeviceIdentifier = "TEST-DEV-01",
+                AllLocalOutboxesDrained = true,
+                NoUnresolvedLocalTransactions = true,
+                SoleDeviceCompletenessConfirmed = true
+            }, "MREFORMO");
+
+            Assert(report.SaleCount == 2 && report.FirstInvoiceNumber == "TXN30000001" && report.LastInvoiceNumber == "TXN30000002",
+                $"Z-Reading must include both late-night invoices (got count={report.SaleCount}, first={report.FirstInvoiceNumber}, last={report.LastInvoiceNumber}).");
+            Assert(report.GrossSales == 2100m && report.Discounts == 0.10m && report.NetSales == 2099.90m && report.VatExemptSales == 2100m,
+                $"Z-Reading totals mismatch: Gross={report.GrossSales}, Disc={report.Discounts}, Net={report.NetSales}, Exempt={report.VatExemptSales}.");
+            Assert(report.Products.Count == 2 && report.ExemptProducts.Count == 2,
+                $"Z-Reading must populate Product Sales and Non-VAT Exempt Products (got Products={report.Products.Count}, Exempt={report.ExemptProducts.Count}).");
+            Assert(report.Payments.Count == 1 && report.Payments[0].PaymentMethod == "CASH" && report.Payments[0].Collections == 2099.90m && report.Payments[0].PaymentCount == 2,
+                "Z-Reading Payment Summary must include both late-night CASH payments totaling 2099.90.");
+            Assert(report.DiscountTotals.Count == 1 && report.DiscountTotals[0].DiscountCode == "MANUAL" && report.DiscountTotals[0].Amount == 0.10m,
+                "Z-Reading Discount Totals must include MANUAL 0.10 discount.");
+            Assert(report.Cashiers.Count == 1 && report.Cashiers[0].NetSales == 2099.90m,
+                "Z-Reading Cashier Summary must reconcile to 2099.90.");
+            Assert(report.Shifts.Count == 1 && report.Shifts[0].CashSales == 2099.90m,
+                "Z-Reading Cash Drawer Shift must reconcile to 2099.90.");
+
+            string html = POS.Shared.Services.ZReadingHtmlFormatter.Format(report);
+            Assert(html.Contains("TXN30000001", StringComparison.Ordinal) && html.Contains("TXN30000002", StringComparison.Ordinal),
+                "Z-Reading HTML must display Beginning and Ending invoice numbers.");
+            Assert(html.Contains("Lechon with Rice", StringComparison.Ordinal) && html.Contains("Lechon", StringComparison.Ordinal),
+                "Z-Reading HTML must display Product Sales items.");
+            Assert(html.Contains("2026-11-23 00:26 Asia/Manila to 2026-11-23 00:48 Asia/Manila", StringComparison.Ordinal),
+                "Z-Reading HTML must render Shift open/close timestamps in Asia/Manila (00:26 to 00:48), never raw UTC (16:26 to 16:48).");
+            Assert(html.Contains("2026-11-23 00:49 Asia/Manila", StringComparison.Ordinal),
+                "Z-Reading HTML must render Generated timestamp in Asia/Manila (00:49).");
+        }
+        finally
+        {
+            POS.Shared.Services.BusinessDayClock.ResetProviders();
+        }
     }
 }
