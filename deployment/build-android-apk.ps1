@@ -26,7 +26,10 @@ Write-Host "=== Building Universal Android APK ($appId v$displayVersion, version
 
 Push-Location $RepoRoot
 try {
-    dotnet publish POS.Client\POS.Client.csproj -f net10.0-android -c Release -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false -p:DebugType=none -p:DebugSymbols=false
+    dotnet restore POS.Client\POS.Client.csproj -p:Configuration=Release
+    if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE" }
+
+    dotnet publish POS.Client\POS.Client.csproj -f net10.0-android -c Release --no-restore -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false -p:DebugType=none -p:DebugSymbols=false
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
     $unsignedApk = Join-Path $RepoRoot "POS.Client\bin\Release\net10.0-android\$appId.apk"

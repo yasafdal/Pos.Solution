@@ -25,6 +25,7 @@ public class TerminalConfigDto
     public DateTime? ReceiptLogoUpdatedAt { get; set; }
     public string BranchTaxType { get; set; } = "VAT-Registered";
     public bool VatDisplay { get; set; } = true;
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
     public string TerminalName { get; set; } = string.Empty;
     public string? ReceiptPrinterName { get; set; }
     public string? KitchenPrinterName { get; set; }

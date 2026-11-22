@@ -12,7 +12,14 @@ public class ReceiptBrandingDto
     public string? ReceiptLogoUrl { get; set; }
     public string? ReceiptLogoDataUri { get; set; }
     public DateTime? ReceiptLogoUpdatedAt { get; set; }
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
     public bool HasLogo => !string.IsNullOrWhiteSpace(ReceiptLogoUrl);
+}
+
+public class UpdateReceiptBrandingSettingsDto
+{
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
+    public bool ApplyToAllBranches { get; set; }
 }
 
 public class ReceiptBrandingResultDto

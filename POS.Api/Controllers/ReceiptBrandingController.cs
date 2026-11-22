@@ -232,6 +232,58 @@ public class ReceiptBrandingController : ControllerBase
         });
     }
 
+    [HttpPut("{branchId:int}/settings")]
+    public async Task<ActionResult<ReceiptBrandingResultDto>> UpdateSettings(
+        int branchId,
+        [FromBody] UpdateReceiptBrandingSettingsDto? request)
+    {
+        if (request == null)
+            return BadRequest(new ReceiptBrandingResultDto { Success = false, Message = "Settings payload is required." });
+
+        await ReceiptLogoStorage.EnsureBranchColumnsAsync(_context);
+        if (User != null && !User.IsInRole("Admin") &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out var supBranchId) &&
+            branchId != supBranchId)
+        {
+            return Forbid();
+        }
+
+        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.BranchId == branchId);
+        if (branch == null)
+            return NotFound(new ReceiptBrandingResultDto { Success = false, Message = "Branch not found." });
+
+        bool applyAll = request.ApplyToAllBranches && (User == null || User.IsInRole("Admin"));
+        if (applyAll)
+        {
+            var callerOrgId = POS.Shared.Constants.PosPermissions.GetOrganizationId(User);
+            var query = _context.Branches.AsQueryable();
+            if (callerOrgId.HasValue)
+                query = query.Where(b => b.OrganizationId == callerOrgId.Value);
+
+            var allBranches = await query.ToListAsync();
+            foreach (var b in allBranches)
+            {
+                b.ShowCustomerDetailsOnReceipt = request.ShowCustomerDetailsOnReceipt;
+            }
+        }
+        else
+        {
+            branch.ShowCustomerDetailsOnReceipt = request.ShowCustomerDetailsOnReceipt;
+        }
+
+        await _context.SaveChangesAsync();
+
+        string stateText = request.ShowCustomerDetailsOnReceipt ? "ON (Displayed)" : "OFF (Hidden)";
+        return Ok(new ReceiptBrandingResultDto
+        {
+            Success = true,
+            Message = applyAll
+                ? $"Customer details on receipt set to {stateText} for all branches."
+                : $"Customer details on receipt set to {stateText} for {branch.Name}.",
+            Branding = ToBrandingDto(branch)
+        });
+    }
+
     private ReceiptBrandingDto ToBrandingDto(Branch branch, string? knownDataUri = null)
     {
         var dataUri = knownDataUri ?? ReceiptLogoStorage.GetDataUri(branch.ReceiptLogoUrl, _env.WebRootPath, _env.ContentRootPath);
@@ -244,7 +296,8 @@ public class ReceiptBrandingController : ControllerBase
             BranchPhone = branch.Phone,
             ReceiptLogoUrl = branch.ReceiptLogoUrl,
             ReceiptLogoDataUri = dataUri,
-            ReceiptLogoUpdatedAt = branch.ReceiptLogoUpdatedAt
+            ReceiptLogoUpdatedAt = branch.ReceiptLogoUpdatedAt,
+            ShowCustomerDetailsOnReceipt = branch.ShowCustomerDetailsOnReceipt
         };
     }
 }

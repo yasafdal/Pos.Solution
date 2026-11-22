@@ -309,15 +309,18 @@ public static class EscPosReceiptBuilder
         }
         w.WriteDash();
 
-        // Customer information
-        w.AlignCenter();
-        w.WriteWrappedCenter("[CUSTOMER INFORMATION]");
-        w.AlignLeft();
-        w.WriteFillRow("Customer:", receipt.CustomerName);
-        w.WriteFillRow("Address:", receipt.CustomerAddress);
-        w.WriteFillRow("TIN:", receipt.CustomerTin);
-        w.WriteFillRow("Bus. Style:", receipt.CustomerBusinessStyle);
-        w.WriteText("\n");
+        // Customer information (controlled by Receipt Branding ShowCustomerDetailsOnReceipt toggle)
+        if (receipt.ShowCustomerDetailsOnReceipt)
+        {
+            w.AlignCenter();
+            w.WriteWrappedCenter("[CUSTOMER INFORMATION]");
+            w.AlignLeft();
+            w.WriteFillRow("Customer:", receipt.CustomerName);
+            w.WriteFillRow("Address:", receipt.CustomerAddress);
+            w.WriteFillRow("TIN:", receipt.CustomerTin);
+            w.WriteFillRow("Bus. Style:", receipt.CustomerBusinessStyle);
+            w.WriteText("\n");
+        }
 
         // Footer (with AGRES company info per RCPT-01)
         w.AlignCenter();

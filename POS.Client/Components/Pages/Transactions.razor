@@ -801,6 +801,7 @@ else
                     ReceiptLogoUrl = Session.Terminal?.ReceiptLogoUrl,
                     ReceiptLogoDataUri = Session.Terminal?.ReceiptLogoDataUri,
                     VatDisplay = Session.Terminal?.VatDisplay ?? true,
+                    ShowCustomerDetailsOnReceipt = Session.Terminal?.ShowCustomerDetailsOnReceipt ?? true,
                     TerminalId = target.TerminalId,
                     TerminalName = Session.Terminal?.TerminalName ?? "Terminal",
                     CashierId = target.CashierId,
@@ -825,6 +826,7 @@ else
                     Items = target.Items,
                     Payments = target.Payments
                 };
+                PosSessionService.EnsureReceiptLogoPopulated(offlineReceipt, Session);
                 await ReceiptPrinter.PrintAsync(offlineReceipt);
                 await Swal.FireAsync("Success", "Offline receipt sent to printer.", SweetAlertIcon.Success);
                 return;

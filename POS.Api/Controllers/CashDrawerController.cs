@@ -2528,7 +2528,7 @@ public class CashDrawerController : ControllerBase
                 && User.FindFirst("terminal_id")?.Value == shift.TerminalId.ToString()
                 && !string.IsNullOrWhiteSpace(request.CashierId)
                 && string.Equals(request.CashierId, shift.CashierId, StringComparison.Ordinal);
-            if (shift != null && (User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString() || (shift.CashierId != caller && !isTerminalTokenForShiftOwner)) && !IsSupervisorRole(GetAuthenticatedRole()))
+            if (shift != null && (User.FindFirst("terminal_id")?.Value != shift.TerminalId.ToString() || (!string.Equals(shift.CashierId, caller, StringComparison.OrdinalIgnoreCase) && !isTerminalTokenForShiftOwner)))
                 return Forbid();
             if (shift != null && !string.IsNullOrWhiteSpace(request.CashierId) && !string.Equals(request.CashierId, shift.CashierId, StringComparison.Ordinal))
                 return Forbid();

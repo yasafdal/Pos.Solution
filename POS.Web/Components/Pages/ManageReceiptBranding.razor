@@ -191,6 +191,72 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Section 3: Customer Details on Receipt Toggle -->
+                <div class="card border-0 shadow-sm rounded-4 p-4 bg-white mt-4">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <h5 class="fw-bold text-dark mb-0">
+                            <i class="bi bi-person-vcard me-2 text-primary"></i>3. Customer Details on Receipt
+                        </h5>
+                        @if (showCustomerDetailsOnReceipt)
+                        {
+                            <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 rounded-pill fw-bold">
+                                <i class="bi bi-eye-fill me-1"></i> ON — Customer Details Displayed
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle px-3 py-2 rounded-pill fw-bold">
+                                <i class="bi bi-eye-slash-fill me-1"></i> OFF — Customer Details Hidden
+                            </span>
+                        }
+                    </div>
+
+                    <div class="form-check form-switch bg-light rounded-3 p-3 ps-5 border mb-3">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               role="switch"
+                               id="showCustomerDetailsSwitch"
+                               @bind="showCustomerDetailsOnReceipt"
+                               disabled="@isSaving"
+                               style="cursor: pointer;" />
+                        <label class="form-check-label fw-semibold text-dark small" for="showCustomerDetailsSwitch" style="cursor: pointer;">
+                            Display Customer Details on Receipt (@(showCustomerDetailsOnReceipt ? "ON" : "OFF"))
+                        </label>
+                        <div class="text-secondary mt-1" style="font-size: 0.80rem;">
+                            Controls whether the <strong>[CUSTOMER INFORMATION]</strong> section (Customer Name, Address, TIN, and Business Style) is displayed on printed and previewed POS receipts.<br />
+                            <span class="text-muted">Note: Turning this setting OFF only hides the section on printed receipts. It does not delete or prevent customer information from being saved in transactions.</span>
+                        </div>
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top">
+                        <span class="text-secondary small">
+                            @if (isAdmin && applyToAllBranches && (branches?.Count ?? 0) > 1)
+                            {
+                                <span><i class="bi bi-globe2 me-1"></i>Applies to all @branches!.Count branches</span>
+                            }
+                            else
+                            {
+                                <span><i class="bi bi-shop me-1"></i>Applies to @(currentBranding?.BranchName ?? "selected branch")</span>
+                            }
+                        </span>
+                        <button type="button"
+                                class="btn btn-primary rounded-3 px-4 fw-bold shadow-sm"
+                                @onclick="SaveCustomerDetailsSettingAsync"
+                                disabled="@isSaving">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                <span>Saving Setting...</span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-check2-circle me-1"></i>
+                                <span>Save Display Setting</span>
+                            }
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Right Column: Live 80mm Thermal Receipt Preview -->
@@ -262,6 +328,17 @@
                                 <div class="thermal-row"><span>Subtotal:</span><span>190.00</span></div>
                                 <div class="thermal-row thermal-total"><span>TOTAL:</span><span>190.00</span></div>
                             </div>
+
+                            @if (showCustomerDetailsOnReceipt)
+                            {
+                                <div class="thermal-section">
+                                    <div class="text-center fw-bold mb-1" style="font-size: 8pt;">[CUSTOMER INFORMATION]</div>
+                                    <div class="thermal-row"><span>Customer:</span><span class="border-bottom border-dark flex-grow-1 ms-2">&nbsp;</span></div>
+                                    <div class="thermal-row"><span>Address:</span><span class="border-bottom border-dark flex-grow-1 ms-2">&nbsp;</span></div>
+                                    <div class="thermal-row"><span>TIN:</span><span class="border-bottom border-dark flex-grow-1 ms-2">&nbsp;</span></div>
+                                    <div class="thermal-row"><span>Bus. Style:</span><span class="border-bottom border-dark flex-grow-1 ms-2">&nbsp;</span></div>
+                                </div>
+                            }
 
                             <div class="thermal-footer">
                                 Thank you for your purchase!<br />
@@ -372,6 +449,7 @@
     private bool isSaving = false;
     private bool isAdmin = false;
     private bool applyToAllBranches = true;
+    private bool showCustomerDetailsOnReceipt = true;
 
     private byte[]? stagedBytes;
     private string? stagedFileName;
@@ -438,10 +516,12 @@
                     BranchPhone = fallback.Phone,
                     ReceiptLogoUrl = fallback.ReceiptLogoUrl,
                     ReceiptLogoDataUri = fallback.ReceiptLogoDataUri,
-                    ReceiptLogoUpdatedAt = fallback.ReceiptLogoUpdatedAt
+                    ReceiptLogoUpdatedAt = fallback.ReceiptLogoUpdatedAt,
+                    ShowCustomerDetailsOnReceipt = fallback.ShowCustomerDetailsOnReceipt
                 };
             }
         }
+        showCustomerDetailsOnReceipt = currentBranding?.ShowCustomerDetailsOnReceipt ?? true;
     }
 
     private async Task OnBranchChanged(ChangeEventArgs e)
@@ -588,6 +668,42 @@
         catch (Exception ex)
         {
             validationError = $"Failed to remove logo: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SaveCustomerDetailsSettingAsync()
+    {
+        if (selectedBranchId <= 0)
+            return;
+
+        isSaving = true;
+        validationError = null;
+        statusMessage = null;
+
+        try
+        {
+            var result = await BranchService.UpdateReceiptBrandingSettingsAsync(
+                selectedBranchId,
+                showCustomerDetailsOnReceipt,
+                isAdmin && applyToAllBranches);
+
+            if (result.Success)
+            {
+                statusMessage = result.Message;
+                await LoadBranchesAndBrandingAsync(selectedBranchId);
+            }
+            else
+            {
+                validationError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            validationError = $"Failed to save receipt display setting: {ex.Message}";
         }
         finally
         {

@@ -7,7 +7,7 @@ namespace POS.Client.Data;
 
 public static class LocalDatabaseMigrator
 {
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 8;
 
     public static void Migrate(DbConnection conn, string dbPath, Action ensureCreatedAction)
     {
@@ -119,6 +119,16 @@ public static class LocalDatabaseMigrator
                     currentVersion = 7;
                 }
 
+                if (currentVersion < 8)
+                {
+                    MaybeSimulateFailure(8);
+                    using var tx8 = conn.BeginTransaction();
+                    ApplyMigrationV8(conn, tx8);
+                    ExecuteNonQuery(conn, tx8, "PRAGMA user_version = 8;");
+                    tx8.Commit();
+                    currentVersion = 8;
+                }
+
                 if (!VerifyQuickCheck(conn))
                 {
                     throw new InvalidOperationException("Database failed PRAGMA quick_check after migration.");
@@ -221,6 +231,7 @@ public static class LocalDatabaseMigrator
                 Phone TEXT NULL,
                 TaxType TEXT NOT NULL DEFAULT 'VAT-Registered',
                 VatDisplay INTEGER NOT NULL DEFAULT 1,
+                ShowCustomerDetailsOnReceipt INTEGER NOT NULL DEFAULT 1,
                 TrackInventory INTEGER NOT NULL DEFAULT 0,
                 BusinessTypeId INTEGER NULL DEFAULT 1,
                 BusinessType TEXT NULL DEFAULT 'FNB',
@@ -247,6 +258,7 @@ public static class LocalDatabaseMigrator
             ("ReceiptLogoDataUri", "TEXT NULL"),
             ("ReceiptLogoUpdatedAt", "TEXT NULL"),
             ("VatDisplay", "INTEGER NOT NULL DEFAULT 1"),
+            ("ShowCustomerDetailsOnReceipt", "INTEGER NOT NULL DEFAULT 1"),
             ("ReceiptPrinterName", "TEXT"),
             ("KitchenPrinterName", "TEXT"),
             ("BarPrinterName", "TEXT"),
@@ -754,6 +766,17 @@ public static class LocalDatabaseMigrator
             INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
             VALUES
                 (7, 'Overnight unresolved shift detection, supervisor recovery audit, and unverified cash investigation fields', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.8');");
+    }
+
+    private static void ApplyMigrationV8(DbConnection conn, DbTransaction tx)
+    {
+        AddColumnIfMissing(conn, tx, "LocalBranches", "ShowCustomerDetailsOnReceipt", "INTEGER NOT NULL DEFAULT 1");
+        AddColumnIfMissing(conn, tx, "LocalTerminalConfigs", "ShowCustomerDetailsOnReceipt", "INTEGER NOT NULL DEFAULT 1");
+
+        ExecuteNonQuery(conn, tx, @"
+            INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
+            VALUES
+                (8, 'Receipt Branding ShowCustomerDetailsOnReceipt toggle on LocalBranches and LocalTerminalConfigs', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.5');");
     }
 
     private static void MaybeSimulateFailure(int targetVersion)

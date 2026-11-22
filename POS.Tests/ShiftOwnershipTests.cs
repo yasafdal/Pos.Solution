@@ -90,6 +90,8 @@ public static partial class Program
             u1.PasswordHash = BCrypt.Net.BCrypt.HashPassword("pass1");
             var u2 = await db.Users.SingleAsync(u => u.Username == "cashier2");
             u2.PasswordHash = BCrypt.Net.BCrypt.HashPassword("pass2");
+            var uMgr = await db.Users.SingleAsync(u => u.Username == "manager1");
+            uMgr.PasswordHash = BCrypt.Net.BCrypt.HashPassword("passmgr");
             db.ZReadingTerminalStates.Add(new ZReadingTerminalState { TerminalId = 1, FirstBusinessDate = bizDate, ConfiguredBy = "verified" });
             await db.SaveChangesAsync();
 
@@ -98,8 +100,11 @@ public static partial class Program
             var terms = new TerminalsController(db, cfg);
             var sessionsA = CreateScopedSessionsController(db, "cashier1", "Cashier", terminalId: 1);
             var sessionsB = CreateScopedSessionsController(db, "cashier2", "Cashier", terminalId: 1);
+            var sessionsSenior = CreateScopedSessionsController(db, "senior1", "Senior Cashier", terminalId: 1);
+            var sessionsMgr = CreateScopedSessionsController(db, "manager1", "Manager", terminalId: 1);
             var cdT1A = CreateTerminalScopedCashDrawerController(db, "cashier1", "Cashier", terminalId: 1);
             var cdT1B = CreateTerminalScopedCashDrawerController(db, "cashier2", "Cashier", terminalId: 1);
+            var cdT1Senior = CreateTerminalScopedCashDrawerController(db, "senior1", "Senior Cashier", terminalId: 1);
 
             // Scenario 1: Cashier A logs in, activates session, and opens shift on Terminal 1
             Assert((await auth.PinLogin(new PinLoginDto { PinCode = "1111", TerminalId = 1, BranchId = 1 })) is OkObjectResult,
@@ -157,6 +162,46 @@ public static partial class Program
             var bOpenRes = await cdT1B.OpenShift(new OpenShiftDto { BranchId = 1, TerminalId = 1, CashierId = "cashier2", OpeningFloat = 1000m }) as ConflictObjectResult;
             Assert(bOpenRes != null && string.Equals(bOpenRes.Value?.ToString(), expectedMsg, StringComparison.Ordinal),
                 $"Scenario 3: OpenShift for Cashier B must return 409 with exact message. Got '{bOpenRes?.Value}'");
+
+            // Scenario 3B: Senior Cashier & Manager MUST be allowed to log in while Cashier A's shift is open,
+            // without altering shift ownership, closing the shift, or creating duplicate CashierSession/CashierSwitchLog rows!
+            Assert((await auth.PinLogin(new PinLoginDto { PinCode = "4444", TerminalId = 1, BranchId = 1 })) is OkObjectResult,
+                "Scenario 3B: Senior Cashier PinLogin on T1 must succeed while Cashier A's shift is open.");
+            Assert((await auth.Login(new LoginDto { Username = "senior1", Password = "pass", TerminalId = 1, BranchId = 1 })) is OkObjectResult,
+                "Scenario 3B: Senior Cashier password Login on T1 must succeed while Cashier A's shift is open.");
+            var seniorTokenRes = (await terms.IssueSessionToken(new TerminalSessionTokenRequestDto { TerminalId = 1, DeviceUuid = "uuid-own-t1", CashierUsername = "senior1" })).Result as OkObjectResult;
+            Assert(seniorTokenRes != null && (seniorTokenRes.Value as TerminalSessionTokenResponseDto)?.Success == true,
+                "Scenario 3B: IssueSessionToken for Senior Cashier must succeed while Cashier A's shift is open.");
+            Assert((await sessionsSenior.ActivateSession(new CashierSessionActivateDto { BranchId = 1, TerminalId = 1, DeviceIdentifier = "uuid-own-t1" })) is OkObjectResult,
+                "Scenario 3B: Senior Cashier ActivateSession on T1 must succeed while Cashier A's shift is open.");
+
+            Assert((await auth.PinLogin(new PinLoginDto { PinCode = "9999", TerminalId = 1, BranchId = 1 })) is OkObjectResult,
+                "Scenario 3B: Manager PinLogin on T1 must succeed while Cashier A's shift is open.");
+            Assert((await auth.Login(new LoginDto { Username = "manager1", Password = "passmgr", TerminalId = 1, BranchId = 1 })) is OkObjectResult,
+                "Scenario 3B: Manager password Login on T1 must succeed while Cashier A's shift is open.");
+            var mgrTokenRes = (await terms.IssueSessionToken(new TerminalSessionTokenRequestDto { TerminalId = 1, DeviceUuid = "uuid-own-t1", CashierUsername = "manager1" })).Result as OkObjectResult;
+            Assert(mgrTokenRes != null && (mgrTokenRes.Value as TerminalSessionTokenResponseDto)?.Success == true,
+                "Scenario 3B: IssueSessionToken for Manager must succeed while Cashier A's shift is open.");
+            Assert((await sessionsMgr.ActivateSession(new CashierSessionActivateDto { BranchId = 1, TerminalId = 1, DeviceIdentifier = "uuid-own-t1" })) is OkObjectResult,
+                "Scenario 3B: Manager ActivateSession on T1 must succeed while Cashier A's shift is open.");
+
+            // Verify Senior Cashier & Manager login did not take over, modify, or close Cashier A's shift
+            var verifyOpenShift = await db.CashDrawerShifts.AsNoTracking().SingleAsync(s => s.ShiftId == shiftA.ShiftId);
+            Assert(verifyOpenShift.Status == "OPEN" &&
+                   verifyOpenShift.CashierId == "cashier1" &&
+                   verifyOpenShift.OpeningFloat == 1000m &&
+                   verifyOpenShift.TotalCashSales == 650m &&
+                   verifyOpenShift.ExpectedBalance == 1650m,
+                "Scenario 3B: Senior Cashier and Manager login must NOT change Cashier A's shift ownership or balances.");
+            Assert((await cdT1Senior.OpenShift(new OpenShiftDto { BranchId = 1, TerminalId = 1, CashierId = "senior1", OpeningFloat = 1000m })) is ConflictObjectResult,
+                "Scenario 3B: Senior Cashier must not open a duplicate concurrent shift while Cashier A's shift is open.");
+            Assert((await cdT1Senior.CloseShift(new CloseShiftDto
+            {
+                ShiftId = shiftA.ShiftId,
+                IsDeclarationConfirmed = true,
+                Denominations = new List<CashDenominationLineDto> { new() { Type = "BILL", Denomination = 1000m, Quantity = 1 } }
+            })) is ForbidResult,
+                "Scenario 3B: Senior Cashier must not close Cashier A's active same-day shift via normal CloseShift.");
 
             // Scenario 4 & 5: Cashier A logs back into T1 -> resumes existing session & shift with ZERO duplicates!
             Assert((await auth.PinLogin(new PinLoginDto { PinCode = "1111", TerminalId = 1, BranchId = 1 })) is OkObjectResult,
@@ -327,7 +372,8 @@ public static partial class Program
                 seedDb.Cashiers.AddRange(
                     new LocalCashier { UserId = 1, Username = "cashier1", Role = "Cashier", PinHash = HashPin("1111"), SyncedAtUtc = dayUtc },
                     new LocalCashier { UserId = 2, Username = "cashier2", Role = "Cashier", PinHash = HashPin("2222"), SyncedAtUtc = dayUtc },
-                    new LocalCashier { UserId = 3, Username = "manager1", Role = "Manager", PinHash = HashPin("9999"), SyncedAtUtc = dayUtc });
+                    new LocalCashier { UserId = 3, Username = "manager1", Role = "Manager", PinHash = HashPin("9999"), SyncedAtUtc = dayUtc },
+                    new LocalCashier { UserId = 4, Username = "senior1", Role = "Senior Cashier", PinHash = HashPin("4444"), SyncedAtUtc = dayUtc });
                 await seedDb.SaveChangesAsync();
             }
 
@@ -361,9 +407,25 @@ public static partial class Program
             // Scenario 10: Cashier B attempts offline login & shift open on T1 -> MUST BE BLOCKED!
             var lockBOffline = await ShiftSession.GetTerminalLockStatusAsync(noNetHttp, 1, "cashier2", offline: true);
             Assert(lockBOffline.IsShiftOwnedByAnotherCashier &&
+                   lockBOffline.IsLoginBlockedByOpenShiftOwnership("Cashier") &&
                    lockBOffline.ActiveShiftOwnerCashierId == "cashier1" &&
                    lockBOffline.ActiveShiftOwnershipMessage == TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage,
                 $"Scenario 10: Offline lock status must block Cashier B with exact message. Got OwnedByOther={lockBOffline.IsShiftOwnedByAnotherCashier}, Owner={lockBOffline.ActiveShiftOwnerCashierId}");
+
+            // Scenario 10B: Senior Cashier & Manager MUST be allowed to log in offline while Cashier A's shift is open,
+            // without taking over Cashier A's shift!
+            var lockSeniorOffline = await ShiftSession.GetTerminalLockStatusAsync(noNetHttp, 1, "senior1", offline: true);
+            var lockMgrOffline = await ShiftSession.GetTerminalLockStatusAsync(noNetHttp, 1, "manager1", offline: true);
+            Assert(!lockSeniorOffline.IsLoginBlockedByOpenShiftOwnership("Senior Cashier") &&
+                   !lockMgrOffline.IsLoginBlockedByOpenShiftOwnership("Manager") &&
+                   lockSeniorOffline.ActiveShiftOwnerCashierId == "cashier1" &&
+                   lockMgrOffline.ActiveShiftOwnerCashierId == "cashier1",
+                "Scenario 10B: Offline Senior Cashier and Manager login must be permitted while preserving Cashier A as shift owner.");
+
+            var seniorSessionOffline = CreateOfflineTestSession("OFFLINE-SESSION-TOKEN", "senior1", "Senior Cashier");
+            var verifySeniorPayment = await ShiftSession.VerifyPaymentShiftLocalFirstAsync(noNetHttp, seniorSessionOffline, new PosConnectivityService(noNetHttp));
+            Assert(!verifySeniorPayment.IsReady && verifySeniorPayment.Issue == ShiftVerificationIssue.DifferentCashierOpen,
+                "Scenario 10B: Senior Cashier must not ring up sales under Cashier A's open shift.");
 
             // Network failure on online probe must ALSO fall back to local ownership and NEVER treat shift as closed!
             var lockBOnNetworkFail = await ShiftSession.GetTerminalLockStatusAsync(noNetHttp, 1, "cashier2", offline: false);

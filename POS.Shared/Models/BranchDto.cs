@@ -21,6 +21,7 @@ public class BranchDto
     // BIR Tax Type (VAT-Registered, Non-VAT)
     public string TaxType { get; set; } = "VAT-Registered";
     public bool VatDisplay { get; set; } = true;
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
 
     public bool IsActive { get; set; } = true;
     public int OutletCount { get; set; }

@@ -483,8 +483,7 @@
                     }
                 }
                 else if (lockState.IsCashierRestricted ||
-                    (lockState.HasUnresolvedPreviousDayShift && !POS.Client.Services.ShiftSession.IsSupervisorRole(Session.Role)) ||
-                    (!lockState.HasUnresolvedPreviousDayShift && lockState.IsShiftOwnedByAnotherCashier))
+                    lockState.IsLoginBlockedByOpenShiftOwnership(Session.Role))
                 {
                     Session.ClearSession();
                     POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;
@@ -610,6 +609,7 @@
                         ReceiptLogoDataUri = outlet.ReceiptLogoDataUri,
                         ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt,
                         VatDisplay = outlet.VatDisplay,
+                        ShowCustomerDetailsOnReceipt = outlet.ShowCustomerDetailsOnReceipt,
                         TerminalName = outlet.TerminalName,
                         BranchTaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType,
                         TerminalIdentifier = outlet.TerminalName

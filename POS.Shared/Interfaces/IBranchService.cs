@@ -20,5 +20,6 @@ namespace POS.Shared.Interfaces
         Task<ReceiptBrandingDto?> GetReceiptBrandingAsync(int branchId);
         Task<ReceiptBrandingResultDto> UploadReceiptLogoAsync(int branchId, byte[] fileBytes, string fileName, string contentType, bool applyToAllBranches = false);
         Task<ReceiptBrandingResultDto> RemoveReceiptLogoAsync(int branchId, bool applyToAllBranches = false);
+        Task<ReceiptBrandingResultDto> UpdateReceiptBrandingSettingsAsync(int branchId, bool showCustomerDetailsOnReceipt, bool applyToAllBranches = false);
     }
 }

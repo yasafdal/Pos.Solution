@@ -26,6 +26,7 @@ public static class ReceiptLogoStorage
                 ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUrl"" VARCHAR(255) NULL;
                 ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
                 ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""VatDisplay"" BOOLEAN NOT NULL DEFAULT TRUE;
+                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ShowCustomerDetailsOnReceipt"" BOOLEAN NOT NULL DEFAULT TRUE;
                 ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""BranchTagline"" VARCHAR(200) NULL;
             ");
             _branchColumnsEnsured = true;

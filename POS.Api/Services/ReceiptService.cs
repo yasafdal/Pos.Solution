@@ -44,6 +44,7 @@ public class ReceiptService(PosDbContext context) : IReceiptService
             ReceiptLogoUrl = branch?.ReceiptLogoUrl,
             ReceiptLogoDataUri = ReceiptLogoStorage.GetDataUri(branch?.ReceiptLogoUrl),
             VatDisplay = branch?.VatDisplay ?? true,
+            ShowCustomerDetailsOnReceipt = branch?.ShowCustomerDetailsOnReceipt ?? true,
             TerminalId = order.TerminalId,
             OutletId = outlet?.OutletId ?? 0, OutletName = outlet?.Outlet.Name ?? string.Empty,
             PTUNumber = outlet?.Ptunumber, MINNumber = outlet?.Minnumber, SerialNumber = outlet?.SerialNumber,

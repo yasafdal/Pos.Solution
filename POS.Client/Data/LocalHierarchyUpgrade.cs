@@ -98,6 +98,8 @@ public static class LocalHierarchyUpgrade
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN LastKnownServerTickCount64 INTEGER NULL");
                 if (!Columns("LocalTerminalConfigs").Contains("VatDisplay"))
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN VatDisplay INTEGER NOT NULL DEFAULT 1");
+                if (!Columns("LocalTerminalConfigs").Contains("ShowCustomerDetailsOnReceipt"))
+                    Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ShowCustomerDetailsOnReceipt INTEGER NOT NULL DEFAULT 1");
                 if (!Columns("LocalTerminalConfigs").Contains("ReceiptLogoUrl"))
                     Execute("ALTER TABLE LocalTerminalConfigs ADD COLUMN ReceiptLogoUrl TEXT NULL");
                 if (!Columns("LocalTerminalConfigs").Contains("ReceiptLogoDataUri"))
@@ -114,6 +116,7 @@ public static class LocalHierarchyUpgrade
                         Phone TEXT NULL,
                         TaxType TEXT NOT NULL DEFAULT 'VAT-Registered',
                         VatDisplay INTEGER NOT NULL DEFAULT 1,
+                        ShowCustomerDetailsOnReceipt INTEGER NOT NULL DEFAULT 1,
                         TrackInventory INTEGER NOT NULL DEFAULT 0,
                         BusinessTypeId INTEGER NULL DEFAULT 1,
                         BusinessType TEXT NULL DEFAULT 'FNB',

@@ -91,6 +91,7 @@ public class OfflineTerminalConfigDto
     public string? ReceiptLogoDataUri { get; set; }
     public DateTime? ReceiptLogoUpdatedAt { get; set; }
     public bool VatDisplay { get; set; } = true;
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
     public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = null!;
     public string DeviceIdentifier { get; set; } = null!;
@@ -118,6 +119,7 @@ public class OfflineBranchConfigDto
     public string? Phone { get; set; }
     public string TaxType { get; set; } = "VAT-Registered";
     public bool VatDisplay { get; set; } = true;
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
     public bool TrackInventory { get; set; }
     public int? BusinessTypeId { get; set; }
     public string? BusinessType { get; set; }

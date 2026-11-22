@@ -50,19 +50,38 @@ namespace POS.Api.Controllers
                 await tx.RollbackAsync();
                 return StatusCode(423, lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
             }
-            if (lockState.HasUnresolvedPreviousDayShift)
-            {
-                bool isSupervisor = CashDrawerController.IsSupervisorRole(User.FindFirstValue(ClaimTypes.Role));
-                if (!isSupervisor)
-                {
-                    await tx.RollbackAsync();
-                    return StatusCode(409, lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
-                }
-            }
-            else if (lockState.IsShiftOwnedByAnotherCashier)
+            var callerRole = User.FindFirstValue(ClaimTypes.Role);
+            var delegatedCashierRole = User.FindFirstValue(POS.Shared.Constants.PosPermissions.CashierRoleClaimType);
+            var effectiveRole = !string.IsNullOrWhiteSpace(delegatedCashierRole) ? delegatedCashierRole : callerRole;
+            bool isSupervisor = CashDrawerController.IsSupervisorRole(callerRole)
+                || CashDrawerController.IsSupervisorRole(delegatedCashierRole);
+            if (lockState.IsLoginBlockedByOpenShiftOwnership(effectiveRole))
             {
                 await tx.RollbackAsync();
-                return StatusCode(409, lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                return StatusCode(409, lockState.HasUnresolvedPreviousDayShift
+                    ? (lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage)
+                    : (lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage));
+            }
+
+            // Supervisor logging in while another cashier owns an active open shift:
+            // Preserve the shift owner's active CashierSession untouched and do not create
+            // duplicate CashierSession or CashierSwitchLog records.
+            if (lockState.IsShiftOwnedByAnotherCashier && isSupervisor)
+            {
+                var ownerSession = await _context.CashierSessions
+                    .AsNoTracking()
+                    .Where(s => s.TerminalId == request.TerminalId && s.Status == "ACTIVE")
+                    .OrderByDescending(s => s.LoginAt)
+                    .FirstOrDefaultAsync();
+                await tx.CommitAsync();
+                return Ok(new
+                {
+                    Message = "Supervisory access authorized; existing cashier shift ownership preserved.",
+                    SessionId = ownerSession?.CashierSessionId ?? 0,
+                    Resumed = false,
+                    SupervisoryAccess = true,
+                    ActiveShiftOwnerCashierId = lockState.ActiveShiftOwnerCashierId
+                });
             }
 
             var activeSessions = await _context.CashierSessions

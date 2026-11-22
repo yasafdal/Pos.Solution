@@ -32,6 +32,8 @@ public partial class Branch
 
     public bool VatDisplay { get; set; } = true;
 
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
+
     public bool TrackInventory { get; set; }
 
     public string? ReceiptLogoUrl { get; set; }

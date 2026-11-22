@@ -144,7 +144,7 @@
     {
         <div class="w-100 rounded-3 px-3 py-2 mb-3 small text-center" style="background: rgba(59, 130, 246, 0.14); border: 1px solid rgba(59, 130, 246, 0.35); color: #bfdbfe;">
             <i class="bi bi-person-lock me-1"></i>
-            Open shift assigned to <strong>@lockStatus.ActiveShiftOwnerCashierId</strong>. Only this cashier may resume until Close Cashier is completed.
+            Open shift assigned to <strong>@lockStatus.ActiveShiftOwnerCashierId</strong>. Only this cashier or an authorized supervisor (Senior Cashier / Manager) may sign in until Close Cashier is completed.
         </div>
     }
 
@@ -627,6 +627,7 @@
                     existingBranch.Phone = outlet.BranchPhone;
                     existingBranch.TaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType;
                     existingBranch.VatDisplay = outlet.VatDisplay;
+                    existingBranch.ShowCustomerDetailsOnReceipt = outlet.ShowCustomerDetailsOnReceipt;
                     existingBranch.BusinessTypeId = outlet.BusinessTypeId ?? 1;
                     existingBranch.BusinessType = outlet.BusinessType ?? "FNB";
                     existingBranch.ReceiptLogoUrl = outlet.ReceiptLogoUrl;
@@ -655,6 +656,7 @@
                         Phone = outlet.BranchPhone,
                         TaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType,
                         VatDisplay = outlet.VatDisplay,
+                        ShowCustomerDetailsOnReceipt = outlet.ShowCustomerDetailsOnReceipt,
                         BusinessTypeId = outlet.BusinessTypeId ?? 1,
                         BusinessType = outlet.BusinessType ?? "FNB",
                         ReceiptLogoUrl = outlet.ReceiptLogoUrl,
@@ -682,6 +684,7 @@
                     existingOutlet.BranchPhone = outlet.BranchPhone;
                     existingOutlet.BranchTaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType;
                     existingOutlet.VatDisplay = outlet.VatDisplay;
+                    existingOutlet.ShowCustomerDetailsOnReceipt = outlet.ShowCustomerDetailsOnReceipt;
                     existingOutlet.ReceiptLogoUrl = outlet.ReceiptLogoUrl;
                     if (string.IsNullOrWhiteSpace(outlet.ReceiptLogoUrl))
                     {
@@ -720,6 +723,7 @@
                         ReceiptLogoDataUri = outlet.ReceiptLogoDataUri,
                         ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt,
                         VatDisplay = outlet.VatDisplay,
+                        ShowCustomerDetailsOnReceipt = outlet.ShowCustomerDetailsOnReceipt,
                         TerminalName = outlet.TerminalName,
                         BranchTaxType = string.IsNullOrWhiteSpace(outlet.BranchTaxType) ? "VAT-Registered" : outlet.BranchTaxType,
                         TerminalIdentifier = address
@@ -762,22 +766,13 @@
                     currentLock.LockMessage ??
                     "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
             }
-            if (currentLock.HasUnresolvedPreviousDayShift)
-            {
-                if (!POS.Client.Services.ShiftSession.IsSupervisorRole(localCashier.Role))
-                {
-                    lockStatus = currentLock;
-                    throw new InvalidOperationException(
-                        currentLock.UnresolvedShiftMessage ??
-                        TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
-                }
-            }
-            else if (currentLock.IsShiftOwnedByAnotherCashier)
+            if (currentLock.IsLoginBlockedByOpenShiftOwnership(localCashier.Role))
             {
                 lockStatus = currentLock;
                 throw new InvalidOperationException(
-                    currentLock.ActiveShiftOwnershipMessage ??
-                    TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                    currentLock.HasUnresolvedPreviousDayShift
+                        ? (currentLock.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage)
+                        : (currentLock.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage));
             }
 
             var localBranch = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
@@ -803,6 +798,7 @@
                 BranchPhone = localBranch?.Phone ?? localOutlet.BranchPhone,
                 BranchTaxType = !string.IsNullOrWhiteSpace(localBranch?.TaxType) ? localBranch.TaxType : localOutlet.BranchTaxType,
                 VatDisplay = localBranch?.VatDisplay ?? localOutlet.VatDisplay,
+                ShowCustomerDetailsOnReceipt = localBranch?.ShowCustomerDetailsOnReceipt ?? localOutlet.ShowCustomerDetailsOnReceipt,
                 ReceiptLogoUrl = localBranch?.ReceiptLogoUrl ?? localOutlet.ReceiptLogoUrl,
                 ReceiptLogoDataUri = localBranch?.ReceiptLogoDataUri ?? localOutlet.ReceiptLogoDataUri,
                 ReceiptLogoUpdatedAt = localBranch?.ReceiptLogoUpdatedAt ?? localOutlet.ReceiptLogoUpdatedAt,
@@ -959,22 +955,13 @@
                         postAuthLock.LockMessage ??
                         "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
                 }
-                if (postAuthLock.HasUnresolvedPreviousDayShift)
-                {
-                    if (!POS.Client.Services.ShiftSession.IsSupervisorRole(role))
-                    {
-                        lockStatus = postAuthLock;
-                        throw new InvalidOperationException(
-                            postAuthLock.UnresolvedShiftMessage ??
-                            TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
-                    }
-                }
-                else if (postAuthLock.IsShiftOwnedByAnotherCashier)
+                if (postAuthLock.IsLoginBlockedByOpenShiftOwnership(role))
                 {
                     lockStatus = postAuthLock;
                     throw new InvalidOperationException(
-                        postAuthLock.ActiveShiftOwnershipMessage ??
-                        TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                        postAuthLock.HasUnresolvedPreviousDayShift
+                            ? (postAuthLock.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage)
+                            : (postAuthLock.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage));
                 }
 
                 var deviceUuid = provisioned.DeviceUuid;

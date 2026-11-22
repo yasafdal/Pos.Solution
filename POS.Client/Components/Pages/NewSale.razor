@@ -1800,6 +1800,7 @@ else
             {
                 if (!disposed)
                 {
+                    await Session.RefreshCachedMenuDisplayModeAsync();
                     await LoadCatalogAsync();
                     StateHasChanged();
                 }

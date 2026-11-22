@@ -13,6 +13,7 @@ public class ReceiptDto
     public string? ReceiptLogoUrl { get; set; }
     public string? ReceiptLogoDataUri { get; set; }
     public bool VatDisplay { get; set; } = true;
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
     public int TerminalId { get; set; }
     public int OutletId { get; set; }
     public string OutletName { get; set; } = string.Empty;

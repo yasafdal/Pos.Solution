@@ -40,6 +40,7 @@ namespace POS.Api.Controllers
                     BranchAddress = o.Branch.Address, BranchPhone = o.Branch.Phone,
                     BranchTaxType = o.Branch.TaxType,
                     VatDisplay = o.Branch.VatDisplay,
+                    ShowCustomerDetailsOnReceipt = o.Branch.ShowCustomerDetailsOnReceipt,
                     ReceiptLogoUrl = o.Branch.ReceiptLogoUrl,
                     ReceiptLogoUpdatedAt = o.Branch.ReceiptLogoUpdatedAt,
                     o.Branch.BusinessTypeId,
@@ -132,6 +133,7 @@ namespace POS.Api.Controllers
                 ReceiptLogoUpdatedAt = outlet.ReceiptLogoUpdatedAt,
                 BranchTaxType = outlet.BranchTaxType ?? "VAT-Registered",
                 VatDisplay = outlet.VatDisplay,
+                ShowCustomerDetailsOnReceipt = outlet.ShowCustomerDetailsOnReceipt,
                 TerminalName = outlet.Name,
                 BusinessTypeId = outlet.BusinessTypeId,
                 BusinessType = outlet.BusinessType,
@@ -402,6 +404,7 @@ namespace POS.Api.Controllers
                 ReceiptLogoUpdatedAt = terminal.Branch?.ReceiptLogoUpdatedAt,
                 BranchTaxType = terminal.Branch?.TaxType ?? "VAT-Registered",
                 VatDisplay = terminal.Branch?.VatDisplay ?? true,
+                ShowCustomerDetailsOnReceipt = terminal.Branch?.ShowCustomerDetailsOnReceipt ?? true,
                 TerminalName = terminal.Name,
                 BusinessTypeId = terminal.Branch?.BusinessTypeId,
                 BusinessType = terminal.Branch?.BusinessType?.Type,
@@ -520,24 +523,14 @@ namespace POS.Api.Controllers
                         Message = lockStatus.LockMessage ?? "Terminal is locked for the remainder of the business day."
                     });
                 }
-                if (lockStatus.HasUnresolvedPreviousDayShift)
-                {
-                    bool isSup = cashierUser != null && CashDrawerController.IsSupervisorRole(cashierUser.Role);
-                    if (!isSup)
-                    {
-                        return StatusCode(409, new TerminalSessionTokenResponseDto
-                        {
-                            Success = false,
-                            Message = lockStatus.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
-                        });
-                    }
-                }
-                else if (lockStatus.IsShiftOwnedByAnotherCashier)
+                if (lockStatus.IsLoginBlockedByOpenShiftOwnership(cashierUser?.Role))
                 {
                     return StatusCode(409, new TerminalSessionTokenResponseDto
                     {
                         Success = false,
-                        Message = lockStatus.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
+                        Message = lockStatus.HasUnresolvedPreviousDayShift
+                            ? (lockStatus.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage)
+                            : (lockStatus.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage)
                     });
                 }
             }

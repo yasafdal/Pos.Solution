@@ -46,7 +46,7 @@ namespace POS.Api.Controllers
                 BranchId = b.BranchId, BusinessTypeId = b.BusinessTypeId, BusinessTypeName = b.BusinessType?.Type,
                 ServiceModeId = b.ServiceModeId, ServiceModeName = b.ServiceMode?.Type,
                 TrackInventory = b.TrackInventory, Name = b.Name, BranchTagline = b.BranchTagline, Code = b.Code, Address = b.Address,
-                Phone = b.Phone, TaxType = b.TaxType, VatDisplay = b.VatDisplay, IsActive = b.IsActive,
+                Phone = b.Phone, TaxType = b.TaxType, VatDisplay = b.VatDisplay, ShowCustomerDetailsOnReceipt = b.ShowCustomerDetailsOnReceipt, IsActive = b.IsActive,
                 ReceiptLogoUrl = b.ReceiptLogoUrl,
                 ReceiptLogoDataUri = POS.Api.Services.ReceiptLogoStorage.GetDataUri(b.ReceiptLogoUrl),
                 ReceiptLogoUpdatedAt = b.ReceiptLogoUpdatedAt,
@@ -98,6 +98,7 @@ namespace POS.Api.Controllers
                 Phone = b.Phone,
                 TaxType = b.TaxType ?? "VAT-Registered",
                 VatDisplay = b.VatDisplay,
+                ShowCustomerDetailsOnReceipt = b.ShowCustomerDetailsOnReceipt,
                 TrackInventory = b.TrackInventory,
                 BusinessTypeId = b.BusinessTypeId,
                 BusinessType = b.BusinessType?.Type,
@@ -131,6 +132,7 @@ namespace POS.Api.Controllers
                 Phone = dto.Phone,
                 TaxType = dto.TaxType,
                 VatDisplay = dto.VatDisplay,
+                ShowCustomerDetailsOnReceipt = dto.ShowCustomerDetailsOnReceipt,
                 IsActive = dto.IsActive,
                 TrackInventory = dto.TrackInventory
             };
@@ -170,6 +172,7 @@ namespace POS.Api.Controllers
             branch.Phone = dto.Phone;
             branch.TaxType = dto.TaxType;
             branch.VatDisplay = dto.VatDisplay;
+            branch.ShowCustomerDetailsOnReceipt = dto.ShowCustomerDetailsOnReceipt;
             branch.IsActive = dto.IsActive;
             branch.TrackInventory = dto.TrackInventory;
 

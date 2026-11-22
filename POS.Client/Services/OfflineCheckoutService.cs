@@ -587,6 +587,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                         ? outletConfig.ReceiptLogoDataUri
                         : (!string.IsNullOrWhiteSpace(sessionOutlet?.ReceiptLogoUrl) ? sessionOutlet.ReceiptLogoDataUri : null));
                 bool vatDisplay = localBranch?.VatDisplay ?? outletConfig?.VatDisplay ?? sessionOutlet?.VatDisplay ?? true;
+                bool showCustomerDetails = localBranch?.ShowCustomerDetailsOnReceipt ?? outletConfig?.ShowCustomerDetailsOnReceipt ?? sessionOutlet?.ShowCustomerDetailsOnReceipt ?? true;
                 string terminalName = !string.IsNullOrWhiteSpace(outletConfig?.TerminalName)
                     ? outletConfig.TerminalName
                     : (sessionOutlet?.TerminalName ?? string.Empty);
@@ -604,6 +605,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     ReceiptLogoUrl = receiptLogoUrl,
                     ReceiptLogoDataUri = receiptLogoDataUri,
                     VatDisplay = vatDisplay,
+                    ShowCustomerDetailsOnReceipt = showCustomerDetails,
                     TerminalId = createDto.TerminalId,
                     OutletId = outletConfig.OutletId, OutletName = outletConfig.OutletName,
                     PTUNumber = outletConfig.PTUNumber, MINNumber = outletConfig.MINNumber, SerialNumber = outletConfig.SerialNumber,
@@ -743,6 +745,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 ? outletConfig.ReceiptLogoDataUri
                 : (!string.IsNullOrWhiteSpace(sessionOutlet?.ReceiptLogoUrl) ? sessionOutlet.ReceiptLogoDataUri : null));
         bool vatDisplay = localBranch?.VatDisplay ?? outletConfig?.VatDisplay ?? sessionOutlet?.VatDisplay ?? true;
+        bool showCustomerDetails = localBranch?.ShowCustomerDetailsOnReceipt ?? outletConfig?.ShowCustomerDetailsOnReceipt ?? sessionOutlet?.ShowCustomerDetailsOnReceipt ?? true;
         string terminalName = !string.IsNullOrWhiteSpace(outletConfig?.TerminalName)
             ? outletConfig.TerminalName
             : (sessionOutlet?.TerminalName ?? $"Terminal #{order.TerminalId}");
@@ -769,6 +772,7 @@ public class OfflineCheckoutService : IOfflineCheckoutService
             ReceiptLogoUrl = receiptLogoUrl,
             ReceiptLogoDataUri = receiptLogoDataUri,
             VatDisplay = vatDisplay,
+            ShowCustomerDetailsOnReceipt = showCustomerDetails,
             TerminalId = order.TerminalId,
             OutletId = outletConfig?.OutletId ?? order.OutletId,
             OutletName = outletConfig?.OutletName ?? sessionOutlet?.OutletName ?? string.Empty,

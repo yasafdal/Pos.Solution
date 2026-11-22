@@ -35,6 +35,20 @@ public class TerminalClosingLockDto
         return $"Previous Business Date ({safeDate}) has an unresolved open cashier shift for {safeCashier}. A new cashier cannot take over this drawer. Notify a Manager or Supervisor to complete Overnight Shift Recovery before releasing this terminal.";
     }
 
+    public static bool IsSupervisoryLoginRole(string? role)
+    {
+        if (string.IsNullOrWhiteSpace(role)) return false;
+        var clean = role.Trim();
+        return clean.Equals("Admin", StringComparison.OrdinalIgnoreCase) ||
+               clean.Equals("Manager", StringComparison.OrdinalIgnoreCase) ||
+               clean.Equals("Senior Cashier", StringComparison.OrdinalIgnoreCase) ||
+               clean.Equals("SeniorCashier", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public bool IsLoginBlockedByOpenShiftOwnership(string? candidateRole) =>
+        (HasUnresolvedPreviousDayShift || IsShiftOwnedByAnotherCashier) &&
+        !IsSupervisoryLoginRole(candidateRole);
+
     public int TerminalId { get; set; }
     public bool IsTerminalLocked { get; set; }
     public bool IsCashierRestricted { get; set; }

@@ -133,6 +133,7 @@ else
                     ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUrl"" VARCHAR(255) NULL;
                     ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
                     ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""VatDisplay"" BOOLEAN NOT NULL DEFAULT TRUE;
+                    ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ShowCustomerDetailsOnReceipt"" BOOLEAN NOT NULL DEFAULT TRUE;
                     ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""BranchTagline"" VARCHAR(200) NULL;
                     ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ServerReceivedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
                     ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceTimeZoneId"" VARCHAR(100) NULL;

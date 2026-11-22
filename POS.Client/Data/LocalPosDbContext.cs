@@ -94,6 +94,7 @@ public class LocalPosDbContext : DbContext
         {
             entity.ToTable("LocalBranches");
             entity.Property(e => e.VatDisplay).HasDefaultValue(true);
+            entity.Property(e => e.ShowCustomerDetailsOnReceipt).HasDefaultValue(true);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
         });
         modelBuilder.Entity<LocalTerminalConfig>(entity =>
@@ -103,6 +104,7 @@ public class LocalPosDbContext : DbContext
             entity.Property(e => e.IsActivated).HasDefaultValue(false);
             entity.Property(e => e.AllowSync).HasDefaultValue(true);
             entity.Property(e => e.VatDisplay).HasDefaultValue(true);
+            entity.Property(e => e.ShowCustomerDetailsOnReceipt).HasDefaultValue(true);
             entity.Property(e => e.MenuDisplayMode).HasDefaultValue(POS.Shared.Models.MenuDisplayMode.TextOnly);
         });
         modelBuilder.Entity<LocalOrderSequence>().ToTable("LocalOrderSequences");

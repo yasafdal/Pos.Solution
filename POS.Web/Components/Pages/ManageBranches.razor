@@ -415,6 +415,7 @@
             Phone = !string.IsNullOrEmpty(branch.Phone) ? new string(branch.Phone.Where(char.IsDigit).ToArray()) : branch.Phone,
             TaxType = string.IsNullOrWhiteSpace(branch.TaxType) ? "VAT-Registered" : branch.TaxType,
             VatDisplay = branch.VatDisplay,
+            ShowCustomerDetailsOnReceipt = branch.ShowCustomerDetailsOnReceipt,
             IsActive = branch.IsActive,
             TrackInventory = branch.TrackInventory
         };
@@ -591,6 +592,7 @@
                 Phone = branch.Phone,
                 TaxType = branch.TaxType,
                 VatDisplay = branch.VatDisplay,
+                ShowCustomerDetailsOnReceipt = branch.ShowCustomerDetailsOnReceipt,
                 IsActive = !branch.IsActive,
                 TrackInventory = branch.TrackInventory
             };

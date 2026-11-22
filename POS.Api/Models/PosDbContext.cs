@@ -65,6 +65,7 @@ public partial class PosDbContext : DbContext
                 .HasMaxLength(30)
                 .HasDefaultValueSql("'VAT-Registered'::character varying");
             entity.Property(e => e.VatDisplay).HasDefaultValue(true);
+            entity.Property(e => e.ShowCustomerDetailsOnReceipt).HasDefaultValue(true);
             entity.Property(e => e.ReceiptLogoUrl).HasMaxLength(255);
             entity.Property(e => e.ReceiptLogoUpdatedAt).HasColumnType("timestamp without time zone");
         });

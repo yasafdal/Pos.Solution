@@ -140,6 +140,7 @@ public class LocalBranch
     public string? Phone { get; set; }
     public string TaxType { get; set; } = "VAT-Registered";
     public bool VatDisplay { get; set; } = true;
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
     public bool TrackInventory { get; set; }
     public int? BusinessTypeId { get; set; } = 1;
     public string? BusinessType { get; set; } = "FNB";
@@ -174,6 +175,7 @@ public class LocalTerminalConfig
     public string? ReceiptLogoDataUri { get; set; }
     public DateTime? ReceiptLogoUpdatedAt { get; set; }
     public bool VatDisplay { get; set; } = true;
+    public bool ShowCustomerDetailsOnReceipt { get; set; } = true;
     public string TerminalName { get; set; } = null!;
     public string BranchTaxType { get; set; } = "VAT-Registered";
     public string TerminalIdentifier { get; set; } = null!;

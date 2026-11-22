@@ -459,14 +459,18 @@ public static class ReceiptHtmlFormatter
             }
         }
 
-        // Customer Information (always displayed; shows info if present, otherwise write-in underlines starting at fixed position)
-        html.Append("<hr class=\"dash\"><div class=\"cust-box\">");
-        html.Append("<div class=\"cust-title\">[CUSTOMER INFORMATION]</div>");
-        CustRow(html, "Customer:", receipt.CustomerName);
-        CustRow(html, "Address:", receipt.CustomerAddress);
-        CustRow(html, "TIN:", receipt.CustomerTin);
-        CustRow(html, "Bus. Style:", receipt.CustomerBusinessStyle);
-        html.Append("</div>");
+        // Customer Information (controlled by Receipt Branding ShowCustomerDetailsOnReceipt toggle)
+        html.Append("<hr class=\"dash\">");
+        if (receipt.ShowCustomerDetailsOnReceipt)
+        {
+            html.Append("<div class=\"cust-box\">");
+            html.Append("<div class=\"cust-title\">[CUSTOMER INFORMATION]</div>");
+            CustRow(html, "Customer:", receipt.CustomerName);
+            CustRow(html, "Address:", receipt.CustomerAddress);
+            CustRow(html, "TIN:", receipt.CustomerTin);
+            CustRow(html, "Bus. Style:", receipt.CustomerBusinessStyle);
+            html.Append("</div>");
+        }
 
         // Footer & Trailing Cutter Feed
         html.Append("<div class=\"footer\">");

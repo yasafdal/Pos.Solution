@@ -2544,23 +2544,40 @@ public static partial class Program
             };
 
             var branchesController = new BranchesController(db) { ControllerContext = adminContext };
+            var brandingController = new ReceiptBrandingController(db, new TestWebHostEnvironment()) { ControllerContext = adminContext };
 
-            // 1. Default VatDisplay = true on existing Branch 1 and new Branch creation
+            // 1. Default VatDisplay = true and ShowCustomerDetailsOnReceipt = true on existing Branch 1 and new Branch creation
+            var brandingInitialRes = await brandingController.GetReceiptBranding(1);
+            var brandingInitial = ((OkObjectResult)brandingInitialRes.Result!).Value as ReceiptBrandingDto;
+            Assert(brandingInitial != null && brandingInitial.ShowCustomerDetailsOnReceipt,
+                "GetReceiptBranding must default to ShowCustomerDetailsOnReceipt = true.");
+
             var createRes = await branchesController.CreateBranch(new BranchDto
             {
                 Name = "Branch No-VAT-Display",
                 Code = "BR-NOVATDISP",
                 TaxType = "VAT-Registered",
                 VatDisplay = false,
+                ShowCustomerDetailsOnReceipt = false,
                 IsActive = true
             });
             var createdBranch = ((OkObjectResult)createRes.Result!).Value as BranchDto;
-            Assert(createdBranch != null && createdBranch.BranchId > 0 && !createdBranch.VatDisplay,
-                "CreateBranch must persist VatDisplay = false when configured.");
+            Assert(createdBranch != null && createdBranch.BranchId > 0 && !createdBranch.VatDisplay && !createdBranch.ShowCustomerDetailsOnReceipt,
+                "CreateBranch must persist VatDisplay = false and ShowCustomerDetailsOnReceipt = false when configured.");
 
-            // 2. Update Branch 1 VatDisplay -> false
+            // 2. Update Branch 1 VatDisplay -> false and ShowCustomerDetailsOnReceipt -> false via ReceiptBrandingController
             var branch1 = await db.Branches.AsNoTracking().FirstAsync(b => b.BranchId == 1);
-            Assert(branch1.VatDisplay, "Branch 1 must default to VatDisplay = true.");
+            Assert(branch1.VatDisplay && branch1.ShowCustomerDetailsOnReceipt,
+                "Branch 1 must default to VatDisplay = true and ShowCustomerDetailsOnReceipt = true.");
+
+            var settingsRes = await brandingController.UpdateSettings(1, new UpdateReceiptBrandingSettingsDto
+            {
+                ShowCustomerDetailsOnReceipt = false,
+                ApplyToAllBranches = false
+            });
+            var settingsResult = ((OkObjectResult)settingsRes.Result!).Value as ReceiptBrandingResultDto;
+            Assert(settingsResult != null && settingsResult.Success && settingsResult.Branding != null && !settingsResult.Branding.ShowCustomerDetailsOnReceipt,
+                "ReceiptBrandingController.UpdateSettings must persist ShowCustomerDetailsOnReceipt = false.");
 
             var updateRes = await branchesController.UpdateBranch(1, new BranchDto
             {
@@ -2573,6 +2590,7 @@ public static partial class Program
                 Phone = branch1.Phone,
                 TaxType = branch1.TaxType,
                 VatDisplay = false,
+                ShowCustomerDetailsOnReceipt = false,
                 IsActive = branch1.IsActive,
                 TrackInventory = branch1.TrackInventory
             });
@@ -2580,17 +2598,18 @@ public static partial class Program
 
             var clientCfgRes = await branchesController.GetBranchClientConfig(1);
             var clientCfg = ((OkObjectResult)clientCfgRes.Result!).Value as OfflineBranchConfigDto;
-            Assert(clientCfg != null && clientCfg.BranchId == 1 && !clientCfg.VatDisplay && clientCfg.TaxType == "VAT-Registered",
-                "GetBranchClientConfig must return updated VatDisplay = false while keeping TaxType = VAT-Registered.");
+            Assert(clientCfg != null && clientCfg.BranchId == 1 && !clientCfg.VatDisplay && !clientCfg.ShowCustomerDetailsOnReceipt && clientCfg.TaxType == "VAT-Registered",
+                "GetBranchClientConfig must return updated VatDisplay = false and ShowCustomerDetailsOnReceipt = false while keeping TaxType = VAT-Registered.");
 
-            // 3. OfflineReferenceDataController returns Branch DTO and Terminal.VatDisplay = false
+            // 3. OfflineReferenceDataController returns Branch DTO and Terminal with VatDisplay = false and ShowCustomerDetailsOnReceipt = false
             var offlineRefController = new OfflineReferenceDataController(db) { ControllerContext = adminContext };
             var refRes = await offlineRefController.GetReferenceData(1, null);
             var refDto = ((OkObjectResult)refRes.Result!).Value as OfflineReferenceDataResponseDto;
-            Assert(refDto != null && refDto.Branch != null && !refDto.Branch.VatDisplay && !refDto.Terminal.VatDisplay,
-                "OfflineReferenceDataController must include Branch config and Terminal.VatDisplay = false.");
+            Assert(refDto != null && refDto.Branch != null && !refDto.Branch.VatDisplay && !refDto.Terminal.VatDisplay &&
+                   !refDto.Branch.ShowCustomerDetailsOnReceipt && !refDto.Terminal.ShowCustomerDetailsOnReceipt,
+                "OfflineReferenceDataController must include Branch and Terminal with VatDisplay = false and ShowCustomerDetailsOnReceipt = false.");
 
-            // 4. Online Order creation & ReceiptService: VAT calculation MUST remain intact even when VatDisplay = false!
+            // 4. Online Order creation & ReceiptService: VAT calculation and customer transaction data MUST remain intact even when flags are false!
             var discountCalc = new POS.Api.Services.DiscountCalculationService();
             var calcResult = discountCalc.CalculateOrder(new OrderCalculationRequestDto
             {
@@ -2613,6 +2632,10 @@ public static partial class Program
                 TerminalId = 1,
                 CashierId = "cashier1",
                 OrderType = "DINING",
+                CustomerName = "Juan Dela Cruz",
+                CustomerAddress = "Makati City",
+                CustomerTin = "123-456-789-000",
+                CustomerBusinessStyle = "Retail Trading",
                 Subtotal = 112m,
                 VatableSales = calcResult.VatableSales,
                 VatExemptSales = calcResult.VatExemptSales,
@@ -2649,30 +2672,69 @@ public static partial class Program
             db.Orders.Add(order);
             await db.SaveChangesAsync();
 
+            var savedOrderInDb = await db.Orders.AsNoTracking().FirstAsync(o => o.OrderId == order.OrderId);
+            Assert(savedOrderInDb.CustomerName == "Juan Dela Cruz" &&
+                   savedOrderInDb.CustomerAddress == "Makati City" &&
+                   savedOrderInDb.CustomerTin == "123-456-789-000" &&
+                   savedOrderInDb.CustomerBusinessStyle == "Retail Trading",
+                "Orders table must preserve all customer fields when ShowCustomerDetailsOnReceipt = false.");
+
             var receiptService = new POS.Api.Services.ReceiptService(db);
             var receiptFalse = await receiptService.GetReceiptAsync(order.OrderId);
-            Assert(receiptFalse != null && !receiptFalse.VatDisplay && receiptFalse.VatableSales == 100m && receiptFalse.VatAmount == 12m,
-                "ReceiptService must preserve VatableSales (100) and VatAmount (12) on ReceiptDto while setting VatDisplay = false.");
+            var receiptReprintFalse = await receiptService.GetReceiptAsync(order.OrderId, isReprint: true);
+            Assert(receiptFalse != null && !receiptFalse.VatDisplay && !receiptFalse.ShowCustomerDetailsOnReceipt &&
+                   receiptFalse.VatableSales == 100m && receiptFalse.VatAmount == 12m &&
+                   receiptFalse.CustomerName == "Juan Dela Cruz" && receiptFalse.CustomerTin == "123-456-789-000",
+                "ReceiptService must preserve VatableSales, VatAmount, and Customer data on ReceiptDto while setting VatDisplay = false and ShowCustomerDetailsOnReceipt = false.");
+            Assert(receiptReprintFalse != null && receiptReprintFalse.IsReprint && !receiptReprintFalse.ShowCustomerDetailsOnReceipt,
+                "ReceiptService reprint must also respect ShowCustomerDetailsOnReceipt = false.");
 
-            // 5. Customer-facing ReceiptHtmlFormatter suppresses VAT breakdown when VatDisplay = false, and shows it when true
+            // 5. Customer-facing ReceiptHtmlFormatter & EscPosReceiptBuilder suppress VAT breakdown and Customer Information when OFF, and show them when ON
             string htmlSuppressed = POS.Client.Services.ReceiptHtmlFormatter.Format(receiptFalse!);
             Assert(!htmlSuppressed.Contains("Vatable Sales", StringComparison.Ordinal) &&
                    !htmlSuppressed.Contains("VAT-Exempt Sales", StringComparison.Ordinal) &&
                    !htmlSuppressed.Contains("Zero-Rated Sales", StringComparison.Ordinal) &&
                    !htmlSuppressed.Contains("VAT (12%):", StringComparison.Ordinal),
                 "ReceiptHtmlFormatter must hide all VAT breakdown rows when VatDisplay = false.");
+            Assert(!htmlSuppressed.Contains("[CUSTOMER INFORMATION]", StringComparison.Ordinal) &&
+                   !htmlSuppressed.Contains("Customer:", StringComparison.Ordinal) &&
+                   !htmlSuppressed.Contains("Juan Dela Cruz", StringComparison.Ordinal) &&
+                   !htmlSuppressed.Contains("Bus. Style:", StringComparison.Ordinal),
+                "ReceiptHtmlFormatter must hide [CUSTOMER INFORMATION] section without empty labels when ShowCustomerDetailsOnReceipt = false.");
             Assert(htmlSuppressed.Contains("Subtotal", StringComparison.Ordinal) &&
                    htmlSuppressed.Contains("TOTAL", StringComparison.Ordinal) &&
                    htmlSuppressed.Contains("112.00", StringComparison.Ordinal),
                 "ReceiptHtmlFormatter must still display Subtotal and TOTAL when VatDisplay = false.");
 
+            var hwConfig80 = new POS.Client.Data.LocalPrinterHardwareConfig { PaperWidthMm = 80 };
+            string escPosSuppressed = Encoding.ASCII.GetString(POS.Client.Services.EscPosReceiptBuilder.BuildReceipt(receiptFalse!, hwConfig80));
+            Assert(!escPosSuppressed.Contains("[CUSTOMER INFORMATION]", StringComparison.Ordinal) &&
+                   !escPosSuppressed.Contains("Customer:", StringComparison.Ordinal) &&
+                   !escPosSuppressed.Contains("Juan Dela Cruz", StringComparison.Ordinal) &&
+                   !escPosSuppressed.Contains("Bus. Style:", StringComparison.Ordinal),
+                "EscPosReceiptBuilder must hide [CUSTOMER INFORMATION] section when ShowCustomerDetailsOnReceipt = false.");
+
             receiptFalse!.VatDisplay = true;
+            receiptFalse.ShowCustomerDetailsOnReceipt = true;
             string htmlDisplayed = POS.Client.Services.ReceiptHtmlFormatter.Format(receiptFalse);
             Assert(htmlDisplayed.Contains("Vatable Sales", StringComparison.Ordinal) &&
                    htmlDisplayed.Contains("100.00", StringComparison.Ordinal) &&
                    htmlDisplayed.Contains("VAT (12%):", StringComparison.Ordinal) &&
                    htmlDisplayed.Contains("12.00", StringComparison.Ordinal),
                 "ReceiptHtmlFormatter must display Vatable Sales and VAT (12%) when VatDisplay = true.");
+            Assert(htmlDisplayed.Contains("[CUSTOMER INFORMATION]", StringComparison.Ordinal) &&
+                   htmlDisplayed.Contains("Juan Dela Cruz", StringComparison.Ordinal) &&
+                   htmlDisplayed.Contains("Makati City", StringComparison.Ordinal) &&
+                   htmlDisplayed.Contains("123-456-789-000", StringComparison.Ordinal) &&
+                   htmlDisplayed.Contains("Retail Trading", StringComparison.Ordinal),
+                "ReceiptHtmlFormatter must display [CUSTOMER INFORMATION] and customer values when ShowCustomerDetailsOnReceipt = true.");
+
+            string escPosDisplayed = Encoding.ASCII.GetString(POS.Client.Services.EscPosReceiptBuilder.BuildReceipt(receiptFalse, hwConfig80));
+            Assert(escPosDisplayed.Contains("[CUSTOMER INFORMATION]", StringComparison.Ordinal) &&
+                   escPosDisplayed.Contains("Juan Dela Cruz", StringComparison.Ordinal) &&
+                   escPosDisplayed.Contains("123-456-789-000", StringComparison.Ordinal) &&
+                   escPosDisplayed.Contains("Retail Trading", StringComparison.Ordinal),
+                "EscPosReceiptBuilder must display [CUSTOMER INFORMATION] and customer values when ShowCustomerDetailsOnReceipt = true.");
 
             // 6. Local SQLite LocalBranches table creation, backfill, and offline checkout preservation
             string tempSqlitePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pos_vat_branch_test_{Guid.NewGuid():N}.db");
@@ -2690,6 +2752,7 @@ public static partial class Program
                         Code = "BR-01",
                         TaxType = "VAT-Registered",
                         VatDisplay = false,
+                        ShowCustomerDetailsOnReceipt = false,
                         IsActive = true,
                         UpdatedAt = DateTime.UtcNow
                     });
@@ -2706,6 +2769,7 @@ public static partial class Program
                         BranchCode = "BR-01",
                         BranchTaxType = "VAT-Registered",
                         VatDisplay = false,
+                        ShowCustomerDetailsOnReceipt = false,
                         IsActivated = true,
                         IsInitialized = true
                     });
@@ -2756,8 +2820,8 @@ public static partial class Program
                         TerminalName = "POS1"
                     });
                     await session.RefreshCachedMenuDisplayModeAsync();
-                    Assert(session.Terminal != null && !session.Terminal.VatDisplay && session.Terminal.BranchTaxType == "VAT-Registered",
-                        "PosSessionService.RefreshCachedMenuDisplayModeAsync must load VatDisplay = false and TaxType from LocalBranches.");
+                    Assert(session.Terminal != null && !session.Terminal.VatDisplay && !session.Terminal.ShowCustomerDetailsOnReceipt && session.Terminal.BranchTaxType == "VAT-Registered",
+                        "PosSessionService.RefreshCachedMenuDisplayModeAsync must load VatDisplay = false, ShowCustomerDetailsOnReceipt = false, and TaxType from LocalBranches.");
 
                     var offlineCheckout = new POS.Client.Services.OfflineCheckoutService(localDb, session);
                     var checkoutRes = await offlineCheckout.ProcessOfflineCashSaleAsync(new OrderCreateDto
@@ -2767,6 +2831,10 @@ public static partial class Program
                         TerminalId = 1,
                         CashierId = "cashier1",
                         OrderType = "DINING",
+                        CustomerName = "Maria Clara",
+                        CustomerAddress = "Intramuros, Manila",
+                        CustomerTin = "987-654-321-000",
+                        CustomerBusinessStyle = "Food Services",
                         Items = new List<OrderItemCreateDto>
                         {
                             new() { ProductId = 1, ProductName = "Burger", Quantity = 1, BasePrice = 112m, TaxName = "VATable" }
@@ -2774,13 +2842,24 @@ public static partial class Program
                     }, 112m, "cashier1");
 
                     Assert(checkoutRes.Success && checkoutRes.Receipt != null, $"Offline checkout must succeed: {checkoutRes.ErrorMessage}");
-                    Assert(!checkoutRes.Receipt!.VatDisplay, "Offline receipt must inherit VatDisplay = false from LocalBranches.");
+                    Assert(!checkoutRes.Receipt!.VatDisplay && !checkoutRes.Receipt.ShowCustomerDetailsOnReceipt,
+                        "Offline receipt must inherit VatDisplay = false and ShowCustomerDetailsOnReceipt = false from LocalBranches.");
                     Assert(checkoutRes.Receipt.VatableSales == 100.00m && checkoutRes.Receipt.VatAmount == 12.00m && checkoutRes.Receipt.TotalAmount == 112.00m,
                         "Offline checkout must still compute and store VatableSales = 100.00 and VatAmount = 12.00 when VatDisplay = false.");
+
+                    string offlineHtml = POS.Client.Services.ReceiptHtmlFormatter.Format(checkoutRes.Receipt);
+                    Assert(!offlineHtml.Contains("[CUSTOMER INFORMATION]", StringComparison.Ordinal) &&
+                           !offlineHtml.Contains("Maria Clara", StringComparison.Ordinal),
+                        "Offline receipt HTML must omit customer details when ShowCustomerDetailsOnReceipt = false.");
 
                     var savedLocalOrder = await localDb.Orders.AsNoTracking().FirstAsync();
                     Assert(savedLocalOrder.VatableSales == 100.00m && savedLocalOrder.VatAmount == 12.00m && savedLocalOrder.TotalAmount == 112.00m,
                         "LocalOrders table must store full VatableSales and VatAmount even when VatDisplay = false.");
+                    Assert(savedLocalOrder.CustomerName == "Maria Clara" &&
+                           savedLocalOrder.CustomerAddress == "Intramuros, Manila" &&
+                           savedLocalOrder.CustomerTin == "987-654-321-000" &&
+                           savedLocalOrder.CustomerBusinessStyle == "Food Services",
+                        "LocalOrders table must store full customer details even when ShowCustomerDetailsOnReceipt = false.");
                 }
             }
             finally

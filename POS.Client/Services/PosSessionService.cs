@@ -40,6 +40,7 @@ namespace POS.Client.Services
             string? logoDataUri = terminal.ReceiptLogoDataUri;
             DateTime? logoUpdatedAt = terminal.ReceiptLogoUpdatedAt;
             bool vatDisplay = terminal.VatDisplay;
+            bool showCustomerDetails = terminal.ShowCustomerDetailsOnReceipt;
             string branchTaxType = terminal.BranchTaxType;
             string branchName = terminal.BranchName;
             string? branchTagline = terminal.BranchTagline;
@@ -52,7 +53,7 @@ namespace POS.Client.Services
                 db.InitializeDatabase();
                 var cached = await db.TerminalConfigs.AsNoTracking()
                     .Where(t => t.TerminalId == terminal.TerminalId)
-                    .Select(t => new { t.MenuDisplayMode, t.BranchId, t.BranchName, t.BranchTagline, t.BranchCode, t.BranchAddress, t.BranchPhone, t.BranchTaxType, t.VatDisplay, t.ReceiptLogoUrl, t.ReceiptLogoDataUri, t.ReceiptLogoUpdatedAt })
+                    .Select(t => new { t.MenuDisplayMode, t.BranchId, t.BranchName, t.BranchTagline, t.BranchCode, t.BranchAddress, t.BranchPhone, t.BranchTaxType, t.VatDisplay, t.ShowCustomerDetailsOnReceipt, t.ReceiptLogoUrl, t.ReceiptLogoDataUri, t.ReceiptLogoUpdatedAt })
                     .FirstOrDefaultAsync();
                 if (cached != null)
                 {
@@ -62,6 +63,7 @@ namespace POS.Client.Services
                     logoDataUri = string.IsNullOrWhiteSpace(cached.ReceiptLogoUrl) ? null : cached.ReceiptLogoDataUri;
                     logoUpdatedAt = cached.ReceiptLogoUpdatedAt;
                     vatDisplay = cached.VatDisplay;
+                    showCustomerDetails = cached.ShowCustomerDetailsOnReceipt;
                     if (!string.IsNullOrWhiteSpace(cached.BranchTaxType)) branchTaxType = cached.BranchTaxType;
                     if (!string.IsNullOrWhiteSpace(cached.BranchName)) branchName = cached.BranchName!;
                     branchTagline = cached.BranchTagline;
@@ -75,6 +77,7 @@ namespace POS.Client.Services
                 if (cachedBranch != null)
                 {
                     vatDisplay = cachedBranch.VatDisplay;
+                    showCustomerDetails = cachedBranch.ShowCustomerDetailsOnReceipt;
                     if (!string.IsNullOrWhiteSpace(cachedBranch.TaxType)) branchTaxType = cachedBranch.TaxType;
                     if (!string.IsNullOrWhiteSpace(cachedBranch.Name)) branchName = cachedBranch.Name;
                     branchTagline = cachedBranch.BranchTagline;
@@ -93,6 +96,7 @@ namespace POS.Client.Services
             if (!ReferenceEquals(Terminal, terminal)) return;
             terminal.MenuDisplayMode = mode;
             terminal.VatDisplay = vatDisplay;
+            terminal.ShowCustomerDetailsOnReceipt = showCustomerDetails;
             terminal.BranchTaxType = branchTaxType;
             terminal.BranchName = branchName;
             terminal.BranchTagline = branchTagline;
@@ -113,6 +117,8 @@ namespace POS.Client.Services
             if (sessionTerminal != null && (receipt.BranchId <= 0 || receipt.BranchId == sessionTerminal.BranchId))
             {
                 receipt.VatDisplay = sessionTerminal.VatDisplay;
+                if (!sessionTerminal.ShowCustomerDetailsOnReceipt)
+                    receipt.ShowCustomerDetailsOnReceipt = false;
                 receipt.BranchTagline ??= sessionTerminal.BranchTagline;
                 if (!POS.Shared.Helpers.ReceiptLogoValidator.IsSafeDataUri(receipt.ReceiptLogoDataUri) &&
                     !string.IsNullOrWhiteSpace(sessionTerminal.ReceiptLogoUrl) &&
@@ -120,7 +126,6 @@ namespace POS.Client.Services
                 {
                     receipt.ReceiptLogoUrl ??= sessionTerminal.ReceiptLogoUrl;
                     receipt.ReceiptLogoDataUri = sessionTerminal.ReceiptLogoDataUri;
-                    return;
                 }
             }
 
@@ -144,9 +149,22 @@ namespace POS.Client.Services
                 if (sessionTerminal == null)
                 {
                     if (localBranch != null)
+                    {
                         receipt.VatDisplay = localBranch.VatDisplay;
+                        receipt.ShowCustomerDetailsOnReceipt = localBranch.ShowCustomerDetailsOnReceipt;
+                    }
                     else if (cfg != null)
+                    {
                         receipt.VatDisplay = cfg.VatDisplay;
+                        receipt.ShowCustomerDetailsOnReceipt = cfg.ShowCustomerDetailsOnReceipt;
+                    }
+                }
+                else if (localBranch != null && (receipt.BranchId <= 0 || receipt.BranchId == sessionTerminal.BranchId))
+                {
+                    sessionTerminal.VatDisplay = localBranch.VatDisplay;
+                    sessionTerminal.ShowCustomerDetailsOnReceipt = localBranch.ShowCustomerDetailsOnReceipt;
+                    receipt.VatDisplay = localBranch.VatDisplay;
+                    receipt.ShowCustomerDetailsOnReceipt = localBranch.ShowCustomerDetailsOnReceipt;
                 }
                 receipt.BranchTagline ??= localBranch?.BranchTagline ?? cfg?.BranchTagline;
 

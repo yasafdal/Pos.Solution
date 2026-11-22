@@ -169,6 +169,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     }
 
                     bool resolvedVatDisplay = data.Branch?.VatDisplay ?? data.Terminal.VatDisplay;
+                    bool resolvedShowCustomerDetails = data.Branch?.ShowCustomerDetailsOnReceipt ?? data.Terminal.ShowCustomerDetailsOnReceipt;
                     string resolvedBranchName = !string.IsNullOrWhiteSpace(data.Branch?.Name)
                         ? data.Branch.Name
                         : data.Terminal.BranchName;
@@ -215,6 +216,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     branchEntity.Phone = resolvedBranchPhone;
                     branchEntity.TaxType = resolvedBranchTaxType;
                     branchEntity.VatDisplay = resolvedVatDisplay;
+                    branchEntity.ShowCustomerDetailsOnReceipt = resolvedShowCustomerDetails;
                     branchEntity.TrackInventory = data.Branch?.TrackInventory ?? priorBranch?.TrackInventory ?? false;
                     branchEntity.BusinessTypeId = resolvedBusinessTypeId;
                     branchEntity.BusinessType = resolvedBusinessType;
@@ -264,6 +266,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     termConfigEntity.ReceiptLogoDataUri = resolvedLogoDataUri;
                     termConfigEntity.ReceiptLogoUpdatedAt = string.IsNullOrWhiteSpace(resolvedLogoUrl) ? null : (data.Branch?.ReceiptLogoUpdatedAt ?? data.Terminal.ReceiptLogoUpdatedAt);
                     termConfigEntity.VatDisplay = resolvedVatDisplay;
+                    termConfigEntity.ShowCustomerDetailsOnReceipt = resolvedShowCustomerDetails;
                     termConfigEntity.TerminalName = data.Terminal.TerminalName;
                     termConfigEntity.BranchTaxType = resolvedBranchTaxType;
                     termConfigEntity.TerminalIdentifier = data.Terminal.DeviceIdentifier;
@@ -676,6 +679,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                 localBranch.Phone = branchDto.Phone;
                 localBranch.TaxType = string.IsNullOrWhiteSpace(branchDto.TaxType) ? "VAT-Registered" : branchDto.TaxType;
                 localBranch.VatDisplay = branchDto.VatDisplay;
+                localBranch.ShowCustomerDetailsOnReceipt = branchDto.ShowCustomerDetailsOnReceipt;
                 localBranch.TrackInventory = branchDto.TrackInventory;
                 localBranch.BusinessTypeId = branchDto.BusinessTypeId ?? 1;
                 localBranch.BusinessType = branchDto.BusinessType ?? "FNB";
@@ -696,6 +700,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     tc.BranchPhone = localBranch.Phone;
                     tc.BranchTaxType = localBranch.TaxType;
                     tc.VatDisplay = localBranch.VatDisplay;
+                    tc.ShowCustomerDetailsOnReceipt = localBranch.ShowCustomerDetailsOnReceipt;
                     tc.BusinessTypeId = localBranch.BusinessTypeId;
                     tc.BusinessType = localBranch.BusinessType;
                     tc.ReceiptLogoUrl = localBranch.ReceiptLogoUrl;

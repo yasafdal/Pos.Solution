@@ -105,5 +105,27 @@ namespace POS.Shared.Services
                 Message = string.IsNullOrWhiteSpace(errorText) ? $"Remove failed ({(int)response.StatusCode})." : errorText.Trim('"')
             };
         }
+
+        public async Task<ReceiptBrandingResultDto> UpdateReceiptBrandingSettingsAsync(int branchId, bool showCustomerDetailsOnReceipt, bool applyToAllBranches = false)
+        {
+            var payload = new UpdateReceiptBrandingSettingsDto
+            {
+                ShowCustomerDetailsOnReceipt = showCustomerDetailsOnReceipt,
+                ApplyToAllBranches = applyToAllBranches
+            };
+            var response = await _http.PutAsJsonAsync($"api/receipt-branding/{branchId}/settings", payload);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ReceiptBrandingResultDto>();
+                return result ?? new ReceiptBrandingResultDto { Success = true, Message = "Receipt display settings updated." };
+            }
+
+            var errorText = await response.Content.ReadAsStringAsync();
+            return new ReceiptBrandingResultDto
+            {
+                Success = false,
+                Message = string.IsNullOrWhiteSpace(errorText) ? $"Update failed ({(int)response.StatusCode})." : errorText.Trim('"')
+            };
+        }
     }
 }

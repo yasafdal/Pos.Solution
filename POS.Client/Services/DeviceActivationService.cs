@@ -156,6 +156,7 @@ public class DeviceActivationService : IDeviceActivationService
             string resolvedBranchCode = branchCode ?? $"BR-{branchId:D2}";
             string resolvedBranchTaxType = !string.IsNullOrWhiteSpace(cfg?.BranchTaxType) ? cfg.BranchTaxType : "VAT-Registered";
             bool resolvedVatDisplay = cfg?.VatDisplay ?? true;
+            bool resolvedShowCustomerDetails = cfg?.ShowCustomerDetailsOnReceipt ?? true;
 
             if (branchId > 0)
             {
@@ -172,6 +173,7 @@ public class DeviceActivationService : IDeviceActivationService
                 branchEntity.Phone = cfg?.BranchPhone;
                 branchEntity.TaxType = resolvedBranchTaxType;
                 branchEntity.VatDisplay = resolvedVatDisplay;
+                branchEntity.ShowCustomerDetailsOnReceipt = resolvedShowCustomerDetails;
                 branchEntity.BusinessTypeId = cfg?.BusinessTypeId ?? 1;
                 branchEntity.BusinessType = cfg?.BusinessType ?? "FNB";
                 branchEntity.ReceiptLogoUrl = cfg?.ReceiptLogoUrl;
@@ -206,6 +208,7 @@ public class DeviceActivationService : IDeviceActivationService
             termConfigEntity.ReceiptLogoDataUri = cfg?.ReceiptLogoDataUri;
             termConfigEntity.ReceiptLogoUpdatedAt = cfg?.ReceiptLogoUpdatedAt;
             termConfigEntity.VatDisplay = resolvedVatDisplay;
+            termConfigEntity.ShowCustomerDetailsOnReceipt = resolvedShowCustomerDetails;
             termConfigEntity.BusinessTypeId = cfg?.BusinessTypeId ?? 1;
             termConfigEntity.BusinessType = cfg?.BusinessType ?? "FNB";
             termConfigEntity.TerminalCode = terminalCode;

@@ -1142,6 +1142,17 @@
                         </button>
                     </div>
                 }
+                else if (!string.Equals(currentShift.CashierId, Session.Username, StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="p-3 rounded-3 mb-3 border border-info bg-info bg-opacity-10 small text-light">
+                        <div class="fw-bold mb-1 text-info">
+                            <i class="bi bi-person-lock me-1"></i> Active Shift Owned by @currentShift.CashierId
+                        </div>
+                        <div class="text-secondary">
+                            You are signed in as <strong>@Session.Username</strong> (@Session.Role). Only the shift owner (<strong>@currentShift.CashierId</strong>) can submit normal Close Cashier for this active shift.
+                        </div>
+                    </div>
+                }
                 else
                 {
                     <!-- D. Explicit Confirmation & Final Submit Closing -->
@@ -2637,6 +2648,11 @@
     private async Task CloseShift()
     {
         if (currentShift == null || isSubmittingShift) return;
+        if (!string.Equals(currentShift.CashierId, Session.Username, StringComparison.OrdinalIgnoreCase))
+        {
+            ShowAlert($"Only the shift owner ({currentShift.CashierId}) can close this active shift.", isError: true);
+            return;
+        }
         if (!ValidateClosingInputs()) return;
         if (requiresRecountConfirmationAfterMovement)
         {
@@ -3327,6 +3343,12 @@
             if (currentShift != null)
             {
                 SyncNonCashDeclarationRows(currentShift);
+                if (!currentShift.IsUnresolvedPreviousBusinessDate &&
+                    !string.Equals(currentShift.CashierId, Session.Username, StringComparison.OrdinalIgnoreCase) &&
+                    activeTab is "CASH_COUNT" or "OTHER_PAYMENTS" or "REVIEW_CLOSE")
+                {
+                    activeTab = "MOVEMENT_HISTORY";
+                }
             }
             else
             {
