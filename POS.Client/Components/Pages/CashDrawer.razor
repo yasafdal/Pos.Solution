@@ -455,6 +455,122 @@
     }
     else
     {
+        @if (currentShift.IsUnresolvedPreviousBusinessDate)
+        {
+            var liveVariance = Math.Round(TotalCountedCash - currentShift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+            <div class="rounded-4 p-3 p-md-4 mb-4 border border-warning" style="background: rgba(245, 158, 11, 0.12);">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                    <div>
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            <span class="badge bg-warning text-dark fw-bold text-uppercase">Overnight Recovery Required</span>
+                            @if (string.Equals(currentShift.RecoveryStatus, TerminalClosingLockDto.RecoveryStatusUnverifiedCash, StringComparison.OrdinalIgnoreCase))
+                            {
+                                <span class="badge bg-danger fw-bold text-uppercase">Unverified Cash — Investigation Open</span>
+                            }
+                        </div>
+                        <h5 class="fw-bold text-warning mb-1">
+                            <i class="bi bi-exclamation-triangle-fill me-2"></i>Unresolved Shift from Previous Business Date (@currentShift.BusinessDate)
+                        </h5>
+                        <div class="small text-light">
+                            Original Cashier: <strong>@currentShift.CashierId</strong> •
+                            Shift #@currentShift.ShiftId •
+                            Opened: <span class="font-monospace">@POS.Shared.Services.BusinessDayClock.FormatManilaDateTime(currentShift.OpenedAt)</span>
+                        </div>
+                    </div>
+                    @if (IsSupervisorUnlocked)
+                    {
+                        <button type="button"
+                                class="btn btn-sm btn-outline-warning fw-semibold rounded-3"
+                                @onclick="() => showUnverifiedCashPanel = !showUnverifiedCashPanel"
+                                disabled="@isSubmittingShift">
+                            <i class="bi bi-search me-1"></i>
+                            @(showUnverifiedCashPanel ? "Hide Investigation Form" : "Cash Cannot Be Verified?")
+                        </button>
+                    }
+                </div>
+
+                @if (IsSupervisorUnlocked)
+                {
+                    <div class="row g-2 mb-3">
+                        <div class="col-6 col-md-3">
+                            <div class="pos-subpanel rounded-3 p-2">
+                                <div class="text-secondary" style="font-size: 0.72rem;">Original Cash Sales</div>
+                                <div class="fw-bold text-light font-monospace">₱@currentShift.TotalCashSales.ToString("N2")</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="pos-subpanel rounded-3 p-2">
+                                <div class="text-secondary" style="font-size: 0.72rem;">Expected Drawer Cash</div>
+                                <div class="fw-bold text-info font-monospace">₱@currentShift.ExpectedBalance.ToString("N2")</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="pos-subpanel rounded-3 p-2">
+                                <div class="text-secondary" style="font-size: 0.72rem;">Counted Physical Cash</div>
+                                <div class="fw-bold text-success font-monospace">₱@TotalCountedCash.ToString("N2")</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="pos-subpanel rounded-3 p-2">
+                                <div class="text-secondary" style="font-size: 0.72rem;">Calculated Variance</div>
+                                <div class="fw-bold font-monospace @GetVarianceTextClass(liveVariance)">
+                                    @FormatSignedCurrency(liveVariance)
+                                    (@(liveVariance == 0m ? "BALANCED" : (liveVariance < 0m ? "SHORT" : "OVER")))
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(currentShift.UnverifiedCashReason))
+                {
+                    <div class="alert alert-danger py-2 px-3 small mb-3">
+                        <i class="bi bi-flag-fill me-1"></i>
+                        <strong>Recorded Cash Investigation:</strong> @currentShift.UnverifiedCashReason
+                        @if (!string.IsNullOrWhiteSpace(currentShift.UnverifiedCashReportedBy))
+                        {
+                            <span class="ms-2 text-secondary">
+                                (Reported by @currentShift.UnverifiedCashReportedBy
+                                @if (currentShift.UnverifiedCashReportedAtUtc.HasValue)
+                                {
+                                    <span> at @POS.Shared.Services.BusinessDayClock.FormatManilaDateTime(currentShift.UnverifiedCashReportedAtUtc.Value)</span>
+                                })
+                            </span>
+                        }
+                    </div>
+                }
+
+                @if (IsSupervisorUnlocked && showUnverifiedCashPanel)
+                {
+                    <div class="pos-subpanel rounded-3 p-3 border border-danger border-opacity-50 mb-2">
+                        <div class="fw-bold text-danger small mb-1">
+                            <i class="bi bi-shield-exclamation me-1"></i> Flag Cash Cannot Be Verified (Keep Shift Unresolved)
+                        </div>
+                        <div class="text-secondary small mb-2">
+                            Do not enter a fake cash count. Recording an investigation keeps Shift #@currentShift.ShiftId OPEN and unresolved, preserves all historical accountability, and blocks unauthorized cashier takeover until physical cash is verified.
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-semibold text-light mb-1">Required Investigation Reason</label>
+                            <textarea rows="2"
+                                      maxlength="500"
+                                      class="form-control rounded-3 pos-denom-input"
+                                      @bind="unverifiedCashReason"
+                                      @bind:event="oninput"
+                                      disabled="@isSubmittingShift"
+                                      placeholder="Explain why actual drawer cash cannot be verified yet..."></textarea>
+                        </div>
+                        <button type="button"
+                                class="btn btn-sm btn-danger fw-bold rounded-3 px-3"
+                                @onclick="SubmitUnverifiedCashInvestigationAsync"
+                                disabled="@(isSubmittingShift || string.IsNullOrWhiteSpace(unverifiedCashReason))">
+                            <i class="bi bi-flag-fill me-1"></i>
+                            @(isSubmittingShift ? "Recording..." : "Record Unverified Cash for Investigation")
+                        </button>
+                    </div>
+                }
+            </div>
+        }
+
         <!-- Active Shift Summary Row (Blind Closing: Hides Expected Cash & System Sales Totals) -->
         <div class="row g-3 mb-4">
             <div class="col-6 col-md-3">
@@ -970,39 +1086,98 @@
                               placeholder="Optional general shift notes..."></textarea>
                 </div>
 
-                <!-- D. Explicit Confirmation & Final Submit Closing -->
-                <div class="p-3 rounded-3 mb-3 border border-primary bg-primary bg-opacity-10 small text-light">
-                    <div class="fw-bold mb-1">
-                        <i class="bi bi-shield-check me-1 text-info"></i> Confirm Blind Closing Declaration
-                    </div>
-                    <div class="mb-2 text-secondary">
-                        Submitting will permanently lock this declaration, close Shift #@currentShift.ShiftId, and print your Cashier Declaration Acknowledgment.
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="confirmBlindDeclarationCheck"
-                               @bind="isDeclarationConfirmed"
-                               disabled="@(isSubmittingShift || requiresRecountConfirmationAfterMovement)" />
-                        <label class="form-check-label fw-semibold text-warning" for="confirmBlindDeclarationCheck">
-                            I confirm that my cash denomination counts (₱@TotalCountedCash.ToString("N2")) and non-cash declarations (₱@DeclaredNonCashTotal.ToString("N2")), including any ₱0.00 amounts, are complete and accurate.
+                @if (currentShift.IsUnresolvedPreviousBusinessDate)
+                {
+                    var recoveryVariance = Math.Round(TotalCountedCash - currentShift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-warning small mb-1">
+                            Required Reason for Supervisor-Assisted Overnight Closing <span class="text-danger">*</span>
                         </label>
+                        <textarea rows="2"
+                                  maxlength="500"
+                                  class="form-control rounded-3 pos-denom-input"
+                                  @bind="overnightRecoveryReason"
+                                  @bind:event="oninput"
+                                  disabled="@isSubmittingShift"
+                                  placeholder="Document why supervisor-assisted overnight closing is being performed for Business Date @currentShift.BusinessDate..."></textarea>
                     </div>
-                </div>
 
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2">
-                    <button type="button"
-                            class="btn btn-outline-light rounded-3 py-2 px-3 fw-semibold"
-                            @onclick="EditOtherPaymentsFromReview"
-                            disabled="@isSubmittingShift">
-                        <i class="bi bi-arrow-left me-1"></i> Back: Other Payments
-                    </button>
-                    <button type="button"
-                            class="btn btn-danger rounded-3 py-2 px-4 fw-bold shadow-sm"
-                            @onclick="CloseShift"
-                            disabled="@(isSubmittingShift || !isDeclarationConfirmed || requiresRecountConfirmationAfterMovement || currentShift.PendingApprovalsCount > 0)">
-                        <i class="bi bi-lock-fill me-1"></i>
-                        @(isSubmittingShift ? "Submitting & Printing..." : "Submit Closing & Print Acknowledgment")
-                    </button>
-                </div>
+                    <div class="p-3 rounded-3 mb-3 border border-warning bg-warning bg-opacity-10 small text-light">
+                        <div class="fw-bold mb-1 text-warning">
+                            <i class="bi bi-shield-lock-fill me-1"></i> Confirm Supervisor-Assisted Overnight Closing
+                        </div>
+                        <div class="mb-2 text-light">
+                            Original Cashier: <strong>@currentShift.CashierId</strong> •
+                            Original Business Date: <strong class="font-monospace">@currentShift.BusinessDate</strong> •
+                            Expected Cash: <strong class="font-monospace">₱@currentShift.ExpectedBalance.ToString("N2")</strong> •
+                            Counted Cash: <strong class="font-monospace">₱@TotalCountedCash.ToString("N2")</strong> •
+                            Variance: <strong class="font-monospace @GetVarianceTextClass(recoveryVariance)">@FormatSignedCurrency(recoveryVariance)</strong>
+                        </div>
+                        <div class="mb-2 text-secondary">
+                            Original transactions and cash accountability remain assigned to <strong>@currentShift.CashierId</strong> for Business Date <strong>@currentShift.BusinessDate</strong>. You (@Session.Username) are recorded strictly as the authorizing closing supervisor.
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="confirmOvernightRecoveryCheck"
+                                   @bind="isDeclarationConfirmed"
+                                   disabled="@(isSubmittingShift || requiresRecountConfirmationAfterMovement)" />
+                            <label class="form-check-label fw-semibold text-warning" for="confirmOvernightRecoveryCheck">
+                                I confirm that I physically counted the drawer cash (₱@TotalCountedCash.ToString("N2")) and authorize Supervisor Overnight Recovery Closing for Shift #@currentShift.ShiftId.
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2">
+                        <button type="button"
+                                class="btn btn-outline-light rounded-3 py-2 px-3 fw-semibold"
+                                @onclick="EditOtherPaymentsFromReview"
+                                disabled="@isSubmittingShift">
+                            <i class="bi bi-arrow-left me-1"></i> Back: Other Payments
+                        </button>
+                        <button type="button"
+                                class="btn btn-warning text-dark rounded-3 py-2 px-4 fw-bold shadow-sm"
+                                @onclick="SubmitOvernightRecoveryCloseAsync"
+                                disabled="@(isSubmittingShift || !IsSupervisorUnlocked || !isDeclarationConfirmed || string.IsNullOrWhiteSpace(overnightRecoveryReason) || requiresRecountConfirmationAfterMovement || currentShift.PendingApprovalsCount > 0)">
+                            <i class="bi bi-shield-check me-1"></i>
+                            @(isSubmittingShift ? "Closing & Releasing Terminal..." : "Confirm Supervisor Overnight Closing")
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <!-- D. Explicit Confirmation & Final Submit Closing -->
+                    <div class="p-3 rounded-3 mb-3 border border-primary bg-primary bg-opacity-10 small text-light">
+                        <div class="fw-bold mb-1">
+                            <i class="bi bi-shield-check me-1 text-info"></i> Confirm Blind Closing Declaration
+                        </div>
+                        <div class="mb-2 text-secondary">
+                            Submitting will permanently lock this declaration, close Shift #@currentShift.ShiftId, and print your Cashier Declaration Acknowledgment.
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="confirmBlindDeclarationCheck"
+                                   @bind="isDeclarationConfirmed"
+                                   disabled="@(isSubmittingShift || requiresRecountConfirmationAfterMovement)" />
+                            <label class="form-check-label fw-semibold text-warning" for="confirmBlindDeclarationCheck">
+                                I confirm that my cash denomination counts (₱@TotalCountedCash.ToString("N2")) and non-cash declarations (₱@DeclaredNonCashTotal.ToString("N2")), including any ₱0.00 amounts, are complete and accurate.
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2">
+                        <button type="button"
+                                class="btn btn-outline-light rounded-3 py-2 px-3 fw-semibold"
+                                @onclick="EditOtherPaymentsFromReview"
+                                disabled="@isSubmittingShift">
+                            <i class="bi bi-arrow-left me-1"></i> Back: Other Payments
+                        </button>
+                        <button type="button"
+                                class="btn btn-danger rounded-3 py-2 px-4 fw-bold shadow-sm"
+                                @onclick="CloseShift"
+                                disabled="@(isSubmittingShift || !isDeclarationConfirmed || requiresRecountConfirmationAfterMovement || currentShift.PendingApprovalsCount > 0)">
+                            <i class="bi bi-lock-fill me-1"></i>
+                            @(isSubmittingShift ? "Submitting & Printing..." : "Submit Closing & Print Acknowledgment")
+                        </button>
+                    </div>
+                }
             </div>
         }
         else if (activeTab == "CASH_MOVEMENTS")
@@ -1987,6 +2162,11 @@
     private string shiftNotes = string.Empty;
     private string pendingOpenShiftId = Guid.NewGuid().ToString("N");
     private string pendingClientCloseId = Guid.NewGuid().ToString("N");
+    private string pendingOvernightCloseOpId = $"OVN-CLOSE-{Guid.NewGuid():N}";
+    private string pendingUnverifiedCashOpId = $"OVN-UNVER-{Guid.NewGuid():N}";
+    private string overnightRecoveryReason = string.Empty;
+    private bool showUnverifiedCashPanel = false;
+    private string unverifiedCashReason = string.Empty;
 
     private decimal OpeningCoinsSubtotal => openingDenominationRows.Where(r => r.Type == "COIN").Sum(r => r.Subtotal);
     private decimal OpeningBillsSubtotal => openingDenominationRows.Where(r => r.Type == "BILL").Sum(r => r.Subtotal);
@@ -2568,6 +2748,168 @@
         }
     }
 
+    private async Task SubmitOvernightRecoveryCloseAsync()
+    {
+        if (currentShift == null || isSubmittingShift) return;
+        if (!IsSupervisorUnlocked)
+        {
+            ShowAlert("Only an authorized Manager or Supervisor can complete overnight shift recovery.", isError: true);
+            return;
+        }
+        if (!ValidateClosingInputs()) return;
+        if (string.IsNullOrWhiteSpace(overnightRecoveryReason))
+        {
+            ShowAlert("A closing reason is required for supervisor-assisted overnight closing.", isError: true);
+            return;
+        }
+        if (!isDeclarationConfirmed)
+        {
+            ShowAlert("Please confirm the physical cash denomination count before completing overnight closing.", isError: true);
+            return;
+        }
+
+        isSubmittingShift = true;
+        try
+        {
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            var req = new SupervisorOvernightCloseRequestDto
+            {
+                ClientOperationId = pendingOvernightCloseOpId,
+                ShiftId = currentShift.ShiftId,
+                ClientShiftId = currentShift.ClientShiftId,
+                TerminalId = currentShift.TerminalId,
+                BranchId = currentShift.BranchId,
+                Denominations = denominationRows.Select(r => new CashDenominationLineDto
+                {
+                    Type = r.Type,
+                    Denomination = r.Denomination,
+                    Quantity = r.Quantity,
+                    Subtotal = r.Subtotal
+                }).ToList(),
+                PaymentDeclarations = nonCashDeclarations.Select(d => new PaymentMethodDeclarationDto
+                {
+                    PaymentMethodCode = d.PaymentMethodCode,
+                    PaymentMethodName = d.PaymentMethodName,
+                    DeclaredAmount = d.DeclaredAmount
+                }).ToList(),
+                IsDeclarationConfirmed = true,
+                Reason = overnightRecoveryReason.Trim(),
+                SupervisorPin = unlockedSupervisorPin,
+                SupervisorUsername = Session.Username,
+                ClosedAtUtc = POS.Shared.Services.BusinessDayClock.UtcNow(),
+                Notes = string.IsNullOrWhiteSpace(closingNotes) ? null : closingNotes.Trim()
+            };
+
+            var closedShift = await ShiftSession.SupervisorOvernightCloseAsync(
+                Http,
+                req,
+                Session.Username ?? "supervisor",
+                Session.Role,
+                isOffline);
+
+            lastClosedShift = closedShift;
+            currentShift = null;
+            activeTab = "CASH_COUNT";
+            hasStartedCounting = false;
+            requiresRecountConfirmationAfterMovement = false;
+            isReviewingClose = false;
+            isDeclarationConfirmed = false;
+            closingNotes = string.Empty;
+            overnightRecoveryReason = string.Empty;
+            showUnverifiedCashPanel = false;
+            unverifiedCashReason = string.Empty;
+            pendingOvernightCloseOpId = $"OVN-CLOSE-{Guid.NewGuid():N}";
+            pendingUnverifiedCashOpId = $"OVN-UNVER-{Guid.NewGuid():N}";
+            ResetDenominationCounts();
+            nonCashDeclarations.Clear();
+
+            var terminalId = Session.Terminal?.TerminalId ?? closedShift.TerminalId;
+            openingFundConfig = await ShiftSession.GetOpeningFundConfigAsync(Http, terminalId, isOffline);
+
+            ShowAlert(
+                $"Overnight recovery completed for Shift #{closedShift.ShiftId} (Original Business Date {closedShift.BusinessDate}, Original Cashier: {closedShift.CashierId}). Terminal is now released for the current Business Date.",
+                isError: false);
+
+            if (!isOffline)
+            {
+                try { _ = SyncManager.TriggerManualSyncAsync(); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isSubmittingShift = false;
+        }
+    }
+
+    private async Task SubmitUnverifiedCashInvestigationAsync()
+    {
+        if (currentShift == null || isSubmittingShift) return;
+        if (!IsSupervisorUnlocked)
+        {
+            ShowAlert("Only an authorized Manager or Supervisor can flag unverified cash for investigation.", isError: true);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(unverifiedCashReason))
+        {
+            ShowAlert("An investigation reason is required when actual cash cannot be verified.", isError: true);
+            return;
+        }
+
+        isSubmittingShift = true;
+        try
+        {
+            var state = await ConnectivityService.CheckConnectivityAsync();
+            isOffline = state != TerminalConnectivityState.OnlineAndHealthy;
+
+            var req = new SupervisorUnverifiedCashRequestDto
+            {
+                ClientOperationId = pendingUnverifiedCashOpId,
+                ShiftId = currentShift.ShiftId,
+                ClientShiftId = currentShift.ClientShiftId,
+                TerminalId = currentShift.TerminalId,
+                BranchId = currentShift.BranchId,
+                Reason = unverifiedCashReason.Trim(),
+                SupervisorPin = unlockedSupervisorPin,
+                SupervisorUsername = Session.Username,
+                ReportedAtUtc = POS.Shared.Services.BusinessDayClock.UtcNow()
+            };
+
+            currentShift = await ShiftSession.FlagUnverifiedCashAsync(
+                Http,
+                req,
+                Session.Username ?? "supervisor",
+                Session.Role,
+                isOffline);
+
+            showUnverifiedCashPanel = false;
+            unverifiedCashReason = string.Empty;
+            pendingUnverifiedCashOpId = $"OVN-UNVER-{Guid.NewGuid():N}";
+
+            ShowAlert(
+                $"Shift #{currentShift.ShiftId} (Business Date {currentShift.BusinessDate}) remains OPEN and flagged for unverified cash investigation. No fake cash count was recorded and terminal ownership remains protected.",
+                isError: false);
+
+            if (!isOffline)
+            {
+                try { _ = SyncManager.TriggerManualSyncAsync(); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowAlert(ex.Message, isError: true);
+        }
+        finally
+        {
+            isSubmittingShift = false;
+        }
+    }
+
     private void OpenLastClosedDeclarationModal()
     {
         if (lastClosedShift?.CashierDeclaration != null)
@@ -2974,12 +3316,12 @@
 
             try
             {
-                currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, isOffline);
+                currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, isOffline, isSupervisor: IsSupervisorUnlocked);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
             {
                 isOffline = true;
-                currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, offline: true);
+                currentShift = await ShiftSession.CurrentDtoAsync(Http, terminalId, offline: true, isSupervisor: IsSupervisorUnlocked);
             }
 
             if (currentShift != null)

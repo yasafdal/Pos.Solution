@@ -42,9 +42,10 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
             "ORDER" => 1,
             "VOID" => 2,
             "CASH_MOVEMENT" => 3,
-            "SHIFT_CLOSE" => 4,
-            "CASHIER_REOPEN" => 5,
-            _ => 6
+            "SHIFT_UNVERIFIED_CASH" => 4,
+            "SHIFT_CLOSE" or "SHIFT_OVERNIGHT_CLOSE" => 5,
+            "CASHIER_REOPEN" => 6,
+            _ => 7
         };
 
     public async Task<List<LocalSyncOutbox>> GetPendingOutboxItemsAsync()
@@ -156,10 +157,43 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
 
     public async Task<bool> UploadTransactionAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
     {
+        // Guard against redundant replay if a causal prerequisite helper already synced this exact item in the same pass
+        if (outboxItem.OutboxId > 0)
+        {
+            using var statusCheckDb = new LocalPosDbContext();
+            statusCheckDb.InitializeDatabase();
+            var dbRow = await statusCheckDb.SyncOutboxes.AsNoTracking()
+                .Where(o => o.OutboxId == outboxItem.OutboxId)
+                .Select(o => new { o.Status, o.PayloadJson })
+                .FirstOrDefaultAsync();
+            if (dbRow != null &&
+                string.Equals(dbRow.Status, "SYNCED", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(dbRow.PayloadJson, outboxItem.PayloadJson, StringComparison.Ordinal))
+                return true;
+        }
+
         if (outboxItem.EntityType == "SHIFT_OPEN")
         {
             try
             {
+                // Ensure any earlier shift closing (normal or supervisor overnight recovery) syncs before opening a newer shift
+                if (outboxItem.OutboxId > 0)
+                {
+                    var (priorClosedReady, priorClosedBlocked) = await EnsureEarlierShiftClosingsSyncedAsync(outboxItem.OutboxId, httpClient);
+                    if (!priorClosedReady)
+                    {
+                        await UpdateOutboxStatusAsync(
+                            outboxItem.OutboxId,
+                            "RETRY_PENDING",
+                            priorClosedBlocked
+                                ? "Earlier shift closing requires attention before opening the next shift."
+                                : "Waiting for earlier shift closing to synchronize before opening the next shift.",
+                            incrementRetry: false,
+                            nextRetryAt: DateTime.UtcNow.AddMinutes(priorClosedBlocked ? 5 : 1));
+                        return false;
+                    }
+                }
+
                 var opening = System.Text.Json.JsonSerializer.Deserialize<OpenShiftDto>(outboxItem.PayloadJson)
                     ?? throw new InvalidOperationException("Missing queued shift opening.");
                 using (var ownerDb = new LocalPosDbContext())
@@ -243,6 +277,14 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
         if (string.Equals(outboxItem.EntityType, "SHIFT_CLOSE", StringComparison.OrdinalIgnoreCase))
         {
             return await UploadShiftCloseAsync(outboxItem, httpClient);
+        }
+        if (string.Equals(outboxItem.EntityType, "SHIFT_OVERNIGHT_CLOSE", StringComparison.OrdinalIgnoreCase))
+        {
+            return await UploadShiftOvernightCloseAsync(outboxItem, httpClient);
+        }
+        if (string.Equals(outboxItem.EntityType, "SHIFT_UNVERIFIED_CASH", StringComparison.OrdinalIgnoreCase))
+        {
+            return await UploadShiftUnverifiedCashAsync(outboxItem, httpClient);
         }
         if (string.Equals(outboxItem.EntityType, "CASHIER_REOPEN", StringComparison.OrdinalIgnoreCase))
         {
@@ -572,6 +614,261 @@ public class OfflineTransactionSyncService : IOfflineTransactionSyncService
 
         bool synced = await UploadTransactionAsync(pendingOpening, httpClient);
         return (synced, false);
+    }
+
+    private async Task<(bool Ready, bool Blocked)> EnsureEarlierShiftClosingsSyncedAsync(long beforeOutboxId, HttpClient httpClient)
+    {
+        List<LocalSyncOutbox> earlierItems;
+        using (var depDb = new LocalPosDbContext())
+        {
+            depDb.InitializeDatabase();
+            bool hasEarlierClose = await depDb.SyncOutboxes.AsNoTracking()
+                .AnyAsync(o => o.OutboxId < beforeOutboxId &&
+                               o.Status != "SYNCED" &&
+                               (o.EntityType == "SHIFT_CLOSE" || o.EntityType == "SHIFT_OVERNIGHT_CLOSE"));
+            if (!hasEarlierClose)
+                return (true, false);
+
+            earlierItems = await depDb.SyncOutboxes.AsNoTracking()
+                .Where(o => o.OutboxId < beforeOutboxId && o.Status != "SYNCED")
+                .OrderBy(o => o.OutboxId)
+                .ToListAsync();
+        }
+
+        if (earlierItems.Any(i => string.Equals(i.Status, "NEEDS_ATTENTION", StringComparison.OrdinalIgnoreCase)))
+            return (false, true);
+
+        foreach (var item in earlierItems)
+        {
+            if (!await UploadTransactionAsync(item, httpClient))
+                return (false, false);
+        }
+        return (true, false);
+    }
+
+    private async Task<(bool Ready, bool Blocked)> EnsureEarlierShiftActivitySyncedAsync(long beforeOutboxId, HttpClient httpClient)
+    {
+        List<LocalSyncOutbox> earlierActivity;
+        using (var depDb = new LocalPosDbContext())
+        {
+            depDb.InitializeDatabase();
+            earlierActivity = await depDb.SyncOutboxes.AsNoTracking()
+                .Where(o => o.OutboxId < beforeOutboxId &&
+                            o.Status != "SYNCED" &&
+                            (o.EntityType == "Order" || o.EntityType == "VOID" || o.EntityType == "CASH_MOVEMENT" || o.EntityType == "SHIFT_UNVERIFIED_CASH"))
+                .OrderBy(o => o.OutboxId)
+                .ToListAsync();
+        }
+
+        if (earlierActivity.Count == 0)
+            return (true, false);
+        if (earlierActivity.Any(i => string.Equals(i.Status, "NEEDS_ATTENTION", StringComparison.OrdinalIgnoreCase)))
+            return (false, true);
+
+        foreach (var item in earlierActivity)
+        {
+            if (!await UploadTransactionAsync(item, httpClient))
+                return (false, false);
+        }
+        return (true, false);
+    }
+
+    private async Task<bool> UploadShiftOvernightCloseAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
+    {
+        try
+        {
+            var req = System.Text.Json.JsonSerializer.Deserialize<SupervisorOvernightCloseRequestDto>(outboxItem.PayloadJson)
+                ?? throw new InvalidOperationException("Missing queued supervisor overnight close payload.");
+
+            if (!string.IsNullOrWhiteSpace(req.ClientShiftId))
+            {
+                var (openingReady, openingBlocked) = await EnsureShiftOpeningSyncedAsync(req.ClientShiftId, httpClient);
+                if (!openingReady)
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "RETRY_PENDING",
+                        openingBlocked ? "Opening shift requires attention before overnight recovery closing." : "Waiting for opening shift acknowledgement before overnight recovery closing.",
+                        false,
+                        DateTime.UtcNow.AddMinutes(openingBlocked ? 5 : 1));
+                    return false;
+                }
+            }
+
+            if (outboxItem.OutboxId > 0)
+            {
+                var (activityReady, activityBlocked) = await EnsureEarlierShiftActivitySyncedAsync(outboxItem.OutboxId, httpClient);
+                if (!activityReady)
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "RETRY_PENDING",
+                        activityBlocked ? "Earlier shift transactions require attention before overnight recovery closing." : "Waiting for earlier shift transactions to sync before overnight recovery closing.",
+                        false,
+                        DateTime.UtcNow.AddMinutes(activityBlocked ? 5 : 1));
+                    return false;
+                }
+            }
+
+            using (var ownerDb = new LocalPosDbContext())
+            {
+                ownerDb.InitializeDatabase();
+                var localShift = await ownerDb.CashDrawerShifts.AsNoTracking()
+                    .Where(s =>
+                        (!string.IsNullOrWhiteSpace(req.ClientOperationId) && (s.RecoveryOperationId == req.ClientOperationId || s.ClientCloseId == req.ClientOperationId))
+                        || (!string.IsNullOrWhiteSpace(req.ClientShiftId) && s.ClientShiftId == req.ClientShiftId)
+                        || (req.ShiftId != 0 && s.ShiftId == req.ShiftId))
+                    .OrderByDescending(s => s.ShiftId)
+                    .FirstOrDefaultAsync();
+
+                if (localShift != null)
+                {
+                    if (localShift.ShiftId > 0) req.ShiftId = localShift.ShiftId;
+                    if (!string.IsNullOrWhiteSpace(localShift.ClientShiftId)) req.ClientShiftId = localShift.ClientShiftId;
+                    req.BranchId = localShift.BranchId;
+                    req.TerminalId = localShift.TerminalId;
+                    if (!req.ClosedAtUtc.HasValue && localShift.ClosedAt.HasValue)
+                        req.ClosedAtUtc = EnsureUtc(localShift.ClosedAt.Value);
+                }
+            }
+            if (req.ClosedAtUtc.HasValue)
+                req.ClosedAtUtc = EnsureUtc(req.ClosedAtUtc.Value);
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
+
+            var response = await httpClient.PostAsJsonAsync("api/cash-drawer/overnight-recovery-close", req);
+            if (response.IsSuccessStatusCode)
+            {
+                var closedDto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                if (closedDto != null && closedDto.ShiftId > 0 && closedDto.Status == "CLOSED")
+                {
+                    await ShiftSession.CacheAsync(closedDto);
+                    await MarkLocalCashierRestrictionSyncedAsync(closedDto.TerminalId, closedDto.CashierId, req.ClientOperationId, closedDto.ShiftId);
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "SYNCED",
+                        null,
+                        incrementRetry: false,
+                        nextRetryAt: null,
+                        auditMessage: $"Synchronized offline supervisor overnight recovery close {req.ClientOperationId} for Shift #{closedDto.ShiftId} (Original Business Date {closedDto.BusinessDate})");
+                    return true;
+                }
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                await UpdateOutboxStatusAsync(outboxItem.OutboxId, "NEEDS_ATTENTION", await response.Content.ReadAsStringAsync(), incrementRetry: false, nextRetryAt: null);
+                return false;
+            }
+
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5 || OfflineRetryPolicy.IsPermanentFailureStatusCode((int)response.StatusCode);
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                $"Supervisor overnight close upload failed ({response.StatusCode}): {await response.Content.ReadAsStringAsync()}",
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5;
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, nextStatus, ex.Message, incrementRetry: true, nextRetryAt: nextRetryTime);
+            return false;
+        }
+    }
+
+    private async Task<bool> UploadShiftUnverifiedCashAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)
+    {
+        try
+        {
+            var req = System.Text.Json.JsonSerializer.Deserialize<SupervisorUnverifiedCashRequestDto>(outboxItem.PayloadJson)
+                ?? throw new InvalidOperationException("Missing queued unverified cash investigation payload.");
+
+            if (!string.IsNullOrWhiteSpace(req.ClientShiftId))
+            {
+                var (openingReady, openingBlocked) = await EnsureShiftOpeningSyncedAsync(req.ClientShiftId, httpClient);
+                if (!openingReady)
+                {
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "RETRY_PENDING",
+                        openingBlocked ? "Opening shift requires attention before syncing unverified cash flag." : "Waiting for opening shift acknowledgement before syncing unverified cash flag.",
+                        false,
+                        DateTime.UtcNow.AddMinutes(openingBlocked ? 5 : 1));
+                    return false;
+                }
+            }
+
+            using (var ownerDb = new LocalPosDbContext())
+            {
+                ownerDb.InitializeDatabase();
+                var localShift = await ownerDb.CashDrawerShifts.AsNoTracking()
+                    .Where(s =>
+                        (!string.IsNullOrWhiteSpace(req.ClientShiftId) && s.ClientShiftId == req.ClientShiftId)
+                        || (req.ShiftId != 0 && s.ShiftId == req.ShiftId))
+                    .OrderByDescending(s => s.ShiftId)
+                    .FirstOrDefaultAsync();
+                if (localShift != null)
+                {
+                    if (localShift.ShiftId > 0) req.ShiftId = localShift.ShiftId;
+                    if (!string.IsNullOrWhiteSpace(localShift.ClientShiftId)) req.ClientShiftId = localShift.ClientShiftId;
+                    req.BranchId = localShift.BranchId;
+                    req.TerminalId = localShift.TerminalId;
+                }
+            }
+            if (req.ReportedAtUtc.HasValue)
+                req.ReportedAtUtc = EnsureUtc(req.ReportedAtUtc.Value);
+
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, "UPLOADING", null, incrementRetry: false, nextRetryAt: DateTime.UtcNow.AddMinutes(2));
+
+            var response = await httpClient.PostAsJsonAsync("api/cash-drawer/overnight-recovery-unverified", req);
+            if (response.IsSuccessStatusCode)
+            {
+                var dto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                if (dto != null && dto.ShiftId > 0)
+                {
+                    await ShiftSession.CacheAsync(dto);
+                    await UpdateOutboxStatusAsync(
+                        outboxItem.OutboxId,
+                        "SYNCED",
+                        null,
+                        incrementRetry: false,
+                        nextRetryAt: null,
+                        auditMessage: $"Synchronized offline unverified-cash investigation flag {req.ClientOperationId} for Shift #{dto.ShiftId}");
+                    return true;
+                }
+            }
+
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5 || OfflineRetryPolicy.IsPermanentFailureStatusCode((int)response.StatusCode);
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+
+            await UpdateOutboxStatusAsync(
+                outboxItem.OutboxId,
+                nextStatus,
+                $"Unverified cash investigation upload failed ({response.StatusCode}): {await response.Content.ReadAsStringAsync()}",
+                incrementRetry: true,
+                nextRetryAt: nextRetryTime);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            int nextRetryCount = outboxItem.RetryCount + 1;
+            bool isPermanent = nextRetryCount >= 5;
+            string nextStatus = isPermanent ? "NEEDS_ATTENTION" : "RETRY_PENDING";
+            DateTime? nextRetryTime = isPermanent ? null : DateTime.UtcNow.Add(OfflineRetryPolicy.CalculateNextRetryDelay(nextRetryCount));
+            await UpdateOutboxStatusAsync(outboxItem.OutboxId, nextStatus, ex.Message, incrementRetry: true, nextRetryAt: nextRetryTime);
+            return false;
+        }
     }
 
     private async Task<bool> UploadShiftCloseAsync(LocalSyncOutbox outboxItem, HttpClient httpClient)

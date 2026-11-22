@@ -77,7 +77,43 @@ public static class TerminalClosingLockGuard
         {
             status.ActiveShiftOwnerCashierId = activeOpenShift.CashierId;
             status.ActiveShiftId = activeOpenShift.ShiftId;
-            if (!string.IsNullOrWhiteSpace(cashierUsername) &&
+
+            bool isPreviousDayShift = BusinessDayClock.IsPreviousBusinessDateShift(
+                activeOpenShift.OpenedAt,
+                serverNowUtc,
+                activeOpenShift.BusinessDate);
+
+            if (isPreviousDayShift)
+            {
+                string origBizDate = BusinessDayClock.GetShiftBusinessDateString(activeOpenShift.OpenedAt, activeOpenShift.BusinessDate);
+                string recoveryStatus = string.IsNullOrWhiteSpace(activeOpenShift.RecoveryStatus)
+                    ? TerminalClosingLockDto.RecoveryStatusRequiresReview
+                    : activeOpenShift.RecoveryStatus;
+                string unresolvedMsg = TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
+                    origBizDate,
+                    activeOpenShift.CashierId,
+                    recoveryStatus,
+                    activeOpenShift.UnverifiedCashReason);
+
+                status.HasUnresolvedPreviousDayShift = true;
+                status.UnresolvedShiftBusinessDate = origBizDate;
+                status.UnresolvedShiftCashierId = activeOpenShift.CashierId;
+                status.UnresolvedShiftId = activeOpenShift.ShiftId;
+                status.UnresolvedShiftClientShiftId = activeOpenShift.ClientShiftId;
+                status.UnresolvedShiftRecoveryStatus = recoveryStatus;
+                status.UnresolvedShiftInvestigationReason = activeOpenShift.UnverifiedCashReason;
+                status.UnresolvedShiftInvestigationBy = activeOpenShift.UnverifiedCashReportedBy;
+                status.UnresolvedShiftInvestigationAtUtc = activeOpenShift.UnverifiedCashReportedAtUtc;
+                status.UnresolvedShiftMessage = unresolvedMsg;
+
+                if (!string.IsNullOrWhiteSpace(cashierUsername) &&
+                    !string.Equals(activeOpenShift.CashierId, cashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    status.IsShiftOwnedByAnotherCashier = true;
+                    status.ActiveShiftOwnershipMessage = unresolvedMsg;
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(cashierUsername) &&
                 !string.Equals(activeOpenShift.CashierId, cashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
             {
                 status.IsShiftOwnedByAnotherCashier = true;
@@ -119,12 +155,24 @@ public static class TerminalClosingLockGuard
         string? clientShiftId,
         string? clientCloseId,
         DateTime closedAtUtc,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? overrideBusinessDate = null)
     {
         var utcClosed = BusinessDayClock.NormalizeUtc(closedAtUtc);
         var serverNowUtc = BusinessDayClock.UtcNow();
-        var closedBusinessDate = BusinessDayClock.GetBusinessDateString(utcClosed);
-        var unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(utcClosed);
+        string closedBusinessDate;
+        DateTime unlockAtUtc;
+        if (!string.IsNullOrWhiteSpace(overrideBusinessDate) &&
+            DateOnly.TryParseExact(overrideBusinessDate.Trim(), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var parsedBizDate))
+        {
+            closedBusinessDate = parsedBizDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(parsedBizDate);
+        }
+        else
+        {
+            closedBusinessDate = BusinessDayClock.GetBusinessDateString(utcClosed);
+            unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(utcClosed);
+        }
 
         // Idempotent upsert: avoid duplicate restriction rows on retries or outbox replays
         CashierClosingRestriction? existing = null;

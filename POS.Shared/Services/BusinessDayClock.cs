@@ -221,6 +221,26 @@ public static class BusinessDayClock
     public static string GetBusinessDateString(DateTime value) =>
         GetBusinessDate(value).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
+    public static DateOnly GetShiftBusinessDate(DateTime shiftOpenedAtUtc, string? recordedBusinessDate = null)
+    {
+        if (!string.IsNullOrWhiteSpace(recordedBusinessDate) &&
+            DateOnly.TryParseExact(recordedBusinessDate.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            return parsed;
+        }
+        return GetBusinessDate(NormalizeUtc(shiftOpenedAtUtc));
+    }
+
+    public static string GetShiftBusinessDateString(DateTime shiftOpenedAtUtc, string? recordedBusinessDate = null) =>
+        GetShiftBusinessDate(shiftOpenedAtUtc, recordedBusinessDate).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    public static bool IsPreviousBusinessDateShift(DateTime shiftOpenedAtUtc, DateTime referenceUtc, string? recordedBusinessDate = null)
+    {
+        var shiftDate = GetShiftBusinessDate(shiftOpenedAtUtc, recordedBusinessDate);
+        var currentDate = GetBusinessDate(NormalizeUtc(referenceUtc));
+        return shiftDate < currentDate;
+    }
+
     public static (DateTime StartLocal, DateTime EndLocal) GetPeriodLocal(DateOnly businessDate) =>
         (DateTime.SpecifyKind(businessDate.ToDateTime(new TimeOnly(4, 0)), DateTimeKind.Unspecified),
          DateTime.SpecifyKind(businessDate.AddDays(1).ToDateTime(new TimeOnly(4, 0)), DateTimeKind.Unspecified));

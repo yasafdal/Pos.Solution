@@ -37,10 +37,14 @@ public class CashDrawerShift
     public long ShiftId { get; set; }
 
     public int BranchId { get; set; }
+    public int? OutletId { get; set; }
     public int TerminalId { get; set; }
 
     [Required, MaxLength(450)]
     public string CashierId { get; set; } = null!;
+
+    [MaxLength(10)]
+    public string? BusinessDate { get; set; }
 
     [Column(TypeName = "numeric(18,2)")]
     public decimal OpeningFloat { get; set; }
@@ -98,6 +102,29 @@ public class CashDrawerShift
 
     public DateTime OpenedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ClosedAt { get; set; }
+
+    [Required, MaxLength(40)]
+    public string ClosingType { get; set; } = "NORMAL"; // NORMAL, SUPERVISOR_OVERNIGHT_RECOVERY
+
+    [MaxLength(450)]
+    public string? ClosedBySupervisorId { get; set; }
+
+    [MaxLength(500)]
+    public string? RecoveryReason { get; set; }
+
+    [MaxLength(40)]
+    public string? RecoveryStatus { get; set; } // NULL, REQUIRES_SUPERVISOR_REVIEW, UNVERIFIED_CASH_INVESTIGATION, RESOLVED_BY_SUPERVISOR
+
+    [MaxLength(500)]
+    public string? UnverifiedCashReason { get; set; }
+
+    [MaxLength(450)]
+    public string? UnverifiedCashReportedBy { get; set; }
+
+    public DateTime? UnverifiedCashReportedAtUtc { get; set; }
+
+    [MaxLength(100)]
+    public string? RecoveryOperationId { get; set; }
 
     [MaxLength(255)]
     public string? Notes { get; set; }

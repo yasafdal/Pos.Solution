@@ -42,9 +42,33 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
         var currentBizDate = POS.Shared.Services.BusinessDayClock.GetBusinessDate(nowUtc);
         if (date > currentBizDate && !configuration.GetValue<bool>("ZReading:BypassPeriodEndForTesting"))
             result.Blockers.Add($"Cannot finalize future business date {date:yyyy-MM-dd}; current business date is {currentBizDate:yyyy-MM-dd}.");
-        if (await db.CashDrawerShifts.AnyAsync(x => x.TerminalId == terminalId && x.OpenedAt < end &&
-            (x.Status == "OPEN" || x.ClosedAt == null || (x.ClosedAt > start && (x.OpenedAt < start || x.ClosedAt > end))), ct))
+        var relevantShifts = await db.CashDrawerShifts.AsNoTracking()
+            .Where(x => x.TerminalId == terminalId && x.OpenedAt < end)
+            .ToListAsync(ct);
+
+        var unresolvedOpenShift = relevantShifts.FirstOrDefault(x => x.Status == "OPEN");
+        if (unresolvedOpenShift != null)
+        {
+            string openBizDate = POS.Shared.Services.BusinessDayClock.GetShiftBusinessDateString(unresolvedOpenShift.OpenedAt, unresolvedOpenShift.BusinessDate);
+            if (string.Equals(unresolvedOpenShift.RecoveryStatus, TerminalClosingLockDto.RecoveryStatusUnverifiedCash, StringComparison.OrdinalIgnoreCase))
+                result.Blockers.Add($"Unresolved cashier shift from Business Date {openBizDate} (cashier {unresolvedOpenShift.CashierId}) is flagged for unverified cash investigation and must be reconciled before Z-Reading.");
+            else if (unresolvedOpenShift.OpenedAt < start)
+                result.Blockers.Add($"Unresolved cashier shift from previous Business Date {openBizDate} (cashier {unresolvedOpenShift.CashierId}) requires supervisor overnight closing before Z-Reading.");
+            else
+                result.Blockers.Add("Open, incomplete, or cross-period shift requires reviewed closure/handoff.");
+        }
+        else if (relevantShifts.Any(x =>
+            x.ClosedAt == null ||
+            (x.ClosedAt > start && (x.OpenedAt < start || x.ClosedAt > end) &&
+             !(string.Equals(x.ClosingType, TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(x.RecoveryStatus, TerminalClosingLockDto.RecoveryStatusResolved, StringComparison.OrdinalIgnoreCase) &&
+               x.ActualCountedBalance.HasValue &&
+               !string.IsNullOrWhiteSpace(x.ClosingDenominationsJson) &&
+               !string.IsNullOrWhiteSpace(x.ClosedBySupervisorId) &&
+               !string.IsNullOrWhiteSpace(x.RecoveryReason)))))
+        {
             result.Blockers.Add("Open, incomplete, or cross-period shift requires reviewed closure/handoff.");
+        }
         if (await db.CashDrawerShifts.AnyAsync(x => x.TerminalId == terminalId && x.Status == "CLOSED" &&
             x.OpenedAt >= start && x.OpenedAt < end &&
             (!x.ActualCountedBalance.HasValue ||

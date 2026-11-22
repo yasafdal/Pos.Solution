@@ -221,8 +221,11 @@ public static class ShiftSession
         if (closedShift == null || !string.Equals(closedShift.Status, "CLOSED", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        DateTime closedRefUtc = BusinessDayClock.NormalizeUtc(closedShift.ClosedAt ?? closedShift.OpenedAt);
-        DateTime nextDayStartUtc = BusinessDayClock.GetNextBusinessDayStartUtc(closedRefUtc);
+        // Overnight supervisor recovery closes belong to the shift's ORIGINAL Business Date, never the recovery date.
+        DateOnly shiftBizDate = string.Equals(closedShift.ClosingType, TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery, StringComparison.OrdinalIgnoreCase)
+            ? BusinessDayClock.GetShiftBusinessDate(closedShift.OpenedAt, closedShift.BusinessDate)
+            : BusinessDayClock.GetShiftBusinessDate(closedShift.ClosedAt ?? closedShift.OpenedAt, closedShift.BusinessDate);
+        DateTime nextDayStartUtc = BusinessDayClock.GetNextBusinessDayStartUtc(shiftBizDate);
         return utcNow < nextDayStartUtc;
     }
 
@@ -353,6 +356,20 @@ public static class ShiftSession
                         Shift = localOpenShift,
                         LockStatus = localLock,
                         ErrorMessage = "Open shift branch does not match the active terminal branch."
+                    };
+                }
+
+                if (BusinessDayClock.IsPreviousBusinessDateShift(localOpenShift.OpenedAt, nowUtc, localOpenShift.BusinessDate))
+                {
+                    ApplyActiveShiftOwnershipToLock(localLock, localOpenShift, username, nowUtc);
+                    return new ShiftVerificationResult
+                    {
+                        IsReady = false,
+                        Offline = true,
+                        Issue = ShiftVerificationIssue.Locked,
+                        Shift = localOpenShift,
+                        LockStatus = localLock,
+                        ErrorMessage = localLock.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
                     };
                 }
 
@@ -1033,12 +1050,24 @@ public static class ShiftSession
         string? clientShiftId,
         string? clientCloseId,
         DateTime closedAtUtc,
-        string syncStatus = "PENDING")
+        string syncStatus = "PENDING",
+        string? overrideBusinessDate = null)
     {
         if (terminalId <= 0 || string.IsNullOrWhiteSpace(cashierId)) return;
         var utcClosed = BusinessDayClock.NormalizeUtc(closedAtUtc);
-        var bizDate = BusinessDayClock.GetBusinessDateString(utcClosed);
-        var unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(utcClosed);
+        string bizDate;
+        DateTime unlockAtUtc;
+        if (!string.IsNullOrWhiteSpace(overrideBusinessDate) &&
+            DateOnly.TryParseExact(overrideBusinessDate.Trim(), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var parsedBizDate))
+        {
+            bizDate = parsedBizDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(parsedBizDate);
+        }
+        else
+        {
+            bizDate = BusinessDayClock.GetBusinessDateString(utcClosed);
+            unlockAtUtc = BusinessDayClock.GetNextBusinessDayStartUtc(utcClosed);
+        }
         string normalizedCashier = cashierId.Trim().ToLowerInvariant();
 
         LocalCashierClosingRestriction? existing = null;
@@ -1151,17 +1180,117 @@ public static class ShiftSession
 
     private static void ApplyActiveShiftOwnershipToLock(
         TerminalClosingLockDto status,
-        string? ownerCashierId,
-        long? activeShiftId,
-        string? candidateCashierUsername)
+        LocalCashDrawerShift? localShift,
+        string? candidateCashierUsername,
+        DateTime effectiveNowUtc)
     {
-        if (string.IsNullOrWhiteSpace(ownerCashierId))
+        if (localShift == null || string.IsNullOrWhiteSpace(localShift.CashierId))
             return;
 
-        status.ActiveShiftOwnerCashierId = ownerCashierId.Trim();
-        status.ActiveShiftId = activeShiftId;
-        if (!string.IsNullOrWhiteSpace(candidateCashierUsername) &&
-            !string.Equals(ownerCashierId.Trim(), candidateCashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
+        status.ActiveShiftOwnerCashierId = localShift.CashierId.Trim();
+        status.ActiveShiftId = localShift.ShiftId;
+
+        bool isPreviousDay = BusinessDayClock.IsPreviousBusinessDateShift(localShift.OpenedAt, effectiveNowUtc, localShift.BusinessDate);
+        if (isPreviousDay)
+        {
+            string origBizDate = BusinessDayClock.GetShiftBusinessDateString(localShift.OpenedAt, localShift.BusinessDate);
+            string recoveryStatus = string.IsNullOrWhiteSpace(localShift.RecoveryStatus)
+                ? TerminalClosingLockDto.RecoveryStatusRequiresReview
+                : localShift.RecoveryStatus;
+            string unresolvedMsg = TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
+                origBizDate,
+                localShift.CashierId,
+                recoveryStatus,
+                localShift.UnverifiedCashReason);
+
+            status.HasUnresolvedPreviousDayShift = true;
+            status.UnresolvedShiftBusinessDate = origBizDate;
+            status.UnresolvedShiftCashierId = localShift.CashierId.Trim();
+            status.UnresolvedShiftId = localShift.ShiftId;
+            status.UnresolvedShiftClientShiftId = localShift.ClientShiftId;
+            status.UnresolvedShiftRecoveryStatus = recoveryStatus;
+            status.UnresolvedShiftInvestigationReason = localShift.UnverifiedCashReason;
+            status.UnresolvedShiftInvestigationBy = localShift.UnverifiedCashReportedBy;
+            status.UnresolvedShiftInvestigationAtUtc = localShift.UnverifiedCashReportedAtUtc;
+            status.UnresolvedShiftMessage = unresolvedMsg;
+
+            if (!string.IsNullOrWhiteSpace(candidateCashierUsername) &&
+                !string.Equals(localShift.CashierId.Trim(), candidateCashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                status.IsShiftOwnedByAnotherCashier = true;
+                status.ActiveShiftOwnershipMessage = unresolvedMsg;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(candidateCashierUsername) &&
+            !string.Equals(localShift.CashierId.Trim(), candidateCashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            status.IsShiftOwnedByAnotherCashier = true;
+            status.ActiveShiftOwnershipMessage = TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage;
+        }
+    }
+
+    private static void ApplyRemoteActiveShiftOwnershipToLock(
+        TerminalClosingLockDto status,
+        TerminalClosingLockDto remoteLock,
+        LocalCashDrawerShift? matchingLocalOpen,
+        string? candidateCashierUsername,
+        DateTime effectiveNowUtc)
+    {
+        if (string.IsNullOrWhiteSpace(remoteLock.ActiveShiftOwnerCashierId))
+            return;
+
+        status.ActiveShiftOwnerCashierId = remoteLock.ActiveShiftOwnerCashierId.Trim();
+        status.ActiveShiftId = remoteLock.ActiveShiftId;
+
+        bool isPreviousDay = remoteLock.HasUnresolvedPreviousDayShift ||
+            (matchingLocalOpen != null && BusinessDayClock.IsPreviousBusinessDateShift(matchingLocalOpen.OpenedAt, effectiveNowUtc, matchingLocalOpen.BusinessDate));
+
+        if (isPreviousDay)
+        {
+            string origBizDate = !string.IsNullOrWhiteSpace(remoteLock.UnresolvedShiftBusinessDate)
+                ? remoteLock.UnresolvedShiftBusinessDate!
+                : (matchingLocalOpen != null
+                    ? BusinessDayClock.GetShiftBusinessDateString(matchingLocalOpen.OpenedAt, matchingLocalOpen.BusinessDate)
+                    : string.Empty);
+            // Preserve local unsynced unverified-cash investigation if server snapshot does not yet carry it
+            string? investigationReason = !string.IsNullOrWhiteSpace(remoteLock.UnresolvedShiftInvestigationReason)
+                ? remoteLock.UnresolvedShiftInvestigationReason
+                : matchingLocalOpen?.UnverifiedCashReason;
+            string? investigationBy = !string.IsNullOrWhiteSpace(remoteLock.UnresolvedShiftInvestigationBy)
+                ? remoteLock.UnresolvedShiftInvestigationBy
+                : matchingLocalOpen?.UnverifiedCashReportedBy;
+            DateTime? investigationAt = remoteLock.UnresolvedShiftInvestigationAtUtc ?? matchingLocalOpen?.UnverifiedCashReportedAtUtc;
+            string recoveryStatus = !string.IsNullOrWhiteSpace(investigationReason)
+                ? TerminalClosingLockDto.RecoveryStatusUnverifiedCash
+                : (!string.IsNullOrWhiteSpace(remoteLock.UnresolvedShiftRecoveryStatus)
+                    ? remoteLock.UnresolvedShiftRecoveryStatus!
+                    : TerminalClosingLockDto.RecoveryStatusRequiresReview);
+            string unresolvedMsg = TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
+                origBizDate,
+                remoteLock.UnresolvedShiftCashierId ?? remoteLock.ActiveShiftOwnerCashierId,
+                recoveryStatus,
+                investigationReason);
+
+            status.HasUnresolvedPreviousDayShift = true;
+            status.UnresolvedShiftBusinessDate = origBizDate;
+            status.UnresolvedShiftCashierId = (remoteLock.UnresolvedShiftCashierId ?? remoteLock.ActiveShiftOwnerCashierId).Trim();
+            status.UnresolvedShiftId = remoteLock.UnresolvedShiftId ?? remoteLock.ActiveShiftId;
+            status.UnresolvedShiftClientShiftId = remoteLock.UnresolvedShiftClientShiftId ?? matchingLocalOpen?.ClientShiftId;
+            status.UnresolvedShiftRecoveryStatus = recoveryStatus;
+            status.UnresolvedShiftInvestigationReason = investigationReason;
+            status.UnresolvedShiftInvestigationBy = investigationBy;
+            status.UnresolvedShiftInvestigationAtUtc = investigationAt;
+            status.UnresolvedShiftMessage = unresolvedMsg;
+
+            if (!string.IsNullOrWhiteSpace(candidateCashierUsername) &&
+                !string.Equals(remoteLock.ActiveShiftOwnerCashierId.Trim(), candidateCashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                status.IsShiftOwnedByAnotherCashier = true;
+                status.ActiveShiftOwnershipMessage = unresolvedMsg;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(candidateCashierUsername) &&
+            !string.Equals(remoteLock.ActiveShiftOwnerCashierId.Trim(), candidateCashierUsername.Trim(), StringComparison.OrdinalIgnoreCase))
         {
             status.IsShiftOwnedByAnotherCashier = true;
             status.ActiveShiftOwnershipMessage = TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage;
@@ -1294,18 +1423,24 @@ public static class ShiftSession
                             try { localOpenOnline = await GetLocalActiveOpenShiftAsync(db, terminalId, asNoTracking: true); } catch { }
                             if (localOpenOnline != null && localOpenOnline.ShiftId < 0)
                             {
-                                ApplyActiveShiftOwnershipToLock(mergedStatus, localOpenOnline.CashierId, localOpenOnline.ShiftId, cashierUsername);
+                                ApplyActiveShiftOwnershipToLock(mergedStatus, localOpenOnline, cashierUsername, serverNowUtc);
                             }
                             else if (!string.IsNullOrWhiteSpace(remoteLock.ActiveShiftOwnerCashierId))
                             {
-                                bool locallyClosedPendingUpload = remoteLock.ActiveShiftId.HasValue &&
-                                    await db.CashDrawerShifts.AsNoTracking().AnyAsync(s =>
-                                        s.ShiftId == remoteLock.ActiveShiftId.Value &&
-                                        s.Status == "CLOSED" &&
-                                        !string.IsNullOrWhiteSpace(s.ClientCloseId));
+                                bool locallyClosedPendingUpload =
+                                    (remoteLock.ActiveShiftId.HasValue &&
+                                     await db.CashDrawerShifts.AsNoTracking().AnyAsync(s =>
+                                         s.ShiftId == remoteLock.ActiveShiftId.Value &&
+                                         s.Status == "CLOSED" &&
+                                         (!string.IsNullOrWhiteSpace(s.ClientCloseId) || !string.IsNullOrWhiteSpace(s.RecoveryOperationId))))
+                                    || (!string.IsNullOrWhiteSpace(remoteLock.UnresolvedShiftClientShiftId) &&
+                                        await db.CashDrawerShifts.AsNoTracking().AnyAsync(s =>
+                                            s.ClientShiftId == remoteLock.UnresolvedShiftClientShiftId &&
+                                            s.Status == "CLOSED" &&
+                                            (!string.IsNullOrWhiteSpace(s.ClientCloseId) || !string.IsNullOrWhiteSpace(s.RecoveryOperationId))));
                                 if (!locallyClosedPendingUpload)
                                 {
-                                    ApplyActiveShiftOwnershipToLock(mergedStatus, remoteLock.ActiveShiftOwnerCashierId, remoteLock.ActiveShiftId, cashierUsername);
+                                    ApplyRemoteActiveShiftOwnershipToLock(mergedStatus, remoteLock, localOpenOnline, cashierUsername, serverNowUtc);
                                 }
                             }
 
@@ -1351,7 +1486,7 @@ public static class ShiftSession
                     currentTickCount64: nowTicks,
                     additionalClosedCashiersToday: localActiveRestrictions.Select(r => r.CashierId));
                 statusNoTerm.ActiveCashierRestrictions = localActiveRestrictions;
-                ApplyActiveShiftOwnershipToLock(statusNoTerm, localOpenOffline?.CashierId, localOpenOffline?.ShiftId, cashierUsername);
+                ApplyActiveShiftOwnershipToLock(statusNoTerm, localOpenOffline, cashierUsername, nowUtc);
                 return statusNoTerm;
             }
 
@@ -1370,7 +1505,7 @@ public static class ShiftSession
                 lastKnownServerTickCount64: cached.LastKnownServerTickCount64,
                 additionalClosedCashiersToday: localActiveRestrictions.Select(r => r.CashierId));
             status.ActiveCashierRestrictions = localActiveRestrictions;
-            ApplyActiveShiftOwnershipToLock(status, localOpenOffline?.CashierId, localOpenOffline?.ShiftId, cashierUsername);
+            ApplyActiveShiftOwnershipToLock(status, localOpenOffline, cashierUsername, nowUtc);
 
             if (!status.IsTerminalLocked && !string.IsNullOrWhiteSpace(cached.ClosedBusinessDate))
             {
@@ -1549,6 +1684,13 @@ public static class ShiftSession
             var existing = await GetLocalActiveOpenShiftAsync(db, request.TerminalId, asNoTracking: false);
             if (existing != null)
             {
+                if (BusinessDayClock.IsPreviousBusinessDateShift(existing.OpenedAt, BusinessDayClock.UtcNow(), existing.BusinessDate))
+                {
+                    string origDate = BusinessDayClock.GetShiftBusinessDateString(existing.OpenedAt, existing.BusinessDate);
+                    throw new InvalidOperationException(TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
+                        origDate, existing.CashierId, existing.RecoveryStatus, existing.UnverifiedCashReason));
+                }
+
                 if (!string.Equals(existing.CashierId, cashier, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException(TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
 
@@ -1582,12 +1724,17 @@ public static class ShiftSession
                 : POS.Shared.Services.BusinessDayClock.UtcNow();
             request.OpenedAt = openedAtUtc;
             request.CashierId = cashier;
+            var localTermForShift = await db.TerminalConfigs.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.TerminalId == request.TerminalId);
             var shift = new LocalCashDrawerShift
             {
                 ShiftId = -DateTime.UtcNow.Ticks,
                 BranchId = request.BranchId,
+                OutletId = localTermForShift?.OutletId,
                 TerminalId = request.TerminalId,
                 CashierId = cashier,
+                BusinessDate = BusinessDayClock.GetBusinessDateString(openedAtUtc),
+                ClosingType = TerminalClosingLockDto.ClosingTypeNormal,
                 OpeningConfirmed = true,
                 ClientShiftId = request.ClientShiftId,
                 OpeningFloat = openingFloat,
@@ -1730,8 +1877,16 @@ public static class ShiftSession
             var reconciliations = await BuildLocalPaymentReconciliationsAsync(db, shift, request.PaymentDeclarations, countedCash);
 
             var closedAtUtc = request.ClosedAt.Value >= shift.OpenedAt ? request.ClosedAt.Value : POS.Shared.Services.BusinessDayClock.UtcNow();
+            string origShiftBizDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+            if (BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtUtc, shift.BusinessDate))
+            {
+                await tx.RollbackAsync();
+                throw new InvalidOperationException(TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
+                    origShiftBizDate, shift.CashierId, shift.RecoveryStatus, shift.UnverifiedCashReason));
+            }
             shift.Status = "CLOSED";
             shift.ClosedAt = closedAtUtc;
+            shift.BusinessDate ??= origShiftBizDate;
             var trimmedNotes = request.Notes?.Trim();
             shift.Notes = string.IsNullOrWhiteSpace(trimmedNotes)
                 ? null
@@ -1800,7 +1955,8 @@ public static class ShiftSession
                 shift.ClientShiftId,
                 shift.ClientCloseId,
                 closedAtUtc,
-                syncStatus: "PENDING");
+                syncStatus: "PENDING",
+                overrideBusinessDate: origShiftBizDate);
 
             await db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -2515,6 +2671,470 @@ public static class ShiftSession
         return user;
     }
 
+    public static async Task<(bool Valid, string? Username, string? Role, string? PinHash)> VerifySupervisorPinOfflineAsync(string? rawPin)
+    {
+        if (string.IsNullOrWhiteSpace(rawPin)) return (false, null, null, null);
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+        var sup = await VerifyLocalSupervisorPinAsync(db, rawPin);
+        return sup == null ? (false, null, null, null) : (true, sup.Username, sup.Role, sup.PinHash);
+    }
+
+    public static async Task<CashDrawerShiftDto?> GetUnresolvedPreviousDayShiftAsync(
+        HttpClient? http,
+        int terminalId,
+        string? supervisorPin = null,
+        bool offline = false)
+    {
+        if (terminalId <= 0) return null;
+
+        if (!offline && http != null && DeviceActivationService.HasValidOnlineBearerToken(http, null))
+        {
+            try
+            {
+                AttachActiveTerminalTokenIfMissing(http);
+                string url = string.IsNullOrWhiteSpace(supervisorPin)
+                    ? $"api/cash-drawer/unresolved-shift/{terminalId}"
+                    : $"api/cash-drawer/unresolved-shift/{terminalId}?supervisorPin={Uri.EscapeDataString(supervisorPin.Trim())}";
+                using var response = await http.GetAsync(url);
+                if (response.IsSuccessStatusCode)
+                {
+                    var dto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                    if (dto != null)
+                    {
+                        await CacheAsync(dto, reconcileCurrent: false);
+                        return dto;
+                    }
+                }
+                else if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    // Still check local unsynced negative shift in case an offline prior-day shift hasn't uploaded yet
+                }
+                else if (!IsTransientStatusCode(response.StatusCode) && response.StatusCode != HttpStatusCode.Unauthorized)
+                {
+                    string err = await SafeReadErrorMessageAsync(response);
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(err)
+                        ? $"Failed to inspect unresolved shift (HTTP {(int)response.StatusCode})."
+                        : err);
+                }
+            }
+            catch (HttpRequestException) { /* fallback to SQLite */ }
+            catch (TaskCanceledException) { /* fallback to SQLite */ }
+            catch (TimeoutException) { /* fallback to SQLite */ }
+        }
+
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+        var nowUtc = BusinessDayClock.UtcNow();
+        var openShift = await GetLocalActiveOpenShiftAsync(db, terminalId, asNoTracking: true);
+        if (openShift == null || !BusinessDayClock.IsPreviousBusinessDateShift(openShift.OpenedAt, nowUtc, openShift.BusinessDate))
+            return null;
+
+        return await BuildLocalShiftDtoAsync(db, openShift, isReprint: false, includeSupervisorReconciliation: true);
+    }
+
+    public static async Task<CashDrawerShiftDto> SupervisorOvernightCloseAsync(
+        HttpClient? http,
+        SupervisorOvernightCloseRequestDto request,
+        string callerUsername,
+        string? callerRole,
+        bool offline)
+    {
+        if (request == null || request.TerminalId <= 0)
+            throw new InvalidOperationException("Valid terminalId and recovery details are required.");
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new InvalidOperationException("A reason is required for supervisor-assisted overnight closing.");
+        if (!request.IsDeclarationConfirmed)
+            throw new InvalidOperationException("Supervisor must explicitly confirm the counted cash breakdown before closing.");
+        if (request.Denominations == null || request.Denominations.Count == 0)
+            throw new InvalidOperationException("Physical cash denomination breakdown is required.");
+        if (!CashDenominationCatalog.TryValidateAndCalculate(request.Denominations, out var validatedDenominations, out decimal countedCash, out var denomError))
+            throw new InvalidOperationException(denomError ?? "Invalid cash denomination breakdown.");
+
+        var nowUtc = BusinessDayClock.UtcNow();
+        request.ClientOperationId = string.IsNullOrWhiteSpace(request.ClientOperationId)
+            ? $"OVN-CLOSE-{Guid.NewGuid():N}"
+            : request.ClientOperationId.Trim();
+        request.Reason = request.Reason.Trim();
+        request.Denominations = validatedDenominations;
+        request.ClosedAtUtc = request.ClosedAtUtc.HasValue
+            ? BusinessDayClock.NormalizeUtc(request.ClosedAtUtc.Value)
+            : nowUtc;
+
+        if (!offline && http != null && DeviceActivationService.HasValidOnlineBearerToken(http, null))
+        {
+            try
+            {
+                AttachActiveTerminalTokenIfMissing(http);
+                using var response = await http.PostAsJsonAsync("api/cash-drawer/overnight-recovery-close", request);
+                if (response.IsSuccessStatusCode)
+                {
+                    var closedDto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                    if (closedDto != null)
+                    {
+                        await CacheAsync(closedDto, reconcileCurrent: false);
+                        await LocalPosDbContext.WriteLock.WaitAsync();
+                        try
+                        {
+                            using var db = new LocalPosDbContext();
+                            db.InitializeDatabase();
+                            string origDate = BusinessDayClock.GetShiftBusinessDateString(closedDto.OpenedAt, closedDto.BusinessDate);
+                            await ApplyLocalCashierClosingRestrictionAsync(
+                                db,
+                                closedDto.BranchId,
+                                closedDto.TerminalId,
+                                closedDto.CashierId,
+                                closedDto.ShiftId,
+                                closedDto.ClientShiftId,
+                                closedDto.ClientCloseId ?? request.ClientOperationId,
+                                closedDto.ClosedAt ?? nowUtc,
+                                syncStatus: "SYNCED",
+                                overrideBusinessDate: origDate);
+                            await db.SaveChangesAsync();
+                        }
+                        finally { LocalPosDbContext.WriteLock.Release(); }
+                        return closedDto;
+                    }
+                }
+                else if (!IsTransientStatusCode(response.StatusCode) && response.StatusCode != HttpStatusCode.Unauthorized)
+                {
+                    string err = await SafeReadErrorMessageAsync(response);
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(err)
+                        ? $"Supervisor overnight recovery failed (HTTP {(int)response.StatusCode})."
+                        : err);
+                }
+            }
+            catch (HttpRequestException) { /* fallback to offline */ }
+            catch (TaskCanceledException) { /* fallback to offline */ }
+            catch (TimeoutException) { /* fallback to offline */ }
+        }
+
+        // Offline supervisor verification (NEVER persist plaintext PIN in outbox)
+        string? approverUsername;
+        string? approverPinHash;
+        using (var authDb = new LocalPosDbContext())
+        {
+            authDb.InitializeDatabase();
+            if (!string.IsNullOrWhiteSpace(request.SupervisorPin))
+            {
+                var sup = await VerifyLocalSupervisorPinAsync(authDb, request.SupervisorPin);
+                if (sup == null)
+                    throw new InvalidOperationException("Invalid supervisor PIN or user does not have supervisor privileges.");
+                approverUsername = sup.Username;
+                approverPinHash = sup.PinHash;
+            }
+            else if (IsSupervisorRole(callerRole))
+            {
+                var localSup = await authDb.Cashiers.AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Username.ToLower() == callerUsername.Trim().ToLower());
+                approverUsername = callerUsername.Trim();
+                approverPinHash = localSup?.PinHash;
+                if (string.IsNullOrWhiteSpace(approverPinHash))
+                    throw new InvalidOperationException("Enter your supervisor PIN to authorize offline overnight recovery.");
+            }
+            else
+            {
+                throw new InvalidOperationException("Supervisor authorization (role or supervisor PIN) is required for overnight shift recovery.");
+            }
+        }
+
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            using var tx = await db.Database.BeginTransactionAsync();
+
+            var existingByOp = await db.CashDrawerShifts.FirstOrDefaultAsync(s =>
+                s.RecoveryOperationId == request.ClientOperationId || s.ClientCloseId == request.ClientOperationId);
+            if (existingByOp != null && existingByOp.Status == "CLOSED" &&
+                string.Equals(existingByOp.ClosingType, TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery, StringComparison.OrdinalIgnoreCase))
+            {
+                await tx.RollbackAsync();
+                return await BuildLocalShiftDtoAsync(db, existingByOp, isReprint: false, includeSupervisorReconciliation: true);
+            }
+
+            LocalCashDrawerShift? shift = null;
+            if (request.ShiftId != 0)
+                shift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId && s.TerminalId == request.TerminalId);
+            if (shift == null && !string.IsNullOrWhiteSpace(request.ClientShiftId))
+                shift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ClientShiftId == request.ClientShiftId && s.TerminalId == request.TerminalId);
+            shift ??= await GetLocalActiveOpenShiftAsync(db, request.TerminalId, asNoTracking: false);
+
+            if (shift == null || !string.Equals(shift.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("No open unresolved shift found locally for supervisor overnight recovery.");
+
+            var closedAtUtc = request.ClosedAtUtc.Value >= BusinessDayClock.NormalizeUtc(shift.OpenedAt)
+                ? request.ClosedAtUtc.Value
+                : BusinessDayClock.UtcNow();
+            string originalBusinessDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtUtc, shift.BusinessDate))
+                throw new InvalidOperationException("Supervisor overnight recovery only applies to open shifts from a previous Business Date.");
+
+            int pendingMovements = await db.CashDrawerMovements.CountAsync(m => m.ShiftId == shift.ShiftId && m.Status == "PENDING_APPROVAL");
+            if (pendingMovements > 0)
+                throw new InvalidOperationException($"Cannot close shift while {pendingMovements} cash movement(s) are pending supervisor approval.");
+
+            var localTerm = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == shift.TerminalId);
+            shift.OutletId ??= localTerm?.OutletId;
+            shift.BusinessDate = originalBusinessDate;
+            shift.ExpectedBalance = shift.OpeningFloat + shift.TotalCashSales - shift.TotalCashRefunds + shift.TotalCashIn - shift.TotalCashOut - shift.TotalCashDrops;
+            shift.ActualCountedBalance = countedCash;
+            shift.Discrepancy = Math.Round(countedCash - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+
+            var reconciliations = await BuildLocalPaymentReconciliationsAsync(db, shift, request.PaymentDeclarations, countedCash);
+
+            shift.Status = "CLOSED";
+            shift.ClosedAt = closedAtUtc;
+            shift.ClosingType = TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery;
+            shift.ClosedBySupervisorId = approverUsername;
+            shift.RecoveryReason = request.Reason.Length > 500 ? request.Reason[..500] : request.Reason;
+            shift.RecoveryStatus = TerminalClosingLockDto.RecoveryStatusResolved;
+            shift.RecoveryOperationId = request.ClientOperationId;
+            shift.ClientCloseId = request.ClientOperationId;
+            shift.ClosingDenominationsJson = JsonSerializer.Serialize(validatedDenominations);
+            shift.ClosingPaymentReconciliationsJson = JsonSerializer.Serialize(reconciliations);
+
+            string composedNote = string.IsNullOrWhiteSpace(request.Notes)
+                ? $"[Overnight Recovery by {approverUsername}] {request.Reason}"
+                : $"[Overnight Recovery by {approverUsername}] {request.Reason} | {request.Notes.Trim()}";
+            shift.Notes = composedNote.Length > 255 ? composedNote[..255] : composedNote;
+
+            if (string.IsNullOrWhiteSpace(shift.ClosingOriginalDeclarationJson))
+            {
+                var origDecls = reconciliations
+                    .Where(r => !r.IsCash)
+                    .Select(r => new PaymentMethodDeclarationDto
+                    {
+                        PaymentMethodCode = r.PaymentMethodCode,
+                        PaymentMethodName = r.PaymentMethodName,
+                        IsActive = r.IsActive,
+                        DisplayOrder = r.DisplayOrder,
+                        DeclaredAmount = r.DeclaredAmount
+                    })
+                    .ToList();
+                shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(new CashierDeclarationReportDto
+                {
+                    ShiftId = shift.ShiftId,
+                    ClientShiftId = shift.ClientShiftId,
+                    BranchId = shift.BranchId,
+                    OutletId = shift.OutletId ?? 0,
+                    TerminalId = shift.TerminalId,
+                    CashierId = shift.CashierId,
+                    OpenedAt = shift.OpenedAt,
+                    ClosedAt = shift.ClosedAt,
+                    SubmittedAt = closedAtUtc,
+                    TotalCountedCash = countedCash,
+                    TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
+                    Denominations = validatedDenominations,
+                    PaymentDeclarations = origDecls,
+                    Notes = shift.Notes
+                });
+            }
+
+            var outboxPayload = new SupervisorOvernightCloseRequestDto
+            {
+                ClientOperationId = request.ClientOperationId,
+                ShiftId = shift.ShiftId,
+                ClientShiftId = shift.ClientShiftId,
+                TerminalId = shift.TerminalId,
+                BranchId = shift.BranchId,
+                Denominations = validatedDenominations,
+                PaymentDeclarations = request.PaymentDeclarations,
+                IsDeclarationConfirmed = true,
+                Reason = shift.RecoveryReason!,
+                SupervisorPin = null,
+                SupervisorPinHash = approverPinHash,
+                SupervisorUsername = approverUsername,
+                ClosedAtUtc = closedAtUtc,
+                Notes = request.Notes
+            };
+
+            bool alreadyQueued = await db.SyncOutboxes.AnyAsync(o =>
+                o.EntityType == "SHIFT_OVERNIGHT_CLOSE" && o.EntityId == request.ClientOperationId);
+            if (!alreadyQueued)
+            {
+                db.SyncOutboxes.Add(new LocalSyncOutbox
+                {
+                    EntityType = "SHIFT_OVERNIGHT_CLOSE",
+                    EntityId = request.ClientOperationId!,
+                    PayloadJson = JsonSerializer.Serialize(outboxPayload),
+                    Status = "PENDING",
+                    CreatedAt = closedAtUtc
+                });
+            }
+
+            await ApplyLocalCashierClosingRestrictionAsync(
+                db,
+                shift.BranchId,
+                shift.TerminalId,
+                shift.CashierId,
+                shift.ShiftId,
+                shift.ClientShiftId,
+                shift.ClientCloseId,
+                closedAtUtc,
+                syncStatus: "PENDING",
+                overrideBusinessDate: originalBusinessDate);
+
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return await BuildLocalShiftDtoAsync(db, shift, isReprint: false, includeSupervisorReconciliation: true);
+        }
+        finally { LocalPosDbContext.WriteLock.Release(); }
+    }
+
+    public static async Task<CashDrawerShiftDto> FlagUnverifiedCashAsync(
+        HttpClient? http,
+        SupervisorUnverifiedCashRequestDto request,
+        string callerUsername,
+        string? callerRole,
+        bool offline)
+    {
+        if (request == null || request.TerminalId <= 0)
+            throw new InvalidOperationException("Valid terminalId is required.");
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new InvalidOperationException("A reason is required to record unverified cash for investigation.");
+
+        var nowUtc = BusinessDayClock.UtcNow();
+        request.ClientOperationId = string.IsNullOrWhiteSpace(request.ClientOperationId)
+            ? $"OVN-UNVER-{Guid.NewGuid():N}"
+            : request.ClientOperationId.Trim();
+        request.Reason = request.Reason.Trim();
+        request.ReportedAtUtc = request.ReportedAtUtc.HasValue
+            ? BusinessDayClock.NormalizeUtc(request.ReportedAtUtc.Value)
+            : nowUtc;
+
+        if (!offline && http != null && DeviceActivationService.HasValidOnlineBearerToken(http, null))
+        {
+            try
+            {
+                AttachActiveTerminalTokenIfMissing(http);
+                using var response = await http.PostAsJsonAsync("api/cash-drawer/overnight-recovery-unverified", request);
+                if (response.IsSuccessStatusCode)
+                {
+                    var dto = await response.Content.ReadFromJsonAsync<CashDrawerShiftDto>();
+                    if (dto != null)
+                    {
+                        await CacheAsync(dto, reconcileCurrent: false);
+                        return dto;
+                    }
+                }
+                else if (!IsTransientStatusCode(response.StatusCode) && response.StatusCode != HttpStatusCode.Unauthorized)
+                {
+                    string err = await SafeReadErrorMessageAsync(response);
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(err)
+                        ? $"Failed to record unverified cash investigation (HTTP {(int)response.StatusCode})."
+                        : err);
+                }
+            }
+            catch (HttpRequestException) { /* fallback to offline */ }
+            catch (TaskCanceledException) { /* fallback to offline */ }
+            catch (TimeoutException) { /* fallback to offline */ }
+        }
+
+        string? approverUsername;
+        string? approverPinHash;
+        using (var authDb = new LocalPosDbContext())
+        {
+            authDb.InitializeDatabase();
+            if (!string.IsNullOrWhiteSpace(request.SupervisorPin))
+            {
+                var sup = await VerifyLocalSupervisorPinAsync(authDb, request.SupervisorPin);
+                if (sup == null)
+                    throw new InvalidOperationException("Invalid supervisor PIN or user does not have supervisor privileges.");
+                approverUsername = sup.Username;
+                approverPinHash = sup.PinHash;
+            }
+            else if (IsSupervisorRole(callerRole))
+            {
+                var localSup = await authDb.Cashiers.AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Username.ToLower() == callerUsername.Trim().ToLower());
+                approverUsername = callerUsername.Trim();
+                approverPinHash = localSup?.PinHash;
+                if (string.IsNullOrWhiteSpace(approverPinHash))
+                    throw new InvalidOperationException("Enter your supervisor PIN to authorize offline unverified-cash investigation.");
+            }
+            else
+            {
+                throw new InvalidOperationException("Supervisor authorization (role or supervisor PIN) is required.");
+            }
+        }
+
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            using var tx = await db.Database.BeginTransactionAsync();
+
+            var existingByOp = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.RecoveryOperationId == request.ClientOperationId);
+            if (existingByOp != null)
+            {
+                await tx.RollbackAsync();
+                return await BuildLocalShiftDtoAsync(db, existingByOp, isReprint: false, includeSupervisorReconciliation: true);
+            }
+
+            LocalCashDrawerShift? shift = null;
+            if (request.ShiftId != 0)
+                shift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId && s.TerminalId == request.TerminalId);
+            if (shift == null && !string.IsNullOrWhiteSpace(request.ClientShiftId))
+                shift = await db.CashDrawerShifts.FirstOrDefaultAsync(s => s.ClientShiftId == request.ClientShiftId && s.TerminalId == request.TerminalId);
+            shift ??= await GetLocalActiveOpenShiftAsync(db, request.TerminalId, asNoTracking: false);
+
+            if (shift == null || !string.Equals(shift.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("No open unresolved shift found locally.");
+
+            var reportedAtUtc = request.ReportedAtUtc.Value;
+            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, reportedAtUtc, shift.BusinessDate))
+                throw new InvalidOperationException("Unverified cash investigation only applies to open shifts from a previous Business Date.");
+
+            var localTerm = await db.TerminalConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.TerminalId == shift.TerminalId);
+            shift.OutletId ??= localTerm?.OutletId;
+            shift.BusinessDate ??= BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+            shift.RecoveryStatus = TerminalClosingLockDto.RecoveryStatusUnverifiedCash;
+            shift.UnverifiedCashReason = request.Reason.Length > 500 ? request.Reason[..500] : request.Reason;
+            shift.UnverifiedCashReportedBy = approverUsername;
+            shift.UnverifiedCashReportedAtUtc = reportedAtUtc;
+            shift.RecoveryOperationId = request.ClientOperationId;
+            // Strictly keep shift.Status = "OPEN", ActualCountedBalance = null, Discrepancy = null, ClosedAt = null!
+
+            var outboxPayload = new SupervisorUnverifiedCashRequestDto
+            {
+                ClientOperationId = request.ClientOperationId,
+                ShiftId = shift.ShiftId,
+                ClientShiftId = shift.ClientShiftId,
+                TerminalId = shift.TerminalId,
+                BranchId = shift.BranchId,
+                Reason = shift.UnverifiedCashReason,
+                SupervisorPin = null,
+                SupervisorPinHash = approverPinHash,
+                SupervisorUsername = approverUsername,
+                ReportedAtUtc = reportedAtUtc
+            };
+
+            bool alreadyQueued = await db.SyncOutboxes.AnyAsync(o =>
+                o.EntityType == "SHIFT_UNVERIFIED_CASH" && o.EntityId == request.ClientOperationId);
+            if (!alreadyQueued)
+            {
+                db.SyncOutboxes.Add(new LocalSyncOutbox
+                {
+                    EntityType = "SHIFT_UNVERIFIED_CASH",
+                    EntityId = request.ClientOperationId!,
+                    PayloadJson = JsonSerializer.Serialize(outboxPayload),
+                    Status = "PENDING",
+                    CreatedAt = reportedAtUtc
+                });
+            }
+
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return await BuildLocalShiftDtoAsync(db, shift, isReprint: false, includeSupervisorReconciliation: true);
+        }
+        finally { LocalPosDbContext.WriteLock.Release(); }
+    }
+
     public static async Task<LocalCashDrawerShift> CacheAsync(CashDrawerShiftDto dto, bool reconcileCurrent = false)
     {
         await LocalPosDbContext.WriteLock.WaitAsync();
@@ -2538,9 +3158,14 @@ public static class ShiftSession
 
         bool preserveLocalPositiveClose = shift.ShiftId > 0
             && string.Equals(shift.Status, "CLOSED", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrWhiteSpace(shift.ClientCloseId)
+            && (!string.IsNullOrWhiteSpace(shift.ClientCloseId) || !string.IsNullOrWhiteSpace(shift.RecoveryOperationId))
             && string.IsNullOrWhiteSpace(dto.ClientCloseId)
             && !string.Equals(dto.Status, "CLOSED", StringComparison.OrdinalIgnoreCase);
+
+        bool preserveLocalUnverifiedFlag = string.Equals(shift.Status, "OPEN", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(dto.Status, "OPEN", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(shift.UnverifiedCashReason)
+            && string.IsNullOrWhiteSpace(dto.UnverifiedCashReason);
 
         // Historical opening ACKs never retire a different opening. Only an authoritative
         // current endpoint can retire other acknowledged shifts on this terminal.
@@ -2579,6 +3204,10 @@ public static class ShiftSession
                 || (reconcileCurrent && old.ShiftId > 0)) old.Status = "CLOSED";
 
         shift.BranchId = dto.BranchId; shift.TerminalId = dto.TerminalId; shift.CashierId = dto.CashierId;
+        if (dto.OutletId > 0) shift.OutletId = dto.OutletId;
+        shift.BusinessDate = !string.IsNullOrWhiteSpace(dto.BusinessDate)
+            ? dto.BusinessDate
+            : (shift.BusinessDate ?? BusinessDayClock.GetShiftBusinessDateString(dto.OpenedAt, null));
         shift.OpeningFloat = dto.OpeningFloat;
         shift.ExpectedOpeningFund = dto.ExpectedOpeningFund ?? shift.ExpectedOpeningFund ?? dto.OpeningFloat;
         shift.OpeningDiscrepancy = dto.OpeningDiscrepancy ?? Math.Round(dto.OpeningFloat - (shift.ExpectedOpeningFund ?? dto.OpeningFloat), 2, MidpointRounding.AwayFromZero);
@@ -2588,12 +3217,61 @@ public static class ShiftSession
 
         if (!preserveLocalPositiveClose)
         {
+            bool preferLocalClosedPlaceholder = closedLocalPlaceholder != null && !string.Equals(dto.Status, "CLOSED", StringComparison.OrdinalIgnoreCase);
             if (!string.IsNullOrWhiteSpace(dto.ClientCloseId)) shift.ClientCloseId = dto.ClientCloseId;
             else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.ClientCloseId)) shift.ClientCloseId = closedLocalPlaceholder.ClientCloseId;
             shift.OpenedAt = dto.OpenedAt;
-            shift.ClosedAt = dto.ClosedAt ?? closedLocalPlaceholder?.ClosedAt;
+            shift.ClosedAt = preferLocalClosedPlaceholder ? closedLocalPlaceholder!.ClosedAt : (dto.ClosedAt ?? closedLocalPlaceholder?.ClosedAt);
             shift.Status = closedLocalPlaceholder != null ? "CLOSED" : dto.Status;
-            if (dto.Notes != null) shift.Notes = dto.Notes;
+
+            if (preferLocalClosedPlaceholder && !string.IsNullOrWhiteSpace(closedLocalPlaceholder!.ClosingType))
+                shift.ClosingType = closedLocalPlaceholder.ClosingType;
+            else if (!string.IsNullOrWhiteSpace(dto.ClosingType))
+                shift.ClosingType = dto.ClosingType;
+            else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.ClosingType))
+                shift.ClosingType = closedLocalPlaceholder.ClosingType;
+
+            if (preferLocalClosedPlaceholder && !string.IsNullOrWhiteSpace(closedLocalPlaceholder!.ClosedBySupervisorId))
+                shift.ClosedBySupervisorId = closedLocalPlaceholder.ClosedBySupervisorId;
+            else if (!string.IsNullOrWhiteSpace(dto.ClosedBySupervisorId))
+                shift.ClosedBySupervisorId = dto.ClosedBySupervisorId;
+            else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.ClosedBySupervisorId))
+                shift.ClosedBySupervisorId = closedLocalPlaceholder.ClosedBySupervisorId;
+
+            if (preferLocalClosedPlaceholder && !string.IsNullOrWhiteSpace(closedLocalPlaceholder!.RecoveryReason))
+                shift.RecoveryReason = closedLocalPlaceholder.RecoveryReason;
+            else if (!string.IsNullOrWhiteSpace(dto.RecoveryReason))
+                shift.RecoveryReason = dto.RecoveryReason;
+            else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.RecoveryReason))
+                shift.RecoveryReason = closedLocalPlaceholder.RecoveryReason;
+
+            if (!preserveLocalUnverifiedFlag)
+            {
+                if (preferLocalClosedPlaceholder && !string.IsNullOrWhiteSpace(closedLocalPlaceholder!.RecoveryStatus))
+                    shift.RecoveryStatus = closedLocalPlaceholder.RecoveryStatus;
+                else if (!string.IsNullOrWhiteSpace(dto.RecoveryStatus))
+                    shift.RecoveryStatus = dto.RecoveryStatus;
+                else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.RecoveryStatus))
+                    shift.RecoveryStatus = closedLocalPlaceholder.RecoveryStatus;
+
+                if (!string.IsNullOrWhiteSpace(dto.UnverifiedCashReason)) shift.UnverifiedCashReason = dto.UnverifiedCashReason;
+                else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.UnverifiedCashReason)) shift.UnverifiedCashReason = closedLocalPlaceholder.UnverifiedCashReason;
+
+                if (!string.IsNullOrWhiteSpace(dto.UnverifiedCashReportedBy)) shift.UnverifiedCashReportedBy = dto.UnverifiedCashReportedBy;
+                else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.UnverifiedCashReportedBy)) shift.UnverifiedCashReportedBy = closedLocalPlaceholder.UnverifiedCashReportedBy;
+
+                if (dto.UnverifiedCashReportedAtUtc.HasValue) shift.UnverifiedCashReportedAtUtc = dto.UnverifiedCashReportedAtUtc;
+                else if (closedLocalPlaceholder?.UnverifiedCashReportedAtUtc != null) shift.UnverifiedCashReportedAtUtc = closedLocalPlaceholder.UnverifiedCashReportedAtUtc;
+
+                if (preferLocalClosedPlaceholder && !string.IsNullOrWhiteSpace(closedLocalPlaceholder!.RecoveryOperationId))
+                    shift.RecoveryOperationId = closedLocalPlaceholder.RecoveryOperationId;
+                else if (!string.IsNullOrWhiteSpace(dto.RecoveryOperationId))
+                    shift.RecoveryOperationId = dto.RecoveryOperationId;
+                else if (closedLocalPlaceholder != null && !string.IsNullOrWhiteSpace(closedLocalPlaceholder.RecoveryOperationId))
+                    shift.RecoveryOperationId = closedLocalPlaceholder.RecoveryOperationId;
+            }
+            if (preferLocalClosedPlaceholder && closedLocalPlaceholder!.Notes != null) shift.Notes = closedLocalPlaceholder.Notes;
+            else if (dto.Notes != null) shift.Notes = dto.Notes;
             else if (closedLocalPlaceholder?.Notes != null) shift.Notes = closedLocalPlaceholder.Notes;
         }
         else
@@ -2852,12 +3530,35 @@ public static class ShiftSession
             ?? serverSnapshot?.OpeningDiscrepancy
             ?? Math.Round(shift.OpeningFloat - expectedOpening, 2, MidpointRounding.AwayFromZero);
 
+        var localTermMeta = await db.TerminalConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.TerminalId == shift.TerminalId);
+        string shiftBizDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+        bool isUnresolvedPrevDay = string.Equals(shift.Status, "OPEN", StringComparison.OrdinalIgnoreCase) &&
+            BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, BusinessDayClock.UtcNow(), shift.BusinessDate);
+
         var dto = new CashDrawerShiftDto
         {
             ShiftId = shift.ShiftId,
             BranchId = shift.BranchId,
+            BranchName = !string.IsNullOrWhiteSpace(serverSnapshot?.BranchName) ? serverSnapshot!.BranchName : (localTermMeta?.BranchName ?? $"Branch #{shift.BranchId}"),
+            OutletId = shift.OutletId ?? serverSnapshot?.OutletId ?? localTermMeta?.OutletId ?? 0,
+            OutletName = !string.IsNullOrWhiteSpace(serverSnapshot?.OutletName) ? serverSnapshot!.OutletName : (localTermMeta?.OutletName ?? string.Empty),
             TerminalId = shift.TerminalId,
+            TerminalCode = !string.IsNullOrWhiteSpace(serverSnapshot?.TerminalCode) ? serverSnapshot!.TerminalCode : (localTermMeta?.TerminalCode ?? string.Empty),
+            TerminalName = !string.IsNullOrWhiteSpace(serverSnapshot?.TerminalName) ? serverSnapshot!.TerminalName : (localTermMeta?.TerminalName ?? $"Terminal #{shift.TerminalId}"),
             CashierId = shift.CashierId,
+            BusinessDate = shiftBizDate,
+            IsUnresolvedPreviousBusinessDate = isUnresolvedPrevDay,
+            ClosingType = string.IsNullOrWhiteSpace(shift.ClosingType) ? TerminalClosingLockDto.ClosingTypeNormal : shift.ClosingType,
+            ClosedBySupervisorId = shift.ClosedBySupervisorId,
+            RecoveryReason = shift.RecoveryReason,
+            RecoveryStatus = isUnresolvedPrevDay && string.IsNullOrWhiteSpace(shift.RecoveryStatus)
+                ? TerminalClosingLockDto.RecoveryStatusRequiresReview
+                : shift.RecoveryStatus,
+            UnverifiedCashReason = shift.UnverifiedCashReason,
+            UnverifiedCashReportedBy = shift.UnverifiedCashReportedBy,
+            UnverifiedCashReportedAtUtc = shift.UnverifiedCashReportedAtUtc,
+            RecoveryOperationId = shift.RecoveryOperationId,
             OpeningFloat = shift.OpeningFloat,
             ExpectedOpeningFund = expectedOpening,
             OpeningDiscrepancy = openingDiscrepancy,

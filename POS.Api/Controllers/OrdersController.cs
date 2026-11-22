@@ -39,6 +39,8 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             context, dto.TerminalId, dto.CashierId);
         if (lockState.IsCashierRestricted || lockState.IsTerminalLocked)
             return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
+        if (lockState.HasUnresolvedPreviousDayShift)
+            return Conflict(lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
         if (lockState.IsShiftOwnedByAnotherCashier)
             return Conflict(lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
 

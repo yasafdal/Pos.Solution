@@ -482,7 +482,9 @@
                         return;
                     }
                 }
-                else if (lockState.IsCashierRestricted || lockState.IsShiftOwnedByAnotherCashier)
+                else if (lockState.IsCashierRestricted ||
+                    (lockState.HasUnresolvedPreviousDayShift && !POS.Client.Services.ShiftSession.IsSupervisorRole(Session.Role)) ||
+                    (!lockState.HasUnresolvedPreviousDayShift && lockState.IsShiftOwnedByAnotherCashier))
                 {
                     Session.ClearSession();
                     POS.Client.Services.DeviceActivationService.ActiveTerminalToken = null;

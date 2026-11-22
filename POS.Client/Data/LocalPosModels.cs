@@ -389,8 +389,10 @@ public class LocalCashDrawerShift
     [Key]
     public long ShiftId { get; set; }
     public int BranchId { get; set; }
+    public int? OutletId { get; set; }
     public int TerminalId { get; set; }
     public string CashierId { get; set; } = string.Empty;
+    public string? BusinessDate { get; set; }
     [Column(TypeName = "decimal(18,2)")]
     public decimal OpeningFloat { get; set; }
     [Column(TypeName = "decimal(18,2)")]
@@ -417,6 +419,14 @@ public class LocalCashDrawerShift
     public string Status { get; set; } = "OPEN";
     public DateTime OpenedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ClosedAt { get; set; }
+    public string ClosingType { get; set; } = "NORMAL";
+    public string? ClosedBySupervisorId { get; set; }
+    public string? RecoveryReason { get; set; }
+    public string? RecoveryStatus { get; set; }
+    public string? UnverifiedCashReason { get; set; }
+    public string? UnverifiedCashReportedBy { get; set; }
+    public DateTime? UnverifiedCashReportedAtUtc { get; set; }
+    public string? RecoveryOperationId { get; set; }
     public string? Notes { get; set; }
 }
 

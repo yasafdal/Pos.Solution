@@ -7,7 +7,7 @@ namespace POS.Client.Data;
 
 public static class LocalDatabaseMigrator
 {
-    public const int CurrentSchemaVersion = 6;
+    public const int CurrentSchemaVersion = 7;
 
     public static void Migrate(DbConnection conn, string dbPath, Action ensureCreatedAction)
     {
@@ -107,6 +107,16 @@ public static class LocalDatabaseMigrator
                     ExecuteNonQuery(conn, tx6, "PRAGMA user_version = 6;");
                     tx6.Commit();
                     currentVersion = 6;
+                }
+
+                if (currentVersion < 7)
+                {
+                    MaybeSimulateFailure(7);
+                    using var tx7 = conn.BeginTransaction();
+                    ApplyMigrationV7(conn, tx7);
+                    ExecuteNonQuery(conn, tx7, "PRAGMA user_version = 7;");
+                    tx7.Commit();
+                    currentVersion = 7;
                 }
 
                 if (!VerifyQuickCheck(conn))
@@ -722,6 +732,28 @@ public static class LocalDatabaseMigrator
             INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
             VALUES
                 (6, 'Discount Type IsActive, RequiresApproval, and UpdatedAtUtc incremental sync support', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.7');");
+    }
+
+    private static void ApplyMigrationV7(DbConnection conn, DbTransaction tx)
+    {
+        if (TableExists(conn, tx, "LocalCashDrawerShifts"))
+        {
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "OutletId", "INTEGER NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "BusinessDate", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "ClosingType", "TEXT NOT NULL DEFAULT 'NORMAL'");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "ClosedBySupervisorId", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "RecoveryReason", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "RecoveryStatus", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "UnverifiedCashReason", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "UnverifiedCashReportedBy", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "UnverifiedCashReportedAtUtc", "TEXT NULL");
+            AddColumnIfMissing(conn, tx, "LocalCashDrawerShifts", "RecoveryOperationId", "TEXT NULL");
+        }
+
+        ExecuteNonQuery(conn, tx, @"
+            INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
+            VALUES
+                (7, 'Overnight unresolved shift detection, supervisor recovery audit, and unverified cash investigation fields', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.8');");
     }
 
     private static void MaybeSimulateFailure(int targetVersion)

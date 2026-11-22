@@ -21,10 +21,40 @@ namespace POS.Api.Controllers;
 public class CashDrawerController : ControllerBase
 {
     private readonly PosDbContext _context;
+    private static volatile bool _overnightRecoverySchemaEnsured;
 
     public CashDrawerController(PosDbContext context)
     {
         _context = context;
+    }
+
+    internal static async Task EnsureOvernightRecoverySchemaAsync(PosDbContext db, CancellationToken cancellationToken = default)
+    {
+        if (_overnightRecoverySchemaEnsured || !db.Database.IsNpgsql())
+            return;
+        try
+        {
+            var conn = db.Database.GetDbConnection();
+            bool shouldClose = conn.State != ConnectionState.Open;
+            if (shouldClose) await conn.OpenAsync(cancellationToken);
+            try
+            {
+                if (conn is Npgsql.NpgsqlConnection npgConn)
+                {
+                    POS.Api.MigrationRunner.ApplyOvernightShiftRecoverySchema(npgConn);
+                    _overnightRecoverySchemaEnsured = true;
+                }
+            }
+            finally
+            {
+                if (shouldClose && conn.State == ConnectionState.Open)
+                    await conn.CloseAsync();
+            }
+        }
+        catch
+        {
+            // Non-fatal if DB permissions restrict DDL; Startup migration or DBA SQL handles it
+        }
     }
 
     private string? GetAuthenticatedUsername() =>
@@ -265,6 +295,7 @@ public class CashDrawerController : ControllerBase
         [FromQuery] string? cashierUsername = null,
         CancellationToken cancellationToken = default)
     {
+        await EnsureOvernightRecoverySchemaAsync(_context, cancellationToken);
         var status = await POS.Api.Services.TerminalClosingLockGuard.EvaluateTerminalLockAsync(
             _context, terminalId, cashierUsername, cancellationToken);
         return Ok(status);
@@ -336,7 +367,8 @@ public class CashDrawerController : ControllerBase
         if (request.ExpectedOpeningFund.HasValue && request.ExpectedOpeningFund.Value < 0m)
             return BadRequest("Expected opening fund cannot be negative.");
         if (!IsSupervisorRole(GetAuthenticatedRole()) && User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString()) return Forbid();
-        if (request.ClientShiftId?.Length > 100 || request.OpenedAt > DateTime.UtcNow.AddMinutes(5))
+        var maxAllowedOpenedAtUtc = (BusinessDayClock.UtcNow() > DateTime.UtcNow ? BusinessDayClock.UtcNow() : DateTime.UtcNow).AddMinutes(5);
+        if (request.ClientShiftId?.Length > 100 || request.OpenedAt > maxAllowedOpenedAtUtc)
             return BadRequest("Invalid opening identity or timestamp.");
 
         var licCheck = await new POS.Api.Services.LicensingService(_context).VerifyTerminalCanOperateAsync(request.TerminalId, null, cancellationToken);
@@ -373,6 +405,8 @@ public class CashDrawerController : ControllerBase
                 return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage);
             if (lockState.IsTerminalLocked)
                 return Conflict(lockState.LockMessage ?? "POS Terminal is locked for the remainder of the current business day.");
+            if (lockState.HasUnresolvedPreviousDayShift)
+                return Conflict(lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
             if (lockState.IsShiftOwnedByAnotherCashier)
                 return Conflict(lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
         }
@@ -409,7 +443,7 @@ public class CashDrawerController : ControllerBase
                 : "Reconcile and close the legacy shift in My Shift before confirming a new opening float. Historical opening cash cannot be changed.");
         }
 
-        var openingTime = request.OpenedAt ?? DateTime.UtcNow;
+        var openingTime = request.OpenedAt ?? BusinessDayClock.UtcNow();
         if (await _context.CashDrawerShifts.AnyAsync(s => s.TerminalId == request.TerminalId && (s.ClosedAt == null || s.ClosedAt >= openingTime), cancellationToken))
             return Conflict("Opening overlaps an existing drawer lifecycle.");
         decimal openingFloat = Math.Round(request.OpeningFloat.Value, 2, MidpointRounding.AwayFromZero);
@@ -418,8 +452,10 @@ public class CashDrawerController : ControllerBase
         var shift = new CashDrawerShift
         {
             BranchId = request.BranchId > 0 ? request.BranchId : (outlet?.BranchId ?? 1),
+            OutletId = outlet?.OutletId,
             TerminalId = request.TerminalId,
             CashierId = cashierId,
+            BusinessDate = BusinessDayClock.GetBusinessDateString(openingTime),
             OpeningFloat = openingFloat,
             ExpectedOpeningFund = finalExpectedOpening,
             OpeningDiscrepancy = openingDiscrepancy,
@@ -428,7 +464,8 @@ public class CashDrawerController : ControllerBase
             ClientShiftId = request.ClientShiftId,
             ExpectedBalance = openingFloat,
             Status = "OPEN",
-            OpenedAt = request.OpenedAt ?? DateTime.UtcNow,
+            ClosingType = TerminalClosingLockDto.ClosingTypeNormal,
+            OpenedAt = openingTime,
             Notes = request.Notes
         };
 
@@ -1552,7 +1589,8 @@ public class CashDrawerController : ControllerBase
             .Include(s => s.Movements)
             .Where(s => s.TerminalId == terminalId &&
                 ((s.OpenedAt >= periodStart && s.OpenedAt < fullPeriodEnd) ||
-                 (s.ClosedAt.HasValue && s.ClosedAt.Value >= periodStart && s.ClosedAt.Value < fullPeriodEnd) ||
+                 (s.ClosedAt.HasValue && s.ClosedAt.Value >= periodStart && s.ClosedAt.Value < fullPeriodEnd &&
+                  s.ClosingType != TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery) ||
                  (s.Status == "OPEN" && s.OpenedAt < fullPeriodEnd)))
             .OrderBy(s => s.OpenedAt)
             .ToListAsync(cancellationToken);
@@ -1940,6 +1978,443 @@ public class CashDrawerController : ControllerBase
         return Ok(reopened);
     }
 
+    /// <summary>
+    /// Inspect an unresolved open cashier shift from a previous Business Date on the specified terminal.
+    /// Supervisor-only (role or valid supervisor PIN) and branch-scoped. Never mutates state.
+    /// </summary>
+    [HttpGet("unresolved-shift/{terminalId:int}")]
+    public async Task<ActionResult<CashDrawerShiftDto>> GetUnresolvedPreviousDayShift(
+        int terminalId,
+        [FromQuery] string? supervisorPin = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (terminalId <= 0)
+            return BadRequest("Valid terminalId is required.");
+
+        await EnsureOvernightRecoverySchemaAsync(_context, cancellationToken);
+
+        bool authorized = IsSupervisorRole(GetAuthenticatedRole());
+        if (!authorized && !string.IsNullOrWhiteSpace(supervisorPin))
+        {
+            var sup = await VerifySupervisorPinAsync(supervisorPin, cancellationToken);
+            authorized = sup != null;
+        }
+        if (!authorized)
+            return Forbid();
+
+        var terminal = await _context.Terminals.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.TerminalId == terminalId, cancellationToken);
+        if (terminal == null)
+            return NotFound("Terminal not found.");
+
+        if (!User.IsInRole("Admin") &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) &&
+            terminal.BranchId != claimBranchId)
+            return Forbid();
+
+        var nowUtc = BusinessDayClock.UtcNow();
+        var openShift = await _context.CashDrawerShifts.AsNoTracking()
+            .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
+            .OrderByDescending(s => s.OpenedAt)
+            .ThenByDescending(s => s.ShiftId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (openShift == null || !BusinessDayClock.IsPreviousBusinessDateShift(openShift.OpenedAt, nowUtc, openShift.BusinessDate))
+            return NotFound("No unresolved previous-Business-Date cashier shift found for this terminal.");
+
+        var snapshot = await ReadSnapshotAsync(_context, openShift.ShiftId, cancellationToken, requireOpen: true, isReprint: false);
+        if (snapshot == null)
+            return NotFound("Unresolved shift snapshot could not be loaded.");
+
+        return Ok(snapshot);
+    }
+
+    /// <summary>
+    /// Supervisor-assisted overnight closing for an unclosed cashier shift from a previous Business Date.
+    /// Preserves the original cashier's transactions, opening fund, and Business Date, records supervisor recovery audit,
+    /// applies the original cashier's Close Cashier restriction for the ORIGINAL Business Date only,
+    /// and releases terminal ownership for the current Business Date without touching Z-Reading locks.
+    /// </summary>
+    [HttpPost("overnight-recovery-close")]
+    public async Task<ActionResult<CashDrawerShiftDto>> SupervisorOvernightClose(
+        [FromBody] SupervisorOvernightCloseRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request == null || request.TerminalId <= 0)
+            return BadRequest("Valid terminalId and recovery payload are required.");
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest("A reason is required for supervisor-assisted overnight closing.");
+        if (!request.IsDeclarationConfirmed)
+            return BadRequest("Supervisor must explicitly confirm the physical cash count before closing.");
+        if (request.Denominations == null || request.Denominations.Count == 0)
+            return BadRequest("Actual physical cash denomination breakdown is required for supervisor-assisted overnight closing.");
+
+        if (!CashDenominationCatalog.TryValidateAndCalculate(request.Denominations, out var validatedDenominations, out decimal countedCash, out var denomError))
+            return BadRequest(denomError ?? "Invalid cash denomination breakdown.");
+
+        if (request.PaymentDeclarations != null)
+        {
+            var seenMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var decl in request.PaymentDeclarations)
+            {
+                if (decl == null) continue;
+                string code = (decl.PaymentMethodCode ?? string.Empty).Trim().ToUpperInvariant();
+                if (string.IsNullOrEmpty(code))
+                    return BadRequest("Payment method code is required for all payment declarations.");
+                if (code == "CASH") continue;
+                if (!seenMethods.Add(code))
+                    return BadRequest($"Duplicate payment declaration for {code}.");
+                if (decl.DeclaredAmount < 0m)
+                    return BadRequest($"Declared total for {code} cannot be negative.");
+                if (decimal.Round(decl.DeclaredAmount, 2) != decl.DeclaredAmount)
+                    return BadRequest($"Declared total for {code} supports at most two decimal places.");
+            }
+        }
+
+        await EnsureOvernightRecoverySchemaAsync(_context, cancellationToken);
+
+        string? supervisorUsername = null;
+        if (!string.IsNullOrWhiteSpace(request.SupervisorPin) || !string.IsNullOrWhiteSpace(request.SupervisorPinHash))
+        {
+            var sup = await VerifySupervisorPinOrHashAsync(request.SupervisorPin, request.SupervisorPinHash, request.SupervisorUsername, cancellationToken);
+            if (sup == null)
+                return Forbid();
+            supervisorUsername = sup.Username;
+        }
+        else if (IsSupervisorRole(GetAuthenticatedRole()))
+        {
+            supervisorUsername = GetAuthenticatedUsername();
+        }
+        else
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(supervisorUsername))
+            return Unauthorized();
+
+        var terminal = await _context.Terminals.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.TerminalId == request.TerminalId, cancellationToken);
+        if (terminal == null)
+            return NotFound("Terminal not found.");
+
+        if (!User.IsInRole("Admin") &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) &&
+            terminal.BranchId != claimBranchId)
+            return Forbid();
+        if (string.Equals(GetAuthenticatedRole(), "Terminal", StringComparison.OrdinalIgnoreCase) &&
+            User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString())
+            return Forbid();
+
+        string opId = string.IsNullOrWhiteSpace(request.ClientOperationId)
+            ? $"OVN-CLOSE-{Guid.NewGuid():N}"
+            : request.ClientOperationId.Trim();
+        if (opId.Length > 100)
+            return BadRequest("ClientOperationId exceeds maximum length.");
+
+        string cleanReason = request.Reason.Trim();
+        if (cleanReason.Length > 500) cleanReason = cleanReason[..500];
+
+        using var tx = await _context.Database.BeginTransactionAsync(
+            _context.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(_context, request.TerminalId, cancellationToken);
+
+            // Idempotency guard: replay with identical operation ID returns the already-resolved shift cleanly
+            var existingByOp = await _context.CashDrawerShifts
+                .FirstOrDefaultAsync(s => s.RecoveryOperationId == opId || s.ClientCloseId == opId, cancellationToken);
+            if (existingByOp != null)
+            {
+                if (existingByOp.TerminalId != request.TerminalId)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return Conflict("Recovery operation ID already belongs to a different terminal shift.");
+                }
+                if (existingByOp.Status == "CLOSED" &&
+                    string.Equals(existingByOp.ClosingType, TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery, StringComparison.OrdinalIgnoreCase))
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    var replaySnap = await ReadSnapshotAsync(_context, existingByOp.ShiftId, cancellationToken, requireOpen: false, isReprint: false);
+                    return Ok(replaySnap!);
+                }
+            }
+
+            CashDrawerShift? shift = null;
+            if (request.ShiftId > 0)
+            {
+                shift = await _context.CashDrawerShifts.Include(s => s.Movements)
+                    .FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId && s.TerminalId == request.TerminalId, cancellationToken);
+            }
+            if (shift == null && !string.IsNullOrWhiteSpace(request.ClientShiftId))
+            {
+                string cid = request.ClientShiftId.Trim();
+                shift = await _context.CashDrawerShifts.Include(s => s.Movements)
+                    .FirstOrDefaultAsync(s => s.ClientShiftId == cid && s.TerminalId == request.TerminalId, cancellationToken);
+            }
+            if (shift == null)
+            {
+                shift = await _context.CashDrawerShifts.Include(s => s.Movements)
+                    .Where(s => s.TerminalId == request.TerminalId && s.Status == "OPEN")
+                    .OrderByDescending(s => s.OpenedAt)
+                    .ThenByDescending(s => s.ShiftId)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+
+            if (shift == null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return NotFound("No matching unresolved shift found for this terminal.");
+            }
+            if (shift.Status != "OPEN")
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return Conflict("This cashier shift has already been closed.");
+            }
+
+            var closedAtUtc = request.ClosedAtUtc.HasValue && NormalizeUtc(request.ClosedAtUtc.Value) >= NormalizeUtc(shift.OpenedAt)
+                ? NormalizeUtc(request.ClosedAtUtc.Value)
+                : BusinessDayClock.UtcNow();
+
+            string originalBusinessDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, closedAtUtc, shift.BusinessDate))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return BadRequest("Supervisor overnight recovery only applies to open shifts from a previous Business Date.");
+            }
+
+            int pendingCount = shift.Movements.Count(m => m.Status == "PENDING_APPROVAL");
+            if (pendingCount > 0)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return BadRequest($"Cannot close shift while {pendingCount} cash movement(s) are still pending supervisor approval. Please approve or reject them first.");
+            }
+
+            RecalculateShiftExpectedBalance(shift);
+            shift.OutletId ??= terminal.OutletId;
+            shift.BusinessDate = originalBusinessDate; // Strictly preserve original Business Date
+            shift.ActualCountedBalance = countedCash;
+            shift.Discrepancy = Math.Round(countedCash - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
+
+            var reconciliations = await BuildPaymentReconciliationsAsync(_context, shift, request.PaymentDeclarations, cancellationToken);
+
+            shift.Status = "CLOSED";
+            shift.ClosedAt = closedAtUtc;
+            shift.ClosingType = TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery;
+            shift.ClosedBySupervisorId = supervisorUsername;
+            shift.RecoveryReason = cleanReason;
+            shift.RecoveryStatus = TerminalClosingLockDto.RecoveryStatusResolved;
+            shift.RecoveryOperationId = opId;
+            shift.ClientCloseId = opId;
+            shift.ClosingDenominationsJson = JsonSerializer.Serialize(validatedDenominations);
+            shift.ClosingPaymentReconciliationsJson = JsonSerializer.Serialize(reconciliations);
+
+            string composedNote = string.IsNullOrWhiteSpace(request.Notes)
+                ? $"[Overnight Recovery by {supervisorUsername}] {cleanReason}"
+                : $"[Overnight Recovery by {supervisorUsername}] {cleanReason} | {request.Notes.Trim()}";
+            shift.Notes = composedNote.Length > 255 ? composedNote[..255] : composedNote;
+
+            if (string.IsNullOrWhiteSpace(shift.ClosingOriginalDeclarationJson))
+            {
+                var origDecls = reconciliations
+                    .Where(r => !r.IsCash)
+                    .Select(r => new PaymentMethodDeclarationDto
+                    {
+                        PaymentMethodCode = r.PaymentMethodCode,
+                        PaymentMethodName = r.PaymentMethodName,
+                        IsActive = r.IsActive,
+                        DisplayOrder = r.DisplayOrder,
+                        DeclaredAmount = r.DeclaredAmount
+                    })
+                    .ToList();
+                var initialDeclaration = new CashierDeclarationReportDto
+                {
+                    ShiftId = shift.ShiftId,
+                    ClientShiftId = shift.ClientShiftId,
+                    BranchId = shift.BranchId,
+                    OutletId = shift.OutletId ?? terminal.OutletId,
+                    TerminalId = shift.TerminalId,
+                    CashierId = shift.CashierId,
+                    OpenedAt = shift.OpenedAt,
+                    ClosedAt = shift.ClosedAt,
+                    SubmittedAt = closedAtUtc,
+                    TotalCountedCash = countedCash,
+                    TotalNonCashDeclared = origDecls.Sum(d => d.DeclaredAmount),
+                    HasRecordedDenominations = validatedDenominations.Count > 0,
+                    Denominations = validatedDenominations,
+                    PaymentDeclarations = origDecls,
+                    Notes = shift.Notes
+                };
+                shift.ClosingOriginalDeclarationJson = JsonSerializer.Serialize(initialDeclaration);
+            }
+
+            // Restrict original cashier ONLY for the ORIGINAL Business Date; never lock the terminal for the new Business Date
+            await POS.Api.Services.TerminalClosingLockGuard.RestrictCashierOnCloseAsync(
+                _context,
+                shift.BranchId,
+                shift.TerminalId,
+                shift.CashierId,
+                shift.ShiftId,
+                shift.ClientShiftId,
+                shift.ClientCloseId,
+                closedAtUtc,
+                cancellationToken,
+                overrideBusinessDate: originalBusinessDate);
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+
+            var closedDto = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: false, isReprint: false);
+            return Ok(closedDto!);
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return StatusCode(500, $"Failed to complete supervisor overnight recovery closing: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Records that physical drawer cash for an unresolved previous-Business-Date shift cannot be verified.
+    /// Keeps the shift strictly OPEN/unresolved for investigation: never fabricates a cash count,
+    /// never marks balanced/closed, never resets the drawer, and never releases terminal ownership.
+    /// </summary>
+    [HttpPost("overnight-recovery-unverified")]
+    public async Task<ActionResult<CashDrawerShiftDto>> FlagUnverifiedCash(
+        [FromBody] SupervisorUnverifiedCashRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request == null || request.TerminalId <= 0)
+            return BadRequest("Valid terminalId is required.");
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest("A reason is required to flag unverified cash for investigation.");
+
+        await EnsureOvernightRecoverySchemaAsync(_context, cancellationToken);
+
+        string? supervisorUsername = null;
+        if (!string.IsNullOrWhiteSpace(request.SupervisorPin) || !string.IsNullOrWhiteSpace(request.SupervisorPinHash))
+        {
+            var sup = await VerifySupervisorPinOrHashAsync(request.SupervisorPin, request.SupervisorPinHash, request.SupervisorUsername, cancellationToken);
+            if (sup == null)
+                return Forbid();
+            supervisorUsername = sup.Username;
+        }
+        else if (IsSupervisorRole(GetAuthenticatedRole()))
+        {
+            supervisorUsername = GetAuthenticatedUsername();
+        }
+        else
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrWhiteSpace(supervisorUsername))
+            return Unauthorized();
+
+        var terminal = await _context.Terminals.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.TerminalId == request.TerminalId, cancellationToken);
+        if (terminal == null)
+            return NotFound("Terminal not found.");
+
+        if (!User.IsInRole("Admin") &&
+            int.TryParse(User.FindFirst("branch_id")?.Value, out int claimBranchId) &&
+            terminal.BranchId != claimBranchId)
+            return Forbid();
+        if (string.Equals(GetAuthenticatedRole(), "Terminal", StringComparison.OrdinalIgnoreCase) &&
+            User.FindFirst("terminal_id")?.Value != request.TerminalId.ToString())
+            return Forbid();
+
+        string opId = string.IsNullOrWhiteSpace(request.ClientOperationId)
+            ? $"OVN-UNVER-{Guid.NewGuid():N}"
+            : request.ClientOperationId.Trim();
+        if (opId.Length > 100)
+            return BadRequest("ClientOperationId exceeds maximum length.");
+
+        string cleanReason = request.Reason.Trim();
+        if (cleanReason.Length > 500) cleanReason = cleanReason[..500];
+
+        using var tx = await _context.Database.BeginTransactionAsync(
+            _context.Database.IsNpgsql() ? IsolationLevel.ReadCommitted : IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            await POS.Api.Services.ShiftLifecycle.LockTerminalAsync(_context, request.TerminalId, cancellationToken);
+
+            var existingByOp = await _context.CashDrawerShifts
+                .FirstOrDefaultAsync(s => s.RecoveryOperationId == opId, cancellationToken);
+            if (existingByOp != null)
+            {
+                if (existingByOp.TerminalId != request.TerminalId)
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    return Conflict("Operation ID already belongs to a different terminal shift.");
+                }
+                await tx.RollbackAsync(cancellationToken);
+                var existingSnap = await ReadSnapshotAsync(_context, existingByOp.ShiftId, cancellationToken, requireOpen: false, isReprint: false);
+                return Ok(existingSnap!);
+            }
+
+            CashDrawerShift? shift = null;
+            if (request.ShiftId > 0)
+                shift = await _context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ShiftId == request.ShiftId && s.TerminalId == request.TerminalId, cancellationToken);
+            if (shift == null && !string.IsNullOrWhiteSpace(request.ClientShiftId))
+            {
+                string cid = request.ClientShiftId.Trim();
+                shift = await _context.CashDrawerShifts.FirstOrDefaultAsync(s => s.ClientShiftId == cid && s.TerminalId == request.TerminalId, cancellationToken);
+            }
+            if (shift == null)
+            {
+                shift = await _context.CashDrawerShifts
+                    .Where(s => s.TerminalId == request.TerminalId && s.Status == "OPEN")
+                    .OrderByDescending(s => s.OpenedAt)
+                    .ThenByDescending(s => s.ShiftId)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+
+            if (shift == null)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return NotFound("No matching unresolved shift found for this terminal.");
+            }
+
+            // If shift was already validly resolved by supervisor later (out-of-order replay), never revert a closed shift
+            if (shift.Status == "CLOSED")
+            {
+                await tx.RollbackAsync(cancellationToken);
+                var closedSnap = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: false, isReprint: false);
+                return Ok(closedSnap!);
+            }
+
+            var reportedAtUtc = request.ReportedAtUtc.HasValue ? NormalizeUtc(request.ReportedAtUtc.Value) : BusinessDayClock.UtcNow();
+            if (!BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, reportedAtUtc, shift.BusinessDate))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return BadRequest("Unverified cash investigation flag only applies to open shifts from a previous Business Date.");
+            }
+
+            shift.OutletId ??= terminal.OutletId;
+            shift.BusinessDate ??= BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+            shift.RecoveryStatus = TerminalClosingLockDto.RecoveryStatusUnverifiedCash;
+            shift.UnverifiedCashReason = cleanReason;
+            shift.UnverifiedCashReportedBy = supervisorUsername;
+            shift.UnverifiedCashReportedAtUtc = reportedAtUtc;
+            shift.RecoveryOperationId = opId;
+            // Strictly keep Status = "OPEN", ActualCountedBalance = null, Discrepancy = null, ClosedAt = null!
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+
+            var flaggedSnap = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken, requireOpen: true, isReprint: false);
+            return Ok(flaggedSnap!);
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            return StatusCode(500, $"Failed to record unverified cash investigation: {ex.Message}");
+        }
+    }
+
     [HttpGet("last-closed/{terminalId:int}")]
     public async Task<ActionResult<CashDrawerShiftDto?>> GetLastClosedShift(
         int terminalId,
@@ -2065,6 +2540,17 @@ public class CashDrawerController : ControllerBase
                 return BadRequest($"Cannot close shift while {pendingCount} cash movement(s) are still pending supervisor approval. Please approve or reject them first.");
             }
 
+            var effectiveCloseUtc = request.ClosedAt.HasValue && request.ClosedAt.Value >= shift.OpenedAt
+                ? NormalizeUtc(request.ClosedAt.Value)
+                : BusinessDayClock.UtcNow();
+            string origShiftBizDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+            if (BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, effectiveCloseUtc, shift.BusinessDate))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return Conflict(TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
+                    origShiftBizDate, shift.CashierId, shift.RecoveryStatus, shift.UnverifiedCashReason));
+            }
+
             RecalculateShiftExpectedBalance(shift);
             shift.ActualCountedBalance = countedCash;
             shift.Discrepancy = Math.Round(countedCash - shift.ExpectedBalance, 2, MidpointRounding.AwayFromZero);
@@ -2072,9 +2558,8 @@ public class CashDrawerController : ControllerBase
             var reconciliations = await BuildPaymentReconciliationsAsync(_context, shift, request.PaymentDeclarations, cancellationToken);
 
             shift.Status = "CLOSED";
-            shift.ClosedAt = request.ClosedAt.HasValue && request.ClosedAt.Value >= shift.OpenedAt
-                ? request.ClosedAt.Value
-                : BusinessDayClock.UtcNow();
+            shift.ClosedAt = effectiveCloseUtc;
+            shift.BusinessDate ??= origShiftBizDate;
             var trimmedNotes = request.Notes?.Trim();
             shift.Notes = string.IsNullOrWhiteSpace(trimmedNotes)
                 ? null
@@ -2466,8 +2951,13 @@ public class CashDrawerController : ControllerBase
 
         var periodEndUtc = BusinessDayClock.NormalizeUtc(shift.ClosedAt ?? BusinessDayClock.UtcNow());
         var shiftOpenedUtc = BusinessDayClock.NormalizeUtc(shift.OpenedAt);
-        var businessDate = BusinessDayClock.GetBusinessDate(periodEndUtc);
-        var (businessDayStartUtc, _) = BusinessDayClock.GetPeriodUtc(businessDate);
+        bool isOvernightRecovery = string.Equals(shift.ClosingType, TerminalClosingLockDto.ClosingTypeSupervisorOvernightRecovery, StringComparison.OrdinalIgnoreCase);
+        var businessDate = isOvernightRecovery
+            ? BusinessDayClock.GetShiftBusinessDate(shift.OpenedAt, shift.BusinessDate)
+            : BusinessDayClock.GetBusinessDate(periodEndUtc);
+        var (businessDayStartUtc, businessDayEndUtc) = BusinessDayClock.GetPeriodUtc(businessDate);
+        if (isOvernightRecovery && periodEndUtc > businessDayEndUtc)
+            periodEndUtc = businessDayEndUtc;
         var periodEnd = DateTime.SpecifyKind(periodEndUtc, DateTimeKind.Unspecified);
         var businessDayStart = DateTime.SpecifyKind(businessDayStartUtc, DateTimeKind.Unspecified);
         var shiftOpenedUnspecified = DateTime.SpecifyKind(shiftOpenedUtc, DateTimeKind.Unspecified);
@@ -2627,12 +3117,29 @@ public class CashDrawerController : ControllerBase
         decimal openingDiscrepancy = shift.OpeningDiscrepancy
             ?? Math.Round(shift.OpeningFloat - expectedOpeningFund, 2, MidpointRounding.AwayFromZero);
 
+        string shiftBizDate = BusinessDayClock.GetShiftBusinessDateString(shift.OpenedAt, shift.BusinessDate);
+        bool isUnresolvedPrevDay = string.Equals(shift.Status, "OPEN", StringComparison.OrdinalIgnoreCase) &&
+            BusinessDayClock.IsPreviousBusinessDateShift(shift.OpenedAt, BusinessDayClock.UtcNow(), shift.BusinessDate);
+
         return new CashDrawerShiftDto
         {
             ShiftId = shift.ShiftId,
             BranchId = shift.BranchId,
+            OutletId = shift.OutletId ?? 0,
             TerminalId = shift.TerminalId,
             CashierId = shift.CashierId,
+            BusinessDate = shiftBizDate,
+            IsUnresolvedPreviousBusinessDate = isUnresolvedPrevDay,
+            ClosingType = string.IsNullOrWhiteSpace(shift.ClosingType) ? TerminalClosingLockDto.ClosingTypeNormal : shift.ClosingType,
+            ClosedBySupervisorId = shift.ClosedBySupervisorId,
+            RecoveryReason = shift.RecoveryReason,
+            RecoveryStatus = isUnresolvedPrevDay && string.IsNullOrWhiteSpace(shift.RecoveryStatus)
+                ? TerminalClosingLockDto.RecoveryStatusRequiresReview
+                : shift.RecoveryStatus,
+            UnverifiedCashReason = shift.UnverifiedCashReason,
+            UnverifiedCashReportedBy = shift.UnverifiedCashReportedBy,
+            UnverifiedCashReportedAtUtc = shift.UnverifiedCashReportedAtUtc,
+            RecoveryOperationId = shift.RecoveryOperationId,
             OpeningFloat = shift.OpeningFloat,
             ExpectedOpeningFund = expectedOpeningFund,
             OpeningDiscrepancy = openingDiscrepancy,

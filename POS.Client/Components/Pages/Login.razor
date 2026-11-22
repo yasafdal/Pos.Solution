@@ -114,6 +114,32 @@
             <span>@errorMessage</span>
         </div>
     }
+    else if (lockStatus?.HasUnresolvedPreviousDayShift == true)
+    {
+        <div class="w-100 rounded-3 px-3 py-2 mb-3 small text-start" style="background: rgba(245, 158, 11, 0.16); border: 1px solid rgba(245, 158, 11, 0.55); color: #fde68a;">
+            <div class="fw-bold d-flex align-items-center gap-1 mb-1">
+                <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                <span>Unresolved Previous-Day Cashier Shift</span>
+            </div>
+            <div class="mb-1">
+                Business Date: <strong class="font-monospace">@lockStatus.UnresolvedShiftBusinessDate</strong> •
+                Original Cashier: <strong>@lockStatus.UnresolvedShiftCashierId</strong>
+            </div>
+            @if (string.Equals(lockStatus.UnresolvedShiftRecoveryStatus, TerminalClosingLockDto.RecoveryStatusUnverifiedCash, StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="text-danger fw-semibold mb-1">
+                    <i class="bi bi-search me-1"></i>Cash Unverified — Flagged for Investigation
+                    @if (!string.IsNullOrWhiteSpace(lockStatus.UnresolvedShiftInvestigationReason))
+                    {
+                        <span>: @lockStatus.UnresolvedShiftInvestigationReason</span>
+                    }
+                </div>
+            }
+            <div style="font-size: 0.78rem; color: #fef3c7;">
+                A new cashier cannot take over this drawer. A Manager or Supervisor must enter their PIN to review and perform Overnight Shift Recovery.
+            </div>
+        </div>
+    }
     else if (!string.IsNullOrWhiteSpace(lockStatus?.ActiveShiftOwnerCashierId))
     {
         <div class="w-100 rounded-3 px-3 py-2 mb-3 small text-center" style="background: rgba(59, 130, 246, 0.14); border: 1px solid rgba(59, 130, 246, 0.35); color: #bfdbfe;">
@@ -736,7 +762,17 @@
                     currentLock.LockMessage ??
                     "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
             }
-            if (currentLock.IsShiftOwnedByAnotherCashier)
+            if (currentLock.HasUnresolvedPreviousDayShift)
+            {
+                if (!POS.Client.Services.ShiftSession.IsSupervisorRole(localCashier.Role))
+                {
+                    lockStatus = currentLock;
+                    throw new InvalidOperationException(
+                        currentLock.UnresolvedShiftMessage ??
+                        TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                }
+            }
+            else if (currentLock.IsShiftOwnedByAnotherCashier)
             {
                 lockStatus = currentLock;
                 throw new InvalidOperationException(
@@ -848,7 +884,7 @@
                 return true;
             }
 
-            Navigation.NavigateTo("/");
+            Navigation.NavigateTo(currentLock.HasUnresolvedPreviousDayShift ? "/cash-drawer" : "/");
             return true;
         }
         catch (InvalidOperationException)
@@ -923,7 +959,17 @@
                         postAuthLock.LockMessage ??
                         "POS Terminal is locked for the remainder of the current business day until 4:00 AM (Asia/Manila).");
                 }
-                if (postAuthLock.IsShiftOwnedByAnotherCashier)
+                if (postAuthLock.HasUnresolvedPreviousDayShift)
+                {
+                    if (!POS.Client.Services.ShiftSession.IsSupervisorRole(role))
+                    {
+                        lockStatus = postAuthLock;
+                        throw new InvalidOperationException(
+                            postAuthLock.UnresolvedShiftMessage ??
+                            TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                    }
+                }
+                else if (postAuthLock.IsShiftOwnedByAnotherCashier)
                 {
                     lockStatus = postAuthLock;
                     throw new InvalidOperationException(
@@ -1001,8 +1047,8 @@
                     }
                 }
 
-                // Navigate to main POS dashboard
-                Navigation.NavigateTo("/");
+                // Navigate to Supervisor Overnight Recovery screen if a previous-day shift is unresolved, else main POS dashboard
+                Navigation.NavigateTo(postAuthLock.HasUnresolvedPreviousDayShift ? "/cash-drawer" : "/");
             }
             else if (isNetworkError && await TryOfflinePinLoginAsync(pin))
             {

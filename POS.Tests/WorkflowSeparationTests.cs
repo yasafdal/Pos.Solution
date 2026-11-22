@@ -569,9 +569,8 @@ public static partial class Program
         try
         {
             var dayUtc = new DateTime(2026, 11, 20, 6, 0, 0, DateTimeKind.Utc); // 2:00 PM Manila
-            SetDeterministicManilaClock(dayUtc, tickCount64: 100_000L);
-
             using var localScope = new TempLocalDbScope("wf04_offline");
+            SetDeterministicManilaClock(dayUtc, tickCount64: 100_000L);
             await SeedOfflineBaselineAsync(configureOpeningFund: true, openingFund: 1000m);
 
             // Seed cashier1, cashier2, manager1 (PIN 9999) into LocalCashiers + verify V5 schema

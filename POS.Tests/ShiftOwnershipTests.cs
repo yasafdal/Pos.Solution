@@ -315,9 +315,8 @@ public static partial class Program
         try
         {
             var dayUtc = new DateTime(2026, 11, 20, 6, 0, 0, DateTimeKind.Utc);
-            SetDeterministicManilaClock(dayUtc, tickCount64: 200_000L);
-
             using var localScope = new TempLocalDbScope("own02_offline");
+            SetDeterministicManilaClock(dayUtc, tickCount64: 200_000L);
             await SeedOfflineBaselineAsync(configureOpeningFund: true, openingFund: 1000m);
 
             using (var seedDb = new LocalPosDbContext())

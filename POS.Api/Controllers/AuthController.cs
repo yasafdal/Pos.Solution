@@ -71,7 +71,12 @@ namespace POS.Api.Controllers
                     return StatusCode(403, lockState.CashierRestrictionMessage ?? lockState.LockMessage);
                 if (lockState.IsTerminalLocked)
                     return StatusCode(423, lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
-                if (lockState.IsShiftOwnedByAnotherCashier)
+                if (lockState.HasUnresolvedPreviousDayShift)
+                {
+                    if (!CashDrawerController.IsSupervisorRole(normalizedRole))
+                        return StatusCode(409, lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                }
+                else if (lockState.IsShiftOwnedByAnotherCashier)
                     return StatusCode(409, lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
 
                 claims.Add(new Claim("branch_id", terminal.BranchId.ToString()));
@@ -123,7 +128,12 @@ namespace POS.Api.Controllers
                     return StatusCode(403, lockState.CashierRestrictionMessage ?? lockState.LockMessage);
                 if (lockState.IsTerminalLocked)
                     return StatusCode(423, lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
-                if (lockState.IsShiftOwnedByAnotherCashier)
+                if (lockState.HasUnresolvedPreviousDayShift)
+                {
+                    if (!CashDrawerController.IsSupervisorRole(normalizedRole))
+                        return StatusCode(409, lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                }
+                else if (lockState.IsShiftOwnedByAnotherCashier)
                     return StatusCode(409, lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
 
                 claims.Add(new Claim("branch_id", terminal.BranchId.ToString()));

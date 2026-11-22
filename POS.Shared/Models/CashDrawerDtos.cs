@@ -9,6 +9,32 @@ public class TerminalClosingLockDto
     public const string ActiveShiftOwnedByAnotherCashierMessage =
         "Terminal currently has an open cashier shift assigned to another cashier. The previous cashier must log back in and complete Close Cashier before another cashier can use this terminal.";
 
+    public const string ClosingTypeNormal = "NORMAL";
+    public const string ClosingTypeSupervisorOvernightRecovery = "SUPERVISOR_OVERNIGHT_RECOVERY";
+
+    public const string RecoveryStatusRequiresReview = "REQUIRES_SUPERVISOR_REVIEW";
+    public const string RecoveryStatusUnverifiedCash = "UNVERIFIED_CASH_INVESTIGATION";
+    public const string RecoveryStatusResolved = "RESOLVED_BY_SUPERVISOR";
+
+    public static string FormatUnresolvedPreviousDayShiftMessage(
+        string businessDate,
+        string cashierId,
+        string? recoveryStatus = null,
+        string? investigationReason = null)
+    {
+        string safeDate = string.IsNullOrWhiteSpace(businessDate) ? "a previous Business Date" : businessDate.Trim();
+        string safeCashier = string.IsNullOrWhiteSpace(cashierId) ? "the previous cashier" : cashierId.Trim();
+        if (string.Equals(recoveryStatus, RecoveryStatusUnverifiedCash, StringComparison.OrdinalIgnoreCase))
+        {
+            string reasonPart = string.IsNullOrWhiteSpace(investigationReason)
+                ? string.Empty
+                : $" Investigation note: {investigationReason.Trim()}.";
+            return $"Previous Business Date ({safeDate}) has an unresolved cashier shift for {safeCashier} flagged for cash investigation (cash not yet verified).{reasonPart} A Manager or Supervisor must verify cash and complete Overnight Recovery before this terminal can be released.";
+        }
+
+        return $"Previous Business Date ({safeDate}) has an unresolved open cashier shift for {safeCashier}. A new cashier cannot take over this drawer. Notify a Manager or Supervisor to complete Overnight Shift Recovery before releasing this terminal.";
+    }
+
     public int TerminalId { get; set; }
     public bool IsTerminalLocked { get; set; }
     public bool IsCashierRestricted { get; set; }
@@ -16,6 +42,16 @@ public class TerminalClosingLockDto
     public string? ActiveShiftOwnerCashierId { get; set; }
     public long? ActiveShiftId { get; set; }
     public string? ActiveShiftOwnershipMessage { get; set; }
+    public bool HasUnresolvedPreviousDayShift { get; set; }
+    public string? UnresolvedShiftBusinessDate { get; set; }
+    public string? UnresolvedShiftCashierId { get; set; }
+    public long? UnresolvedShiftId { get; set; }
+    public string? UnresolvedShiftClientShiftId { get; set; }
+    public string? UnresolvedShiftRecoveryStatus { get; set; }
+    public string? UnresolvedShiftInvestigationReason { get; set; }
+    public string? UnresolvedShiftInvestigationBy { get; set; }
+    public DateTime? UnresolvedShiftInvestigationAtUtc { get; set; }
+    public string? UnresolvedShiftMessage { get; set; }
     public bool ClockTamperDetected { get; set; }
     public string? ClosedBusinessDate { get; set; }
     public string CurrentBusinessDate { get; set; } = string.Empty;
@@ -517,6 +553,16 @@ public class CashDrawerShiftDto
     public string Status { get; set; } = null!;
     public DateTime OpenedAt { get; set; }
     public DateTime? ClosedAt { get; set; }
+    public string? BusinessDate { get; set; }
+    public bool IsUnresolvedPreviousBusinessDate { get; set; }
+    public string ClosingType { get; set; } = TerminalClosingLockDto.ClosingTypeNormal;
+    public string? ClosedBySupervisorId { get; set; }
+    public string? RecoveryReason { get; set; }
+    public string? RecoveryStatus { get; set; }
+    public string? UnverifiedCashReason { get; set; }
+    public string? UnverifiedCashReportedBy { get; set; }
+    public DateTime? UnverifiedCashReportedAtUtc { get; set; }
+    public string? RecoveryOperationId { get; set; }
     public string? Notes { get; set; }
     public int PendingApprovalsCount { get; set; }
     public List<CashMovementResponseDto> Movements { get; set; } = new();
@@ -608,4 +654,47 @@ public class CashMovementSummaryReportDto
     public int TotalReversedCount { get; set; }
     public List<CashMovementCategoryBreakdownDto> ByCategory { get; set; } = new();
     public List<CashMovementTerminalBreakdownDto> ByTerminal { get; set; } = new();
+}
+
+public class SupervisorOvernightCloseRequestDto
+{
+    [MaxLength(100)]
+    public string? ClientOperationId { get; set; }
+    public long ShiftId { get; set; }
+    [MaxLength(100)]
+    public string? ClientShiftId { get; set; }
+    public int TerminalId { get; set; }
+    public int BranchId { get; set; }
+    public List<CashDenominationLineDto> Denominations { get; set; } = new();
+    public List<PaymentMethodDeclarationDto>? PaymentDeclarations { get; set; }
+    public bool IsDeclarationConfirmed { get; set; }
+    [Required, MaxLength(500)]
+    public string Reason { get; set; } = string.Empty;
+    [MaxLength(64)]
+    public string? SupervisorPin { get; set; }
+    public string? SupervisorPinHash { get; set; }
+    [MaxLength(450)]
+    public string? SupervisorUsername { get; set; }
+    public DateTime? ClosedAtUtc { get; set; }
+    [MaxLength(255)]
+    public string? Notes { get; set; }
+}
+
+public class SupervisorUnverifiedCashRequestDto
+{
+    [MaxLength(100)]
+    public string? ClientOperationId { get; set; }
+    public long ShiftId { get; set; }
+    [MaxLength(100)]
+    public string? ClientShiftId { get; set; }
+    public int TerminalId { get; set; }
+    public int BranchId { get; set; }
+    [Required, MaxLength(500)]
+    public string Reason { get; set; } = string.Empty;
+    [MaxLength(64)]
+    public string? SupervisorPin { get; set; }
+    public string? SupervisorPinHash { get; set; }
+    [MaxLength(450)]
+    public string? SupervisorUsername { get; set; }
+    public DateTime? ReportedAtUtc { get; set; }
 }

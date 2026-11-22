@@ -50,7 +50,16 @@ namespace POS.Api.Controllers
                 await tx.RollbackAsync();
                 return StatusCode(423, lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
             }
-            if (lockState.IsShiftOwnedByAnotherCashier)
+            if (lockState.HasUnresolvedPreviousDayShift)
+            {
+                bool isSupervisor = CashDrawerController.IsSupervisorRole(User.FindFirstValue(ClaimTypes.Role));
+                if (!isSupervisor)
+                {
+                    await tx.RollbackAsync();
+                    return StatusCode(409, lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+                }
+            }
+            else if (lockState.IsShiftOwnedByAnotherCashier)
             {
                 await tx.RollbackAsync();
                 return StatusCode(409, lockState.ActiveShiftOwnershipMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);

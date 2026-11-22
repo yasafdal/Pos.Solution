@@ -12,8 +12,23 @@ public static class ZReadingLocalReadiness
         // Check all statuses, not only retry-due items; payloads can belong to earlier sessions.
         int pending = await db.SyncOutboxes.AsNoTracking().CountAsync(o => o.Status != "SYNCED");
         if (pending > 0) blockers.Add($"{pending} local outbox record(s) remain unsynchronized or unresolved.");
-        if (await db.CashDrawerShifts.AsNoTracking().AnyAsync(s => s.TerminalId == terminalId && s.Status == "OPEN"))
-            blockers.Add("Close and synchronize the local cashier shift before finalization.");
+        var localOpenShift = await db.CashDrawerShifts.AsNoTracking()
+            .Where(s => s.TerminalId == terminalId && s.Status == "OPEN")
+            .OrderByDescending(s => s.OpenedAt)
+            .FirstOrDefaultAsync();
+        if (localOpenShift != null)
+        {
+            var nowUtc = POS.Shared.Services.BusinessDayClock.UtcNow();
+            if (POS.Shared.Services.BusinessDayClock.IsPreviousBusinessDateShift(localOpenShift.OpenedAt, nowUtc, localOpenShift.BusinessDate))
+            {
+                string origDate = POS.Shared.Services.BusinessDayClock.GetShiftBusinessDateString(localOpenShift.OpenedAt, localOpenShift.BusinessDate);
+                blockers.Add($"Unresolved cashier shift from previous Business Date {origDate} (cashier {localOpenShift.CashierId}) requires supervisor overnight closing before Z-Reading.");
+            }
+            else
+            {
+                blockers.Add("Close and synchronize the local cashier shift before finalization.");
+            }
+        }
         if (await db.CashDrawerShifts.AsNoTracking().AnyAsync(s => s.TerminalId == terminalId && s.Status == "CLOSED" &&
             (!s.ActualCountedBalance.HasValue || (string.IsNullOrEmpty(s.ClosingDenominationsJson) && string.IsNullOrEmpty(s.ClosingOriginalDeclarationJson)))))
             blockers.Add("One or more closed local shifts are missing required cash accountability (denomination count/declaration).");

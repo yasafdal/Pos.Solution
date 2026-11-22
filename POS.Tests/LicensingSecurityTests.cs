@@ -1225,6 +1225,16 @@ public static partial class Program
 
             // Complete sale 10 seconds before expiry
             BusinessDayClock.UtcNowProvider = () => beforeExpiryUtc;
+            using (var shiftAlignDb = new LocalPosDbContext())
+            {
+                var localShift = await shiftAlignDb.CashDrawerShifts.FindAsync(shift.ShiftId);
+                if (localShift != null)
+                {
+                    localShift.OpenedAt = beforeExpiryUtc.AddHours(-1);
+                    localShift.BusinessDate = BusinessDayClock.GetBusinessDateString(beforeExpiryUtc);
+                    await shiftAlignDb.SaveChangesAsync();
+                }
+            }
             var session = new PosSessionService();
             session.SetSession("TOKEN", "cashier1", "Cashier", new TerminalConfigDto
             {
@@ -1958,6 +1968,16 @@ public static partial class Program
                 DateTime.SpecifyKind(preExpirySaleUtc.AddHours(8), DateTimeKind.Unspecified),
                 TimeSpan.FromHours(8));
             BusinessDayClock.TickCount64Provider = () => 200_000L;
+            using (var shiftAlignDb = new LocalPosDbContext())
+            {
+                var localShift = await shiftAlignDb.CashDrawerShifts.FindAsync(shift.ShiftId);
+                if (localShift != null)
+                {
+                    localShift.OpenedAt = preExpirySaleUtc.AddHours(-1);
+                    localShift.BusinessDate = BusinessDayClock.GetBusinessDateString(preExpirySaleUtc);
+                    await shiftAlignDb.SaveChangesAsync();
+                }
+            }
             var session = new PosSessionService();
             session.SetSession("TOKEN", "cashier1", "Cashier", new TerminalConfigDto
             {

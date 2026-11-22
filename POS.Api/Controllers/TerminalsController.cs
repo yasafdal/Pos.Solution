@@ -508,7 +508,19 @@ namespace POS.Api.Controllers
                         Message = lockStatus.LockMessage ?? "Terminal is locked for the remainder of the business day."
                     });
                 }
-                if (lockStatus.IsShiftOwnedByAnotherCashier)
+                if (lockStatus.HasUnresolvedPreviousDayShift)
+                {
+                    bool isSup = cashierUser != null && CashDrawerController.IsSupervisorRole(cashierUser.Role);
+                    if (!isSup)
+                    {
+                        return StatusCode(409, new TerminalSessionTokenResponseDto
+                        {
+                            Success = false,
+                            Message = lockStatus.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage
+                        });
+                    }
+                }
+                else if (lockStatus.IsShiftOwnedByAnotherCashier)
                 {
                     return StatusCode(409, new TerminalSessionTokenResponseDto
                     {

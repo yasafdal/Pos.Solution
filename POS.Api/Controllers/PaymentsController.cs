@@ -41,6 +41,11 @@ public class PaymentsController(PosDbContext context, POS.Shared.Interfaces.ISeq
             await transaction.RollbackAsync();
             return Conflict(lockState.CashierRestrictionMessage ?? lockState.LockMessage ?? "POS Terminal is locked for the current business day.");
         }
+        if (lockState.HasUnresolvedPreviousDayShift)
+        {
+            await transaction.RollbackAsync();
+            return Conflict(lockState.UnresolvedShiftMessage ?? TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
+        }
         if (lockState.IsShiftOwnedByAnotherCashier)
         {
             await transaction.RollbackAsync();

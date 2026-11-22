@@ -115,6 +115,12 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                     throw new InvalidOperationException("Open a shift and confirm opening float before offline payment.");
                 if (confirmedShift.BranchId != createDto.BranchId)
                     throw new InvalidOperationException("Open shift branch does not match the active terminal branch.");
+                if (BusinessDayClock.IsPreviousBusinessDateShift(confirmedShift.OpenedAt, BusinessDayClock.UtcNow(), confirmedShift.BusinessDate))
+                {
+                    string origDate = BusinessDayClock.GetShiftBusinessDateString(confirmedShift.OpenedAt, confirmedShift.BusinessDate);
+                    throw new InvalidOperationException(TerminalClosingLockDto.FormatUnresolvedPreviousDayShiftMessage(
+                        origDate, confirmedShift.CashierId, confirmedShift.RecoveryStatus, confirmedShift.UnverifiedCashReason));
+                }
                 if (!string.Equals(confirmedShift.CashierId, cashierId, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException(TerminalClosingLockDto.ActiveShiftOwnedByAnotherCashierMessage);
                 if (!confirmedShift.OpeningConfirmed || (createDto.ShiftId.HasValue && createDto.ShiftId != confirmedShift.ShiftId))

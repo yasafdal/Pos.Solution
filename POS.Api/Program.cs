@@ -165,6 +165,7 @@ else
             try { POS.Api.MigrationRunner.ApplyLicensingSchema(conn); } catch { }
             try { POS.Api.MigrationRunner.ApplyAgresIdentitySchema(conn); } catch { }
             try { POS.Api.MigrationRunner.ApplyDiscountSyncSchema(conn); } catch { }
+            try { POS.Api.MigrationRunner.ApplyOvernightShiftRecoverySchema(conn); } catch { }
         }
     }
     catch { /* Non-fatal if DB is unreachable at startup */ }
