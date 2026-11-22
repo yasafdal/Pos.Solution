@@ -1409,8 +1409,7 @@
 }
 
 .pos-sale-modal .pos-split-pill-toggle.active,
-.pos-sale-modal .pos-quick-cash-btn.active,
-.pos-sale-modal .pos-quick-cash-btn.exact {
+.pos-sale-modal .pos-quick-cash-btn.active {
     border-color: var(--pos-primary, #3b82f6);
     background: rgba(59, 130, 246, 0.15);
     color: var(--pos-primary-light, #60a5fa);

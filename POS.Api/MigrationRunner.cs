@@ -588,6 +588,54 @@ public class MigrationRunner
             CREATE UNIQUE INDEX IF NOT EXISTS ""UX_CashDrawerShifts_RecoveryOperationId""
                 ON ""CashDrawerShifts"" (""RecoveryOperationId"")
                 WHERE ""RecoveryOperationId"" IS NOT NULL;
+
+            DO $$
+            BEGIN
+                IF to_regclass('public.""ZReadingTerminalStates""') IS NOT NULL THEN
+                    INSERT INTO public.""ZReadingTerminalStates"" (
+                        ""TerminalId"",
+                        ""LastZNumber"",
+                        ""ResetCounter"",
+                        ""FirstBusinessDate"",
+                        ""LastBusinessDate"",
+                        ""OpeningAccumulatedSales"",
+                        ""AccumulatedGrossSales"",
+                        ""MutationVersion"",
+                        ""ConfiguredBy"",
+                        ""ConfiguredAt"",
+                        ""UpdatedAt""
+                    )
+                    SELECT
+                        t.""TerminalId"",
+                        0,
+                        NULL,
+                        COALESCE(
+                            LEAST(
+                                (SELECT MIN((((""OpenedAt"" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours')::date) FROM public.""CashDrawerShifts"" s WHERE s.""TerminalId"" = t.""TerminalId""),
+                                (SELECT MIN((((""CreatedAt"" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours')::date) FROM public.""Orders"" o WHERE o.""TerminalId"" = t.""TerminalId"")
+                            ),
+                            (((NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Manila') - INTERVAL '4 hours')::date
+                        ),
+                        NULL,
+                        0.00,
+                        0.00,
+                        0,
+                        'AUTO_MIGRATION_BACKFILL',
+                        NOW() AT TIME ZONE 'UTC',
+                        NOW() AT TIME ZONE 'UTC'
+                    FROM public.""Terminals"" t
+                    WHERE t.""IsActive"" = TRUE
+                      AND (
+                          t.""IsActivationCodeUsed"" = TRUE
+                          OR EXISTS (SELECT 1 FROM public.""CashDrawerShifts"" s WHERE s.""TerminalId"" = t.""TerminalId"")
+                          OR EXISTS (SELECT 1 FROM public.""Orders"" o WHERE o.""TerminalId"" = t.""TerminalId"")
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM public.""ZReadingTerminalStates"" z WHERE z.""TerminalId"" = t.""TerminalId""
+                      )
+                    ON CONFLICT (""TerminalId"") DO NOTHING;
+                END IF;
+            END $$;
         ";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.ExecuteNonQuery();

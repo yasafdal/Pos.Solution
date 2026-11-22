@@ -50,6 +50,15 @@ public sealed class ZReadingsController(PosDbContext db, IConfiguration configur
     public async Task<IActionResult> Readiness([FromQuery] int terminalId, [FromQuery] DateOnly businessDate, CancellationToken ct = default)
     {
         if (!await Allowed(terminalId, false, ct)) return Forbid();
+        if (Service.Enabled)
+        {
+            await ZReadingService.EnsureTerminalBaselineProvisionedAsync(
+                db,
+                terminalId,
+                $"AUTO_READINESS:{Operator}",
+                requestedBusinessDate: businessDate,
+                ct: ct);
+        }
         return Ok(await Service.ReadinessAsync(terminalId, businessDate, ct));
     }
 
@@ -111,6 +120,15 @@ public sealed class ZReadingsController(PosDbContext db, IConfiguration configur
         if (!await Allowed(request.TerminalId, true, ct)) return Forbid();
         var terminal = await db.Terminals.AsNoTracking().SingleAsync(x => x.TerminalId == request.TerminalId, ct);
         if (terminal.DeviceIdentifier != null && terminal.DeviceIdentifier != request.DeviceIdentifier) return Forbid();
+        if (Service.Enabled)
+        {
+            await ZReadingService.EnsureTerminalBaselineProvisionedAsync(
+                db,
+                request.TerminalId,
+                $"AUTO_GENERATE:{Operator}",
+                requestedBusinessDate: request.BusinessDate,
+                ct: ct);
+        }
         try { return Ok(await Service.GenerateAsync(request, Operator, ct)); }
         catch (ZReadingException ex) { return StatusCode(ex.StatusCode, ex.Message); }
         catch (DbUpdateException) { return Conflict("Concurrent generation or operation-ID collision. Retrieve by terminal/date and reconcile the same operation ID; do not generate a new identity."); }

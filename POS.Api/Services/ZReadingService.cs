@@ -16,6 +16,105 @@ public partial class ZReadingService(PosDbContext db, IConfiguration configurati
         if (!Enabled) throw new ZReadingException(409, "Z-Reading is disabled; deploy and explicitly configure it first.");
     }
 
+    /// <summary>
+    /// Idempotently provisions the initial ZReadingTerminalStates baseline row for a terminal
+    /// if none exists yet. Uses the earliest shift/order Business Date on the terminal (or
+    /// the current Manila Business Date when no historical activity exists) with 0.00 opening
+    /// accumulated gross sales. Never modifies an existing baseline row.
+    /// </summary>
+    public static async Task<ZReadingTerminalState?> EnsureTerminalBaselineProvisionedAsync(
+        PosDbContext db,
+        int terminalId,
+        string? configuredBy = null,
+        DateTime? candidateTimestampUtc = null,
+        DateOnly? requestedBusinessDate = null,
+        CancellationToken ct = default)
+    {
+        if (terminalId <= 0) return null;
+
+        var existing = await db.ZReadingTerminalStates
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TerminalId == terminalId, ct);
+        if (existing != null) return existing;
+
+        var terminal = await db.Terminals
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TerminalId == terminalId, ct);
+        if (terminal == null || !terminal.IsActive) return null;
+
+        var candidateDates = new List<DateOnly>();
+
+        var minShiftOpenedAt = await db.CashDrawerShifts
+            .AsNoTracking()
+            .Where(s => s.TerminalId == terminalId)
+            .Select(s => (DateTime?)s.OpenedAt)
+            .MinAsync(ct);
+        if (minShiftOpenedAt.HasValue)
+            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(
+                POS.Shared.Services.BusinessDayClock.NormalizeUtc(minShiftOpenedAt.Value)));
+
+        var minOrderCreatedAt = await db.Orders
+            .AsNoTracking()
+            .Where(o => o.TerminalId == terminalId)
+            .Select(o => (DateTime?)o.CreatedAt)
+            .MinAsync(ct);
+        if (minOrderCreatedAt.HasValue)
+            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(
+                POS.Shared.Services.BusinessDayClock.NormalizeUtc(minOrderCreatedAt.Value)));
+
+        if (candidateTimestampUtc.HasValue)
+            candidateDates.Add(POS.Shared.Services.BusinessDayClock.GetBusinessDate(
+                POS.Shared.Services.BusinessDayClock.NormalizeUtc(candidateTimestampUtc.Value)));
+
+        var currentBizDate = POS.Shared.Services.BusinessDayClock.GetCurrentBusinessDate();
+        DateOnly firstBusinessDate;
+        if (candidateDates.Count > 0)
+        {
+            firstBusinessDate = candidateDates.Min();
+        }
+        else if (requestedBusinessDate.HasValue && requestedBusinessDate.Value <= currentBizDate)
+        {
+            firstBusinessDate = requestedBusinessDate.Value;
+        }
+        else
+        {
+            firstBusinessDate = currentBizDate;
+        }
+
+        string actor = string.IsNullOrWhiteSpace(configuredBy)
+            ? $"AUTO_PROVISION:{terminal.TerminalCode}"
+            : configuredBy.Trim();
+        if (actor.Length > 100) actor = actor[..100];
+
+        var state = new ZReadingTerminalState
+        {
+            TerminalId = terminalId,
+            FirstBusinessDate = firstBusinessDate,
+            OpeningAccumulatedSales = 0m,
+            AccumulatedGrossSales = 0m,
+            MutationVersion = 0,
+            LastZNumber = 0,
+            ResetCounter = null,
+            LastBusinessDate = null,
+            ConfiguredBy = actor,
+            ConfiguredAt = POS.Shared.Services.BusinessDayClock.UtcNow()
+        };
+
+        db.ZReadingTerminalStates.Add(state);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return state;
+        }
+        catch (DbUpdateException)
+        {
+            db.Entry(state).State = EntityState.Detached;
+            return await db.ZReadingTerminalStates
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TerminalId == terminalId, ct);
+        }
+    }
+
     public async Task<ZReadingReadinessDto> ReadinessAsync(int terminalId, DateOnly date, CancellationToken ct = default)
     {
         var (start, end) = Period(date);

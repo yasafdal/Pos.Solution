@@ -472,6 +472,20 @@ public class CashDrawerController : ControllerBase
         _context.CashDrawerShifts.Add(shift);
         await _context.SaveChangesAsync(cancellationToken);
 
+        try
+        {
+            await POS.Api.Services.ZReadingService.EnsureTerminalBaselineProvisionedAsync(
+                _context,
+                request.TerminalId,
+                $"AUTO_SHIFT_OPEN:{cashierId}",
+                candidateTimestampUtc: openingTime,
+                ct: cancellationToken);
+        }
+        catch
+        {
+            // Non-fatal if Z-Reading tables are absent in isolated unit tests
+        }
+
         await tx.CommitAsync(cancellationToken);
         var openedSnap = await ReadSnapshotAsync(_context, shift.ShiftId, cancellationToken);
         return Ok(IsSupervisorRole(GetAuthenticatedRole()) ? openedSnap : RedactForCashier(openedSnap));

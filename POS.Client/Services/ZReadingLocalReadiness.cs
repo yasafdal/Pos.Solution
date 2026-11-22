@@ -6,7 +6,10 @@ namespace POS.Client.Services;
 /// <summary>Local checks supplement, never replace, authoritative server readiness.</summary>
 public static class ZReadingLocalReadiness
 {
-    public static async Task<List<string>> GetBlockersAsync(LocalPosDbContext db, int terminalId)
+    public static async Task<List<string>> GetBlockersAsync(
+        LocalPosDbContext db,
+        int terminalId,
+        DateOnly? businessDate = null)
     {
         var blockers = new List<string>();
         // Check all statuses, not only retry-due items; payloads can belong to earlier sessions.
@@ -29,9 +32,44 @@ public static class ZReadingLocalReadiness
                 blockers.Add("Close and synchronize the local cashier shift before finalization.");
             }
         }
-        if (await db.CashDrawerShifts.AsNoTracking().AnyAsync(s => s.TerminalId == terminalId && s.Status == "CLOSED" &&
-            (!s.ActualCountedBalance.HasValue || (string.IsNullOrEmpty(s.ClosingDenominationsJson) && string.IsNullOrEmpty(s.ClosingOriginalDeclarationJson)))))
-            blockers.Add("One or more closed local shifts are missing required cash accountability (denomination count/declaration).");
+        var localClosedShifts = await db.CashDrawerShifts.AsNoTracking()
+            .Where(s => s.TerminalId == terminalId && s.Status == "CLOSED")
+            .ToListAsync();
+        if (localClosedShifts.Count > 0)
+        {
+            var positiveClientShiftIds = localClosedShifts
+                .Where(s => s.ShiftId > 0 && !string.IsNullOrWhiteSpace(s.ClientShiftId))
+                .Select(s => s.ClientShiftId!)
+                .ToHashSet(StringComparer.Ordinal);
+            var positiveClientCloseIds = localClosedShifts
+                .Where(s => s.ShiftId > 0 && !string.IsNullOrWhiteSpace(s.ClientCloseId))
+                .Select(s => s.ClientCloseId!)
+                .ToHashSet(StringComparer.Ordinal);
+
+            bool hasUnaccountedLocalClose = localClosedShifts.Any(s =>
+            {
+                // Ignore retired open-shift negative placeholders or server-retired cache rows that were never closed locally on this client.
+                if (string.IsNullOrWhiteSpace(s.ClientCloseId) && string.IsNullOrWhiteSpace(s.RecoveryOperationId))
+                    return false;
+
+                // Ignore negative offline placeholder rows already superseded by a positive server shift row.
+                if (s.ShiftId < 0 &&
+                    ((!string.IsNullOrWhiteSpace(s.ClientShiftId) && positiveClientShiftIds.Contains(s.ClientShiftId)) ||
+                     (!string.IsNullOrWhiteSpace(s.ClientCloseId) && positiveClientCloseIds.Contains(s.ClientCloseId))))
+                    return false;
+
+                // When checking a specific Business Date, only inspect local closes belonging to that Business Date.
+                if (businessDate.HasValue &&
+                    POS.Shared.Services.BusinessDayClock.GetShiftBusinessDate(s.OpenedAt, s.BusinessDate) != businessDate.Value)
+                    return false;
+
+                return !s.ActualCountedBalance.HasValue ||
+                       (string.IsNullOrEmpty(s.ClosingDenominationsJson) && string.IsNullOrEmpty(s.ClosingOriginalDeclarationJson));
+            });
+
+            if (hasUnaccountedLocalClose)
+                blockers.Add("One or more closed local shifts are missing required cash accountability (denomination count/declaration).");
+        }
         if (await db.CashDrawerMovements.AsNoTracking().AnyAsync(m => m.TerminalId == terminalId && m.SyncStatus != "SYNCED"))
             blockers.Add("Local cash movements remain unsynchronized.");
         if (await db.TransactionVoids.AsNoTracking().AnyAsync(v => v.TerminalId == terminalId && v.SyncStatus != "SYNCED"))

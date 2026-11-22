@@ -413,7 +413,7 @@ else
         blockers = readiness.Blockers.ToList();
         if (string.IsNullOrWhiteSpace(ResolvedDeviceIdentifier)) blockers.Add("Device identity is missing. Reconnect and resolve terminal registration before finalizing.");
         using var db = new LocalPosDbContext(); db.InitializeDatabase();
-        blockers.AddRange(await ZReadingLocalReadiness.GetBlockersAsync(db, Session.Terminal!.TerminalId));
+        blockers.AddRange(await ZReadingLocalReadiness.GetBlockersAsync(db, Session.Terminal!.TerminalId, businessDate));
     }
 
     private async Task RefreshAsync()
@@ -438,7 +438,7 @@ else
             try
             {
                 using var db = new LocalPosDbContext(); db.InitializeDatabase();
-                var pending = await ZReadingLocalReadiness.GetBlockersAsync(db, Session.Terminal!.TerminalId);
+                var pending = await ZReadingLocalReadiness.GetBlockersAsync(db, Session.Terminal!.TerminalId, businessDate);
                 if (pending.Count > 0) throw new InvalidOperationException(string.Join(" ", pending));
                 var operationId = Preferences.Default.Get(OperationKey, string.Empty);
                 if (string.IsNullOrEmpty(operationId))

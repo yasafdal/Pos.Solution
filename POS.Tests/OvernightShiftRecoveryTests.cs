@@ -886,6 +886,41 @@ public static partial class Program
                    await srvDb.Orders.CountAsync(o => o.TerminalId == 1) == 1 &&
                    await srvDb.CashierClosingRestrictions.CountAsync(r => r.TerminalId == 1 && r.CashierId == "cashier1" && r.BusinessDate == "2026-11-20") == 1,
                 "Scenario 15: Reconnect sync must produce zero duplicate shifts, orders, or restrictions.");
+
+            var autoProvisionedState = await srvDb.ZReadingTerminalStates.AsNoTracking().SingleOrDefaultAsync(z => z.TerminalId == 1);
+            Assert(autoProvisionedState != null &&
+                   autoProvisionedState.FirstBusinessDate == new DateOnly(2026, 11, 18) &&
+                   autoProvisionedState.OpeningAccumulatedSales == 0m,
+                $"Z-Reading baseline must be auto-provisioned with earliest shift Business Date (2026-11-18) and 0.00 opening sales. Got: {autoProvisionedState?.FirstBusinessDate}");
+
+            var nov20LocalBlockers = await ZReadingLocalReadiness.GetBlockersAsync(syncDb, 1, new DateOnly(2026, 11, 20));
+            Assert(!nov20LocalBlockers.Any(b => b.Contains("missing required cash accountability", StringComparison.OrdinalIgnoreCase)),
+                $"Retired negative shift placeholder must not false-trigger missing cash accountability blocker. Got: {string.Join("; ", nov20LocalBlockers)}");
+
+            syncDb.CashDrawerShifts.Add(new LocalCashDrawerShift
+            {
+                ShiftId = -999999,
+                BranchId = 1,
+                OutletId = 1,
+                TerminalId = 1,
+                CashierId = "cashier1",
+                BusinessDate = "2026-11-20",
+                Status = "CLOSED",
+                ClientShiftId = "uncounted-local-shift",
+                ClientCloseId = "uncounted-local-close",
+                OpenedAt = shiftA.OpenedAt,
+                ClosedAt = shiftA.OpenedAt.AddHours(2),
+                ActualCountedBalance = null
+            });
+            await syncDb.SaveChangesAsync();
+
+            var nov20WithUncounted = await ZReadingLocalReadiness.GetBlockersAsync(syncDb, 1, new DateOnly(2026, 11, 20));
+            Assert(nov20WithUncounted.Any(b => b.Contains("missing required cash accountability", StringComparison.OrdinalIgnoreCase)),
+                "Genuinely uncounted local close on target Business Date must still block Z-Reading.");
+
+            var nov21IgnoringNov20Row = await ZReadingLocalReadiness.GetBlockersAsync(syncDb, 1, new DateOnly(2026, 11, 21));
+            Assert(!nov21IgnoringNov20Row.Any(b => b.Contains("missing required cash accountability", StringComparison.OrdinalIgnoreCase)),
+                "Closed local row from prior Business Date (2026-11-20) must not false-block 2026-11-21 local readiness check.");
         }
         finally
         {

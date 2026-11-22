@@ -1358,7 +1358,7 @@ else
                                             var isExact = amt == currentOrderResponse.TotalAmount;
                                             var isSelected = cashTendered == amt;
                                             <button type="button"
-                                                    class="pos-quick-cash-btn @(isExact ? "exact" : "") @(isSelected ? "active" : "")"
+                                                    class="pos-quick-cash-btn @(isSelected ? "active" : "")"
                                                     disabled="@isProcessingPayment"
                                                     @onclick="() => cashTendered = amt">
                                                 @(isExact ? $"Exact (₱{amt:N2})" : $"₱{amt:N0}")

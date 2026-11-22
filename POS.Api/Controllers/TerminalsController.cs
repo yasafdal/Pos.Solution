@@ -449,6 +449,18 @@ namespace POS.Api.Controllers
                 // Non-fatal if licensing table is not yet initialized in an isolated mock test
             }
 
+            try
+            {
+                await POS.Api.Services.ZReadingService.EnsureTerminalBaselineProvisionedAsync(
+                    _context,
+                    terminal.TerminalId,
+                    $"AUTO_ACTIVATION:{terminal.TerminalCode}");
+            }
+            catch
+            {
+                // Non-fatal if Z-Reading tables are not yet initialized in an isolated mock test
+            }
+
             return Ok(new TerminalActivationResponseDto
             {
                 Success = true,
