@@ -7,7 +7,7 @@ namespace POS.Client.Data;
 
 public static class LocalDatabaseMigrator
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
 
     public static void Migrate(DbConnection conn, string dbPath, Action ensureCreatedAction)
     {
@@ -97,6 +97,16 @@ public static class LocalDatabaseMigrator
                     ExecuteNonQuery(conn, tx5, "PRAGMA user_version = 5;");
                     tx5.Commit();
                     currentVersion = 5;
+                }
+
+                if (currentVersion < 6)
+                {
+                    MaybeSimulateFailure(6);
+                    using var tx6 = conn.BeginTransaction();
+                    ApplyMigrationV6(conn, tx6);
+                    ExecuteNonQuery(conn, tx6, "PRAGMA user_version = 6;");
+                    tx6.Commit();
+                    currentVersion = 6;
                 }
 
                 if (!VerifyQuickCheck(conn))
@@ -697,6 +707,21 @@ public static class LocalDatabaseMigrator
             INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
             VALUES
                 (5, 'Cashier-level closing restrictions separated from terminal Z-Reading lock', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.6');");
+    }
+
+    private static void ApplyMigrationV6(DbConnection conn, DbTransaction tx)
+    {
+        if (TableExists(conn, tx, "LocalDiscounts"))
+        {
+            AddColumnIfMissing(conn, tx, "LocalDiscounts", "RequiresApproval", "INTEGER NOT NULL DEFAULT 0");
+            AddColumnIfMissing(conn, tx, "LocalDiscounts", "IsActive", "INTEGER NOT NULL DEFAULT 1");
+            AddColumnIfMissing(conn, tx, "LocalDiscounts", "UpdatedAtUtc", "TEXT NULL");
+        }
+
+        ExecuteNonQuery(conn, tx, @"
+            INSERT OR IGNORE INTO LocalSchemaMigrations (Version, Description, AppliedAtUtc, AppVersion)
+            VALUES
+                (6, 'Discount Type IsActive, RequiresApproval, and UpdatedAtUtc incremental sync support', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), '1.0.7');");
     }
 
     private static void MaybeSimulateFailure(int targetVersion)

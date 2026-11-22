@@ -125,20 +125,11 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             })
             .ToListAsync();
 
-        var discounts = await context.DiscountTypes
-            .AsNoTracking()
-            .Select(d => new OfflineDiscountDto
-            {
-                DiscountId = d.DiscountTypeId,
-                Code = d.Code,
-                Name = d.Name,
-                DiscountCategory = d.DiscountCategory,
-                DiscountMethod = d.DiscountMethod,
-                DiscountValue = d.DiscountValue,
-                IsStatutory = d.IsStatutory,
-                RequiresIdentification = d.RequiresIdentification
-            })
-            .ToListAsync();
+        var discountSync = await DiscountsController.BuildDiscountSyncPayloadAsync(
+            context,
+            request?.DiscountLastSyncedAtUtc,
+            request?.DiscountStateHash);
+        var discounts = discountSync.Discounts;
 
         // Reserve a distinct offline block under the same row lock used by online invoicing.
         // shortcut: 1000 numbers per refresh, tune allocation size when operational usage is measured.
@@ -347,6 +338,9 @@ public class OfflineReferenceDataController(PosDbContext context) : ControllerBa
             ProductModifierMappings = productModifierMappings,
             Taxes = taxes,
             Discounts = discounts,
+            DiscountsIsIncremental = discountSync.IsIncremental,
+            DiscountsHasChanges = discountSync.HasChanges,
+            DiscountStateHash = discountSync.StateHash,
             InvoiceSequence = invoiceSequenceDto,
             Cashiers = cashiers,
             CashMovementCategories = cashMovementCategories,

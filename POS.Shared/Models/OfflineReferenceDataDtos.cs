@@ -12,6 +12,8 @@ public class OfflineReferenceDataRequestDto
     public long? CurrentStartingNumber { get; set; }
     public long? CurrentEndingNumber { get; set; }
     public long? CurrentLastIssuedNumber { get; set; }
+    public DateTime? DiscountLastSyncedAtUtc { get; set; }
+    public string? DiscountStateHash { get; set; }
 }
 
 public class OfflineReferenceDataResponseDto
@@ -26,6 +28,9 @@ public class OfflineReferenceDataResponseDto
     public List<OfflineProductModifierMappingDto> ProductModifierMappings { get; set; } = new();
     public List<OfflineTaxDto> Taxes { get; set; } = new();
     public List<OfflineDiscountDto> Discounts { get; set; } = new();
+    public bool DiscountsIsIncremental { get; set; }
+    public bool DiscountsHasChanges { get; set; } = true;
+    public string? DiscountStateHash { get; set; }
     public OfflineInvoiceSequenceDto? InvoiceSequence { get; set; }
     public List<OfflineCashierDto> Cashiers { get; set; } = new();
     public List<CashMovementCategoryDto> CashMovementCategories { get; set; } = new();
@@ -206,4 +211,39 @@ public class OfflineDiscountDto
     public decimal DiscountValue { get; set; }
     public bool IsStatutory { get; set; }
     public bool RequiresIdentification { get; set; }
+    public bool RequiresApproval { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+public class OfflineDiscountSyncResponseDto
+{
+    public bool IsIncremental { get; set; }
+    public bool HasChanges { get; set; }
+    public DateTime ServerTimestampUtc { get; set; }
+    public string StateHash { get; set; } = string.Empty;
+    public List<OfflineDiscountDto> Discounts { get; set; } = new();
+}
+
+public static class DiscountSyncHasher
+{
+    public static string ComputeStateHash(IEnumerable<OfflineDiscountDto> discounts)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var d in discounts.OrderBy(x => x.DiscountId))
+        {
+            sb.Append(d.DiscountId).Append('|')
+              .Append((d.Code ?? string.Empty).Trim().ToUpperInvariant()).Append('|')
+              .Append((d.Name ?? string.Empty).Trim()).Append('|')
+              .Append((d.DiscountCategory ?? string.Empty).Trim().ToUpperInvariant()).Append('|')
+              .Append((d.DiscountMethod ?? string.Empty).Trim().ToUpperInvariant()).Append('|')
+              .Append(d.DiscountValue.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture)).Append('|')
+              .Append(d.IsStatutory ? '1' : '0').Append('|')
+              .Append(d.RequiresIdentification ? '1' : '0').Append('|')
+              .Append(d.RequiresApproval ? '1' : '0').Append('|')
+              .Append(d.IsActive ? '1' : '0').Append('\n');
+        }
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+    }
 }

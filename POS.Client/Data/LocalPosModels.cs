@@ -112,6 +112,9 @@ public class LocalDiscount
     public decimal DiscountValue { get; set; }
     public bool IsStatutory { get; set; }
     public bool RequiresIdentification { get; set; }
+    public bool RequiresApproval { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime? UpdatedAtUtc { get; set; }
 }
 
 public class LocalPaymentMethod

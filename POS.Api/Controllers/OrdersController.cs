@@ -59,12 +59,20 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
             decimal? resolvedValue = dto.DiscountValue;
             decimal resolvedPromoAmount = dto.PromoDiscountAmount;
 
+            var (configuredDiscount, discountActivationError) = await DiscountsController.ValidateDiscountActivationAsync(
+                context, dto.DiscountTypeId, normalizedCode);
+            if (discountActivationError != null)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(discountActivationError);
+            }
+
+            int? resolvedDiscountTypeId = dto.DiscountTypeId ?? configuredDiscount?.DiscountTypeId;
+
             if (!string.IsNullOrWhiteSpace(normalizedCode) && normalizedCode != "NONE" && normalizedCode != "MANUAL"
                 && !POS.Shared.Services.LocalDiscountCalculationService.IsStatutoryVatExemptCode(normalizedCode)
                 && string.IsNullOrWhiteSpace(resolvedMethod) && !resolvedValue.HasValue)
             {
-                var configuredDiscount = await context.DiscountTypes.AsNoTracking()
-                    .FirstOrDefaultAsync(d => d.IsActive && d.Code.ToUpper() == normalizedCode);
                 if (configuredDiscount != null)
                 {
                     resolvedMethod = configuredDiscount.DiscountMethod;
@@ -146,7 +154,7 @@ public class OrdersController(PosDbContext context, POS.Shared.Interfaces.ISeque
                 OrderStatus = "PENDING",
                 PaymentStatus = "UNPAID",
                 DiscountAmount = calcRes.DiscountAmount,
-                DiscountTypeId = dto.DiscountTypeId,
+                DiscountTypeId = resolvedDiscountTypeId,
                 DiscountCode = dto.DiscountCode,
                 CustomerCardNumber = dto.CustomerCardNumber,
                 VatableSales = calcRes.VatableSales,

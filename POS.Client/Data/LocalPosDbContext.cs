@@ -83,7 +83,12 @@ public class LocalPosDbContext : DbContext
         modelBuilder.Entity<LocalModifierOption>().ToTable("LocalModifierOptions");
         modelBuilder.Entity<LocalProductModifierGroup>().ToTable("LocalProductModifierGroups");
         modelBuilder.Entity<LocalTax>().ToTable("LocalTaxes");
-        modelBuilder.Entity<LocalDiscount>().ToTable("LocalDiscounts");
+        modelBuilder.Entity<LocalDiscount>(entity =>
+        {
+            entity.ToTable("LocalDiscounts");
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.RequiresApproval).HasDefaultValue(false);
+        });
         modelBuilder.Entity<LocalPaymentMethod>().ToTable("LocalPaymentMethods");
         modelBuilder.Entity<LocalBranch>(entity =>
         {

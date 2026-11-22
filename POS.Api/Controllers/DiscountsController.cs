@@ -17,11 +17,136 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
 {
     // GET: api/discounts
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<DiscountType>>> GetDiscountTypes()
+    public async Task<ActionResult<IEnumerable<DiscountType>>> GetDiscountTypes([FromQuery] bool activeOnly = false)
     {
-        return await context.DiscountTypes
+        var query = context.DiscountTypes.AsNoTracking();
+        if (activeOnly)
+            query = query.Where(d => d.IsActive);
+
+        return await query
             .OrderBy(d => d.DiscountTypeId)
             .ToListAsync();
+    }
+
+    // GET: api/discounts/sync?sinceUtc=...&knownHash=...
+    [HttpGet("sync")]
+    public async Task<ActionResult<OfflineDiscountSyncResponseDto>> SyncDiscountTypes(
+        [FromQuery] DateTime? sinceUtc = null,
+        [FromQuery] string? knownHash = null)
+    {
+        var payload = await BuildDiscountSyncPayloadAsync(context, sinceUtc, knownHash);
+        return Ok(payload);
+    }
+
+    internal static DateTime NormalizeUtc(DateTime value)
+    {
+        if (value == default) return DateTime.UtcNow;
+        return value.Kind == DateTimeKind.Local
+            ? value.ToUniversalTime()
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+    }
+
+    internal static async Task<OfflineDiscountSyncResponseDto> BuildDiscountSyncPayloadAsync(
+        PosDbContext context,
+        DateTime? sinceUtc,
+        string? knownHash)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var allDtos = await context.DiscountTypes
+            .AsNoTracking()
+            .OrderBy(d => d.DiscountTypeId)
+            .Select(d => new OfflineDiscountDto
+            {
+                DiscountId = d.DiscountTypeId,
+                Code = d.Code,
+                Name = d.Name,
+                DiscountCategory = d.DiscountCategory,
+                DiscountMethod = d.DiscountMethod,
+                DiscountValue = d.DiscountValue,
+                IsStatutory = d.IsStatutory,
+                RequiresIdentification = d.RequiresIdentification,
+                RequiresApproval = d.RequiresApproval,
+                IsActive = d.IsActive,
+                UpdatedAtUtc = d.UpdatedAt != default ? d.UpdatedAt : d.CreatedAt
+            })
+            .ToListAsync();
+
+        foreach (var d in allDtos)
+            d.UpdatedAtUtc = NormalizeUtc(d.UpdatedAtUtc);
+
+        string serverHash = DiscountSyncHasher.ComputeStateHash(allDtos);
+
+        if (sinceUtc.HasValue && !string.IsNullOrWhiteSpace(knownHash)
+            && string.Equals(knownHash.Trim(), serverHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return new OfflineDiscountSyncResponseDto
+            {
+                IsIncremental = true,
+                HasChanges = false,
+                ServerTimestampUtc = nowUtc,
+                StateHash = serverHash,
+                Discounts = new List<OfflineDiscountDto>()
+            };
+        }
+
+        if (sinceUtc.HasValue)
+        {
+            // Strict greater-than cursor downloads only modified rows; StateHash self-heal guarantees zero missed updates.
+            var cursorUtc = NormalizeUtc(sinceUtc.Value);
+            var delta = allDtos.Where(d => d.UpdatedAtUtc > cursorUtc).ToList();
+            if (delta.Count > 0)
+            {
+                return new OfflineDiscountSyncResponseDto
+                {
+                    IsIncremental = true,
+                    HasChanges = true,
+                    ServerTimestampUtc = nowUtc,
+                    StateHash = serverHash,
+                    Discounts = delta
+                };
+            }
+        }
+
+        return new OfflineDiscountSyncResponseDto
+        {
+            IsIncremental = false,
+            HasChanges = true,
+            ServerTimestampUtc = nowUtc,
+            StateHash = serverHash,
+            Discounts = allDtos
+        };
+    }
+
+    internal static async Task<(DiscountType? ActiveDiscount, string? ErrorMessage)> ValidateDiscountActivationAsync(
+        PosDbContext context,
+        int? discountTypeId,
+        string? discountCode)
+    {
+        if (discountTypeId.HasValue)
+        {
+            var byId = await context.DiscountTypes.AsNoTracking()
+                .FirstOrDefaultAsync(d => d.DiscountTypeId == discountTypeId.Value);
+            if (byId == null)
+                return (null, "The selected discount type does not exist.");
+            if (!byId.IsActive)
+                return (null, $"Discount '{byId.Name}' ({byId.Code}) is inactive and cannot be applied.");
+            return (byId, null);
+        }
+
+        var normalizedCode = (discountCode ?? "NONE").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedCode) || normalizedCode == "NONE")
+            return (null, null);
+
+        var byCode = await context.DiscountTypes.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Code.ToUpper() == normalizedCode);
+        if (byCode != null)
+        {
+            if (!byCode.IsActive)
+                return (null, $"Discount '{byCode.Name}' ({byCode.Code}) is inactive and cannot be applied.");
+            return (byCode, null);
+        }
+
+        return (null, null);
     }
 
     // GET: api/discounts/get-discount/5
@@ -45,6 +170,9 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
             dto.Code, dto.DiscountMethod, dto.DiscountValue);
         if (validationError != null)
             return BadRequest(validationError);
+
+        dto.CreatedAt = DateTime.UtcNow;
+        dto.UpdatedAt = dto.CreatedAt;
 
         context.DiscountTypes.Add(dto);
         await context.SaveChangesAsync();
@@ -71,6 +199,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
         discount.DiscountValue = dto.DiscountValue;
         discount.RequiresIdentification = dto.RequiresIdentification;
         discount.IsActive = dto.IsActive;
+        discount.UpdatedAt = DateTime.UtcNow;
 
         await context.SaveChangesAsync();
         return NoContent();
@@ -100,17 +229,16 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
         try
         {
             var code = (request.DiscountCode ?? "NONE").Trim().ToUpperInvariant();
-            if (!string.IsNullOrWhiteSpace(code) && code != "NONE" && code != "MANUAL"
+            var (configured, activationError) = await ValidateDiscountActivationAsync(context, null, code);
+            if (activationError != null)
+                return BadRequest(activationError);
+
+            if (configured != null && code != "MANUAL"
                 && !POS.Shared.Services.LocalDiscountCalculationService.IsStatutoryVatExemptCode(code)
                 && string.IsNullOrWhiteSpace(request.DiscountMethod) && !request.DiscountValue.HasValue)
             {
-                var configured = await context.DiscountTypes.AsNoTracking()
-                    .FirstOrDefaultAsync(d => d.IsActive && d.Code.ToUpper() == code);
-                if (configured != null)
-                {
-                    request.DiscountMethod = configured.DiscountMethod;
-                    request.DiscountValue = configured.DiscountValue;
-                }
+                request.DiscountMethod = configured.DiscountMethod;
+                request.DiscountValue = configured.DiscountValue;
             }
 
             var result = calculationService.CalculateOrder(request);

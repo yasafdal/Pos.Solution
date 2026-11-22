@@ -14,6 +14,7 @@ public interface IReferenceDataSyncService
     event Action? OnSyncCompleted;
     Task<bool> SyncReferenceDataAsync(int terminalId, HttpClient httpClient);
     Task<bool> SyncBranchConfigAsync(int branchId, HttpClient httpClient);
+    Task<bool> SyncDiscountTypesIncrementalAsync(HttpClient httpClient, bool forceFull = false);
     Task<bool> CheckAndSyncIncrementalAsync(int terminalId, HttpClient httpClient);
     Task<DateTime?> GetLastSuccessfulSyncAsync();
     Task<bool> ValidateCacheAsync();
@@ -47,16 +48,21 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                 dbRead.InitializeDatabase();
                 var currentLocalSeq = await dbRead.InvoiceSequences.AsNoTracking()
                     .FirstOrDefaultAsync(s => s.TerminalId == terminalId && s.IsActive);
-                if (currentLocalSeq != null)
+                var existingDiscounts = await dbRead.Discounts.AsNoTracking().ToListAsync();
+                var (discountSinceUtc, discountStateHash) = ComputeLocalDiscountCursor(existingDiscounts);
+
+                if (currentLocalSeq != null || discountSinceUtc.HasValue)
                 {
                     refDataReq = new OfflineReferenceDataRequestDto
                     {
                         TerminalId = terminalId,
-                        CurrentSequenceId = currentLocalSeq.SequenceId,
-                        SeriesCode = currentLocalSeq.SeriesCode,
-                        CurrentStartingNumber = currentLocalSeq.StartingNumber,
-                        CurrentEndingNumber = currentLocalSeq.EndingNumber,
-                        CurrentLastIssuedNumber = currentLocalSeq.LastIssuedNumber
+                        CurrentSequenceId = currentLocalSeq?.SequenceId,
+                        SeriesCode = currentLocalSeq?.SeriesCode,
+                        CurrentStartingNumber = currentLocalSeq?.StartingNumber,
+                        CurrentEndingNumber = currentLocalSeq?.EndingNumber,
+                        CurrentLastIssuedNumber = currentLocalSeq?.LastIssuedNumber,
+                        DiscountLastSyncedAtUtc = discountSinceUtc,
+                        DiscountStateHash = discountStateHash
                     };
                 }
             }
@@ -187,7 +193,6 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalProducts;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalCategories;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTaxes;");
-                    await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalDiscounts;");
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalBranches WHERE BranchId != {0};", data.Terminal.BranchId);
                     await db.Database.ExecuteSqlRawAsync("DELETE FROM LocalTerminalConfigs WHERE TerminalId != {0};", data.Terminal.TerminalId);
                     if (data.Cashiers != null && data.Cashiers.Count > 0)
@@ -450,19 +455,10 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                         });
                     }
 
-                    foreach (var d in data.Discounts)
+                    bool serverSupportsDiscountIsActive = !string.IsNullOrWhiteSpace(data.DiscountStateHash);
+                    if (serverSupportsDiscountIsActive && (data.DiscountsHasChanges || data.Discounts.Count > 0))
                     {
-                        db.Discounts.Add(new LocalDiscount
-                        {
-                            DiscountId = d.DiscountId,
-                            Code = d.Code,
-                            Name = d.Name,
-                            DiscountCategory = d.DiscountCategory,
-                            DiscountMethod = d.DiscountMethod,
-                            DiscountValue = d.DiscountValue,
-                            IsStatutory = d.IsStatutory,
-                            RequiresIdentification = d.RequiresIdentification
-                        });
+                        await UpsertDiscountsInPlaceAsync(db, data.Discounts, data.ServerTimestamp);
                     }
 
                     if (data.CashMovementCategories != null && data.CashMovementCategories.Count > 0)
@@ -586,6 +582,28 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
             }
 
             _lastSyncTime = DateTime.UtcNow;
+
+            if (string.IsNullOrWhiteSpace(data.DiscountStateHash))
+            {
+                // Older API server omitted IsActive from reference-data; fetch authoritative IsActive via /api/discounts fallback
+                try { await SyncDiscountTypesIncrementalAsync(httpClient, forceFull: true); } catch { }
+            }
+            else if (data.DiscountsIsIncremental)
+            {
+                try
+                {
+                    using var verifyDb = new LocalPosDbContext();
+                    verifyDb.InitializeDatabase();
+                    var localAfter = await verifyDb.Discounts.AsNoTracking().ToListAsync();
+                    var (_, afterHash) = ComputeLocalDiscountCursor(localAfter);
+                    if (!string.Equals(afterHash, data.DiscountStateHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        await SyncDiscountTypesIncrementalAsync(httpClient, forceFull: true);
+                    }
+                }
+                catch { }
+            }
+
             LocalDatabaseBackupService.TriggerBackgroundSurvivableBackup();
             try { OnSyncCompleted?.Invoke(); } catch { }
             return true;
@@ -702,6 +720,237 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
         }
     }
 
+    public async Task<bool> SyncDiscountTypesIncrementalAsync(HttpClient httpClient, bool forceFull = false)
+    {
+        if (httpClient == null) return false;
+        try
+        {
+            DateTime? sinceUtc = null;
+            string? knownHash = null;
+
+            if (!forceFull)
+            {
+                using var dbRead = new LocalPosDbContext();
+                dbRead.InitializeDatabase();
+                var existing = await dbRead.Discounts.AsNoTracking().ToListAsync();
+                (sinceUtc, knownHash) = ComputeLocalDiscountCursor(existing);
+            }
+
+            var queryParts = new List<string>();
+            if (sinceUtc.HasValue)
+                queryParts.Add($"sinceUtc={Uri.EscapeDataString(sinceUtc.Value.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}");
+            if (!string.IsNullOrWhiteSpace(knownHash))
+                queryParts.Add($"knownHash={Uri.EscapeDataString(knownHash)}");
+
+            string url = queryParts.Count > 0
+                ? $"api/discounts/sync?{string.Join("&", queryParts)}"
+                : "api/discounts/sync";
+
+            var response = await httpClient.GetAsync(url);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound ||
+                response.StatusCode == System.Net.HttpStatusCode.MethodNotAllowed)
+            {
+                // Backwards-compatible fallback when POS.Api does not yet expose GET api/discounts/sync
+                return await SyncDiscountTypesFromListEndpointAsync(httpClient, knownHash, forceFull);
+            }
+            if (!response.IsSuccessStatusCode)
+                return false;
+
+            var payload = await response.Content.ReadFromJsonAsync<OfflineDiscountSyncResponseDto>();
+            if (payload == null)
+                return false;
+
+            if (!payload.HasChanges)
+                return true;
+
+            string updatedLocalHash;
+            await LocalPosDbContext.WriteLock.WaitAsync();
+            try
+            {
+                using var db = new LocalPosDbContext();
+                db.InitializeDatabase();
+                await UpsertDiscountsInPlaceAsync(db, payload.Discounts ?? new List<OfflineDiscountDto>(), payload.ServerTimestampUtc);
+                await db.SaveChangesAsync();
+
+                var allAfter = await db.Discounts.AsNoTracking().ToListAsync();
+                (_, updatedLocalHash) = ComputeLocalDiscountCursor(allAfter);
+            }
+            finally
+            {
+                LocalPosDbContext.WriteLock.Release();
+            }
+
+            // Self-heal if an incremental delta still differs from the server state fingerprint (e.g., out-of-band DB change).
+            if (!forceFull && payload.IsIncremental
+                && !string.IsNullOrWhiteSpace(payload.StateHash)
+                && !string.Equals(updatedLocalHash, payload.StateHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return await SyncDiscountTypesIncrementalAsync(httpClient, forceFull: true);
+            }
+
+            try { OnSyncCompleted?.Invoke(); } catch { }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> SyncDiscountTypesFromListEndpointAsync(HttpClient httpClient, string? knownHash, bool forceFull)
+    {
+        var listResponse = await httpClient.GetAsync("api/discounts");
+        if (!listResponse.IsSuccessStatusCode)
+            return false;
+
+        var remoteList = await listResponse.Content.ReadFromJsonAsync<List<DiscountTypeDto>>();
+        if (remoteList == null)
+            return false;
+
+        var nowUtc = DateTime.UtcNow;
+        var dtos = remoteList.Select(d => new OfflineDiscountDto
+        {
+            DiscountId = d.DiscountTypeId,
+            Code = d.Code,
+            Name = d.Name,
+            DiscountCategory = d.DiscountCategory,
+            DiscountMethod = d.DiscountMethod,
+            DiscountValue = d.DiscountValue,
+            IsStatutory = d.IsStatutory,
+            RequiresIdentification = d.RequiresIdentification,
+            RequiresApproval = d.RequiresApproval,
+            IsActive = d.IsActive,
+            UpdatedAtUtc = d.UpdatedAt != default ? d.UpdatedAt : (d.CreatedAt != default ? d.CreatedAt : nowUtc)
+        }).ToList();
+
+        string remoteHash = DiscountSyncHasher.ComputeStateHash(dtos);
+        if (!forceFull && !string.IsNullOrWhiteSpace(knownHash)
+            && string.Equals(knownHash, remoteHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        await LocalPosDbContext.WriteLock.WaitAsync();
+        try
+        {
+            using var db = new LocalPosDbContext();
+            db.InitializeDatabase();
+            await UpsertDiscountsInPlaceAsync(db, dtos, nowUtc);
+            await db.SaveChangesAsync();
+        }
+        finally
+        {
+            LocalPosDbContext.WriteLock.Release();
+        }
+
+        try { OnSyncCompleted?.Invoke(); } catch { }
+        return true;
+    }
+
+    internal static (DateTime? SinceUtc, string StateHash) ComputeLocalDiscountCursor(List<LocalDiscount> localDiscounts)
+    {
+        var dtos = localDiscounts.Select(d => new OfflineDiscountDto
+        {
+            DiscountId = d.DiscountId,
+            Code = d.Code,
+            Name = d.Name,
+            DiscountCategory = d.DiscountCategory,
+            DiscountMethod = d.DiscountMethod,
+            DiscountValue = d.DiscountValue,
+            IsStatutory = d.IsStatutory,
+            RequiresIdentification = d.RequiresIdentification,
+            RequiresApproval = d.RequiresApproval,
+            IsActive = d.IsActive,
+            UpdatedAtUtc = d.UpdatedAtUtc ?? default
+        });
+
+        string hash = DiscountSyncHasher.ComputeStateHash(dtos);
+        DateTime? sinceUtc = localDiscounts.Count > 0 && localDiscounts.All(d => d.UpdatedAtUtc.HasValue)
+            ? DateTime.SpecifyKind(localDiscounts.Max(d => d.UpdatedAtUtc!.Value), DateTimeKind.Utc)
+            : null;
+        return (sinceUtc, hash);
+    }
+
+    internal static async Task UpsertDiscountsInPlaceAsync(
+        LocalPosDbContext db,
+        IReadOnlyList<OfflineDiscountDto> discounts,
+        DateTime fallbackTimestampUtc)
+    {
+        if (discounts == null || discounts.Count == 0)
+            return;
+
+        var existingRows = await db.Discounts.ToListAsync();
+        var byId = existingRows.ToDictionary(x => x.DiscountId);
+        var byCode = existingRows
+            .Where(x => !string.IsNullOrWhiteSpace(x.Code))
+            .GroupBy(x => x.Code.Trim().ToUpperInvariant())
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var fallbackUtc = fallbackTimestampUtc != default
+            ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(fallbackTimestampUtc)
+            : DateTime.UtcNow;
+
+        foreach (var d in discounts)
+        {
+            var normalizedUpdatedAt = d.UpdatedAtUtc != default
+                ? POS.Shared.Services.BusinessDayClock.NormalizeUtc(d.UpdatedAtUtc)
+                : fallbackUtc;
+            var codeKey = (d.Code ?? string.Empty).Trim().ToUpperInvariant();
+
+            if (!byId.TryGetValue(d.DiscountId, out var entity) && !string.IsNullOrEmpty(codeKey))
+                byCode.TryGetValue(codeKey, out entity);
+
+            if (entity == null)
+            {
+                entity = new LocalDiscount { DiscountId = d.DiscountId };
+                db.Discounts.Add(entity);
+                byId[d.DiscountId] = entity;
+                if (!string.IsNullOrEmpty(codeKey)) byCode[codeKey] = entity;
+            }
+
+            entity.Code = d.Code ?? string.Empty;
+            entity.Name = d.Name ?? string.Empty;
+            entity.DiscountCategory = d.DiscountCategory ?? string.Empty;
+            entity.DiscountMethod = d.DiscountMethod ?? string.Empty;
+            entity.DiscountValue = d.DiscountValue;
+            entity.IsStatutory = d.IsStatutory;
+            entity.RequiresIdentification = d.RequiresIdentification;
+            entity.RequiresApproval = d.RequiresApproval;
+            entity.IsActive = d.IsActive;
+            entity.UpdatedAtUtc = normalizedUpdatedAt;
+        }
+    }
+
+    public static async Task<(List<DiscountTypeDto> ActiveDiscounts, int TotalLocalCount)> LoadActiveDiscountsFromLocalDbAsync()
+    {
+        using var db = new LocalPosDbContext();
+        db.InitializeDatabase();
+
+        int totalCount = await db.Discounts.AsNoTracking().CountAsync();
+        var activeRows = await db.Discounts
+            .AsNoTracking()
+            .Where(d => d.IsActive)
+            .OrderBy(d => d.DiscountId)
+            .ToListAsync();
+
+        var activeDtos = activeRows.Select(d => new DiscountTypeDto
+        {
+            DiscountTypeId = d.DiscountId,
+            Code = d.Code,
+            Name = d.Name,
+            DiscountCategory = d.DiscountCategory,
+            DiscountMethod = d.DiscountMethod,
+            DiscountValue = d.DiscountValue,
+            IsStatutory = d.IsStatutory,
+            RequiresIdentification = d.RequiresIdentification,
+            RequiresApproval = d.RequiresApproval,
+            IsActive = d.IsActive,
+            UpdatedAt = d.UpdatedAtUtc ?? default
+        }).ToList();
+
+        return (activeDtos, totalCount);
+    }
+
     public Task<DateTime?> GetLastSuccessfulSyncAsync()
     {
         return Task.FromResult(_lastSyncTime);
@@ -726,6 +975,7 @@ public class ReferenceDataSyncService : IReferenceDataSyncService
                     {
                         try { await SyncBranchConfigAsync(cfg.BranchId, httpClient); } catch { }
                     }
+                    try { await SyncDiscountTypesIncrementalAsync(httpClient); } catch { }
                     _lastSyncTime = cfg.LastSyncAt.Value;
                     return true;
                 }

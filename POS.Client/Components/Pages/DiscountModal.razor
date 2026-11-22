@@ -1,5 +1,7 @@
 @inject IDiscountService DiscountService
 @inject PosSessionService Session
+@inject IReferenceDataSyncService ReferenceDataSync
+@inject HttpClient Http
 @using Microsoft.EntityFrameworkCore
 @using POS.Shared.Models
 @using POS.Shared.Interfaces
@@ -30,7 +32,7 @@
                     }
 
                     <!-- 5-Column Grid of Discounts -->
-                    @if (availableDiscounts != null)
+                    @if (availableDiscounts != null && SortedDiscounts.Any())
                     {
                         <div class="discount-grid">
                             @foreach (var dt in SortedDiscounts)
@@ -51,6 +53,13 @@
                                     <span class="discount-item-badge @GetBadgeColorClass(dt)">@GetBadgeText(dt)</span>
                                 </button>
                             }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="text-center text-muted py-4 small">
+                            <i class="bi bi-percent fs-3 d-block mb-1 text-secondary"></i>
+                            No active discounts available.
                         </div>
                     }
 
@@ -136,7 +145,7 @@
                         <button type="button" class="btn btn-outline-secondary px-3" @onclick="CloseDiscountModal">
                             Cancel
                         </button>
-                        <button type="button" class="btn btn-primary px-4 fw-bold" @onclick="ConfirmDiscount">
+                        <button type="button" class="btn btn-primary px-4 fw-bold" @onclick="ConfirmDiscount" disabled="@(selectedDiscountType == null || !selectedDiscountType.IsActive)">
                             Apply
                         </button>
                     </div>
@@ -168,51 +177,99 @@
 
     public async Task OpenAsync()
     {
+        availableDiscounts = null;
+
+        // Best-effort incremental sync from PostgreSQL -> SQLite (non-fatal when offline)
         try
         {
-            availableDiscounts = await DiscountService.GetDiscountTypesAsync();
+            await DeviceActivationService.EnsureOnlineBearerTokenAsync(Http, Session);
+            await ReferenceDataSync.SyncDiscountTypesIncrementalAsync(Http);
         }
-        catch
+        catch { }
+
+        int totalCachedCount = 0;
+        try
+        {
+            var localResult = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            totalCachedCount = localResult.TotalLocalCount;
+            if (totalCachedCount > 0)
+            {
+                availableDiscounts = localResult.ActiveDiscounts;
+            }
+        }
+        catch { }
+
+        // Only query the live endpoint directly if SQLite has never been synced yet
+        if (totalCachedCount == 0)
         {
             try
             {
-                using var db = new POS.Client.Data.LocalPosDbContext();
-                db.InitializeDatabase();
-                var cached = await db.Discounts.AsNoTracking().ToListAsync();
-                if (cached.Count > 0)
+                var remoteAll = await DiscountService.GetDiscountTypesAsync();
+                if (remoteAll.Count > 0)
                 {
-                    availableDiscounts = cached.Select(d => new DiscountTypeDto
+                    // Persist all records (active and inactive) to SQLite for offline parity
+                    try
                     {
-                        DiscountTypeId = d.DiscountId,
-                        Code = d.Code,
-                        Name = d.Name,
-                        DiscountCategory = d.DiscountCategory,
-                        DiscountMethod = d.DiscountMethod,
-                        DiscountValue = d.DiscountValue,
-                        IsStatutory = d.IsStatutory,
-                        RequiresIdentification = d.RequiresIdentification,
-                        IsActive = true
-                    }).ToList();
+                        await POS.Client.Data.LocalPosDbContext.WriteLock.WaitAsync();
+                        try
+                        {
+                            using var db = new POS.Client.Data.LocalPosDbContext();
+                            db.InitializeDatabase();
+                            var dtos = remoteAll.Select(d => new OfflineDiscountDto
+                            {
+                                DiscountId = d.DiscountTypeId,
+                                Code = d.Code,
+                                Name = d.Name,
+                                DiscountCategory = d.DiscountCategory,
+                                DiscountMethod = d.DiscountMethod,
+                                DiscountValue = d.DiscountValue,
+                                IsStatutory = d.IsStatutory,
+                                RequiresIdentification = d.RequiresIdentification,
+                                RequiresApproval = d.RequiresApproval,
+                                IsActive = d.IsActive,
+                                UpdatedAtUtc = d.UpdatedAt != default ? d.UpdatedAt : d.CreatedAt
+                            }).ToList();
+                            await ReferenceDataSyncService.UpsertDiscountsInPlaceAsync(db, dtos, DateTime.UtcNow);
+                            await db.SaveChangesAsync();
+                        }
+                        finally
+                        {
+                            POS.Client.Data.LocalPosDbContext.WriteLock.Release();
+                        }
+                    }
+                    catch { }
+
+                    availableDiscounts = remoteAll.Where(d => d.IsActive).ToList();
+                    totalCachedCount = remoteAll.Count;
                 }
             }
             catch { }
+        }
 
-            if (availableDiscounts == null || availableDiscounts.Count == 0)
+        if (availableDiscounts == null)
+        {
+            if (totalCachedCount == 0)
             {
                 availableDiscounts = new List<DiscountTypeDto>
                 {
-                    new() { Code = "NONE", Name = "No Discount", DiscountCategory = "NONE", DiscountMethod = "PERCENTAGE", DiscountValue = 0 },
-                    new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
-                    new() { Code = "PWD", Name = "PWD (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true },
-                    new() { Code = "BNPC", Name = "Basic Commodities (5%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 5, IsStatutory = true },
-                    new() { Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10, RequiresIdentification = true },
-                    new() { Code = "MANUAL", Name = "Manual Custom Discount", DiscountCategory = "CUSTOM", DiscountMethod = "PERCENTAGE", DiscountValue = 0 }
+                    new() { Code = "NONE", Name = "No Discount", DiscountCategory = "NONE", DiscountMethod = "PERCENTAGE", DiscountValue = 0, IsActive = true },
+                    new() { Code = "SC", Name = "Senior Citizen (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true, IsActive = true },
+                    new() { Code = "PWD", Name = "PWD (20%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20, IsStatutory = true, RequiresIdentification = true, IsActive = true },
+                    new() { Code = "BNPC", Name = "Basic Commodities (5%)", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 5, IsStatutory = true, IsActive = true },
+                    new() { Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10, RequiresIdentification = true, IsActive = true },
+                    new() { Code = "MANUAL", Name = "Manual Custom Discount", DiscountCategory = "CUSTOM", DiscountMethod = "PERCENTAGE", DiscountValue = 0, IsActive = true }
                 };
+            }
+            else
+            {
+                availableDiscounts = new List<DiscountTypeDto>();
             }
         }
 
         selectedDiscountCode = Cart.ActiveDiscountCode;
-        selectedDiscountType = availableDiscounts.FirstOrDefault(d => d.Code == selectedDiscountCode) ?? availableDiscounts.First();
+        selectedDiscountType = availableDiscounts.FirstOrDefault(d => d.IsActive && string.Equals(d.Code, selectedDiscountCode, StringComparison.OrdinalIgnoreCase))
+            ?? availableDiscounts.FirstOrDefault(d => d.IsActive);
+        selectedDiscountCode = selectedDiscountType?.Code ?? "NONE";
         cardOrIdNumber = Cart.CustomerCardNumber;
         manualPercentage = Cart.ManualDiscountPercentage;
         manualFixedAmount = Cart.ManualDiscountAmount;
@@ -236,8 +293,10 @@
         {
             if (availableDiscounts == null) return Enumerable.Empty<DiscountTypeDto>();
 
-            // Keep all standard/statutory discounts in their order, but put custom/manual discount at the bottom
-            return availableDiscounts.OrderBy(d => IsCustomDiscount(d) ? 1 : 0);
+            // Display only active discount types, keeping custom/manual discount at the bottom
+            return availableDiscounts
+                .Where(d => d.IsActive)
+                .OrderBy(d => IsCustomDiscount(d) ? 1 : 0);
         }
     }
 
@@ -313,6 +372,12 @@
     {
         if (selectedDiscountType == null) return;
         discountError = null;
+
+        if (!selectedDiscountType.IsActive)
+        {
+            discountError = $"Discount '{FormatDiscountName(selectedDiscountType.Name)}' is inactive and cannot be applied.";
+            return;
+        }
 
         if (!Cart.Items.Any())
         {
@@ -451,7 +516,8 @@
                 appliedManualAmt,
                 0m,
                 branchTaxType,
-                res.TotalAmount);
+                res.TotalAmount,
+                selectedDiscountType.DiscountTypeId > 0 ? selectedDiscountType.DiscountTypeId : null);
             isDiscountModalOpen = false;
             await OnDiscountChanged.InvokeAsync();
         }

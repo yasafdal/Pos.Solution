@@ -159,6 +159,7 @@ else
             cmd.ExecuteNonQuery();
             POS.Api.MigrationRunner.ApplyLicensingSchema(conn);
             POS.Api.MigrationRunner.ApplyAgresIdentitySchema(conn);
+            POS.Api.MigrationRunner.ApplyDiscountSyncSchema(conn);
         }
     }
     catch { /* Non-fatal if DB is unreachable at startup */ }

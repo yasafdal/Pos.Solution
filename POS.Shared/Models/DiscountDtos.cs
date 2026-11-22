@@ -16,6 +16,7 @@ public class DiscountTypeDto
     public bool RequiresApproval { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }
 
 public class DiscountAuditLogDto

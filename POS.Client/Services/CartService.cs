@@ -23,6 +23,7 @@ namespace POS.Client.Services
         public decimal TotalItems => _items.Sum(i => i.Quantity);
 
         public event Action? OnChange;
+        private int? activeDiscountTypeId;
         private string activeDiscountCode = "NONE";
         private decimal activeDiscountAmount = 0.00m;
         private string? activeDiscountMethod;
@@ -34,6 +35,7 @@ namespace POS.Client.Services
         private decimal? activeCalculatedTotal;
         private string? customerCardNumber;
 
+        public int? ActiveDiscountTypeId => activeDiscountTypeId;
         public string ActiveDiscountCode => activeDiscountCode;
         public decimal ActiveDiscountAmount => activeDiscountAmount;
         public string? ActiveDiscountMethod => activeDiscountMethod;
@@ -58,7 +60,8 @@ namespace POS.Client.Services
             decimal manualAmount = 0m,
             decimal promoAmount = 0m,
             string? branchTaxType = null,
-            decimal? calculatedTotal = null)
+            decimal? calculatedTotal = null,
+            int? discountTypeId = null)
         {
             if (amount < 0m)
                 throw new ArgumentOutOfRangeException(nameof(amount), "Invalid discount value: discount amount cannot be negative.");
@@ -80,6 +83,7 @@ namespace POS.Client.Services
             if (amount > subtotal + 0.01m)
                 throw new ArgumentOutOfRangeException(nameof(amount), "Discount amount cannot exceed the eligible amount.");
 
+            activeDiscountTypeId = discountTypeId.HasValue && discountTypeId.Value > 0 ? discountTypeId.Value : null;
             activeDiscountCode = normalizedCode;
             activeDiscountAmount = System.Math.Min(subtotal, System.Math.Round(amount, 2));
             activeDiscountMethod = string.IsNullOrWhiteSpace(discountMethod) ? null : discountMethod.Trim().ToUpperInvariant();
@@ -141,6 +145,7 @@ namespace POS.Client.Services
 
         private void ClearDiscountInternal()
         {
+            activeDiscountTypeId = null;
             activeDiscountCode = "NONE";
             activeDiscountAmount = 0.00m;
             activeDiscountMethod = null;

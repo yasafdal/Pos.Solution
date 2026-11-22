@@ -199,6 +199,10 @@ public class HeldSalesController(PosDbContext context) : ControllerBase
         if (dto.Items.Any(i => i.Quantity <= 0m || i.BasePrice < 0m || i.LineTotal < 0m))
             return BadRequest("Held sale item quantities must be positive and amounts cannot be negative.");
 
+        var (_, discountActivationError) = await DiscountsController.ValidateDiscountActivationAsync(context, null, dto.DiscountCode);
+        if (discountActivationError != null)
+            return BadRequest(discountActivationError);
+
         var terminal = await context.Terminals.AsNoTracking().Include(t => t.Outlet).ThenInclude(o => o.Branch)
             .SingleOrDefaultAsync(t => t.TerminalId == dto.TerminalId, cancellationToken);
         if (terminal == null || terminal.BranchId != dto.BranchId || !terminal.IsActive || !terminal.Outlet.IsActive || !terminal.Outlet.Branch.IsActive)

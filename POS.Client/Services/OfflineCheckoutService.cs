@@ -166,12 +166,41 @@ public class OfflineCheckoutService : IOfflineCheckoutService
                 decimal? resolvedValue = createDto.DiscountValue;
                 decimal resolvedPromoAmount = createDto.PromoDiscountAmount;
 
+                // Validate discount activation status against latest locally synchronized SQLite records
+                LocalDiscount? localDisc = null;
+                if (createDto.DiscountTypeId.HasValue)
+                {
+                    localDisc = await db.Discounts.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.DiscountId == createDto.DiscountTypeId.Value);
+                    if (localDisc != null && !localDisc.IsActive)
+                    {
+                        await transaction.RollbackAsync();
+                        return new OfflineCheckoutResultDto
+                        {
+                            Success = false,
+                            ErrorMessage = $"Discount '{localDisc.Name}' ({localDisc.Code}) is inactive and cannot be applied."
+                        };
+                    }
+                }
+                if (localDisc == null && normalizedDiscountCode != "NONE")
+                {
+                    localDisc = await db.Discounts.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Code.ToUpper() == normalizedDiscountCode);
+                    if (localDisc != null && !localDisc.IsActive)
+                    {
+                        await transaction.RollbackAsync();
+                        return new OfflineCheckoutResultDto
+                        {
+                            Success = false,
+                            ErrorMessage = $"Discount '{localDisc.Name}' ({localDisc.Code}) is inactive and cannot be applied."
+                        };
+                    }
+                }
+
                 if (normalizedDiscountCode != "NONE" && normalizedDiscountCode != "MANUAL"
                     && !LocalDiscountCalculationService.IsStatutoryVatExemptCode(normalizedDiscountCode)
                     && string.IsNullOrWhiteSpace(resolvedMethod) && !resolvedValue.HasValue)
                 {
-                    var localDisc = await db.Discounts.AsNoTracking()
-                        .FirstOrDefaultAsync(d => d.Code.ToUpper() == normalizedDiscountCode);
                     if (localDisc != null)
                     {
                         resolvedMethod = localDisc.DiscountMethod;

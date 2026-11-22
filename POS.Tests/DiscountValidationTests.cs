@@ -532,4 +532,400 @@ public partial class Program
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
     }
+
+    private sealed class DiscountSyncInProcHandler(
+        OfflineReferenceDataController refCtrl,
+        DiscountsController discCtrl,
+        Func<bool> isOnline) : HttpMessageHandler
+    {
+        public bool SimulateLegacyServerWithoutSyncEndpoint { get; set; }
+        public int SyncCallCount { get; private set; }
+        public int LastReturnedDiscountCount { get; private set; }
+        public bool LastWasIncremental { get; private set; }
+        public bool LastHadChanges { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+        {
+            if (!isOnline())
+                throw new HttpRequestException("Simulated offline network failure.");
+
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri?.Query ?? string.Empty);
+
+            if (path.EndsWith("/api/offline/reference-data", StringComparison.OrdinalIgnoreCase))
+            {
+                int terminalId = query.TryGetValue("terminalId", out var tid) && int.TryParse(tid, out var t) ? t : 1;
+                OfflineReferenceDataRequestDto? reqDto = null;
+                if (request.Content != null)
+                {
+                    var json = await request.Content.ReadAsStringAsync(cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(json))
+                        reqDto = System.Text.Json.JsonSerializer.Deserialize<OfflineReferenceDataRequestDto>(json,
+                            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                var actionResult = await refCtrl.GetReferenceData(terminalId, reqDto);
+                if (actionResult.Result is OkObjectResult ok && ok.Value is OfflineReferenceDataResponseDto payload)
+                {
+                    SyncCallCount++;
+                    LastReturnedDiscountCount = payload.Discounts.Count;
+                    LastWasIncremental = payload.DiscountsIsIncremental;
+                    LastHadChanges = payload.DiscountsHasChanges;
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                    {
+                        Content = System.Net.Http.Json.JsonContent.Create(payload)
+                    };
+                }
+                return new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest);
+            }
+
+            if (path.EndsWith("/api/discounts/sync", StringComparison.OrdinalIgnoreCase))
+            {
+                if (SimulateLegacyServerWithoutSyncEndpoint)
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+
+                DateTime? sinceUtc = query.TryGetValue("sinceUtc", out var sVal)
+                    && DateTime.TryParse(sVal, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
+                    ? parsed : null;
+                string? knownHash = query.TryGetValue("knownHash", out var hVal) ? hVal.ToString() : null;
+
+                var actionResult = await discCtrl.SyncDiscountTypes(sinceUtc, knownHash);
+                if (actionResult.Result is OkObjectResult ok && ok.Value is OfflineDiscountSyncResponseDto payload)
+                {
+                    SyncCallCount++;
+                    LastReturnedDiscountCount = payload.Discounts.Count;
+                    LastWasIncremental = payload.IsIncremental;
+                    LastHadChanges = payload.HasChanges;
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                    {
+                        Content = System.Net.Http.Json.JsonContent.Create(payload)
+                    };
+                }
+                return new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest);
+            }
+
+            if (path.EndsWith("/api/discounts", StringComparison.OrdinalIgnoreCase))
+            {
+                var actionResult = await discCtrl.GetDiscountTypes();
+                var list = actionResult.Value?.ToList() ?? new List<DiscountType>();
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = System.Net.Http.Json.JsonContent.Create(list)
+                };
+            }
+
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        }
+    }
+
+    private static async Task TestDiscSync01_IsActiveSyncIncrementalFilteringOfflineAndApiValidation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"pos_disc_sync01_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var dbPath = Path.Combine(tempDir, "local_pos.db");
+        var prevDbPath = AppContext.GetData("POS.LocalDatabasePath");
+
+        try
+        {
+            AppContext.SetData("POS.LocalDatabasePath", dbPath);
+            LocalPosDbContext.ResetInitializationState(dbPath);
+
+            var (conn, apiDb, _) = await CreateTestEnvAsync();
+            await using var _ = conn;
+
+            // Seed catalog, invoice sequence, shift, and 5 Discount Types matching the exact spec matrix
+            apiDb.Categories.Add(new Category { CategoryId = 1, Name = "Meals", IsActive = true });
+            apiDb.Products.Add(new Product { ProductId = 1, CategoryId = 1, Name = "Chicken Meal", Price = 200m, IsActive = true, ProductType = "Food" });
+            apiDb.Taxes.Add(new Taxis { TaxId = 1, Name = "VATable", Rate = 12m });
+            apiDb.InvoiceSequences.Add(new InvoiceSequence
+            {
+                TerminalId = 1, SeriesCode = "S1", Prefix = "INV01-",
+                StartingNumber = 1, EndingNumber = 9999, LastIssuedNumber = 0, PaddingLength = 7, IsActive = true
+            });
+            var srvShift = await apiDb.CashDrawerShifts.FirstAsync(s => s.TerminalId == 1 && s.Status == "OPEN");
+            srvShift.ClientShiftId = "SHIFT-DISCSYNC-01";
+            srvShift.OpeningFloat = 1000m;
+
+            var t0 = DateTime.UtcNow.AddHours(-2);
+            apiDb.DiscountTypes.AddRange(
+                new DiscountType { DiscountTypeId = 1, Code = "SC", Name = "Senior Citizen", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20m, IsStatutory = true, RequiresIdentification = true, IsActive = true, CreatedAt = t0, UpdatedAt = t0 },
+                new DiscountType { DiscountTypeId = 2, Code = "PWD", Name = "PWD", DiscountCategory = "STATUTORY", DiscountMethod = "PERCENTAGE", DiscountValue = 20m, IsStatutory = true, RequiresIdentification = true, IsActive = true, CreatedAt = t0, UpdatedAt = t0 },
+                new DiscountType { DiscountTypeId = 3, Code = "EMPLOYEE", Name = "Employee Discount", DiscountCategory = "CORPORATE", DiscountMethod = "PERCENTAGE", DiscountValue = 10m, IsStatutory = false, RequiresIdentification = true, IsActive = false, CreatedAt = t0, UpdatedAt = t0 },
+                new DiscountType { DiscountTypeId = 4, Code = "PROMO", Name = "Promotional Discount", DiscountCategory = "PROMOTIONAL", DiscountMethod = "PERCENTAGE", DiscountValue = 15m, IsStatutory = false, RequiresIdentification = false, IsActive = true, CreatedAt = t0, UpdatedAt = t0 },
+                new DiscountType { DiscountTypeId = 5, Code = "SPECIAL", Name = "Special Discount", DiscountCategory = "PROMOTIONAL", DiscountMethod = "FIXED", DiscountValue = 25m, IsStatutory = false, RequiresIdentification = false, IsActive = false, CreatedAt = t0, UpdatedAt = t0 }
+            );
+            await apiDb.SaveChangesAsync();
+
+            var refCtrl = new OfflineReferenceDataController(apiDb)
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext { User = BuildPrincipal("cashier1", "Cashier", branchId: 1, terminalId: 1) }
+                }
+            };
+            var discCtrl = CreateDiscountsControllerForTest(apiDb, role: "Admin");
+            var ordersCtrl = new OrdersController(apiDb, new SequenceService(apiDb), new DiscountCalculationService())
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext { User = BuildPrincipal("cashier1", "Cashier", branchId: 1, terminalId: 1) }
+                }
+            };
+            var heldCtrl = CreateHeldSalesControllerForTest(apiDb, "cashier1", "Cashier", 1, 1);
+
+            bool online = true;
+            var handler = new DiscountSyncInProcHandler(refCtrl, discCtrl, () => online);
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
+
+            // 1 & 2. Initial full reference sync saves all 5 records with real IsActive; POS.Client shows ONLY active 3
+            using var localDbSeed = new LocalPosDbContext();
+            var refSync = new ReferenceDataSyncService(localDbSeed);
+            Assert(await refSync.SyncReferenceDataAsync(1, http), "Initial reference data sync must succeed.");
+            Assert(handler.LastReturnedDiscountCount == 5 && !handler.LastWasIncremental, "Initial sync must download all 5 discount types.");
+
+            using (var checkDb = new LocalPosDbContext())
+            {
+                var allLocal = await checkDb.Discounts.AsNoTracking().OrderBy(d => d.DiscountId).ToListAsync();
+                Assert(allLocal.Count == 5, $"SQLite must preserve all 5 discount records (including inactive), got {allLocal.Count}.");
+                Assert(allLocal.Single(d => d.Code == "SC").IsActive, "SC must be active in SQLite.");
+                Assert(allLocal.Single(d => d.Code == "PWD").IsActive, "PWD must be active in SQLite.");
+                Assert(!allLocal.Single(d => d.Code == "EMPLOYEE").IsActive, "EMPLOYEE must be inactive in SQLite (not hardcoded true).");
+                Assert(allLocal.Single(d => d.Code == "PROMO").IsActive, "PROMO must be active in SQLite.");
+                Assert(!allLocal.Single(d => d.Code == "SPECIAL").IsActive, "SPECIAL must be inactive in SQLite.");
+            }
+
+            var (activeInitial, totalInitial) = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            Assert(totalInitial == 5 && activeInitial.Count == 3, $"POS.Client must display only 3 active discounts; got {activeInitial.Count}/{totalInitial}.");
+            Assert(activeInitial.Select(d => d.Code).SequenceEqual(new[] { "SC", "PWD", "PROMO" }),
+                "Visible discounts must be exactly SC, PWD, PROMO.");
+
+            // Incremental sync when unchanged downloads ZERO rows
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "No-change incremental sync must succeed.");
+            Assert(handler.LastWasIncremental && !handler.LastHadChanges && handler.LastReturnedDiscountCount == 0,
+                $"Unchanged incremental sync must download 0 rows; got count={handler.LastReturnedDiscountCount}, hasChanges={handler.LastHadChanges}.");
+
+            // Create a completed order using PROMO while PROMO is still active (for historical preservation test #10)
+            var histOrderRes = await ordersCtrl.CreateOrder(new OrderCreateDto
+            {
+                BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1", ShiftId = srvShift.ShiftId,
+                DiscountCode = "PROMO",
+                Items = new() { new() { ProductId = 1, ProductName = "Chicken Meal", Quantity = 1, BasePrice = 200m, TaxName = "VATable" } }
+            });
+            var histOrderDto = ((OkObjectResult)histOrderRes.Result!).Value as OrderResponseDto;
+            Assert(histOrderDto != null && histOrderDto.DiscountAmount == 30m && histOrderDto.TotalAmount == 170m,
+                $"Historical PROMO order expected Disc=30 Total=170; got Disc={histOrderDto?.DiscountAmount} Total={histOrderDto?.TotalAmount}.");
+
+            // 3 & 4. Activate EMPLOYEE in POS.Web (UpdateDiscount) -> incremental sync downloads only changed row -> appears in POS.Client
+            var empEntity = await apiDb.DiscountTypes.AsNoTracking().SingleAsync(d => d.Code == "EMPLOYEE");
+            empEntity.IsActive = true;
+            var activateRes = await discCtrl.UpdateDiscount(empEntity.DiscountTypeId, empEntity);
+            Assert(activateRes is NoContentResult, "Activating EMPLOYEE discount must succeed.");
+
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "Incremental sync after activation must succeed.");
+            Assert(handler.LastWasIncremental && handler.LastHadChanges && handler.LastReturnedDiscountCount == 1,
+                $"Incremental sync should download only 1 updated discount; got count={handler.LastReturnedDiscountCount}, incremental={handler.LastWasIncremental}.");
+
+            var (activeAfterActivate, _) = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            Assert(activeAfterActivate.Any(d => d.Code == "EMPLOYEE") && activeAfterActivate.Count == 4,
+                "EMPLOYEE must now appear in POS.Client active discounts.");
+
+            // 5 & 6. Deactivate PROMO in POS.Web -> incremental sync updates SQLite IsActive=false (keeps row) -> disappears from POS.Client
+            var promoEntity = await apiDb.DiscountTypes.AsNoTracking().SingleAsync(d => d.Code == "PROMO");
+            promoEntity.IsActive = false;
+            var deactivateRes = await discCtrl.UpdateDiscount(promoEntity.DiscountTypeId, promoEntity);
+            Assert(deactivateRes is NoContentResult, "Deactivating PROMO discount must succeed.");
+
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "Incremental sync after deactivation must succeed.");
+            using (var checkAfterDeactivate = new LocalPosDbContext())
+            {
+                var localPromo = await checkAfterDeactivate.Discounts.AsNoTracking().SingleOrDefaultAsync(d => d.Code == "PROMO");
+                Assert(localPromo != null && !localPromo.IsActive, "Deactivated PROMO must remain in SQLite with IsActive=false.");
+            }
+            var (activeAfterDeactivate, totalAfterDeactivate) = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            Assert(totalAfterDeactivate == 5 && !activeAfterDeactivate.Any(d => d.Code == "PROMO") && activeAfterDeactivate.Count == 3,
+                "Deactivated PROMO must disappear from POS.Client while staying in SQLite.");
+
+            // Out-of-band direct DB edit WITHOUT bumping UpdatedAt -> StateHash detects mismatch and self-heals!
+            await apiDb.Database.ExecuteSqlRawAsync("UPDATE DiscountTypes SET IsActive = 1 WHERE Code = 'SPECIAL';");
+            apiDb.ChangeTracker.Clear();
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "Sync after direct DB edit must self-heal via state hash.");
+            var (activeAfterDirectDb, _) = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            Assert(activeAfterDirectDb.Any(d => d.Code == "SPECIAL"),
+                "Direct DB activation without timestamp update must still sync via StateHash self-heal.");
+            // Restore SPECIAL to inactive for remaining tests
+            var specialEntity = await apiDb.DiscountTypes.AsNoTracking().SingleAsync(d => d.Code == "SPECIAL");
+            specialEntity.IsActive = false;
+            await discCtrl.UpdateDiscount(specialEntity.DiscountTypeId, specialEntity);
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "Restore SPECIAL inactive sync must succeed.");
+
+            // 7. Restart POS.Client (clear pools & reinitialize fresh DbContext) -> exact statuses persist
+            SqliteConnection.ClearAllPools();
+            LocalPosDbContext.ResetInitializationState(dbPath);
+            var (activeAfterRestart, totalAfterRestart) = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            Assert(totalAfterRestart == 5 && activeAfterRestart.Select(d => d.Code).SequenceEqual(new[] { "SC", "PWD", "EMPLOYEE" }),
+                "Restart must preserve synchronized IsActive states (SC, PWD, EMPLOYEE active; PROMO, SPECIAL inactive).");
+
+            // 8. Disconnect internet -> latest synchronized active discounts still displayed & offline checkout blocks inactive discounts
+            online = false;
+            bool offlineSyncAttempt = await refSync.SyncDiscountTypesIncrementalAsync(http);
+            Assert(!offlineSyncAttempt, "Sync while offline must fail gracefully without throwing.");
+            var (activeWhileOffline, _) = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            Assert(activeWhileOffline.Select(d => d.Code).SequenceEqual(new[] { "SC", "PWD", "EMPLOYEE" }),
+                "Offline POS.Client must continue displaying latest synchronized active discounts.");
+
+            var session = CreateOfflineVoidSession(username: "cashier1", role: "Cashier");
+            var offlineCheckout = new OfflineCheckoutService(new LocalPosDbContext(), session);
+
+            var inactiveOfflineRes = await offlineCheckout.ProcessSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1", ShiftId = srvShift.ShiftId,
+                DiscountCode = "PROMO", DiscountMethod = "PERCENTAGE", DiscountValue = 15m,
+                Items = new() { new() { ProductId = 1, ProductName = "Chicken Meal", Quantity = 1, BasePrice = 200m, TaxName = "VATable" } }
+            }, 200m, "CASH", null, "cashier1");
+            Assert(!inactiveOfflineRes.Success && (inactiveOfflineRes.ErrorMessage?.Contains("inactive", StringComparison.OrdinalIgnoreCase) ?? false),
+                $"Offline checkout must block inactive PROMO discount; got Success={inactiveOfflineRes.Success}, Err={inactiveOfflineRes.ErrorMessage}.");
+
+            var activeOfflineRes = await offlineCheckout.ProcessSaleAsync(new OrderCreateDto
+            {
+                BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1", ShiftId = srvShift.ShiftId,
+                DiscountTypeId = 3, DiscountCode = "EMPLOYEE",
+                Items = new() { new() { ProductId = 1, ProductName = "Chicken Meal", Quantity = 1, BasePrice = 200m, TaxName = "VATable" } }
+            }, 200m, "CASH", null, "cashier1");
+            Assert(activeOfflineRes.Success && activeOfflineRes.Receipt != null && activeOfflineRes.Receipt.DiscountAmount == 20m,
+                $"Offline checkout with active EMPLOYEE discount must succeed; err='{activeOfflineRes.ErrorMessage}'.");
+
+            // 9. While offline, admin toggles SPECIAL active & EMPLOYEE inactive; reconnect -> sync updates local SQLite
+            var specAgain = await apiDb.DiscountTypes.AsNoTracking().SingleAsync(d => d.Code == "SPECIAL");
+            specAgain.IsActive = true;
+            await discCtrl.UpdateDiscount(specAgain.DiscountTypeId, specAgain);
+            var empAgain = await apiDb.DiscountTypes.AsNoTracking().SingleAsync(d => d.Code == "EMPLOYEE");
+            empAgain.IsActive = false;
+            await discCtrl.UpdateDiscount(empAgain.DiscountTypeId, empAgain);
+
+            online = true;
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "Reconnect incremental sync must succeed.");
+            var (activeAfterReconnect, _) = await ReferenceDataSyncService.LoadActiveDiscountsFromLocalDbAsync();
+            Assert(activeAfterReconnect.Select(d => d.Code).SequenceEqual(new[] { "SC", "PWD", "SPECIAL" }),
+                $"Reconnect sync must update local active list to SC, PWD, SPECIAL; got {string.Join(",", activeAfterReconnect.Select(d => d.Code))}.");
+
+            // 10. Historical completed transaction using previously active PROMO remains completely unchanged
+            var savedHistOrder = await apiDb.Orders.AsNoTracking().SingleAsync(o => o.OrderId == histOrderDto!.OrderId);
+            Assert(savedHistOrder.DiscountCode == "PROMO" && savedHistOrder.DiscountTypeId == 4 && savedHistOrder.DiscountAmount == 30m && savedHistOrder.TotalAmount == 170m,
+                "Historical completed order using previously active PROMO must remain unchanged after deactivation.");
+
+            // 11. Direct API requests cannot apply inactive discounts (by code OR by DiscountTypeId, even with forged method/value)
+            var apiCalcInactive = await discCtrl.CalculateDiscount(new OrderCalculationRequestDto
+            {
+                BranchTaxType = "VAT-Registered", DiscountCode = "PROMO", DiscountMethod = "PERCENTAGE", DiscountValue = 15m,
+                Items = SingleItem(200m)
+            });
+            Assert(apiCalcInactive.Result is BadRequestObjectResult, "POST api/discounts/calculate must reject inactive PROMO discount.");
+
+            var apiOrderInactiveByCode = await ordersCtrl.CreateOrder(new OrderCreateDto
+            {
+                BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1", ShiftId = srvShift.ShiftId,
+                DiscountCode = "EMPLOYEE", DiscountMethod = "PERCENTAGE", DiscountValue = 10m,
+                Items = new() { new() { ProductId = 1, ProductName = "Chicken Meal", Quantity = 1, BasePrice = 200m, TaxName = "VATable" } }
+            });
+            Assert(apiOrderInactiveByCode.Result is BadRequestObjectResult, "POST api/orders must reject inactive EMPLOYEE discount by code.");
+
+            var apiOrderInactiveById = await ordersCtrl.CreateOrder(new OrderCreateDto
+            {
+                BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1", ShiftId = srvShift.ShiftId,
+                DiscountTypeId = 4, DiscountCode = "PROMO",
+                Items = new() { new() { ProductId = 1, ProductName = "Chicken Meal", Quantity = 1, BasePrice = 200m, TaxName = "VATable" } }
+            });
+            Assert(apiOrderInactiveById.Result is BadRequestObjectResult, "POST api/orders must reject inactive PROMO discount by DiscountTypeId.");
+
+            var apiHeldInactive = await heldCtrl.CreateHeldSale(new HeldSaleCreateDto
+            {
+                BranchId = 1, OutletId = 1, TerminalId = 1, CashierId = "cashier1",
+                Subtotal = 200m, DiscountAmount = 30m, DiscountCode = "PROMO", TotalAmount = 170m,
+                Items = new() { new() { ProductId = 1, ProductName = "Chicken Meal", Quantity = 1, BasePrice = 200m, LineTotal = 200m } }
+            });
+            Assert(apiHeldInactive.Result is BadRequestObjectResult, "POST api/held-sales must reject inactive PROMO discount.");
+
+            // 12. Verify SQLite v5 -> v6 safe migration adds IsActive/RequiresApproval/UpdatedAtUtc while preserving existing rows & LocalOrders
+            var migDbPath = Path.Combine(tempDir, "legacy_v5.db");
+            AppContext.SetData("POS.LocalDatabasePath", migDbPath);
+            LocalPosDbContext.ResetInitializationState(migDbPath);
+            using (var seedV5 = new LocalPosDbContext())
+            {
+                seedV5.InitializeDatabase();
+                seedV5.Orders.Add(new LocalOrder
+                {
+                    OrderId = "ord-hist-1", InvoiceNumber = "INV01-0000001", BranchId = 1, OutletId = 1, TerminalId = 1,
+                    OrderType = "DINING", CashierId = "cashier1", Subtotal = 200m, DiscountAmount = 30m, DiscountCode = "PROMO",
+                    VatableSales = 151.79m, VatAmount = 18.21m, TotalAmount = 170m, PaymentStatus = "PAID", OrderStatus = "COMPLETED",
+                    CreatedAt = DateTime.UtcNow
+                });
+                await seedV5.SaveChangesAsync();
+            }
+            SqliteConnection.ClearAllPools();
+            // Downgrade LocalDiscounts table back to exact v5 schema (without IsActive/RequiresApproval/UpdatedAtUtc) & user_version=5
+            await using (var rawConn = new SqliteConnection($"Data Source={migDbPath}"))
+            {
+                await rawConn.OpenAsync();
+                using var cmd = rawConn.CreateCommand();
+                cmd.CommandText = @"
+                    DROP TABLE LocalDiscounts;
+                    CREATE TABLE LocalDiscounts (
+                        DiscountId INTEGER PRIMARY KEY,
+                        Code TEXT NOT NULL,
+                        Name TEXT NOT NULL,
+                        DiscountCategory TEXT NOT NULL,
+                        DiscountMethod TEXT NOT NULL,
+                        DiscountValue TEXT NOT NULL,
+                        IsStatutory INTEGER NOT NULL,
+                        RequiresIdentification INTEGER NOT NULL
+                    );
+                    INSERT INTO LocalDiscounts (DiscountId, Code, Name, DiscountCategory, DiscountMethod, DiscountValue, IsStatutory, RequiresIdentification)
+                    VALUES (4, 'PROMO', 'Promotional Discount', 'PROMOTIONAL', 'PERCENTAGE', '15.00', 0, 0);
+                    DELETE FROM LocalSchemaMigrations WHERE Version >= 6;
+                    PRAGMA user_version = 5;";
+                await cmd.ExecuteNonQueryAsync();
+            }
+            LocalPosDbContext.ResetInitializationState(migDbPath);
+            using (var upgradedDb = new LocalPosDbContext())
+            {
+                upgradedDb.InitializeDatabase();
+                Assert(LocalDatabaseMigrator.GetUserVersion(upgradedDb.Database.GetDbConnection()) == LocalDatabaseMigrator.CurrentSchemaVersion,
+                    $"Legacy v5 SQLite DB must migrate cleanly to v{LocalDatabaseMigrator.CurrentSchemaVersion}.");
+                var migratedDisc = await upgradedDb.Discounts.AsNoTracking().SingleAsync(d => d.DiscountId == 4);
+                Assert(migratedDisc.Code == "PROMO" && migratedDisc.IsActive && !migratedDisc.UpdatedAtUtc.HasValue,
+                    "Migrated legacy LocalDiscounts row must preserve record and leave UpdatedAtUtc null so first sync fetches authoritative PostgreSQL IsActive.");
+                var preservedOrder = await upgradedDb.Orders.AsNoTracking().SingleAsync(o => o.OrderId == "ord-hist-1");
+                Assert(preservedOrder.DiscountCode == "PROMO" && preservedOrder.DiscountAmount == 30m,
+                    "Historical LocalOrder discount fields must remain untouched after v5->v6 migration.");
+            }
+            // First sync on migrated v5->v6 DB pulls authoritative IsActive=false for PROMO immediately!
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "First sync after v5->v6 migration must succeed.");
+            using (var postMigDb = new LocalPosDbContext())
+            {
+                var syncedPromo = await postMigDb.Discounts.AsNoTracking().SingleAsync(d => d.DiscountId == 4);
+                Assert(!syncedPromo.IsActive && syncedPromo.UpdatedAtUtc.HasValue,
+                    "First sync after v5->v6 migration must update legacy PROMO row to authoritative IsActive=false.");
+            }
+
+            // 13. Backwards-compatible fallback when older POS.Api returns 404 on /api/discounts/sync -> falls back to GET /api/discounts
+            var promoReEnable = await apiDb.DiscountTypes.AsNoTracking().SingleAsync(d => d.Code == "PROMO");
+            promoReEnable.IsActive = true;
+            await discCtrl.UpdateDiscount(promoReEnable.DiscountTypeId, promoReEnable);
+            handler.SimulateLegacyServerWithoutSyncEndpoint = true;
+            Assert(await refSync.SyncDiscountTypesIncrementalAsync(http), "Fallback to GET api/discounts must succeed when /api/discounts/sync returns 404.");
+            using (var fallbackDb = new LocalPosDbContext())
+            {
+                var syncedPromoFallback = await fallbackDb.Discounts.AsNoTracking().SingleAsync(d => d.DiscountId == 4);
+                Assert(syncedPromoFallback.IsActive, "Fallback to GET api/discounts must update SQLite IsActive accurately.");
+            }
+            handler.SimulateLegacyServerWithoutSyncEndpoint = false;
+        }
+        finally
+        {
+            BusinessDayClock.ResetProviders();
+            SqliteConnection.ClearAllPools();
+            AppContext.SetData("POS.LocalDatabasePath", prevDbPath);
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
 }

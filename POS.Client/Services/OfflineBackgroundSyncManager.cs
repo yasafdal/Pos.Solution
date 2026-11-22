@@ -129,12 +129,19 @@ namespace POS.Client.Workers
                 }
 
                 bool refSyncSuccess = true;
-                if (includeReferenceSync && terminalId > 0)
+                if (terminalId > 0)
                 {
                     var refSync = scope.ServiceProvider.GetService<IReferenceDataSyncService>();
                     if (refSync != null)
                     {
-                        refSyncSuccess = await refSync.SyncReferenceDataAsync(terminalId, httpClient);
+                        if (includeReferenceSync)
+                        {
+                            refSyncSuccess = await refSync.SyncReferenceDataAsync(terminalId, httpClient);
+                        }
+                        else
+                        {
+                            try { await refSync.SyncDiscountTypesIncrementalAsync(httpClient); } catch { }
+                        }
                     }
                 }
 
