@@ -320,6 +320,8 @@ public class MigrationRunner
         }
 
         ApplyLicensingSchema(conn);
+        ApplyAgresIdentitySchema(conn);
+        ApplyDiscountSyncSchema(conn);
 
         Console.WriteLine("All migration scripts applied successfully to pos_db!");
     }
@@ -536,15 +538,15 @@ public class MigrationRunner
     public static void ApplyDiscountSyncSchema(NpgsqlConnection conn)
     {
         const string sql = @"
-            ALTER TABLE ""DiscountTypes"" ADD COLUMN IF NOT EXISTS ""UpdatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+            ALTER TABLE ""DiscountTypes"" ADD COLUMN IF NOT EXISTS ""UpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC');
             UPDATE ""DiscountTypes""
-            SET ""UpdatedAt"" = COALESCE(""CreatedAt"", NOW())
+            SET ""UpdatedAt"" = COALESCE(""CreatedAt"", NOW() AT TIME ZONE 'UTC')
             WHERE ""UpdatedAt"" IS NULL;
 
             CREATE OR REPLACE FUNCTION set_discount_types_updated_at()
             RETURNS TRIGGER AS $$
             BEGIN
-                NEW.""UpdatedAt"" = NOW();
+                NEW.""UpdatedAt"" = NOW() AT TIME ZONE 'UTC';
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;

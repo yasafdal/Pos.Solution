@@ -2,16 +2,16 @@
 -- Reuses existing "DiscountTypes"."IsActive" column as the authoritative activation flag.
 
 ALTER TABLE "DiscountTypes"
-    ADD COLUMN IF NOT EXISTS "UpdatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+    ADD COLUMN IF NOT EXISTS "UpdatedAt" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC');
 
 UPDATE "DiscountTypes"
-SET "UpdatedAt" = COALESCE("CreatedAt", NOW())
+SET "UpdatedAt" = COALESCE("CreatedAt", NOW() AT TIME ZONE 'UTC')
 WHERE "UpdatedAt" IS NULL;
 
 CREATE OR REPLACE FUNCTION set_discount_types_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW."UpdatedAt" = NOW();
+    NEW."UpdatedAt" = NOW() AT TIME ZONE 'UTC';
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

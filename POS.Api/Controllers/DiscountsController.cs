@@ -15,10 +15,43 @@ namespace POS.Api.Controllers;
 [Authorize]
 public class DiscountsController(PosDbContext context, IDiscountCalculationService calculationService) : ControllerBase
 {
+    private static volatile bool _discountColumnsEnsured;
+
+    internal static async Task EnsureDiscountSyncSchemaAsync(PosDbContext context)
+    {
+        if (_discountColumnsEnsured || !context.Database.IsNpgsql())
+            return;
+
+        try
+        {
+            await context.Database.ExecuteSqlRawAsync(@"
+                ALTER TABLE ""DiscountTypes"" ADD COLUMN IF NOT EXISTS ""UpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC');
+                CREATE OR REPLACE FUNCTION set_discount_types_updated_at()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    NEW.""UpdatedAt"" = NOW() AT TIME ZONE 'UTC';
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                DROP TRIGGER IF EXISTS trg_discount_types_updated_at ON ""DiscountTypes"";
+                CREATE TRIGGER trg_discount_types_updated_at
+                    BEFORE UPDATE ON ""DiscountTypes""
+                    FOR EACH ROW
+                    EXECUTE FUNCTION set_discount_types_updated_at();
+            ");
+            _discountColumnsEnsured = true;
+        }
+        catch
+        {
+            // Non-fatal if DB user has read-only permissions and column already exists
+        }
+    }
+
     // GET: api/discounts
     [HttpGet]
     public async Task<ActionResult<IEnumerable<DiscountType>>> GetDiscountTypes([FromQuery] bool activeOnly = false)
     {
+        await EnsureDiscountSyncSchemaAsync(context);
         var query = context.DiscountTypes.AsNoTracking();
         if (activeOnly)
             query = query.Where(d => d.IsActive);
@@ -51,6 +84,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
         DateTime? sinceUtc,
         string? knownHash)
     {
+        await EnsureDiscountSyncSchemaAsync(context);
         var nowUtc = DateTime.UtcNow;
         var allDtos = await context.DiscountTypes
             .AsNoTracking()
@@ -122,6 +156,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
         int? discountTypeId,
         string? discountCode)
     {
+        await EnsureDiscountSyncSchemaAsync(context);
         if (discountTypeId.HasValue)
         {
             var byId = await context.DiscountTypes.AsNoTracking()
@@ -153,6 +188,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
     [HttpGet("get-discount/{id}")]
     public async Task<ActionResult<DiscountType>> GetDiscount(int id)
     {
+        await EnsureDiscountSyncSchemaAsync(context);
         var discount = await context.DiscountTypes.FindAsync(id);
         if (discount == null) return NotFound();
         return Ok(discount);
@@ -163,6 +199,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
     [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<DiscountType>> CreateDiscount(DiscountType dto)
     {
+        await EnsureDiscountSyncSchemaAsync(context);
         if (dto == null || string.IsNullOrWhiteSpace(dto.Code) || string.IsNullOrWhiteSpace(dto.Name))
             return BadRequest("Discount Code and Name are required.");
 
@@ -184,6 +221,7 @@ public class DiscountsController(PosDbContext context, IDiscountCalculationServi
     [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> UpdateDiscount(int id, DiscountType dto)
     {
+        await EnsureDiscountSyncSchemaAsync(context);
         if (id != dto.DiscountTypeId) return BadRequest("ID mismatch");
         var discount = await context.DiscountTypes.FindAsync(id);
         if (discount == null) return NotFound();

@@ -127,39 +127,44 @@ else
         {
             using var conn = new Npgsql.NpgsqlConnection(connStr);
             conn.Open();
-            using var cmd = new Npgsql.NpgsqlCommand(@"
-                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUrl"" VARCHAR(255) NULL;
-                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
-                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""VatDisplay"" BOOLEAN NOT NULL DEFAULT TRUE;
-                ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""BranchTagline"" VARCHAR(200) NULL;
-                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ServerReceivedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
-                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceTimeZoneId"" VARCHAR(100) NULL;
-                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceUtcOffsetMinutes"" INT NULL;
-                ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ClockSkewSeconds"" INT NULL;
-                ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""BusinessDate"" VARCHAR(10) NULL;
-                ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""CancelledAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
-                ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""CancellationReason"" VARCHAR(255) NULL;
-                ALTER TABLE ""TransactionVoids"" ADD COLUMN IF NOT EXISTS ""ClientVoidId"" VARCHAR(100) NULL;
-                UPDATE ""Payments"" p
-                SET ""paid_at"" = p.""paid_at"" + (o.""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute')
-                FROM ""Orders"" o
-                WHERE p.""order_id"" = o.""order_id""
-                  AND o.""DeviceUtcOffsetMinutes"" IS NOT NULL
-                  AND ABS(o.""DeviceUtcOffsetMinutes"") >= 180
-                  AND o.""ServerReceivedAtUtc"" IS NOT NULL
-                  AND ABS(EXTRACT(EPOCH FROM (o.""created_at"" - o.""ServerReceivedAtUtc""))) < 7200;
-                UPDATE ""Orders""
-                SET ""created_at"" = ""created_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute'),
-                    ""invoice_issued_at"" = CASE WHEN ""invoice_issued_at"" IS NOT NULL THEN ""invoice_issued_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute') ELSE NULL END
-                WHERE ""DeviceUtcOffsetMinutes"" IS NOT NULL
-                  AND ABS(""DeviceUtcOffsetMinutes"") >= 180
-                  AND ""ServerReceivedAtUtc"" IS NOT NULL
-                  AND ABS(EXTRACT(EPOCH FROM (""created_at"" - ""ServerReceivedAtUtc""))) < 7200;
-            ", conn);
-            cmd.ExecuteNonQuery();
-            POS.Api.MigrationRunner.ApplyLicensingSchema(conn);
-            POS.Api.MigrationRunner.ApplyAgresIdentitySchema(conn);
-            POS.Api.MigrationRunner.ApplyDiscountSyncSchema(conn);
+            try
+            {
+                using var cmd = new Npgsql.NpgsqlCommand(@"
+                    ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUrl"" VARCHAR(255) NULL;
+                    ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""ReceiptLogoUpdatedAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+                    ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""VatDisplay"" BOOLEAN NOT NULL DEFAULT TRUE;
+                    ALTER TABLE ""Branches"" ADD COLUMN IF NOT EXISTS ""BranchTagline"" VARCHAR(200) NULL;
+                    ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ServerReceivedAtUtc"" TIMESTAMP WITHOUT TIME ZONE NULL;
+                    ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceTimeZoneId"" VARCHAR(100) NULL;
+                    ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""DeviceUtcOffsetMinutes"" INT NULL;
+                    ALTER TABLE ""Orders"" ADD COLUMN IF NOT EXISTS ""ClockSkewSeconds"" INT NULL;
+                    ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""BusinessDate"" VARCHAR(10) NULL;
+                    ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""CancelledAt"" TIMESTAMP WITHOUT TIME ZONE NULL;
+                    ALTER TABLE ""HeldSales"" ADD COLUMN IF NOT EXISTS ""CancellationReason"" VARCHAR(255) NULL;
+                    ALTER TABLE ""TransactionVoids"" ADD COLUMN IF NOT EXISTS ""ClientVoidId"" VARCHAR(100) NULL;
+                    UPDATE ""Payments"" p
+                    SET ""paid_at"" = p.""paid_at"" + (o.""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute')
+                    FROM ""Orders"" o
+                    WHERE p.""order_id"" = o.""order_id""
+                      AND o.""DeviceUtcOffsetMinutes"" IS NOT NULL
+                      AND ABS(o.""DeviceUtcOffsetMinutes"") >= 180
+                      AND o.""ServerReceivedAtUtc"" IS NOT NULL
+                      AND ABS(EXTRACT(EPOCH FROM (o.""created_at"" - o.""ServerReceivedAtUtc""))) < 7200;
+                    UPDATE ""Orders""
+                    SET ""created_at"" = ""created_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute'),
+                        ""invoice_issued_at"" = CASE WHEN ""invoice_issued_at"" IS NOT NULL THEN ""invoice_issued_at"" + (""DeviceUtcOffsetMinutes"" * INTERVAL '1 minute') ELSE NULL END
+                    WHERE ""DeviceUtcOffsetMinutes"" IS NOT NULL
+                      AND ABS(""DeviceUtcOffsetMinutes"") >= 180
+                      AND ""ServerReceivedAtUtc"" IS NOT NULL
+                      AND ABS(EXTRACT(EPOCH FROM (""created_at"" - ""ServerReceivedAtUtc""))) < 7200;
+                ", conn);
+                cmd.ExecuteNonQuery();
+            }
+            catch { /* Non-fatal if legacy column names differ */ }
+
+            try { POS.Api.MigrationRunner.ApplyLicensingSchema(conn); } catch { }
+            try { POS.Api.MigrationRunner.ApplyAgresIdentitySchema(conn); } catch { }
+            try { POS.Api.MigrationRunner.ApplyDiscountSyncSchema(conn); } catch { }
         }
     }
     catch { /* Non-fatal if DB is unreachable at startup */ }
